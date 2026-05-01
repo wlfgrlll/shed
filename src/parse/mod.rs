@@ -944,6 +944,12 @@ impl ParseStream {
   fn tokens(&self) -> &[Tk] {
     &self.tokens[self.cursor..]
   }
+  pub fn feed_tokens(&mut self, tokens: Vec<Tk>) {
+    self.tokens.extend(tokens);
+  }
+  pub fn feed_token(&mut self, token: Tk) {
+    self.tokens.push(token);
+  }
   fn is_empty(&self) -> bool {
     self.tokens().is_empty()
   }
@@ -2180,7 +2186,8 @@ impl Iterator for ParseStream {
   type Item = Result<Node, (usize, ShErr)>; // (block_depth and error)
   fn next(&mut self) -> Option<Self::Item> {
     // Empty token vector or only SOI/EOI tokens, nothing to do
-    if self.is_empty() || self.len() == 1 {
+    if self.is_empty()
+      && self.len() == 1 && self.tokens().last().unwrap().class == TkRule::EOI {
       return None;
     }
     while let Some(tk) = self.tokens().first() {
@@ -2198,7 +2205,7 @@ impl Iterator for ParseStream {
       Ok(Some(node)) => Some(Ok(node)),
       Ok(None) => None,
       Err(e) => {
-        let block_depth = std::mem::take(&mut self.block_depth);
+        let block_depth = self.block_depth;
         Some(Err((block_depth, e)))
       }
     }

@@ -177,7 +177,7 @@ impl FromStr for ArrIndex {
       "@" => Ok(Self::AllSplit),
       "*" => Ok(Self::AllJoined),
       "#" => Ok(Self::ArgCount),
-      _ if s.starts_with('-') && s[1..].chars().all(|c| c.is_digit(1)) => {
+      _ if s.starts_with('-') && !s[1..].is_empty() && s[1..].chars().all(|c| c.is_ascii_digit()) => {
         let idx = s[1..].parse::<usize>().unwrap();
         Ok(Self::FromBack(idx))
       }

@@ -21,9 +21,7 @@ use crate::{
   expand::alias::AliasExpander,
   match_loop, motion,
   parse::{
-    ParseFlags, ParsedSrc, Redir, RedirType,
-    execute::{exec_int, exec_nonint},
-    lex::{self, CLOSERS, LexFlags, LexStream, Tk, TkFlags, TkRule},
+    ParseFlags, ParsedSrc, Redir, RedirType, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
   },
   prelude::*,
   procio::{self, IoFrame, IoMode, IoStack, capture_command},
@@ -686,83 +684,46 @@ impl Edit {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct IndentCtx {
-  depth: usize,
-  ctx: Vec<Tk>,
-}
+pub struct IndentCtx;
 
 impl IndentCtx {
   pub fn new() -> Self {
     Self::default()
   }
 
-  pub fn depth(&self) -> usize {
-    self.depth
-  }
-
-  pub fn ctx(&self) -> &[Tk] {
-    &self.ctx
-  }
-
-  pub fn descend(&mut self, tk: Tk) {
-    self.ctx.push(tk);
-    self.depth += 1;
-  }
-
-  pub fn swap_top(&mut self, tk: Tk) {
-    if let Some(top) = self.ctx.last_mut() {
-      *top = tk;
+  pub fn check_levels_per_row(&mut self, input: &str) -> (Vec<(usize, usize)>, bool) {
+    // byte offset of the start of each row
+    let mut row_starts: Vec<usize> = vec![0];
+    for (i, ch) in input.char_indices() {
+      if ch == '\n' {
+        row_starts.push(i + 1);
+      }
     }
-  }
+    let n_rows = row_starts.len();
 
-  pub fn ascend(&mut self) {
-    self.depth = self.depth.saturating_sub(1);
-    self.ctx.pop();
-  }
+    // boundaries we need parser depth at: each row_start, plus input.len() for last row's end.
+    // \n is a Sep token and doesn't shift depth, so depth-just-before-\n == depth-just-after-\n,
+    // which lets depth at row_starts[i+1] double as depth at end of row i.
+    let mut boundaries = row_starts;
+    boundaries.push(input.len());
 
-  pub fn reset(&mut self) {
-    std::mem::take(self);
-  }
-
-  pub fn check_tk(&mut self, tk: Tk) {
-    if tk.is_opener() {
-      self.descend(tk);
-    } else if self.ctx.last().is_some_and(|t| tk.is_closer_for(t)) {
-      self.ascend();
+    let mut depths: Vec<usize> = Vec::with_capacity(boundaries.len());
+    let mut failed = false;
+    for &b in &boundaries {
+      let mut src = ParsedSrc::new(input[..b].into())
+        .with_lex_flags(LexFlags::LEX_UNFINISHED)
+        .with_parse_flags(ParseFlags::ERR_RETURN);
+      if src.parse_src().is_err() {
+        failed = true;
+      }
+      depths.push(src.block_depth);
     }
-  }
 
-  pub fn is_sibling(&self, other: &str) -> bool {
-    let Some(last) = self.ctx.last() else {
-      return false;
-    };
-    let last = last.as_str();
-    if last == "if" || last == "elif" {
-      other == "elif" || other == "else"
-    } else {
-      false
-    }
-  }
+    let levels: Vec<(usize, usize)> = (0..n_rows)
+      .map(|i| (depths[i], depths[i + 1]))
+      .collect();
 
-  pub fn checked_calculate(&mut self, input: &str) -> (usize, bool) {
-    self.depth = 0;
-    self.ctx.clear();
-
-    let mut src = ParsedSrc::new(input.into())
-      .with_lex_flags(LexFlags::LEX_UNFINISHED)
-      .with_parse_flags(ParseFlags::ERR_RETURN);
-
-    // now we parse the input
-    // src.block_depth will be non-zero if the parse was stopped somewhere.
-    let res = src.parse_src();
-
-    self.depth = src.block_depth;
-
-    (self.depth, res.is_err())
-  }
-
-  pub fn calculate(&mut self, input: &str) -> usize {
-    self.checked_calculate(input).0
+    (levels, failed)
   }
 }
 
@@ -995,6 +956,8 @@ pub struct LineBuf {
   pub kill_cycle_pos: Option<Pos>,
 
   pub concat_points: VecDeque<Pos>,
+  pub indent_cache: Option<Vec<(usize,usize)>>,
+  pub parse_status: bool,
 }
 
 impl Default for LineBuf {
@@ -1023,6 +986,8 @@ impl Default for LineBuf {
       kill_ring: KillRing::new(),
       kill_cycle_pos: None,
       concat_points: VecDeque::new(),
+      indent_cache: None,
+      parse_status: true,
     }
   }
 }
@@ -1306,24 +1271,33 @@ impl LineBuf {
   fn break_line(&mut self) {
     self.break_line_at(self.cursor.pos);
   }
+  fn break_line_unchecked(&mut self) {
+    self.break_line_at_unchecked(self.cursor.pos);
+  }
   fn break_line_at(&mut self, pos: Pos) {
+    self.break_line_at_inner(pos, true);
+  }
+  fn break_line_at_unchecked(&mut self, pos: Pos) {
+    self.break_line_at_inner(pos, false);
+  }
+  fn break_line_at_inner(&mut self, pos: Pos, invalidate_cache: bool) {
     let Pos { row, col } = pos;
     let rest = self.lines[row].split_off(col);
 
     self.lines.insert(row + 1, rest);
-    let mut new_line_pos = Pos {
-      row: row + 1,
-      col: 0,
-    };
-    let fixed_line_pos = self.fix_calc_pos(new_line_pos);
-    let level = self.calc_indent_level_for_pos(fixed_line_pos);
+    if invalidate_cache {
+      self.indent_cache = None;
+    }
+    let (_,end) = self.indent_levels_for_row(row + 1);
     let new_line = self.lines.get_mut(row + 1).unwrap();
-    for tab in std::iter::repeat_n(Grapheme::from('\t'), level) {
+
+    let mut col = 0;
+    for tab in std::iter::repeat_n(Grapheme::from('\t'), end) {
       new_line.insert(0, tab);
-      new_line_pos = new_line_pos.col_add(1);
+      col += 1;
     }
 
-    self.cursor.pos = new_line_pos;
+    self.cursor.pos.set(row + 1, col);
   }
   fn verb_shell_cmd(&mut self, cmd: &str, stdin: Option<&str>) -> ShResult<Option<String>> {
     let mut vars = HashSet::new();
@@ -1468,35 +1442,31 @@ impl LineBuf {
     }
   }
   fn insert_at(&mut self, mut pos: Pos, gr: Grapheme) {
-    let level = self.calc_indent_level_for_pos(pos);
     if gr.is_lf() {
       self.break_line_at(pos);
       pos = pos.row_add(1);
       pos.set(pos.row, 0);
-      log::debug!("Inserted LF, breaking line at {pos:?}, calculated indent level {level}");
-      pos = self.fix_calc_pos(pos)
     } else {
       let row = pos.row;
       let col = pos.col;
       self.lines[row].insert(col, gr);
+      self.indent_cache = None;
       pos = pos.col_add(1);
     }
-    let new_level = self.calc_indent_level_for_pos(pos);
+    // Cheap test first: only consider dedenting if the line's trimmed content
+    // is exactly a closer keyword. Skips the depth query for 99% of typing.
     let line = self.cur_line().to_string();
     let trimmed = line.trim();
+    let is_closer = lex::CLOSERS
+      .iter()
+      .chain(lex::MIDDLES.iter())
+      .any(|closer| trimmed == *closer);
 
-    if new_level < level {
-      let delta = level.saturating_sub(new_level);
-      let line = self.cur_line_mut();
-      // check if the line is an exact match of a closer keyword
-      // we don't want to dedent something like 'foo) echo bar ;;'
-      // where the closer is inlined with the content
-      let is_closer = lex::CLOSERS
-        .iter()
-        .chain(lex::MIDDLES.iter())
-        .any(|closer| trimmed == *closer);
-
-      if is_closer {
+    if is_closer {
+      let (start, end) = self.indent_levels_for_row(pos.row);
+      if start > end {
+        let delta = start.saturating_sub(end);
+        let line = self.cur_line_mut();
         for _ in 0..delta {
           if line.0.first().is_some_and(|c| c.as_char() == Some('\t')) {
             line.0.remove(0);
@@ -1511,6 +1481,17 @@ impl LineBuf {
     self.insert_at(self.cursor.pos, gr);
   }
   fn insert_str(&mut self, s: &str) {
+    for gr in s.graphemes(true) {
+      let gr = Grapheme::from(gr);
+      if gr.is_lf() {
+        self.break_line_unchecked();
+      } else {
+        self.insert(gr);
+        self.cursor.pos.col += 1;
+      }
+    }
+  }
+  fn insert_str_unchecked(&mut self, s: &str) {
     for gr in s.graphemes(true) {
       let gr = Grapheme::from(gr);
       if gr.is_lf() {
@@ -3238,21 +3219,21 @@ impl LineBuf {
   fn delete_range(&mut self, motion: &MotionKind) -> Lines {
     self.extract_range(motion)
   }
-  pub fn checked_calc_indent_level_for_pos(&mut self, pos: Pos) -> (usize, bool) {
-    let mut lines = self.lines.clone();
-    lines.split_lines_at(pos);
-    let raw = lines.join();
-
-    self.indent_ctx.checked_calculate(&raw)
+  pub fn indent_levels(&mut self) -> &[(usize,usize)] {
+    let has_cache = self.indent_cache.is_some();
+    if !has_cache {
+      let joined = self.joined();
+      let (levels,status) = self.indent_ctx.check_levels_per_row(&joined);
+      self.indent_cache = Some(levels);
+      self.parse_status = status;
+    }
+    self.indent_cache.as_ref().unwrap()
   }
-  pub fn checked_calc_indent_level(&mut self) -> (usize, bool) {
-    self.checked_calc_indent_level_for_pos(self.cursor.pos)
-  }
-  pub fn calc_indent_level(&mut self) -> usize {
-    self.calc_indent_level_for_pos(self.cursor.pos)
-  }
-  pub fn calc_indent_level_for_pos(&mut self, pos: Pos) -> usize {
-    self.checked_calc_indent_level_for_pos(pos).0
+  pub fn indent_levels_for_row(&mut self, row: usize) -> (usize,usize) {
+    self.indent_levels()
+      .get(row)
+      .cloned()
+      .unwrap_or_default()
   }
   fn motion_mutation(&mut self, motion: &MotionKind, mut f: impl FnMut(&Grapheme) -> Grapheme) {
     match motion {
@@ -3424,10 +3405,10 @@ impl LineBuf {
             self.set_row(s);
             if *verb == Verb::Change {
               // we've gotta indent
-              let level = self.calc_indent_level();
+              let (start,_) = self.indent_levels_for_row(self.row());
               let line = self.cur_line_mut();
               let mut col = 0;
-              for tab in std::iter::repeat_n(Grapheme::from('\t'), level) {
+              for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
                 line.0.insert(col, tab);
                 col += 1;
               }
@@ -3441,10 +3422,10 @@ impl LineBuf {
             self.set_row(*s);
             if *verb == Verb::Change {
               // we've gotta indent
-              let level = self.calc_indent_level();
+              let (start,_) = self.indent_levels_for_row(self.row());
               let line = self.cur_line_mut();
               let mut col = 0;
-              for tab in std::iter::repeat_n(Grapheme::from('\t'), level) {
+              for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
                 line.0.insert(col, tab);
                 col += 1;
               }
@@ -3663,13 +3644,10 @@ impl LineBuf {
           let target = (row + 1).min(self.lines.len());
           self.lines.insert(target, Line::default());
 
-          let level = self.calc_indent_level_for_pos(Pos {
-            row: target,
-            col: 0,
-          });
+          let (start,_) = self.indent_levels_for_row(target);
           let line = self.line_mut(target);
           let mut col = 0;
-          for tab in std::iter::repeat_n(Grapheme::from('\t'), level) {
+          for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
             line.insert(0, tab);
             col += 1;
           }
@@ -3680,10 +3658,10 @@ impl LineBuf {
           let row = self.row();
           self.lines.insert(row, Line::default());
 
-          let level = self.calc_indent_level_for_pos(Pos { row, col: 0 });
+          let (start,_) = self.indent_levels_for_row(row);
           let line = self.line_mut(row);
           let mut col = 0;
-          for tab in std::iter::repeat_n(Grapheme::from('\t'), level) {
+          for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
             line.insert(0, tab);
             col += 1;
           }
@@ -3843,42 +3821,50 @@ impl LineBuf {
         let new_lines = Lines::to_lines(output.unwrap_or_default());
         self.lines.0.splice(s..s, new_lines.0);
       }
-      Verb::Read(src) => match src {
-        ReadSrc::File(path_buf) => {
-          if !path_buf.is_file() {
-            system_msg!("{} is not a file", path_buf.display());
-            return Ok(());
-          }
-          let Ok(contents) = std::fs::read_to_string(path_buf) else {
-            system_msg!("Failed to read file {}", path_buf.display());
-            return Ok(());
-          };
-          let line_count = contents.lines().count();
-          let byte_count = contents.len();
-          let size = format_size(byte_count as u64);
-
-          status_msg!(
-            "Read {line_count} lines [{size}] from '{}'",
-            path_buf.display()
-          );
-          self.insert_str(&contents);
-        }
-        ReadSrc::Cmd(cmd) => {
-          let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
-          let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
-          pre_cmd.exec();
-          let output = match capture_command(cmd, None) {
-            Ok(out) => out,
-            Err(e) => {
-              post_cmd.exec();
-              e.print_error();
+      Verb::Read(src) => {
+        let contents = match src {
+          ReadSrc::File(path_buf) => {
+            if !path_buf.is_file() {
+              system_msg!("{} is not a file", path_buf.display());
               return Ok(());
             }
-          };
-          post_cmd.exec();
-          self.insert_str(&output);
-        }
-      },
+            let Ok(contents) = std::fs::read_to_string(path_buf) else {
+              system_msg!("Failed to read file {}", path_buf.display());
+              return Ok(());
+            };
+            let line_count = contents.lines().count();
+            let byte_count = contents.len();
+            let size = format_size(byte_count as u64);
+            status_msg!(
+              "Read {line_count} lines [{size}] from '{}'",
+              path_buf.display()
+            );
+            contents
+          }
+          ReadSrc::Cmd(cmd) => {
+            let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
+            let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
+            pre_cmd.exec();
+            let output = match capture_command(cmd, None) {
+              Ok(out) => out,
+              Err(e) => {
+                post_cmd.exec();
+                e.print_error();
+                return Ok(());
+              }
+            };
+            post_cmd.exec();
+            output
+          }
+        };
+
+        // Splice content in verbatim, no auto-indent, no equalize.
+        // Going char-by-char through insert_str triggers a depth query
+        // per newline, which is O(N²) for `:r` on large files.
+        let new_lines = Lines::to_lines(&contents);
+        self.insert_lines_at(self.cursor.pos, new_lines);
+        self.indent_cache = None;
+      }
       Verb::Write(dest) => match dest {
         WriteDest::FileAppend(path_buf) | WriteDest::File(path_buf) => {
           let Ok(mut file) = (if matches!(dest, WriteDest::File(_)) {
@@ -4391,14 +4377,8 @@ impl LineBuf {
     for row in line_nums {
       let line_len = self.line(row).len();
 
-      // we are going to calculate the level twice, once at column = 0 and once at column = line.len()
-      // "b-b-b-b-but muh performance" i dont care
-      // the number of tabs we use for the line is the lesser of these two calculations
-      // if level_start > level_end, the line has an closer
-      // if level_end > level_start, the line has a opener
-      let level_start = self.calc_indent_level_for_pos(Pos { row, col: 0 });
-      let level_end = self.calc_indent_level_for_pos(Pos { row, col: line_len });
-      let num_tabs = level_start.min(level_end);
+      let (start,end) = self.indent_levels_for_row(row);
+      let num_tabs = start.min(end);
 
       let line = self.line_mut(row);
       while line.0.first().is_some_and(|c| c.is_ws()) {
@@ -4463,10 +4443,16 @@ impl LineBuf {
       Some(Motion::LineUp | Motion::LineDown)
     );
     let is_separator = cmd.is_separator_insert();
+    let is_edit = cmd.is_edit();
 
     if !is_vertical {
       self.saved_col = None;
     }
+
+    if is_edit {
+      self.indent_cache = None;
+    }
+
 
     let before = self.lines.clone();
     let old_cursor = self.cursor.pos;
@@ -4495,8 +4481,9 @@ impl LineBuf {
     {
       edit.merging = false;
     }
+    let changed = self.lines != before;
 
-    if self.lines != before && !is_undo_op {
+    if changed && !is_undo_op {
       self.redo_stack.clear();
       if is_char_insert {
         // Merge consecutive char inserts into one undo entry

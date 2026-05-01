@@ -423,6 +423,7 @@ impl Verb {
         | Self::JoinLines
         | Self::InsertChar(_)
         | Self::Insert(_)
+        | Self::AcceptLineOrNewline
         | Self::Dedent
         | Self::Indent
         | Self::Equalize

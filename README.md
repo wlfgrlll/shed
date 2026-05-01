@@ -279,7 +279,7 @@ pkgs = import nixpkgs {
 ## Known issues
 
 * The expanded content from the `PSR` variable doesn't work well with multi-line content
-* `select` has not been implemented yet
+* The line editor hasn't been optimized for very large buffers yet (1000+ lines or so), so its pretty slow/unpredictable with those.
 
 ## Quirks
 
