@@ -68,7 +68,8 @@ impl ScopeStack {
   }
   pub fn sh_argv_mut(&mut self) -> &mut VecDeque<String> {
     let len = self.scopes.len();
-    let idx = self.scopes
+    let idx = self
+      .scopes
       .iter()
       .rposition(|s| !s.sh_argv().is_empty())
       .unwrap_or(len - 1);
@@ -494,7 +495,6 @@ impl ScopeStack {
       param,
       ShellParam::Pos(_) | ShellParam::AllArgs | ShellParam::AllArgsStr | ShellParam::ArgCount
     ) {
-
       let scope = self.sh_argv_scope();
       return scope.get_param(param);
     }

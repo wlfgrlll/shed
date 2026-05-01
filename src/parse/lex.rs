@@ -1287,9 +1287,11 @@ impl Iterator for LexStream {
           return self.next();
         }
       }
-      '!' if self.next_is_cmd()
-        && get_char(&self.source, self.cursor + 1)
-          .is_none_or(|c| c.is_whitespace() || matches!(c, ';' | '|' | '&')) => {
+      '!'
+        if self.next_is_cmd()
+          && get_char(&self.source, self.cursor + 1)
+            .is_none_or(|c| c.is_whitespace() || matches!(c, ';' | '|' | '&')) =>
+      {
         self.inc_cursor(1);
         let tk_type = TkRule::Bang;
 
@@ -1520,8 +1522,10 @@ mod tests {
       "'!cmd' should NOT produce a Bang token; got {classes:?}"
     );
     let text = lex_first_nontrivial_text("!cmd");
-    assert_eq!(text, "!cmd",
-      "the whole `!cmd` should be one token; got {text:?}");
+    assert_eq!(
+      text, "!cmd",
+      "the whole `!cmd` should be one token; got {text:?}"
+    );
   }
 
   #[test]
@@ -1538,8 +1542,10 @@ mod tests {
     // `!!` is the hist-exp "last command" — not two Bang operators.
     let classes = lex_classes("!!");
     let bang_count = classes.iter().filter(|c| matches!(c, TkRule::Bang)).count();
-    assert!(bang_count <= 1,
-      "'!!' should not produce two Bang tokens; got {classes:?}");
+    assert!(
+      bang_count <= 1,
+      "'!!' should not produce two Bang tokens; got {classes:?}"
+    );
   }
 
   #[test]

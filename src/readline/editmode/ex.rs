@@ -15,11 +15,11 @@ use crate::readline::editmode::{EditMode, ModeReport};
 use crate::readline::history::History;
 use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
-use crate::state::{CursorStyle, write_meta};
+use crate::state::CursorStyle;
 use crate::util::error::ShResult;
-use crate::verb;
 use crate::{bitflags, match_loop};
 use crate::{key, motion, sherr};
+use crate::{status_msg, verb};
 
 bitflags! {
   #[derive(Debug,Clone,Copy,PartialEq,Eq)]
@@ -86,8 +86,8 @@ impl EditMode for ViEx {
         let res = match parse_ex_input(&input) {
           Ok(cmd) => Ok(cmd),
           Err(e) => {
-            let msg = e.unwrap_or(format!("Not an editor command: {}", &input));
-            write_meta(|m| m.post_status_message(msg.clone()));
+            let msg = e.unwrap_or_else(|| format!("Not an editor command: {}", &input));
+            status_msg!("{msg}");
             Err(sherr!(ParseErr, "{msg}"))
           }
         };
@@ -95,9 +95,7 @@ impl EditMode for ViEx {
         if let Some(hist) = self.history()
           && let Err(e) = hist.push(input)
         {
-          write_meta(|m| {
-            m.post_status_message(format!("Failed to save ex command to history: {e}"))
-          });
+          status_msg!("Failed to save ex command to history: {e}");
         }
 
         res

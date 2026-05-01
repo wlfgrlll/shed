@@ -1,11 +1,15 @@
-use crate::{builtin::join_raw_args, getopt::{Opt, OptSpec}, outln, state::{read_vars, write_vars}, util::{error::ShResult, with_status}};
+use crate::{
+  builtin::join_raw_args,
+  getopt::{Opt, OptSpec},
+  outln,
+  state::{read_vars, write_vars},
+  util::{error::ShResult, with_status},
+};
 
 pub(super) struct Defer;
 impl super::Builtin for Defer {
   fn opts(&self) -> Vec<crate::getopt::OptSpec> {
-    vec![
-      OptSpec::flag('c')
-    ]
+    vec![OptSpec::flag('c')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> crate::util::error::ShResult<()> {
     if args.argv.is_empty() {
@@ -76,7 +80,10 @@ mod tests {
     test_input("foo() { local x=hello; defer 'echo $x'; }").unwrap();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("hello"), "defer body should see local x; got {out:?}");
+    assert!(
+      out.contains("hello"),
+      "defer body should see local x; got {out:?}"
+    );
   }
 
   #[test]
@@ -86,8 +93,10 @@ mod tests {
     test_input("foo() { x=before; defer \"echo $(echo $x)\"; x=after; }").unwrap();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("before"),
-      "command sub should resolve at registration time; got {out:?}");
+    assert!(
+      out.contains("before"),
+      "command sub should resolve at registration time; got {out:?}"
+    );
   }
 
   #[test]
@@ -108,9 +117,13 @@ mod tests {
     let out = guard.read_output();
     // Output should contain both registered commands. Order/format depends on
     // display_deferred_cmds, but both bodies must appear before they run.
-    let listing_idx = out.find("echo a").expect("defer listing should mention 'echo a'");
-    assert!(out[listing_idx..].contains("echo b"),
-      "defer listing should mention both; got {out:?}");
+    let listing_idx = out
+      .find("echo a")
+      .expect("defer listing should mention 'echo a'");
+    assert!(
+      out[listing_idx..].contains("echo b"),
+      "defer listing should mention both; got {out:?}"
+    );
   }
 
   #[test]

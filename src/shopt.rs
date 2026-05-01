@@ -3,7 +3,6 @@ use std::{fmt::Display, str::FromStr};
 use nix::{libc::STDERR_FILENO, unistd::write};
 
 use crate::expand::expand_keymap;
-use crate::{sherr, two_way_display};
 use crate::util::ui::ansi_from_description;
 use crate::{
   parse::lex::Span,
@@ -11,6 +10,7 @@ use crate::{
   state::{read_shopts, read_vars},
   util::error::{ShErr, ShResult},
 };
+use crate::{sherr, two_way_display};
 
 pub fn xtrace_print(argv: &[(String, Span)]) {
   if read_shopts(|o| o.set.xtrace) {
@@ -299,6 +299,9 @@ shopt_group! {
     #[validate(validate_viewport_height)]
     viewport_height: String = "50%".to_string(),
 
+    /// If enabled, trims leading/trailing whitespace on submitting a command
+    trim_on_submit: bool = true,
+
     /// Whether to display line numbers in multiline input
     line_numbers: bool = true,
 
@@ -516,7 +519,7 @@ shopt_group! {
 mod tests {
   use crate::{assert_status_ne, state};
 
-use super::*;
+  use super::*;
 
   #[test]
   fn set_and_get_core_bool() {

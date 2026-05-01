@@ -15,7 +15,10 @@ use crate::sherr;
 use crate::state::{read_shopts, read_vars};
 use crate::util::error::ShResult;
 
-pub fn expand_raw_inner(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShResult<String> {
+pub fn expand_raw_inner(
+  chars: &mut Peekable<Chars<'_>>,
+  expand_cmd_subs: bool,
+) -> ShResult<String> {
   let mut result = String::new();
 
   match_loop!(chars.next() => ch, {
@@ -162,11 +165,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
 }
 
 pub fn escape_glob(raw: &str, use_markers: bool) -> String {
-  let esc_ch = if use_markers {
-    markers::ESCAPE
-  } else {
-    '\\'
-  };
+  let esc_ch = if use_markers { markers::ESCAPE } else { '\\' };
   let mut out = String::new();
   let mut chars = raw.chars();
   match_loop!(chars.next() => ch, {
@@ -193,7 +192,9 @@ pub fn expand_glob(raw: &str) -> ShResult<String> {
     require_literal_leading_dot: !read_shopts(|s| s.core.dotglob),
     ..Default::default()
   };
-  for entry in glob::glob_with(&escaped, opts).map_err(|_| sherr!(SyntaxErr, "Invalid glob pattern"))? {
+  for entry in
+    glob::glob_with(&escaped, opts).map_err(|_| sherr!(SyntaxErr, "Invalid glob pattern"))?
+  {
     let entry = entry.map_err(|_| sherr!(SyntaxErr, "Invalid filename found in glob"))?;
     let entry_raw = entry
       .to_str()
@@ -350,7 +351,9 @@ mod tests {
     // wrapped post-glob; check via strip_markers.
     use crate::readline::markers::strip_markers;
     let stripped = strip_markers(&result);
-    assert!(stripped.contains("my file.txt"),
-      "expected match for 'my\\ *'; got {stripped:?}");
+    assert!(
+      stripped.contains("my file.txt"),
+      "expected match for 'my\\ *'; got {stripped:?}"
+    );
   }
 }

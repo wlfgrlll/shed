@@ -46,7 +46,9 @@ use crate::signal::{
   GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
 };
 use crate::state::{
-  AutoCmdKind, LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard, VarFlags, VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts, read_vars, source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts
+  AutoCmdKind, LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
+  VarFlags, VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts,
+  read_vars, source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
 };
 use crate::util::AutoCmdVecUtils;
 use crate::util::error::{self, ShErrKind, ShResult};
@@ -56,7 +58,7 @@ use state::write_vars;
 #[derive(Parser, Debug)]
 #[command(
   author = "Kyler Clay",
-  about  = "An experimental POSIX shell",
+  about = "An experimental POSIX shell",
   long_about = "shed is an experimental POSIX shell focused on interative user experience, extensibility, and powerful line editing."
 )]
 struct ShedArgs {
@@ -119,7 +121,22 @@ fn setup_panic_handler() {
 
 fn main() -> ExitCode {
   yansi::enable();
-  env_logger::init();
+  let pid = Pid::this();
+  if let Ok(log_file) = OpenOptions::new()
+    .create(true)
+    .truncate(true)
+    .open(format!("/tmp/shed{pid}.log"))
+  {
+    env_logger::Builder::from_default_env()
+      .target(env_logger::Target::Pipe(Box::new(log_file)))
+      .init();
+  } else {
+    env_logger::init();
+  }
+  let _guard = scopeguard::guard(pid, |pid| {
+    let _ = std::fs::remove_file(format!("/tmp/shed{pid}.log"));
+  });
+
   setup_panic_handler();
 
   let mut args = ShedArgs::parse();
@@ -253,12 +270,7 @@ fn first_run_setup() -> ShResult<()> {
   let rc_path = generate_default_rc()?;
 
   if let Some(rc_path) = rc_path {
-    write_meta(|m| {
-      m.post_status_message(format!(
-        "Generated default rc file at '{}'",
-        rc_path.display()
-      ))
-    });
+    status_msg!("Generated default rc file at '{}'", rc_path.display());
   }
 
   Ok(())
@@ -705,11 +717,11 @@ fn handle_socket_request(
 ) -> ShResult<Option<ReadlineEvent>> {
   match request {
     SocketRequest::PostSystemMessage(msg) => {
-      write_meta(|m| m.post_system_message(msg));
+      system_msg!("{msg}");
       write(&conn, b"ok\n").ok();
     }
     SocketRequest::PostStatusMessage(msg) => {
-      write_meta(|m| m.post_status_message(msg));
+      status_msg!("{msg}");
       write(&conn, b"ok\n").ok();
     }
     SocketRequest::Subscribe => {

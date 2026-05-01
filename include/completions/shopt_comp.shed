@@ -1,12 +1,12 @@
 _shopt_comp() {
 		local cword=${COMP_WORDS[$COMP_CWORD]}
 		local group option
-		local groups=( 
-			highlight 	
-			core 
-			line 
-			set 
-			prompt 
+		local groups=(
+			highlight
+			core
+			line
+			set
+			prompt
 		)
 		local groups_desc=(
 			"Syntax highlighting options"
@@ -16,17 +16,17 @@ _shopt_comp() {
 			"Prompt config otions"
 		)
 		local highlight=(
-			enable 
-			string 
-			keyword 
-			valid_command 
-			invalid_command 
-			control_flow_keyword 
-			argument 
-			argument_file 
-			comment 
-			glob 
-			selection 
+			enable
+			string
+			keyword
+			valid_command
+			invalid_command
+			control_flow_keyword
+			argument
+			argument_file
+			comment
+			glob
+			selection
 		)
 		local highlight_desc=(
 			"Enables/disables syntax highlighting. Current value: '$(shopt highlight.enable)'"
@@ -41,18 +41,18 @@ _shopt_comp() {
 			"The style of glob characters. Current value: '$(shopt highlight.glob)'"
 			"The style of visual selections. Current value: '$(shopt highlight.selection)'"
 		)
-		local core=( 
-			dotglob 
-			nullglob 
-			autocd 
-			hist_ignore_dupes 
-			max_hist 
-			interactive_comments 
-			auto_hist 
-			bell_enabled 
-			max_recurse_depth 
-			xpg_echo 
-			bell_style 
+		local core=(
+			dotglob
+			nullglob
+			autocd
+			hist_ignore_dupes
+			max_hist
+			interactive_comments
+			auto_hist
+			bell_enabled
+			max_recurse_depth
+			xpg_echo
+			bell_style
 		)
 		local core_desc=(
 			"If enabled, glob patterns match on hidden files. Current value: '$(shopt core.dotglob)'"
@@ -68,14 +68,14 @@ _shopt_comp() {
 			"Whether shed sends an audible bell, a visual one, or 'both'. Current value: '$(shopt core.bell_style)'"
 		)
 		local prompt=(
-			trunc_prompt_path 
-			comp_limit 
-			leader 
-			screensaver_cmd 
-			screensaver_idle_time 
-			completion_ignore_case 
-			hist_cat 
-			expand_aliases 
+			trunc_prompt_path
+			comp_limit
+			leader
+			screensaver_cmd
+			screensaver_idle_time
+			completion_ignore_case
+			hist_cat
+			expand_aliases
 		)
 		local prompt_desc=(
 			"Maximum number of path segments in the prompt's expanded CWD. Current value: '$(shopt prompt.trunc_prompt_path)'"
@@ -89,6 +89,7 @@ _shopt_comp() {
 		)
 		local line=(
 			linebreak_on_incomplete
+      trim_on_submit
 			viewport_height
 			line_numbers
 			scroll_offset
@@ -99,6 +100,7 @@ _shopt_comp() {
 		)
 		local line_desc=(
 			"Whether enter breaks a new line on incomplete input, or submits the command as is. Current value: '$(shopt line.linebreak_on_incomplete)'"
+      "If enabled, trims leading/trailing whitespace on submission"
 			"Maximum number of visible lines in the line editor. Takes an absolute value or percentage of terminal height. Current value: '$(shopt line.viewport_height)'"
 			"How many lines away from the top or bottom the cursor must be before the viewport scrolls. Current value: '$(shopt line.scroll_offset)'"
 			"Visual width of tab characters in the line editor. Current value: '$(shopt line.tab_width)'"

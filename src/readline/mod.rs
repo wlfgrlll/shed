@@ -2,7 +2,7 @@ use crate::parse::lex::LexStream;
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
 use crate::readline::linebuf::{Pos, ordered};
 use crate::util::strops::QuoteState;
-use crate::{flush_term, motion, verb, write_term};
+use crate::{flush_term, motion, status_msg, verb, write_term};
 use ariadne::Span;
 use editcmd::{CmdFlags, EditCmd, Motion, MotionCmd, RegisterName, Verb, VerbCmd};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
@@ -26,20 +26,19 @@ use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
 use crate::readline::history::HistEntry;
 use crate::readline::term::{calc_str_width, clear_rows, move_cursor_to_end, redraw};
 use crate::state::{
-  self, AutoCmdKind, ShellParam, Var, VarFlags, VarKind, read_logic, read_shopts, with_term, with_vars, write_meta, write_vars
+  self, AutoCmdKind, ShellParam, Var, VarFlags, VarKind, read_logic, read_shopts, with_term,
+  with_vars, write_meta, write_vars,
 };
 use crate::util::AutoCmdVecUtils;
 use crate::{
-  key,
-  match_loop,
+  key, match_loop,
   parse::lex::{self, LexFlags, Tk, TkFlags, TkRule},
-  readline::{
-    complete::{CompResponse, Completer},
-  },
+  readline::complete::{CompResponse, Completer},
   util::error::ShResult,
 };
 
 pub mod complete;
+pub mod context;
 pub mod editcmd;
 pub mod editmode;
 pub mod highlight;
@@ -50,7 +49,6 @@ pub mod layout;
 pub mod linebuf;
 pub mod register;
 pub mod term;
-pub mod context;
 
 #[cfg(test)]
 pub mod tests;
@@ -175,10 +173,7 @@ pub mod markers {
   pub const CODE_BLOCK: Marker = '\u{e187}';
 
   pub fn is_visual_marker(c: Marker) -> bool {
-    c == VISUAL_MODE_START ||
-    c == VISUAL_MODE_END ||
-    c == MATCH_START ||
-    c == MATCH_END
+    c == VISUAL_MODE_START || c == VISUAL_MODE_END || c == MATCH_START || c == MATCH_END
   }
 
   pub fn strip_markers(str: &str) -> String {
@@ -186,7 +181,6 @@ pub mod markers {
     out.retain(|c| !is_marker(c));
     out
   }
-
 }
 type Marker = char;
 
@@ -260,6 +254,7 @@ impl SimpleEditor {
 }
 
 /// Non-blocking readline result
+#[derive(Debug)]
 pub enum ReadlineEvent {
   /// A complete line was entered
   Line(String),
@@ -382,7 +377,7 @@ pub enum LineCmd {
   Quit,
   ClearScreen,
   ResetWidget,
-  NormalSeq(Vec<usize>,String),
+  NormalSeq(Vec<usize>, String),
   TriggerCompletion,
   TriggerHistSearch,
 }
@@ -920,10 +915,7 @@ impl ShedLine {
           [
             ("NUM_MATCHES".into(), Into::<Var>::into(num_candidates)),
             ("MATCHES".into(), Into::<Var>::into(candidates)),
-            (
-              "SEARCH_STR".into(),
-              Into::<Var>::into(comp.token()),
-            ),
+            ("SEARCH_STR".into(), Into::<Var>::into(comp.token())),
           ],
           || {
             post_cmds.exec();
@@ -1014,36 +1006,39 @@ impl ShedLine {
   }
 
   fn extract_line_nums(&self, cmd: &EditCmd) -> ShResult<Vec<usize>> {
-    Ok(match cmd.motion() {
-      Some(MotionCmd(_, Motion::LineRange(s, e))) => {
-        let s = self
-          .editor
-          .resolve_line_addr(s)?
-          .unwrap_or(self.editor.row());
-        let e = self
-          .editor
-          .resolve_line_addr(e)?
-          .unwrap_or(self.editor.row());
-        let (s, e) = ordered(s, e);
-        Either::Left(s..=e)
+    Ok(
+      match cmd.motion() {
+        Some(MotionCmd(_, Motion::LineRange(s, e))) => {
+          let s = self
+            .editor
+            .resolve_line_addr(s)?
+            .unwrap_or(self.editor.row());
+          let e = self
+            .editor
+            .resolve_line_addr(e)?
+            .unwrap_or(self.editor.row());
+          let (s, e) = ordered(s, e);
+          Either::Left(s..=e)
+        }
+        Some(MotionCmd(_, Motion::Line(addr))) => {
+          let addr = self
+            .editor
+            .resolve_line_addr(addr)?
+            .unwrap_or(self.editor.row());
+          Either::Left(addr..=addr)
+        }
+        Some(MotionCmd(_, m @ (Motion::Global(con, re) | Motion::NotGlobal(con, re)))) => {
+          let polarity = matches!(m, Motion::Global(_, _));
+          let lines = self.editor.get_matching_lines(con, re, polarity)?;
+          Either::Right(lines.into_iter())
+        }
+        _ => {
+          let row = self.editor.row();
+          Either::Left(row..=row)
+        }
       }
-      Some(MotionCmd(_, Motion::Line(addr))) => {
-        let addr = self
-          .editor
-          .resolve_line_addr(addr)?
-          .unwrap_or(self.editor.row());
-        Either::Left(addr..=addr)
-      }
-      Some(MotionCmd(_, m @ (Motion::Global(con, re) | Motion::NotGlobal(con, re)))) => {
-        let polarity = matches!(m, Motion::Global(_, _));
-        let lines = self.editor.get_matching_lines(con, re, polarity)?;
-        Either::Right(lines.into_iter())
-      }
-      _ => {
-        let row = self.editor.row();
-        Either::Left(row..=row)
-      }
-    }.collect())
+      .collect(),
+    )
   }
 
   fn submit(&mut self) -> ShResult<Option<ReadlineEvent>> {
@@ -1052,6 +1047,9 @@ impl ShedLine {
     self.print_line(true)?;
     if let Some(layout) = &self.old_layout {
       move_cursor_to_end(layout)?;
+    }
+    if read_shopts(|o| o.line.trim_on_submit) {
+      self.editor.trim();
     }
     write_term!("\n").ok();
     let buf = self.editor.take_buf();
@@ -1074,12 +1072,10 @@ impl ShedLine {
 
     let Ok(cmd) = self.mode.handle_key_fallible(key.clone()) else {
       // it's an ex mode error
-      return Ok(Some(LineCmd::switch_to_normal()))
+      return Ok(Some(LineCmd::switch_to_normal()));
     };
 
-    let Some(cmd) = cmd else {
-      return Ok(None)
-    };
+    let Some(cmd) = cmd else { return Ok(None) };
 
     self.resolve_cmd(cmd)
   }
@@ -1091,7 +1087,7 @@ impl ShedLine {
 
     if let Some(VerbCmd(_, Verb::Normal(seq))) = cmd.verb() {
       let line_nums = self.extract_line_nums(&cmd)?;
-      return Ok(Some(LineCmd::NormalSeq(line_nums, seq.clone())))
+      return Ok(Some(LineCmd::NormalSeq(line_nums, seq.clone())));
     }
 
     if self.should_grab_history(&cmd) {
@@ -1174,11 +1170,7 @@ impl ShedLine {
       if self.ctrl_d_warning_counter == 3 || self.editor.is_empty() {
         // our silly user is spamming ctrl+d for some reason
         // maybe they want to exit the shell?
-        write_meta(|m| {
-          m.post_status_message(
-            "Ctrl+D only quits in insert mode. try ':q' or entering insert mode with 'i'".into(),
-          )
-        });
+        status_msg!("Ctrl+D only quits in insert mode. try ':q' or entering insert mode with 'i'");
         self.ctrl_d_warning_counter = 0;
       } else {
         self.ctrl_d_warning_counter += 1;
@@ -1191,7 +1183,10 @@ impl ShedLine {
   }
 
   pub fn update_editor_search(&mut self) {
-    if matches!(self.mode.report_mode(), ModeReport::RevSearch | ModeReport::Search) {
+    if matches!(
+      self.mode.report_mode(),
+      ModeReport::RevSearch | ModeReport::Search
+    ) {
       self.editor.update_pending_search(self.mode.pending_seq());
       self.needs_redraw = true;
     }
@@ -1200,7 +1195,7 @@ impl ShedLine {
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
     let Some(linecmd) = self.resolve_key(&key)? else {
       self.update_editor_search();
-      return Ok(None)
+      return Ok(None);
     };
     if !matches!(&linecmd, LineCmd::ScrollHistVirtual(_)) {
       self.focused_history().stop_virtual_scroll();
@@ -1235,10 +1230,7 @@ impl ShedLine {
           .map(|(r, _)| r.0)
           .unwrap_or(1);
 
-        let prompt_cursor_offset = self.old_layout
-          .as_ref()
-          .map(|l| l.cursor.row)
-          .unwrap_or(0);
+        let prompt_cursor_offset = self.old_layout.as_ref().map(|l| l.cursor.row).unwrap_or(0);
 
         let prompt_top = cursor_row.saturating_sub(prompt_cursor_offset);
         let scroll_amount = prompt_top.saturating_sub(1);
@@ -1255,7 +1247,7 @@ impl ShedLine {
         self.reset_active_widget(false)?;
         Ok(None)
       }
-      LineCmd::NormalSeq(line_nums,seq) => {
+      LineCmd::NormalSeq(line_nums, seq) => {
         let keys = expand_keymap(&seq);
 
         self.editor.start_undo_merge();
@@ -1299,8 +1291,6 @@ impl ShedLine {
       }
       LineCmd::AppendHint => self.accept_hint(),
     }
-
-
   }
 
   pub fn get_layout(&mut self, line: &str) -> Layout {
@@ -1379,10 +1369,8 @@ impl ShedLine {
   pub fn scroll_history_to(&mut self, hist_idx: usize) {
     let entry = self.focused_history().scroll_to(hist_idx).cloned();
     if entry.is_some() {
-      write_meta(|m| {
-        let total = self.focused_history().search_mask_count();
-        m.post_status_message(format!("jumped to hist entry: {}/{}", hist_idx + 1, total));
-      })
+      let total = self.focused_history().search_mask_count();
+      status_msg!("jumped to hist entry: {}/{}", hist_idx + 1, total);
     }
     self.swap_history_editor(entry);
   }
@@ -1490,8 +1478,12 @@ impl ShedLine {
       .unwrap_or_default();
     let one_line = new_layout.end.row == 0;
 
-    if let Some(comp) = self.completer.as_mut() { comp.clear()?; }
-    if let Some(finder) = self.history_fzf() { finder.clear()?; }
+    if let Some(comp) = self.completer.as_mut() {
+      comp.clear()?;
+    }
+    if let Some(finder) = self.history_fzf() {
+      finder.clear()?;
+    }
 
     if let Some(layout) = self.old_layout.as_ref() {
       clear_rows(layout)?;
@@ -1560,7 +1552,7 @@ impl ShedLine {
         ModeReport::Ex => ": ",
         ModeReport::RevSearch => "?",
         ModeReport::Search => "/",
-        _ => unreachable!()
+        _ => unreachable!(),
       };
       let down = new_layout.end.row - new_layout.cursor.row;
       let move_down = if down > 0 {
@@ -1587,8 +1579,7 @@ impl ShedLine {
     write_term!("{}", &self.mode.cursor_style()).unwrap();
 
     // Move to end of layout for overlay draws (completer, history search)
-    let has_overlays =
-      self.completer.is_some() || self.history_fzf().is_some();
+    let has_overlays = self.completer.is_some() || self.history_fzf().is_some();
 
     let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
     if has_overlays && down > 0 {
@@ -1734,12 +1725,8 @@ impl ShedLine {
           Box::new(ViVisual::new())
         }
 
-        Verb::SearchMode => {
-          Box::new(ViSearch::new())
-        }
-        Verb::RevSearchMode => {
-          Box::new(ViSearchRev::new())
-        }
+        Verb::SearchMode => Box::new(ViSearch::new()),
+        Verb::RevSearchMode => Box::new(ViSearchRev::new()),
 
         _ => unreachable!(),
       }
@@ -2209,25 +2196,25 @@ pub fn annotate_token(token: Tk) -> Vec<(usize, Marker)> {
   let priority = |m: Marker| -> u8 {
     match m {
       markers::MATCH_START
-        | markers::MATCH_END
-        | markers::VISUAL_MODE_END
-        | markers::VISUAL_MODE_START
-        | markers::RESET => 0,
+      | markers::MATCH_END
+      | markers::VISUAL_MODE_END
+      | markers::VISUAL_MODE_START
+      | markers::RESET => 0,
 
-        markers::VAR_SUB
-          | markers::VAR_SUB_END
-          | markers::CMD_SUB
-          | markers::CMD_SUB_END
-          | markers::PROC_SUB
-          | markers::PROC_SUB_END
-          | markers::STRING_DQ
-          | markers::STRING_DQ_END
-          | markers::STRING_SQ
-          | markers::STRING_SQ_END
-          | markers::SUBSH_END => 2,
+      markers::VAR_SUB
+      | markers::VAR_SUB_END
+      | markers::CMD_SUB
+      | markers::CMD_SUB_END
+      | markers::PROC_SUB
+      | markers::PROC_SUB_END
+      | markers::STRING_DQ
+      | markers::STRING_DQ_END
+      | markers::STRING_SQ
+      | markers::STRING_SQ_END
+      | markers::SUBSH_END => 2,
 
-        markers::ARG => 3,
-        _ => 1,
+      markers::ARG => 3,
+      _ => 1,
     }
   };
   // Sort by position descending, with priority ordering at same position:
@@ -2237,22 +2224,16 @@ pub fn annotate_token(token: Tk) -> Vec<(usize, Marker)> {
   // Result: [END][TOGGLE][RESET]
   let sort_insertions = |insertions: &mut Vec<(usize, Marker)>| {
     insertions.sort_by(|a, b| match b.0.cmp(&a.0) {
-      std::cmp::Ordering::Equal => {
-        priority(a.1).cmp(&priority(b.1))
-      }
+      std::cmp::Ordering::Equal => priority(a.1).cmp(&priority(b.1)),
       other => other,
     });
   };
 
   let in_context = |c: Marker, insertions: &[(usize, Marker)]| -> bool {
     let mut stack = insertions.to_vec();
-    stack.sort_by(|a, b| {
-      match b.0.cmp(&a.0) {
-        std::cmp::Ordering::Equal => {
-          priority(a.1).cmp(&priority(b.1))
-        }
-        other => other,
-      }
+    stack.sort_by(|a, b| match b.0.cmp(&a.0) {
+      std::cmp::Ordering::Equal => priority(a.1).cmp(&priority(b.1)),
+      other => other,
     });
     stack.retain(|(i, m)| *i <= token.span.range().start && !markers::END_MARKERS.contains(m));
 

@@ -1,10 +1,7 @@
 mod markup;
 mod pager;
 
-use std::{
-  env,
-  path::Path,
-};
+use std::{env, path::Path};
 
 use crate::{
   builtin::help::{
@@ -138,7 +135,7 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   }
 
   // ok, not a filename. let's check our builtin help pages
-  for (page,content) in HELP_PAGES {
+  for (page, content) in HELP_PAGES {
     if page.starts_with(topic) {
       return Some((0, content.to_string(), Some(page.to_string())));
     }
@@ -163,7 +160,7 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
     }
   }
 
-  for (page,content) in HELP_PAGES {
+  for (page, content) in HELP_PAGES {
     let mut new_tags = read_tags(content, page).ok()?;
     score_matches(topic, &mut new_tags);
     tags.append(&mut new_tags);
@@ -175,7 +172,11 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
     let ScoredTag { tag: _, line, file } = best;
 
     if let Some((_, content)) = HELP_PAGES.iter().find(|(name, _)| name == file) {
-      return Some((line.saturating_sub(2), content.to_string(), Some(file.to_string())));
+      return Some((
+        line.saturating_sub(2),
+        content.to_string(),
+        Some(file.to_string()),
+      ));
     }
 
     std::fs::read_to_string(file)
@@ -301,7 +302,10 @@ pub fn score_matches(topic: &str, tags: &mut Vec<ScoredTag>) {
 
 pub fn read_tags_from_file(path: &Path) -> ShResult<Vec<ScoredTag>> {
   let contents = std::fs::read_to_string(path)?;
-  read_tags(&contents, path.file_stem().unwrap().to_string_lossy().as_ref())
+  read_tags(
+    &contents,
+    path.file_stem().unwrap().to_string_lossy().as_ref(),
+  )
 }
 
 pub fn read_tags(content: &str, name: &str) -> ShResult<Vec<ScoredTag>> {
@@ -314,7 +318,7 @@ pub fn read_tags(content: &str, name: &str) -> ShResult<Vec<ScoredTag>> {
       ScoredTag::new(
         ScoredCandidate::new(span.content(styled.content()).into()).with_len_penalty(true),
         span.line_no(styled.content()),
-        name
+        name,
       )
     })
     .collect();

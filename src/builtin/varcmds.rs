@@ -21,9 +21,9 @@ pub fn prepare_assignment_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
   let mut args = vec![];
   for tk in argv {
     let raw = tk.span.as_str();
-    let is_arr_lit = raw.find('=').is_some_and(|eq| {
-      raw[eq + 1..].starts_with('(') && raw.ends_with(')')
-    });
+    let is_arr_lit = raw
+      .find('=')
+      .is_some_and(|eq| raw[eq + 1..].starts_with('(') && raw.ends_with(')'));
     if is_arr_lit {
       args.push((raw.to_string(), tk.span.clone()));
     } else {
@@ -100,7 +100,9 @@ pub(super) struct Readonly;
 impl super::Builtin for Readonly {
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
-    if !argv.is_empty() { argv.remove(0); }
+    if !argv.is_empty() {
+      argv.remove(0);
+    }
     Ok((argv, vec![]))
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
@@ -144,7 +146,9 @@ pub(super) struct Export;
 impl super::Builtin for Export {
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
-    if !argv.is_empty() { argv.remove(0); }
+    if !argv.is_empty() {
+      argv.remove(0);
+    }
     Ok((argv, vec![]))
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
@@ -172,7 +176,9 @@ pub(super) struct Local;
 impl super::Builtin for Local {
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
-    if !argv.is_empty() { argv.remove(0); }
+    if !argv.is_empty() {
+      argv.remove(0);
+    }
     Ok((argv, vec![]))
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
@@ -518,9 +524,15 @@ mod tests {
     test_input("{ local x=inside; echo \"in=$x\"; }; echo \"out=$x\"").unwrap();
     let out = guard.read_output();
     assert!(out.contains("in=inside"), "got {out:?}");
-    assert!(out.contains("out="), "x should be unset outside block; got {out:?}");
+    assert!(
+      out.contains("out="),
+      "x should be unset outside block; got {out:?}"
+    );
     // 'out=inside' would mean the local leaked
-    assert!(!out.contains("out=inside"), "local leaked out of block: {out:?}");
+    assert!(
+      !out.contains("out=inside"),
+      "local leaked out of block: {out:?}"
+    );
   }
 
   #[test]
@@ -530,16 +542,23 @@ mod tests {
     test_input("{ { local x=inner; }; echo \"middle=$x\"; }; echo \"outer=$x\"").unwrap();
     let out = guard.read_output();
     assert!(out.contains("middle="), "got {out:?}");
-    assert!(!out.contains("middle=inner"), "inner local leaked to middle: {out:?}");
+    assert!(
+      !out.contains("middle=inner"),
+      "inner local leaked to middle: {out:?}"
+    );
     assert!(out.contains("outer="), "got {out:?}");
-    assert!(!out.contains("outer=inner"), "inner local leaked to outer: {out:?}");
+    assert!(
+      !out.contains("outer=inner"),
+      "inner local leaked to outer: {out:?}"
+    );
   }
 
   #[test]
   fn local_shadows_outer_within_block() {
     // local x in inner block shadows outer; outer value restored after block.
     let guard = TestGuard::new();
-    test_input("foo() { local x=outer; { local x=inner; echo \"in=$x\"; }; echo \"after=$x\"; }").unwrap();
+    test_input("foo() { local x=outer; { local x=inner; echo \"in=$x\"; }; echo \"after=$x\"; }")
+      .unwrap();
     test_input("foo").unwrap();
     let out = guard.read_output();
     assert!(out.contains("in=inner"), "got {out:?}");
@@ -556,7 +575,10 @@ mod tests {
     let out = guard.read_output();
     assert!(out.contains("fn=inside"), "got {out:?}");
     assert!(out.contains("after="), "got {out:?}");
-    assert!(!out.contains("after=inside"), "function local leaked: {out:?}");
+    assert!(
+      !out.contains("after=inside"),
+      "function local leaked: {out:?}"
+    );
   }
 
   #[test]
@@ -567,6 +589,9 @@ mod tests {
     test_input("foo").unwrap();
     let out = guard.read_output();
     assert!(out.contains("after_brace="), "got {out:?}");
-    assert!(!out.contains("after_brace=brace"), "brace-local leaked into function scope: {out:?}");
+    assert!(
+      !out.contains("after_brace=brace"),
+      "brace-local leaked into function scope: {out:?}"
+    );
   }
 }

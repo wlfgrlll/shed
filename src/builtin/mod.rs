@@ -2,9 +2,20 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use crate::{
-  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict}, jobs::ChildProc, parse::{
-    NdFlags, NdRule, Node, execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv}, lex::{Span, Tk}
-  }, sherr, state::read_meta, util::{error::{ShErrKind, ShResult}, guards::var_ctx_guard, with_status}
+  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
+  jobs::ChildProc,
+  parse::{
+    NdFlags, NdRule, Node,
+    execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
+    lex::{Span, Tk},
+  },
+  sherr,
+  state::read_meta,
+  util::{
+    error::{ShErrKind, ShResult},
+    guards::var_ctx_guard,
+    with_status,
+  },
 };
 
 pub mod alias;
@@ -12,9 +23,10 @@ pub mod arrops;
 pub mod autocmd;
 pub mod cd;
 pub mod complete;
+pub mod defer;
 pub mod dirstack;
-pub mod eval;
 pub mod echo;
+pub mod eval;
 pub mod exec;
 pub mod fixcmd;
 pub mod flowctl;
@@ -40,12 +52,11 @@ pub mod test; // [[ ]] thing
 pub mod times;
 pub mod trap;
 pub mod varcmds;
-pub mod defer;
 
 macro_rules! register_completions {
-  ($($name:literal => $path:literal),* $(,)?) => {
+  ($($name:literal => $script:expr),* $(,)?) => {
     static COMPLETIONS: &[(&str,&str)] = &[
-      $(($name, include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $path)))),*
+      $(($name, $script)),*
     ];
 
     pub fn source_builtin_completions() {
@@ -188,9 +199,48 @@ register_builtins! {
   "wait"     => jobctl::Wait,
 }
 
+macro_rules! compgen {
+  ($name:literal, $flag:expr) => {
+    concat!(
+      "_",
+      $name,
+      "_comp() { compadd $(compgen ",
+      $flag,
+      r#" -- "$2"); }; complete -F _"#,
+      $name,
+      "_comp ",
+      $name
+    )
+  };
+}
+
+macro_rules! embed {
+  ($path:literal) => {
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))
+  };
+}
+
 register_completions! {
-  "cd"    => "include/completions/cd_comp.shed",
-  "shopt" => "include/completions/shopt_comp.shed",
+  "unalias"  => compgen!("unalias",  "-a"),
+  "alias"    => compgen!("alias",    "-a"),
+  "pushd"    => compgen!("pushd",    "-d"),
+  "unset"    => compgen!("unset",    "-v"),
+  "type"     => compgen!("type",     "-c"),
+  "hash"     => compgen!("hash",     "-c"),
+  "command"  => compgen!("command",  "-c"),
+  "exec"     => compgen!("exec",     "-c"),
+  "bg"       => compgen!("bg",       "-j"),
+  "fg"       => compgen!("fg",       "-j"),
+  "readonly" => compgen!("readonly", "-v"),
+  "export"   => compgen!("export",   "-v"),
+  "local"    => compgen!("local",    "-v"),
+  "disown"   => compgen!("disown",   "-j"),
+  "wait"     => compgen!("wait",     "-j"),
+  "source"   => compgen!("source",   "-f"),
+  "."        => compgen!(".",        "-f"),
+  "cd"       => embed!("completions/cd_comp.shed"),
+  "shopt"    => embed!("completions/shopt_comp.shed"),
+  "compadd"  => embed!("completions/compadd_comp.shed"),
 }
 
 /// Lookup a name in the builtin table via binary search
@@ -230,18 +280,15 @@ pub trait Builtin: Sync {
     Ok((argv, opts))
   }
   /// The main entry point for running a builtin. This is responsible for setting up the environment, handling redirections, and catching control flow errors.
-  fn setup_builtin(
-    &self,
-    mut node: Node,
-    dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn setup_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
     let cmd_raw = node.get_command().unwrap().to_string();
     let report_time = node.flags.contains(NdFlags::REPORT_TIME);
     let context = node.context.clone();
     let NdRule::Command { assignments, argv } = &mut node.class else {
       unreachable!()
     };
-    let env_vars = dispatcher.set_assignments(std::mem::take(assignments), AssignBehavior::Export)?;
+    let env_vars =
+      dispatcher.set_assignments(std::mem::take(assignments), AssignBehavior::Export)?;
     let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
     let fork_builtins = node.flags.contains(NdFlags::FORK_BUILTINS);
 
@@ -256,7 +303,9 @@ pub trait Builtin: Sync {
     }
 
     // Set up redirections here so we can attach the guard to propagated errors.
-    dispatcher.io_stack.append_to_frame(std::mem::take(&mut node.redirs));
+    dispatcher
+      .io_stack
+      .append_to_frame(std::mem::take(&mut node.redirs));
     let guard = dispatcher.io_stack.pop_frame().redirect()?;
 
     // Register ChildProc in current job
@@ -307,11 +356,7 @@ pub trait Builtin: Sync {
     }
   }
   /// Parse arguments and options, pack BuiltinArgs, run self.execute()
-  fn run_builtin(
-    &self,
-    node: Node,
-    _dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
     let span = node.get_span().clone();
     let NdRule::Command {
       assignments: _,
@@ -393,20 +438,18 @@ impl Builtin for False {
 }
 
 struct BuiltinBuiltin;
-impl Builtin for BuiltinBuiltin { // lol
+impl Builtin for BuiltinBuiltin {
+  // lol
   fn execute(&self, _args: BuiltinArgs) -> ShResult<()> {
     unreachable!("this one operates on the node directly")
   }
-  fn setup_builtin(
-    &self,
-    mut node: Node,
-    dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn setup_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
     let span = node.get_span();
     let NdRule::Command {
       assignments: _,
       ref mut argv,
-    } = node.class else {
+    } = node.class
+    else {
       unreachable!()
     };
     *argv = argv
@@ -417,8 +460,7 @@ impl Builtin for BuiltinBuiltin { // lol
 
     let cmd = argv.first().map(|tk| tk.as_str()).unwrap_or("");
     let Some(builtin) = lookup_builtin(cmd) else {
-      sherr!(NotFound @ span, "builtin not found: {cmd}")
-        .print_error();
+      sherr!(NotFound @ span, "builtin not found: {cmd}").print_error();
       return with_status(127);
     };
 
@@ -431,15 +473,12 @@ impl Builtin for CommandBuiltin {
   fn execute(&self, _args: BuiltinArgs) -> ShResult<()> {
     unreachable!("this one operates on the node directly")
   }
-  fn run_builtin(
-    &self,
-    mut node: Node,
-    dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn run_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
     let NdRule::Command {
       assignments: _,
       ref mut argv,
-    } = node.class else {
+    } = node.class
+    else {
       unreachable!()
     };
     *argv = argv
@@ -447,8 +486,6 @@ impl Builtin for CommandBuiltin {
       .skip(1)
       .map(|tk| tk.clone())
       .collect::<Vec<Tk>>();
-
-    node.flags |= NdFlags::NO_FORK;
 
     // this one has to offload to the dispatcher
     dispatcher.exec_cmd(node)

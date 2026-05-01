@@ -156,7 +156,8 @@ impl HelpPager {
     let mut content = self.content().to_string();
 
     if let Some(idx) = self.hovered
-    && let Some(c_ref) = self.cross_refs.get(idx) {
+      && let Some(c_ref) = self.cross_refs.get(idx)
+    {
       const HOVER_SEQ: &str = "\x1b[7;36m"; // inverse cyan (same length as REF_SEQ to maintain spans)
       let prefix = c_ref.prefix_range();
       content.replace_range(prefix, HOVER_SEQ);
@@ -176,7 +177,7 @@ impl HelpPager {
     for (i, line) in content_lines.iter().enumerate() {
       if self.ref_keys.is_empty() {
         write_term!("{line}\x1b[K\n").ok();
-        continue
+        continue;
       }
 
       let mut line = line.to_string();
@@ -451,9 +452,10 @@ impl HelpPager {
   }
 
   fn click_ref_from_pos(&self, row: usize, col: usize) -> Option<&ClickableRef> {
-    self.click_refs.iter().find(|cr| {
-      cr.row == row && col >= cr.col_start && col < cr.col_end
-    })
+    self
+      .click_refs
+      .iter()
+      .find(|cr| cr.row == row && col >= cr.col_start && col < cr.col_end)
   }
 
   fn handle_hover(&mut self, row: usize, col: usize) -> ShResult<PagerEvent> {
@@ -468,10 +470,14 @@ impl HelpPager {
   }
 
   fn handle_click(&mut self, row: usize, col: usize) -> ShResult<PagerEvent> {
-    if let Some(cr) = self.click_refs.iter().find(|cr| {
-      cr.row == row && col >= cr.col_start && col < cr.col_end
-    }) {
-      let target = self.cross_refs[cr.ref_idx].content(self.content()).to_string();
+    if let Some(cr) = self
+      .click_refs
+      .iter()
+      .find(|cr| cr.row == row && col >= cr.col_start && col < cr.col_end)
+    {
+      let target = self.cross_refs[cr.ref_idx]
+        .content(self.content())
+        .to_string();
       return Ok(PagerEvent::OpenRef(target));
     }
     Ok(PagerEvent::Continue)

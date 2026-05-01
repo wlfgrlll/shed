@@ -19,7 +19,11 @@ use crate::{
   match_loop,
   prelude::*,
   procio::borrow_fd,
-  readline::{LineData, complete::{Candidate, CompSpec}, keys::KeyEvent},
+  readline::{
+    LineData,
+    complete::{Candidate, CompSpec},
+    keys::KeyEvent,
+  },
   sherr,
   util::error::{ShErr, ShResult},
 };

@@ -3,10 +3,15 @@ use std::{fmt::Display, str::FromStr};
 use nix::sys::signal::Signal;
 
 use crate::{
-  errln, expand::as_var_val_display, outln, signal::parse_signal, state::{read_logic, write_logic}, util::{
+  errln,
+  expand::as_var_val_display,
+  outln,
+  signal::parse_signal,
+  state::{read_logic, write_logic},
+  util::{
     error::{ShErr, ShResult, ShResultExt},
     with_status,
-  }
+  },
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]

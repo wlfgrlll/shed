@@ -3,11 +3,11 @@ use std::ops::Range;
 use std::str::Chars;
 
 use crate::expand::util::is_var_name_ch;
-use crate::util::error::ShResult;
-use crate::{match_loop, sherr};
 use crate::readline::markers;
 use crate::state::read_vars;
+use crate::util::error::ShResult;
 use crate::util::strops::QuoteState;
+use crate::{match_loop, sherr};
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.
 pub(super) fn strip_escape_markers(s: &str) -> String {
@@ -404,10 +404,12 @@ pub fn escape_str_bounded(raw: &str, use_marker: bool, bound: Option<Range<usize
   let mut chars = raw.char_indices();
   let esc_ch = if use_marker { markers::ESCAPE } else { '\\' };
 
-  while let Some((i,ch)) = chars.next() {
-    if let Some(bound) = &bound && !bound.contains(&i) {
+  while let Some((i, ch)) = chars.next() {
+    if let Some(bound) = &bound
+      && !bound.contains(&i)
+    {
       result.push(ch);
-      continue
+      continue;
     }
 
     match ch {
@@ -480,10 +482,7 @@ pub fn unescape_math(raw: &str) -> ShResult<String> {
   });
 
   if !qt_state.outside() {
-    return Err(sherr!(
-      ParseErr,
-      "Unmatched quote in arithmetic expression",
-    ));
+    return Err(sherr!(ParseErr, "Unmatched quote in arithmetic expression",));
   }
 
   Ok(result)
@@ -491,6 +490,11 @@ pub fn unescape_math(raw: &str) -> ShResult<String> {
 
 /// Escapes a string for displaying as a var value
 pub fn as_var_val_display(s: &str) -> String {
+  // An empty string MUST be quoted, otherwise interpolating it into a command
+  // line collapses into surrounding whitespace and the arg is silently dropped.
+  if s.is_empty() {
+    return "''".to_string();
+  }
   let has_control = s.chars().any(|c| c.is_ascii_control());
   let has_special = s.chars().any(|c| SPECIAL_CHARS.contains(c));
 
@@ -667,6 +671,8 @@ mod tests {
 
   #[test]
   fn display_empty_string() {
-    assert_eq!(as_var_val_display(""), "");
+    // Empty must be quoted so it survives whitespace collapsing when
+    // interpolated into a command line.
+    assert_eq!(as_var_val_display(""), "''");
   }
 }

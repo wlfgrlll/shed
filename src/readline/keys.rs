@@ -174,13 +174,11 @@ impl KeyEvent {
       }
       KeyCode::Grapheme(gr) => seq.push_str(gr),
       KeyCode::Verbatim(s) => seq.push_str(s),
-      clk @ (KeyCode::MiddleClick(x,y) |
-      KeyCode::RightClick(x,y) |
-      KeyCode::LeftClick(x,y)) => {
+      clk @ (KeyCode::MiddleClick(x, y) | KeyCode::RightClick(x, y) | KeyCode::LeftClick(x, y)) => {
         let name = match clk {
-          KeyCode::MiddleClick(_,_) => "MiddleClick",
-          KeyCode::RightClick(_,_) => "RightClick",
-          KeyCode::LeftClick(_,_) => "LeftClick",
+          KeyCode::MiddleClick(_, _) => "MiddleClick",
+          KeyCode::RightClick(_, _) => "RightClick",
+          KeyCode::LeftClick(_, _) => "LeftClick",
           _ => unreachable!(),
         };
         seq.push_str(&format!("{name}({x},{y})"));
@@ -202,7 +200,7 @@ impl KeyEvent {
         seq.push_str("Forward");
         needs_angle_bracket = true;
       }
-      KeyCode::MousePos(x,y) => {
+      KeyCode::MousePos(x, y) => {
         seq.push_str(&format!("MousePos({x},{y})"));
         needs_angle_bracket = true;
       }
@@ -245,10 +243,10 @@ pub enum KeyCode {
   // mouse events
   ScrollUp,
   ScrollDown,
-  MousePos(usize,usize),
-  LeftClick(usize,usize),
-  RightClick(usize,usize),
-  MiddleClick(usize,usize),
+  MousePos(usize, usize),
+  LeftClick(usize, usize),
+  RightClick(usize, usize),
+  MiddleClick(usize, usize),
   Back,
   Forward,
 

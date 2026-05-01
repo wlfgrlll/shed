@@ -3,7 +3,10 @@ use std::{fmt::Write, ops::Range};
 use yansi::Paint;
 
 use crate::{
-  readline::context::{CtxTk, CtxTkRule, get_context_tokens}, shopt::ShOptHighlight, state::read_shopts, util::ui::{PaletteEntry, style_from_description}
+  readline::context::{CtxTk, CtxTkRule, get_context_tokens},
+  shopt::ShOptHighlight,
+  state::read_shopts,
+  util::ui::{PaletteEntry, style_from_description},
 };
 
 pub struct Palette {
@@ -81,7 +84,13 @@ impl Palette {
   pub fn style_for(&self, tk: &CtxTk, editor_cursor_pos: usize) -> PaletteEntry {
     let class = tk.class();
     match class {
-      CtxTkRule::ValidCommand => self.valid_command,
+      CtxTkRule::ValidCommand => {
+        if ["break", "continue", "return"].contains(&tk.span().as_str()) {
+          self.control_flow_keyword
+        } else {
+          self.valid_command
+        }
+      }
       CtxTkRule::InvalidCommand => self.invalid_command,
       CtxTkRule::Argument => self.argument,
       CtxTkRule::ArgumentFile => {
@@ -174,7 +183,7 @@ fn paint(
   out: &mut String,
   node: &CtxTk,
   parent: PaletteEntry,
-  cursor: &mut usize, // our position in the input
+  cursor: &mut usize,       // our position in the input
   editor_cursor_pos: usize, // editor cursor position
   palette: &Palette,
   selections: &[Range<usize>],
@@ -245,7 +254,8 @@ fn emit_with_selection(
   let mut merged: Vec<Range<usize>> = Vec::with_capacity(overlapping.len());
   for sel in overlapping {
     if let Some(last) = merged.last_mut()
-    && sel.start <= last.end {
+      && sel.start <= last.end
+    {
       last.end = last.end.max(sel.end);
       continue;
     }
@@ -306,9 +316,13 @@ mod tests {
     while let Some(c) = chars.next() {
       if c == '\x1b' {
         // ESC; expect '[' then params then a final byte in 0x40..=0x7E
-        if chars.next() != Some('[') { continue; }
+        if chars.next() != Some('[') {
+          continue;
+        }
         for end in chars.by_ref() {
-          if ('@'..='~').contains(&end) { break; }
+          if ('@'..='~').contains(&end) {
+            break;
+          }
         }
       } else {
         out.push(c);
@@ -332,7 +346,11 @@ mod tests {
     ];
     for input in cases {
       let out = highlight(input, &p, 0, vec![]);
-      assert_eq!(strip_ansi(&out), input, "round-trip failed for {input:?}\nout: {out:?}");
+      assert_eq!(
+        strip_ansi(&out),
+        input,
+        "round-trip failed for {input:?}\nout: {out:?}"
+      );
     }
   }
 
@@ -346,10 +364,16 @@ mod tests {
     let p = test_palette();
     let out = highlight("ls $foo", &p, 0, vec![]);
     // Cyan = ANSI 36 - the variable style for $foo should appear in output.
-    assert!(contains_sgr_param(&out, "36"), "expected cyan in output: {out:?}");
+    assert!(
+      contains_sgr_param(&out, "36"),
+      "expected cyan in output: {out:?}"
+    );
     // And `$foo` should sit somewhere after a cyan code.
     let cyan_idx = out.find(";36m").or_else(|| out.find("[36m")).expect("cyan");
-    assert!(out[cyan_idx..].contains("foo"), "expected $foo after cyan: {out:?}");
+    assert!(
+      out[cyan_idx..].contains("foo"),
+      "expected $foo after cyan: {out:?}"
+    );
   }
 
   #[test]
@@ -357,7 +381,10 @@ mod tests {
     let p = test_palette();
     let out = highlight(r#""hello""#, &p, 0, vec![]);
     // Yellow = ANSI 33.
-    assert!(contains_sgr_param(&out, "33"), "expected yellow in output: {out:?}");
+    assert!(
+      contains_sgr_param(&out, "33"),
+      "expected yellow in output: {out:?}"
+    );
   }
 
   #[test]
@@ -365,8 +392,14 @@ mod tests {
     let p = test_palette();
     let out = highlight(r#""hi $foo""#, &p, 0, vec![]);
     // Both yellow (string) and cyan (var) should appear.
-    assert!(contains_sgr_param(&out, "33"), "expected yellow (string): {out:?}");
-    assert!(contains_sgr_param(&out, "36"), "expected cyan (var): {out:?}");
+    assert!(
+      contains_sgr_param(&out, "33"),
+      "expected yellow (string): {out:?}"
+    );
+    assert!(
+      contains_sgr_param(&out, "36"),
+      "expected cyan (var): {out:?}"
+    );
   }
 
   #[test]

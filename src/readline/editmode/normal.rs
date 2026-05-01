@@ -396,13 +396,13 @@ impl ViNormal {
           let verb = Some(verb!(match dir {
             '/' => Verb::SearchMode,
             '?' => Verb::RevSearchMode,
-            _ => unreachable!()
+            _ => unreachable!(),
           }));
           return Some(EditCmd {
             register,
             verb,
             motion: None,
-            raw_seq: format!("{}{dir}",self.take_cmd()),
+            raw_seq: format!("{}{dir}", self.take_cmd()),
             flags: CmdFlags::empty(),
           });
         }

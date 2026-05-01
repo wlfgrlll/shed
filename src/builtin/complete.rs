@@ -1,9 +1,15 @@
 use bitflags::bitflags;
 
-use itertools::{Itertools, EitherOrBoth};
+use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
-  getopt::{Opt, OptSpec}, out, outln, parse::{NdRule, Node, execute::Dispatcher}, readline::complete::{BashCompSpec, Candidate, CompContext, CompSpec}, sherr, state::{read_meta, read_vars, write_meta}, util::{error::ShResult, with_status, write_out}
+  getopt::{Opt, OptSpec},
+  out, outln,
+  parse::{NdRule, Node, execute::Dispatcher},
+  readline::complete::{BashCompSpec, Candidate, CompContext, CompSpec},
+  sherr,
+  state::{read_meta, read_vars, write_meta},
+  util::{error::ShResult, with_status},
 };
 
 bitflags! {
@@ -67,7 +73,7 @@ impl super::Builtin for Complete {
         read_meta(|m| -> ShResult<()> {
           let specs = m.comp_specs().values();
           for spec in specs {
-            write_out(spec.source())?;
+            outln!("{}", spec.source())?;
           }
           Ok(())
         })?;
@@ -75,7 +81,7 @@ impl super::Builtin for Complete {
         read_meta(|m| -> ShResult<()> {
           for (cmd, _) in &args.argv {
             if let Some(spec) = m.comp_specs().get(cmd) {
-              out!("{}",spec.source())?;
+              out!("{}", spec.source())?;
             }
           }
           Ok(())
@@ -132,11 +138,7 @@ impl super::Builtin for CompGen {
   fn execute(&self, _args: super::BuiltinArgs) -> ShResult<()> {
     unreachable!("CompGen uses run_builtin directly")
   }
-  fn run_builtin(
-    &self,
-    node: Node,
-    _dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
     use crate::getopt::get_opts_from_tokens_raw;
 
     let NdRule::Command {
@@ -154,7 +156,10 @@ impl super::Builtin for CompGen {
 
     let (argv, opts) = get_opts_from_tokens_raw(argv, &self.opts())?;
 
-    let prefix = argv.into_iter().nth(1).unwrap_or_default();
+    let mut prefix = argv.into_iter().nth(1).unwrap_or_default().to_string();
+    if prefix.as_str() == "--" {
+      prefix.clear();
+    }
     let comp_opts = get_comp_opts(opts)?;
     let comp_spec = BashCompSpec::from_comp_opts(comp_opts).with_source(src);
 
@@ -199,7 +204,13 @@ impl super::Builtin for Compadd {
         _ => {}
       }
     }
-    log::debug!("Compadd options - prefix: {:?}, suffix: {:?}, desc_arr: {:?}, cand_arr: {:?}", prefix, suffix, desc_arr, cand_arr);
+    log::debug!(
+      "Compadd options - prefix: {:?}, suffix: {:?}, desc_arr: {:?}, cand_arr: {:?}",
+      prefix,
+      suffix,
+      desc_arr,
+      cand_arr
+    );
 
     let make_candidate = |mut a| {
       if let Some(p) = &prefix {
@@ -211,7 +222,8 @@ impl super::Builtin for Compadd {
       Candidate::from(a)
     };
 
-    let mut candidates: Vec<Candidate> = args.argv
+    let mut candidates: Vec<Candidate> = args
+      .argv
       .into_iter()
       .map(|(s, _)| s)
       .map(make_candidate)
@@ -229,22 +241,24 @@ impl super::Builtin for Compadd {
     log::debug!("Candidates: {:?}", candidates);
 
     let descriptions = if let Some(desc_arr) = desc_arr {
-      log::debug!("desc_arr exists: {:?}", read_vars(|v| v.get_var_meta(&desc_arr)));
+      log::debug!(
+        "desc_arr exists: {:?}",
+        read_vars(|v| v.get_var_meta(&desc_arr))
+      );
       read_vars(|v| v.get_arr_elems(&desc_arr))
     } else {
       vec![]
-    }.into_iter();
+    }
+    .into_iter();
     log::debug!("Descriptions: {:?}", descriptions);
 
     let described: Vec<Candidate> = candidates
       .into_iter()
       .zip_longest(descriptions)
-      .filter_map(|pair| {
-        match pair {
-          EitherOrBoth::Both(cand, desc) => Some(cand.with_desc(desc)),
-          EitherOrBoth::Left(cand) => Some(cand),
-          EitherOrBoth::Right(_) => None
-        }
+      .filter_map(|pair| match pair {
+        EitherOrBoth::Both(cand, desc) => Some(cand.with_desc(desc)),
+        EitherOrBoth::Left(cand) => Some(cand),
+        EitherOrBoth::Right(_) => None,
       })
       .collect();
 

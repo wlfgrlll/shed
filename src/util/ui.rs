@@ -16,32 +16,35 @@ pub const TREE_RIGHT: &str = "\x1b[90m┤\x1b[0m";
 #[derive(Clone, Debug, Default, Copy)]
 pub struct PaletteEntry {
   style: Style,
-  decorations: Decorations
+  decorations: Decorations,
 }
 
 impl PaletteEntry {
   pub fn new() -> Self {
-    Self { style: Style::new().primary().on_primary(), decorations: Decorations::default() }
+    Self {
+      style: Style::new().primary().on_primary(),
+      decorations: Decorations::default(),
+    }
   }
   /*
-    "green" => style = style.green(),
-    "red" => style = style.red(),
-    "yellow" => style = style.yellow(),
-    "blue" => style = style.blue(),
-    "magenta" => style = style.magenta(),
-    "cyan" => style = style.cyan(),
-    "white" => style = style.white(),
-    "black" => style = style.black(),
-    "bold" => decor = decor.bold(),
-    "dim" => decor = decor.dim(),
-    "italic" => decor = decor.italic(),
-    "underline" => decor = decor.underline(),
-    "strikethrough" => decor = decor.strike(),
-    "hidden" => decor = decor.hidden(),
-    "blink" => decor = decor.blink(),
-    "inverted" => decor = decor.inverted(),
-    "reset" => style = style.resetting(),
-    */
+  "green" => style = style.green(),
+  "red" => style = style.red(),
+  "yellow" => style = style.yellow(),
+  "blue" => style = style.blue(),
+  "magenta" => style = style.magenta(),
+  "cyan" => style = style.cyan(),
+  "white" => style = style.white(),
+  "black" => style = style.black(),
+  "bold" => decor = decor.bold(),
+  "dim" => decor = decor.dim(),
+  "italic" => decor = decor.italic(),
+  "underline" => decor = decor.underline(),
+  "strikethrough" => decor = decor.strike(),
+  "hidden" => decor = decor.hidden(),
+  "blink" => decor = decor.blink(),
+  "inverted" => decor = decor.inverted(),
+  "reset" => style = style.resetting(),
+  */
   pub fn style(&self) -> Style {
     self.decorations.apply(self.style)
   }
@@ -360,7 +363,10 @@ pub fn style_from_description(desc: &str) -> ShResult<PaletteEntry> {
     _ => return Err(sherr!(ParseErr, "Unknown style '{}' in color description", word)),
   });
 
-  Ok(PaletteEntry { style, decorations: decor })
+  Ok(PaletteEntry {
+    style,
+    decorations: decor,
+  })
 }
 
 /// Build an ansi color escape sequence from a plain english description

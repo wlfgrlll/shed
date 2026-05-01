@@ -4,7 +4,8 @@ use crate::{
   builtin::join_raw_args,
   getopt::{Opt, OptSpec},
   sherr,
-  state::{read_meta, write_meta},
+  state::read_meta,
+  status_msg, system_msg,
   util::{error::ShResult, with_status, write_ln_out},
 };
 
@@ -57,15 +58,12 @@ impl super::Builtin for Msg {
     let (msg, _span) = join_raw_args(args.argv);
 
     if system {
-      write_meta(|m| {
-        m.post_system_message(msg.clone());
-      })
+      system_msg!("{msg}");
     }
+
     // defaults to status messages if no flag is provided, but if both are provided we post to both
     if status || !system {
-      write_meta(|m| {
-        m.post_status_message(msg);
-      })
+      status_msg!("{msg}");
     }
 
     with_status(0)

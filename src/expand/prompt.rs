@@ -4,6 +4,7 @@ use crate::prelude::*;
 use crate::state;
 use crate::state::read_vars;
 use crate::state::{read_jobs, read_logic, write_meta};
+use crate::status_msg;
 use crate::util::error::ShResult;
 use crate::util::ui::ansi_from_description;
 
@@ -375,7 +376,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
     PromptTk::Color(c) => {
       match ansi_from_description(&c) {
         Ok(esc_seq) => result.push_str(&esc_seq.to_string()),
-        Err(e) => write_meta(|m| m.post_status_message(e.to_string()))
+        Err(e) => status_msg!("{e}")
       }
     }
     PromptTk::RuntimeMillis => {

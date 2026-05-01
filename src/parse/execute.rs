@@ -12,16 +12,26 @@ use super::{
 };
 
 use crate::{
-  builtin::{BUILTIN_NAMES, lookup_builtin, test::double_bracket_test, trap::TrapTarget}, errln, expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern, glob_to_regex}, jobs::{ChildProc, JobStack, dispatch_job}, prelude::*, procio::{IoStack, PipeGenerator}, sherr, shopt::xtrace_print, signal::{check_signals, signals_pending}, state::{
+  builtin::{BUILTIN_NAMES, lookup_builtin, test::double_bracket_test, trap::TrapTarget},
+  errln,
+  expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern, glob_to_regex},
+  jobs::{ChildProc, JobStack, dispatch_job},
+  prelude::*,
+  procio::{IoStack, PipeGenerator},
+  sherr,
+  shopt::xtrace_print,
+  signal::{check_signals, signals_pending},
+  state::{
     self, ShFunc, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term,
     write_jobs, write_logic, write_meta, write_vars,
-  }, util::{
+  },
+  util::{
     RedirVecUtils,
     error::{ShErr, ShErrKind, ShResult, ShResultExt, next_color},
     guards::{scope_guard, shared_scope_guard, var_ctx_guard},
     strops::split_case_pat,
     with_status,
-  }
+  },
 };
 
 fn in_cd_path(name: &str) -> bool {
@@ -672,13 +682,7 @@ impl Dispatcher {
       Ok(())
     };
 
-    self.run_compound(
-      "case",
-      case_stmt.redirs,
-      case_stmt.flags,
-      blame,
-      case_logic,
-    )
+    self.run_compound("case", case_stmt.redirs, case_stmt.flags, blame, case_logic)
   }
   fn exec_loop(&mut self, loop_stmt: Node) -> ShResult<()> {
     let blame = loop_stmt.get_span().clone();
@@ -728,13 +732,7 @@ impl Dispatcher {
     };
 
     let _loop_guard = write_meta(|m| m.enter_loop());
-    self.run_compound(
-      "loop",
-      loop_stmt.redirs,
-      loop_stmt.flags,
-      blame,
-      loop_logic,
-    )
+    self.run_compound("loop", loop_stmt.redirs, loop_stmt.flags, blame, loop_logic)
   }
   fn exec_for_arith(&mut self, for_stmt: Node) -> ShResult<()> {
     let blame = for_stmt.get_span().clone();
@@ -794,13 +792,7 @@ impl Dispatcher {
     };
 
     let _loop_guard = write_meta(|m| m.enter_loop());
-    self.run_compound(
-      "c_for",
-      for_stmt.redirs,
-      for_stmt.flags,
-      blame,
-      for_logic,
-    )
+    self.run_compound("c_for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
   fn exec_for_arr(&mut self, for_stmt: Node) -> ShResult<()> {
     let blame = for_stmt.get_span().clone();
@@ -867,13 +859,7 @@ impl Dispatcher {
     };
 
     let _loop_guard = write_meta(|m| m.enter_loop());
-    self.run_compound(
-      "for",
-      for_stmt.redirs,
-      for_stmt.flags,
-      blame,
-      for_logic,
-    )
+    self.run_compound("for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
   fn exec_if(&mut self, if_stmt: Node) -> ShResult<()> {
     let blame = if_stmt.get_span().clone();
@@ -925,13 +911,7 @@ impl Dispatcher {
       Ok(())
     };
 
-    self.run_compound(
-      "if",
-      if_stmt.redirs,
-      if_stmt.flags,
-      blame,
-      if_logic,
-    )
+    self.run_compound("if", if_stmt.redirs, if_stmt.flags, blame, if_logic)
   }
   fn exec_pipeline(&mut self, pipeline: Node) -> ShResult<()> {
     let pipeline_span = pipeline.get_span().clone();
@@ -1025,8 +1005,7 @@ impl Dispatcher {
       .to_string();
 
     let Some(builtin) = lookup_builtin(&cmd_raw) else {
-      sherr!(NotFound @ cmd.get_span(), "builtin not found: {cmd_raw}")
-        .print_error();
+      sherr!(NotFound @ cmd.get_span(), "builtin not found: {cmd_raw}").print_error();
       return with_status(127);
     };
 
@@ -1072,7 +1051,7 @@ impl Dispatcher {
         if let Err(e) = self.set_assignments(assignments, assign_behavior) {
           e.print_error();
         };
-        return Ok(())
+        return Ok(());
       }
     }
     // argv is not empty. let's set this stuff here.
@@ -1190,7 +1169,11 @@ impl Dispatcher {
       }
     }
   }
-  pub fn set_assignments(&self, assigns: Vec<Node>, behavior: AssignBehavior) -> ShResult<Vec<String>> {
+  pub fn set_assignments(
+    &self,
+    assigns: Vec<Node>,
+    behavior: AssignBehavior,
+  ) -> ShResult<Vec<String>> {
     let mut new_env_vars = vec![];
     let mut flags = match behavior {
       AssignBehavior::Export => VarFlags::EXPORT,

@@ -1,5 +1,11 @@
 use std::{
-  collections::VecDeque, env, fmt::{Debug, Display}, io::Write, os::fd::RawFd, sync::LazyLock, time::Instant
+  collections::VecDeque,
+  env,
+  fmt::{Debug, Display},
+  io::Write,
+  os::fd::RawFd,
+  sync::LazyLock,
+  time::Instant,
 };
 
 mod guard;
@@ -64,7 +70,7 @@ struct EventParser {
   ss3_pending: bool,
   dcs_buf: Option<String>,
   dcs_is_xtgettcap: bool,
-  dcs_supported: bool
+  dcs_supported: bool,
 }
 
 impl EventParser {
@@ -87,19 +93,25 @@ impl EventParser {
   }
 
   pub fn parse_term_cap(&mut self) {
-    let Some(buf) = self.dcs_buf.take() else { return };
+    let Some(buf) = self.dcs_buf.take() else {
+      return;
+    };
     let supported = self.dcs_supported;
     self.dcs_is_xtgettcap = false;
     self.dcs_supported = false;
 
     // Only emit when the terminal reported the cap as supported.
-    if !supported { return }
+    if !supported {
+      return;
+    }
 
     let (name_hex, value_hex) = match buf.split_once('=') {
-      Some((n,v)) => (n, Some(v)),
-      None => (buf.as_str(), None)
+      Some((n, v)) => (n, Some(v)),
+      None => (buf.as_str(), None),
     };
-    let Some(name) = Self::decode_hex(name_hex) else { return };
+    let Some(name) = Self::decode_hex(name_hex) else {
+      return;
+    };
     let value = value_hex.and_then(Self::decode_hex);
 
     self.push(TermEvent::Capabilities { name, value });
@@ -110,7 +122,8 @@ impl EventParser {
       return None; // Invalid hex string
     }
 
-    let bytes: Option<Vec<u8>> = hex.chars()
+    let bytes: Option<Vec<u8>> = hex
+      .chars()
       .chunks(2)
       .into_iter()
       .map(|chunk| {
@@ -139,7 +152,7 @@ impl Perform for EventParser {
         self.dcs_buf = Some(String::new());
       }
 
-      _ => ()
+      _ => (),
     }
   }
 
@@ -344,7 +357,9 @@ impl Perform for EventParser {
       }
       // SGR mouse: CSI < button;x;y M/m (ignore mouse events for now)
       ([b'<'], dir @ ('M' | 'm')) => {
-        if dir == 'm' { return } // release event
+        if dir == 'm' {
+          return;
+        } // release event
 
         let button = params.first().copied().unwrap_or(0);
         match button {
@@ -357,9 +372,9 @@ impl Perform for EventParser {
             let row = params.get(2).copied().unwrap_or(0) as usize;
 
             match button {
-              0 => TermEvent::Key(KeyEvent(KeyCode::LeftClick(row,col), ModKeys::empty())),
-              1 => TermEvent::Key(KeyEvent(KeyCode::MiddleClick(row,col), ModKeys::empty())),
-              2 => TermEvent::Key(KeyEvent(KeyCode::RightClick(row,col), ModKeys::empty())),
+              0 => TermEvent::Key(KeyEvent(KeyCode::LeftClick(row, col), ModKeys::empty())),
+              1 => TermEvent::Key(KeyEvent(KeyCode::MiddleClick(row, col), ModKeys::empty())),
+              2 => TermEvent::Key(KeyEvent(KeyCode::RightClick(row, col), ModKeys::empty())),
               35 => TermEvent::Key(KeyEvent(KeyCode::MousePos(row, col), ModKeys::empty())),
               _ => {
                 // Other mouse events we don't care about
@@ -749,14 +764,13 @@ impl Terminal {
   }
 
   pub fn query_caps(&mut self) -> ShResult<()> {
-    if self.test_mode { return Ok(()); }
+    if self.test_mode {
+      return Ok(());
+    }
     let Some(tty) = self.tty else { return Ok(()) };
     let mut caps = TermCap::empty();
 
-    let queries = [
-      ("Su", TermCap::SYNC_OUTPUT),
-      ("RGB", TermCap::TRUECOLOR),
-    ];
+    let queries = [("Su", TermCap::SYNC_OUTPUT), ("RGB", TermCap::TRUECOLOR)];
 
     let mut query_str = String::new();
     for (name, _) in &queries {
@@ -771,7 +785,7 @@ impl Terminal {
     loop {
       let deadline = 50u128.saturating_sub(start.elapsed().as_millis());
       if deadline == 0 {
-        break
+        break;
       }
 
       let timeout = PollTimeout::try_from(deadline as i32).unwrap();
@@ -894,7 +908,9 @@ impl Terminal {
   }
 
   pub fn check_kitty_kbd_flags(&mut self) -> ShResult<Option<TermEvent>> {
-    if self.test_mode { return Ok(None); }
+    if self.test_mode {
+      return Ok(None);
+    }
     let Some(tty) = self.tty else { return Ok(None) };
 
     self.write_direct(Self::CAP_QUERY)?;
@@ -916,7 +932,9 @@ impl Terminal {
   }
 
   pub fn get_cursor_pos(&mut self) -> ShResult<Option<(Rows, Cols)>> {
-    if self.test_mode { return Ok(None); }
+    if self.test_mode {
+      return Ok(None);
+    }
     let Some(tty) = self.tty else { return Ok(None) };
 
     // ask the terminal where our cursor is

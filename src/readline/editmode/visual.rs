@@ -47,7 +47,9 @@ impl ViVisual {
         None => return CmdState::Pending,
       }
     }
-    if motion.is_none() && let Some(verb) = verb {
+    if motion.is_none()
+      && let Some(verb) = verb
+    {
       match verb {
         Verb::Put(_) => CmdState::Complete,
         _ => CmdState::Pending,
@@ -190,7 +192,7 @@ impl ViVisual {
             verb: Some(verb!(Verb::Change)),
             motion: Some(motion!(Motion::WholeLine)),
             raw_seq: self.take_cmd(),
-            flags: self.take_flags()
+            flags: self.take_flags(),
           });
         }
         '>' => {
@@ -342,7 +344,7 @@ impl ViVisual {
         verb: Some(verb),
         motion: None,
         raw_seq: self.take_cmd(),
-        flags: self.take_flags()
+        flags: self.take_flags(),
       });
     }
 
@@ -620,7 +622,7 @@ impl ViVisual {
         verb,
         motion,
         raw_seq: std::mem::take(&mut self.pending_seq),
-        flags: self.take_flags()
+        flags: self.take_flags(),
       }),
       CmdState::Pending => None,
       CmdState::Invalid => {
@@ -739,7 +741,10 @@ impl EditMode for ViVisual {
       cmd.normalize_counts();
     };
     if let Some(cmd) = cmd.as_ref()
-      && !matches!(cmd.verb.as_ref().map(|v| &v.1), Some(Verb::NormalMode | Verb::ExMode | Verb::Undo | Verb::Redo))
+      && !matches!(
+        cmd.verb.as_ref().map(|v| &v.1),
+        Some(Verb::NormalMode | Verb::ExMode | Verb::Undo | Verb::Redo)
+      )
     {
       self.register_cmd(cmd);
     }

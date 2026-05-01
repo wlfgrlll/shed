@@ -1,10 +1,11 @@
 use ariadne::{Fmt, Span};
 
 use crate::{
-  out, outln,
+  getopt::{Opt, OptSpec},
+  outln,
   parse::lex::KEYWORDS,
   sherr,
-  state::{self, read_logic},
+  state::{self, read_logic, read_vars},
   util::{
     error::{ShResult, next_color},
     with_status,
@@ -13,8 +14,13 @@ use crate::{
 
 pub(super) struct Type;
 impl super::Builtin for Type {
+  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+    vec![OptSpec::flag('s')]
+  }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let mut status = 0;
+    let short = args.opts.contains(&Opt::Short('s'));
+
     for (arg, span) in args.argv {
       if let Some(util) = state::which_util(&arg) {
         match util.kind() {
@@ -22,31 +28,69 @@ impl super::Builtin for Type {
             let alias = read_logic(|v| v.get_alias(&arg)).unwrap();
             let (line, col) = alias.source.line_and_col();
             let name = alias.source.source().name();
-            out!(
-              "{arg} is an alias for '{alias_body}' defined at {name}:{ln}:{co}",
-              ln = line + 1,
-              co = col + 1,
-              alias_body = alias.body,
-            )?
+            if short {
+              outln!("alias")?
+            } else {
+              outln!(
+                "{arg} is an alias for '{alias_body}' defined at {name}:{ln}:{co}",
+                ln = line + 1,
+                co = col + 1,
+                alias_body = alias.body,
+              )?
+            }
           }
           state::UtilKind::Function => {
             let func = read_logic(|v| v.get_func(&arg)).unwrap();
             let (line, col) = func.source.line_and_col();
             let name = func.source.source().name();
-            out!(
-              "{arg} is a function defined at {name}:{ln}:{co}",
-              ln = line + 1,
-              co = col + 1,
-              name = name,
-            )?
+            if short {
+              outln!("function")?
+            } else {
+              outln!(
+                "{arg} is a function defined at {name}:{ln}:{co}",
+                ln = line + 1,
+                co = col + 1,
+                name = name,
+              )?
+            }
           }
-          state::UtilKind::Builtin => outln!("{arg} is a shell builtin")?,
+          state::UtilKind::Builtin => {
+            if short {
+              outln!("builtin")?
+            } else {
+              outln!("{arg} is a shell builtin")?
+            }
+          }
           state::UtilKind::Command(path_buf) | state::UtilKind::File(path_buf) => {
-            outln!("{arg} is {}", path_buf.display())?
+            if short {
+              outln!("external")?
+            } else {
+              outln!("{arg} is {}", path_buf.display())?
+            }
           }
         };
       } else if KEYWORDS.contains(&arg.as_str()) {
-        outln!("{arg} is a shell keyword")?;
+        if short {
+          outln!("keyword")?
+        } else {
+          outln!("{arg} is a shell keyword")?;
+        }
+      } else if let Some(var) = read_vars(|v| v.try_get_var_meta(arg.as_str())) {
+        if short {
+          match var.kind() {
+            state::VarKind::Str(_) => outln!("string")?,
+            state::VarKind::Int(_) => outln!("integer")?,
+            state::VarKind::Arr(_) => outln!("array")?,
+            state::VarKind::AssocArr(_) => outln!("assoc_array")?,
+          }
+        } else {
+          match var.kind() {
+            state::VarKind::Str(_) => outln!("{arg} is a string variable")?,
+            state::VarKind::Int(_) => outln!("{arg} is an integer variable")?,
+            state::VarKind::Arr(_) => outln!("{arg} is an array variable")?,
+            state::VarKind::AssocArr(_) => outln!("{arg} is an associative array")?,
+          }
+        }
       } else {
         sherr!(
           NotFound @ span,

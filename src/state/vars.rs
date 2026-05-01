@@ -651,7 +651,8 @@ impl VarTab {
     std::mem::take(&mut self.deferred_cmds)
   }
   pub fn display_deferred_cmds(&self) -> String {
-    self.deferred_cmds
+    self
+      .deferred_cmds
       .iter()
       .map(|s| as_var_val_display(s))
       .collect::<Vec<_>>()

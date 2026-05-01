@@ -3,14 +3,21 @@ use std::{fmt::Write, io::Write as IoWrite, sync::atomic::AtomicBool};
 use tempfile::NamedTempFile;
 
 use crate::{
-  match_loop, out, parse::{
+  match_loop, out,
+  parse::{
     NdRule, Node,
     execute::{Dispatcher, exec_input},
     lex::{Span, Tk},
-  }, prelude::*, readline::{
+  },
+  prelude::*,
+  readline::{
     history::{HistEntry, History},
     linebuf::ordered,
-  }, sherr, shopt::xtrace_print, state::{self}, util::error::{ShResult, ShResultExt}
+  },
+  sherr,
+  shopt::xtrace_print,
+  state::{self},
+  util::error::{ShResult, ShResultExt},
 };
 
 /// POSIX specifies that an invocation of `fc` that edits and re-executes a command shall not itself be committed to command history
@@ -145,11 +152,7 @@ impl super::Builtin for FixCmd {
   fn execute(&self, _args: super::BuiltinArgs) -> ShResult<()> {
     unreachable!("fixcmd is a special snowflake command that needs really special handling");
   }
-  fn run_builtin(
-    &self,
-    node: Node,
-    _dispatcher: &mut Dispatcher
-  ) -> ShResult<()> {
+  fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
     let span = node.get_span();
     let NdRule::Command {
       assignments: _,

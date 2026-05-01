@@ -1,16 +1,17 @@
 use crate::{
-  getopt::{Opt, OptSpec}, outln, state::write_shopts, util::{
+  getopt::{Opt, OptSpec},
+  outln,
+  state::write_shopts,
+  util::{
     error::{ShResult, ShResultExt},
     with_status,
-  }
+  },
 };
 
 pub(super) struct Shopt;
 impl super::Builtin for Shopt {
   fn opts(&self) -> Vec<crate::getopt::OptSpec> {
-    vec![
-      OptSpec::flag('h'),
-    ]
+    vec![OptSpec::flag('h')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let print_help = args.opts.contains(&Opt::Short('h'));

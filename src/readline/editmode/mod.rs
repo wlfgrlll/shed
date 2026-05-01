@@ -18,19 +18,19 @@ mod insert;
 mod normal;
 mod remote;
 mod replace;
+mod search;
 mod verbatim;
 mod visual;
-mod search;
 
+pub use emacs::Emacs;
 pub use ex::{SubFlags, ViEx};
 pub use insert::ViInsert;
 pub use normal::ViNormal;
+pub use remote::RemoteMode;
 pub use replace::ViReplace;
+pub use search::{ViSearch, ViSearchRev};
 pub use verbatim::ViVerbatim;
 pub use visual::ViVisual;
-pub use emacs::Emacs;
-pub use remote::RemoteMode;
-pub use search::{ViSearch, ViSearchRev};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeReport {
@@ -141,7 +141,9 @@ pub trait EditMode {
   fn history(&mut self) -> Option<&mut History> {
     None
   }
-  fn is_input_mode(&self) -> bool { false }
+  fn is_input_mode(&self) -> bool {
+    false
+  }
   fn move_cursor_on_undo(&self) -> bool;
   fn clamp_cursor(&self) -> bool;
   fn hist_scroll_start_pos(&self) -> Option<To>;

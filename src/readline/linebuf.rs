@@ -1,5 +1,9 @@
 use std::{
-  cmp::Ordering, collections::{HashSet, VecDeque}, fmt::Display, ops::{Deref, DerefMut, Index, IndexMut, Range}, slice::SliceIndex
+  cmp::Ordering,
+  collections::{HashSet, VecDeque},
+  fmt::Display,
+  ops::{Deref, DerefMut, Index, IndexMut, Range},
+  slice::SliceIndex,
 };
 
 use ariadne::Span as AriadneSpan;
@@ -24,14 +28,24 @@ use crate::{
   prelude::*,
   procio::{self, IoFrame, IoMode, IoStack, capture_command},
   readline::{
-    context::{CtxTkRule, get_context_tokens}, editcmd::{LineAddr, ReadSrc, StashArgs, StashListArg, VerbCmd, WriteDest}, editmode::SubFlags, highlight::{self}, history::History, markers, register::RegisterContent, term::get_win_size
+    context::{CtxTkRule, get_context_tokens},
+    editcmd::{LineAddr, ReadSrc, StashArgs, StashListArg, VerbCmd, WriteDest},
+    editmode::SubFlags,
+    highlight::{self},
+    history::History,
+    markers,
+    register::RegisterContent,
+    term::get_win_size,
   },
   sherr,
   state::{
     self, AutoCmdKind, VarFlags, VarKind, read_logic, read_shopts, read_vars, with_term,
     write_meta, write_vars,
   },
-  util::{AutoCmdVecUtils, error::ShResult, guards::var_ctx_guard, strops::QuoteState},
+  status_msg, system_msg,
+  util::{
+    AutoCmdVecUtils, error::ShResult, format_size, guards::var_ctx_guard, strops::QuoteState,
+  },
   verb,
 };
 
@@ -224,10 +238,7 @@ pub struct Lines(Vec<Line>);
 impl Lines {
   pub fn to_lines(s: impl ToString) -> Lines {
     let s = s.to_string();
-    let mut new: Lines = s.split("\n")
-      .map(to_graphemes)
-      .map(Line::from)
-      .collect();
+    let mut new: Lines = s.split("\n").map(to_graphemes).map(Line::from).collect();
     new.push_empty();
     new
   }
@@ -240,7 +251,8 @@ impl Lines {
   }
 
   pub fn join(&self) -> String {
-    self.0
+    self
+      .0
       .iter()
       .map(|line| line.to_string())
       .collect::<Vec<String>>()
@@ -316,7 +328,8 @@ impl Lines {
       return None;
     }
 
-    let common_lines = self.0
+    let common_lines = self
+      .0
       .iter()
       .zip(other.iter())
       .take_while(|(l, r)| *l == *r)
@@ -389,7 +402,6 @@ impl IndexMut<usize> for Lines {
     &mut self.0[index]
   }
 }
-
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Delim {
@@ -469,16 +481,16 @@ impl SelectMode {
   pub fn shape(&self, other: Pos) -> SelectShape {
     match self {
       SelectMode::Char(pos) => {
-        let (s,e) = ordered(*pos, other);
+        let (s, e) = ordered(*pos, other);
         // offset points from lower end (s) to upper end (e) - always non-negative
         SelectShape::Char(e.difference(&s))
       }
       SelectMode::Line(pos) => {
-        let (s,e) = ordered(*pos, other);
+        let (s, e) = ordered(*pos, other);
         SelectShape::Line(e.difference(&s))
       }
       SelectMode::Block(pos) => {
-        let (s,e) = ordered(*pos, other);
+        let (s, e) = ordered(*pos, other);
         SelectShape::Block(e.difference(&s))
       }
     }
@@ -957,7 +969,7 @@ impl Ord for Hint {
 #[derive(Debug, Clone)]
 pub struct LineBuf {
   pub lines: Lines,
-  pub byte_positions: Option<Vec<(usize,Pos)>>,
+  pub byte_positions: Option<Vec<(usize, Pos)>>,
   pub hint: Option<Hint>,
   pub cursor: Cursor,
 
@@ -1096,12 +1108,7 @@ impl LineBuf {
     let mut select_spans = self.search_match_spans();
     select_spans.extend(self.select_range_byte_pos());
 
-    let highlighted = highlight::highlight(
-      &joined,
-      &palette,
-      self.cursor_to_flat(),
-      select_spans,
-    );
+    let highlighted = highlight::highlight(&joined, &palette, self.cursor_to_flat(), select_spans);
     let hint = self.get_hint_text();
     let lines = Lines::to_lines(format!("{highlighted}{hint}"));
 
@@ -1112,6 +1119,35 @@ impl LineBuf {
     let (mid, _) = mid.split_at(height);
 
     Lines(mid.to_vec()).join()
+  }
+  pub fn trim(&mut self) {
+    // trim empty lines
+    while self.lines.first().is_some_and(|l| l.0.is_empty()) {
+      self.lines.remove(0);
+    }
+    while self.lines.last().is_some_and(|l| l.0.is_empty()) {
+      self.lines.pop();
+    }
+
+    // trim whitespace
+    for (i, line) in self.lines.iter_mut().enumerate() {
+      if i == 0 {
+        while line.0.first().is_some_and(|gr| gr.is_ws()) {
+          line.0.remove(0);
+        }
+      }
+      while line.0.last().is_some_and(|gr| gr.is_ws()) {
+        line.0.pop();
+      }
+    }
+
+    // trim empty lines again
+    while self.lines.first().is_some_and(|l| l.0.is_empty()) {
+      self.lines.remove(0);
+    }
+    while self.lines.last().is_some_and(|l| l.0.is_empty()) {
+      self.lines.pop();
+    }
   }
   pub fn window_slice_to_cursor(&self) -> Option<String> {
     let mut result = String::new();
@@ -1418,10 +1454,14 @@ impl LineBuf {
   fn fix_calc_pos(&mut self, pos: Pos) -> Pos {
     let row = pos.row;
     let Some(line) = self.lines.get(row).map(|l| l.to_string()) else {
-      return pos
+      return pos;
     };
     if let Some(closer) = CLOSERS.iter().find(|c| line.trim().starts_with(*c)) {
-      log::debug!("Line starts with closer '{}', adjusting calculated position by {}", closer, closer.len());
+      log::debug!(
+        "Line starts with closer '{}', adjusting calculated position by {}",
+        closer,
+        closer.len()
+      );
       pos.col_add(closer.len())
     } else {
       pos
@@ -2562,7 +2602,7 @@ impl LineBuf {
     line.0.len()
   }
   /// map every valid Pos in the buffer to a corresponding byte position in the string
-  fn byte_positions(&self) -> Vec<(usize,Pos)> {
+  fn byte_positions(&self) -> Vec<(usize, Pos)> {
     let mut positions = vec![];
     let mut acc = 0;
 
@@ -2571,7 +2611,13 @@ impl LineBuf {
         positions.push((acc, Pos { row, col }));
         acc += gr.len_utf8();
       }
-      positions.push((acc, Pos { row, col: line.0.len() }));
+      positions.push((
+        acc,
+        Pos {
+          row,
+          col: line.0.len(),
+        },
+      ));
       acc += 1; // for the newline
     }
 
@@ -2582,7 +2628,7 @@ impl LineBuf {
     if let Some(positions) = &self.byte_positions {
       positions
         .iter()
-        .find_map(|(b,p)| (*b >= byte_offset).then_some(*p))
+        .find_map(|(b, p)| (*b >= byte_offset).then_some(*p))
     } else {
       self.byte_positions = Some(self.byte_positions());
       self.byte_to_pos(byte_offset)
@@ -2593,28 +2639,30 @@ impl LineBuf {
     if let Some(positions) = &self.byte_positions {
       positions
         .iter()
-        .find_map(|(b,p)| (*p >= pos).then_some(*b))
+        .find_map(|(b, p)| (*p >= pos).then_some(*b))
     } else {
       self.byte_positions = Some(self.byte_positions());
       self.pos_to_byte(pos)
     }
   }
   pub fn search(&mut self, motion: &Motion, save: bool) -> Option<MotionKind> {
-    let Motion::Search(pat, dir) = motion else { return None };
-    let re = Regex::new(pat)
-      .unwrap_or_else(|_| Regex::new(&regex::escape(pat)).unwrap());
+    let Motion::Search(pat, dir) = motion else {
+      return None;
+    };
+    let re = Regex::new(pat).unwrap_or_else(|_| Regex::new(&regex::escape(pat)).unwrap());
     let buf = self.joined();
     let cursor_byte = self.pos_to_byte(self.cursor.pos)?;
 
     let target_byte = match dir {
-      Direction::Forward => {
-        re.find_at(&buf, cursor_byte + 1)
-          .or_else(|| re.find(&buf))
-          .map(|m| m.start())
-      }
+      Direction::Forward => re
+        .find_at(&buf, cursor_byte + 1)
+        .or_else(|| re.find(&buf))
+        .map(|m| m.start()),
       Direction::Backward => {
         let matches: Vec<_> = re.find_iter(&buf).collect();
-        matches.iter().rev()
+        matches
+          .iter()
+          .rev()
           .find(|m| m.start() < cursor_byte)
           .or_else(|| matches.last())
           .map(|m| m.start())
@@ -2669,9 +2717,9 @@ impl LineBuf {
     };
     let mut motion = motion.clone();
 
-
     if let Motion::Selection(mode) = motion
-    && let Some(new) = self.evaluate_select_shape(&mode) {
+      && let Some(new) = self.evaluate_select_shape(&mode)
+    {
       motion = new;
     }
 
@@ -3002,7 +3050,9 @@ impl LineBuf {
           unreachable!("Repeat motions should have been resolved in readline/mod.rs")
         }
         Motion::Null => None,
-        Motion::Selection(mode) => { unreachable!() }
+        Motion::Selection(mode) => {
+          unreachable!()
+        }
       };
       Ok(kind)
     };
@@ -3796,15 +3846,21 @@ impl LineBuf {
       Verb::Read(src) => match src {
         ReadSrc::File(path_buf) => {
           if !path_buf.is_file() {
-            write_meta(|m| m.post_system_message(format!("{} is not a file", path_buf.display())));
+            system_msg!("{} is not a file", path_buf.display());
             return Ok(());
           }
           let Ok(contents) = std::fs::read_to_string(path_buf) else {
-            write_meta(|m| {
-              m.post_system_message(format!("Failed to read file {}", path_buf.display()))
-            });
+            system_msg!("Failed to read file {}", path_buf.display());
             return Ok(());
           };
+          let line_count = contents.lines().count();
+          let byte_count = contents.len();
+          let size = format_size(byte_count as u64);
+
+          status_msg!(
+            "Read {line_count} lines [{size}] from '{}'",
+            path_buf.display()
+          );
           self.insert_str(&contents);
         }
         ReadSrc::Cmd(cmd) => {
@@ -3834,20 +3890,21 @@ impl LineBuf {
           } else {
             OpenOptions::new().create(true).append(true).open(path_buf)
           }) else {
-            write_meta(|m| {
-              m.post_system_message(format!("Failed to open file {}", path_buf.display()))
-            });
+            system_msg!("Failed to open file {}", path_buf.display());
             return Ok(());
           };
+          let joined = self.joined();
+          let bytes = joined.as_bytes();
+          let lines = bytes.iter().filter(|b| **b == b'\n').count();
+          let len = bytes.len() as u64;
+          let size = format_size(len);
 
-          if let Err(e) = file.write_all(self.joined().as_bytes()) {
-            write_meta(|m| {
-              m.post_system_message(format!(
-                "Failed to write to file {}: {e}",
-                path_buf.display()
-              ))
-            });
+          if let Err(e) = file.write_all(bytes) {
+            system_msg!("Failed to write to file {}: {e}", path_buf.display());
           }
+
+          status_msg!("Wrote {lines} lines [{size}] to '{}'", path_buf.display());
+
           return Ok(());
         }
         WriteDest::Cmd(cmd) => {
@@ -3873,7 +3930,7 @@ impl LineBuf {
       },
       Verb::Edit(path) => {
         if read_vars(|v| v.try_get_var("EDITOR")).is_none() {
-          write_meta(|m| m.post_system_message("$EDITOR is unset. Aborting edit.".into()));
+          system_msg!("$EDITOR is unset. Aborting edit.");
         } else {
           let input = format!("$EDITOR {}", path.display());
           exec_int(input, Some("ex edit".into()))?;
@@ -3882,15 +3939,13 @@ impl LineBuf {
 
       Verb::Stash(args) => {
         let Ok(stash) = Stash::new() else {
-          write_meta(|m| {
-            m.post_status_message("Failed to open stash - database unreachable".into())
-          });
+          status_msg!("Failed to access stash - database unreachable");
           return Ok(());
         };
         match args {
           StashArgs::Push(arg) => {
             if self.is_empty() {
-              write_meta(|m| m.post_status_message("Buffer is empty, nothing to stash".into()));
+              status_msg!("Buffer is empty, nothing to stash");
               return Ok(());
             }
             let stash_len = stash.stack_len();
@@ -3920,24 +3975,20 @@ impl LineBuf {
             } = match stash.pop(idx) {
               Ok(ent) => match ent {
                 Some(ent) => {
-                  write_meta(|m| m.post_status_message("stash: Popped stack entry".to_string()));
+                  status_msg!("stash: Popped stash entry");
                   ent
                 }
                 None => {
-                  write_meta(|m| {
-                    if stack_len == 0 {
-                      m.post_status_message("stash: Stash is empty".into());
-                    } else {
-                      m.post_status_message(format!("stash: No stash entry at index '{idx}'"));
-                    }
-                  });
+                  if stack_len == 0 {
+                    status_msg!("stash: Stash is empty, nothing to pop");
+                  } else {
+                    status_msg!("stash: No stash entry at index '{idx}'");
+                  }
                   return Ok(());
                 }
               },
               Err(e) => {
-                write_meta(|m| {
-                  m.post_status_message(format!("stash: Failed to pop stash entry: {e}"))
-                });
+                status_msg!("stash: Failed to pop stash entry: {e}");
                 return Ok(());
               }
             };
@@ -3947,11 +3998,7 @@ impl LineBuf {
             let cursor_pos = match self.parse_pos(&cursor_pos) {
               Ok(pos) => pos,
               Err(e) => {
-                write_meta(|m| {
-                  m.post_status_message(format!(
-                    "stash: Failed to parse cursor position from stash: {e}"
-                  ))
-                });
+                status_msg!("Failed to parse cursor position from stash: {e}");
                 Pos { row: 0, col: 0 }
               }
             };
@@ -3970,19 +4017,13 @@ impl LineBuf {
 
             match stash.pop(idx).ok().flatten() {
               Some(_) => {
-                write_meta(|m| {
-                  m.post_status_message(format!("stash: Dropped stash entry '{idx}'"))
-                });
+                status_msg!("stash: Dropped stash entry");
               }
               None => {
                 if stack_len == 0 {
-                  write_meta(|m| {
-                    m.post_status_message("stash: Stash is empty, nothing to drop".into())
-                  });
+                  status_msg!("stash: Stash is empty, nothing to drop");
                 } else {
-                  write_meta(|m| {
-                    m.post_status_message(format!("stash: No stack entry at index '{idx}'"))
-                  });
+                  status_msg!("stash: No stash entry at index '{idx}'");
                 }
               }
             }
@@ -4001,24 +4042,18 @@ impl LineBuf {
             else {
               if let Ok(idx) = name.parse::<usize>() {
                 if stack_len == 0 {
-                  write_meta(|m| m.post_status_message("stash: Stash is empty".into()));
+                  status_msg!("stash: Stash is empty");
                 } else {
-                  write_meta(|m| {
-                    m.post_status_message(format!("stash: No stash entry at index '{idx}'"))
-                  });
+                  status_msg!("stash: No stash entry at index '{idx}'");
                 }
               } else {
-                write_meta(|m| {
-                  m.post_status_message(format!("stash: No stash entry named '{name}'"))
-                });
+                status_msg!("stash: No stash entry named '{name}'");
               }
               return Ok(());
             };
 
             if let Some(name) = name {
-              write_meta(|m| {
-                m.post_status_message(format!("stash: Applied stash entry '{}'", name))
-              });
+              status_msg!("stash: Applied stash entry '{}'", name);
             }
 
             self.set_buffer(buffer);
@@ -4026,11 +4061,7 @@ impl LineBuf {
             let cursor_pos = match self.parse_pos(&cursor_pos) {
               Ok(pos) => pos,
               Err(e) => {
-                write_meta(|m| {
-                  m.post_status_message(format!(
-                    "stash: Failed to parse cursor position from stash: {e}"
-                  ))
-                });
+                status_msg!("Failed to parse cursor position from stash: {e}");
                 Pos { row: 0, col: 0 }
               }
             };
@@ -4051,16 +4082,12 @@ impl LineBuf {
             else {
               if let Ok(idx) = name.parse::<usize>() {
                 if stack_len == 0 {
-                  write_meta(|m| m.post_status_message("stash: Stash is empty".into()));
+                  status_msg!("stash: Stash is empty");
                 } else {
-                  write_meta(|m| {
-                    m.post_status_message(format!("stash: No stash entry at index '{idx}'"))
-                  });
+                  status_msg!("stash: No stash entry at index '{idx}'");
                 }
               } else {
-                write_meta(|m| {
-                  m.post_status_message(format!("stash: No stash entry named '{name}'"))
-                });
+                status_msg!("stash: No stash entry named '{name}'");
               }
               return Ok(());
             };
@@ -4074,11 +4101,7 @@ impl LineBuf {
             let cursor_offset = match self.parse_pos(&cursor_pos) {
               Ok(pos) => pos,
               Err(e) => {
-                write_meta(|m| {
-                  m.post_system_message(format!(
-                    "stash: Failed to parse cursor position from stash: {e}"
-                  ))
-                });
+                system_msg!("Failed to parse cursor position from stash: {e}");
                 Pos { row: 0, col: 0 }
               }
             };
@@ -4102,18 +4125,18 @@ impl LineBuf {
             if output.trim().is_empty() {
               match arg {
                 Some(StashListArg::Named) => {
-                  write_meta(|m| m.post_status_message("stash: No named stash entries".into()));
+                  status_msg!("stash: No named stash entries");
                 }
                 Some(StashListArg::Stack) => {
-                  write_meta(|m| m.post_status_message("stash: Stack is empty".into()));
+                  status_msg!("stash: Stack is empty");
                 }
                 None => {
-                  write_meta(|m| m.post_status_message("stash: No stash entries".into()));
+                  status_msg!("stash: No stash entries");
                 }
               }
             } else {
               for line in output.lines() {
-                write_meta(|m| m.post_system_message(line.to_string()));
+                system_msg!("{line}");
               }
             }
           }
@@ -4138,10 +4161,7 @@ impl LineBuf {
         }
         .round() as usize;
 
-        let msg = format!("line: {row}/{num_lines}, col: {col} --{percentage}%--");
-        write_meta(|m| {
-          m.post_status_message(msg);
-        })
+        status_msg!("line: {row}/{num_lines}, col: {col} --{percentage}%--");
       }
 
       Verb::TransposeChar => {
@@ -4298,7 +4318,7 @@ impl LineBuf {
         let re = match regex::Regex::new(old) {
           Ok(re) => re,
           Err(e) => {
-            write_meta(|m| m.post_status_message(format!("{e}")));
+            status_msg!("{e}");
             return Ok(());
           }
         };
@@ -4639,11 +4659,13 @@ impl LineBuf {
   }
 
   pub fn hint_lines(&self) -> Lines {
-    Lines(self
-      .hint
-      .as_ref()
-      .map(|h| h.lines().to_vec())
-      .unwrap_or_default())
+    Lines(
+      self
+        .hint
+        .as_ref()
+        .map(|h| h.lines().to_vec())
+        .unwrap_or_default(),
+    )
   }
 
   pub fn get_hint_text(&self) -> String {
@@ -4834,7 +4856,7 @@ impl LineBuf {
       Motion::CharRange(s, e) => {
         let s = self.pos_to_byte(s)?;
         let e = self.pos_to_byte(e)?;
-        let (s,e) = ordered(s, e);
+        let (s, e) = ordered(s, e);
         Some(s..e)
       }
       Motion::LineRange(s, e) => {
@@ -4879,7 +4901,10 @@ impl LineBuf {
   }
 
   pub fn select_mode(&self) -> Option<Motion> {
-    self.select_mode.as_ref().map(|m| Motion::Selection(m.shape(self.cursor.pos)))
+    self
+      .select_mode
+      .as_ref()
+      .map(|m| Motion::Selection(m.shape(self.cursor.pos)))
   }
 
   pub fn is_selecting(&self) -> bool {
@@ -5228,14 +5253,14 @@ impl LineBuf {
     hist_expansions.sort_by_key(|n| n.span().start());
 
     let mut any_changes = false;
-    let mut changes: Vec<((Pos,Pos), String)> = vec![];
+    let mut changes: Vec<((Pos, Pos), String)> = vec![];
     for exp in hist_expansions {
       let span = exp.span().clone();
       let Some(start) = self.byte_to_pos(span.range().start) else {
-        continue
+        continue;
       };
       let Some(mut end) = self.byte_to_pos(span.range().end) else {
-        continue
+        continue;
       };
       end = end.col_sub(1); // exclusive range
       let change = match history.resolve_hist_token(exp.span().as_str()) {
@@ -5246,13 +5271,14 @@ impl LineBuf {
         None => {
           any_changes = true;
           let raw = exp.span().as_str();
-          raw.strip_prefix('!')
+          raw
+            .strip_prefix('!')
             .map(|s| s.to_string())
             .unwrap_or_else(|| raw.to_string())
         }
       };
 
-      changes.push(((start,end), change));
+      changes.push(((start, end), change));
     }
 
     for (range, change) in changes.into_iter().rev() {

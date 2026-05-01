@@ -111,7 +111,10 @@ impl EditCmd {
     }
   }
   pub fn history_scroll_offset(&self) -> Option<isize> {
-    if matches!(self.verb().map(|v| &v.1), Some(Verb::HistoryUp | Verb::HistoryDown)) {
+    if matches!(
+      self.verb().map(|v| &v.1),
+      Some(Verb::HistoryUp | Verb::HistoryDown)
+    ) {
       let count = self.verb().map(|v| v.0).unwrap_or(1);
       let offset = match self.verb().map(|v| &v.1) {
         Some(Verb::HistoryUp) => -(count as isize),
@@ -119,8 +122,10 @@ impl EditCmd {
         _ => 0,
       };
       Some(offset)
-
-    } else if matches!(self.motion().map(|m| &m.1), Some(Motion::LineUp | Motion::LineDown)) {
+    } else if matches!(
+      self.motion().map(|m| &m.1),
+      Some(Motion::LineUp | Motion::LineDown)
+    ) {
       let count = self.motion().map(|m| m.0).unwrap_or(1);
       let offset = match self.motion().map(|m| &m.1) {
         Some(Motion::LineUp) => -(count as isize),
