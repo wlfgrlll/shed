@@ -146,12 +146,12 @@ fn main() -> ExitCode {
     args.login_shell = true;
   }
   if args.version {
-    println!(
+    outln!(
       "shed {} ({} {})",
       env!("CARGO_PKG_VERSION"),
       std::env::consts::ARCH,
       std::env::consts::OS
-    );
+    ).ok();
     return ExitCode::SUCCESS;
   }
 
@@ -245,12 +245,12 @@ fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
   let path = path.as_ref();
   let path_raw = path.to_string_lossy().to_string();
   if !path.is_file() {
-    eprintln!("shed: Failed to open input file: {}", path.display());
+    errln!("shed: Failed to open input file: {}", path.display())?;
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "input file not found",));
   }
   let Ok(input) = fs::read_to_string(path) else {
-    eprintln!("shed: Failed to read input file: {}", path.display());
+    errln!("shed: Failed to read input file: {}", path.display())?;
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "failed to read input file",));
   };
@@ -359,7 +359,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
   })?;
 
   if let Some(msg) = read_meta(|m| m.welcome_message(args.welcome)) {
-    println!("\n{msg}");
+    outln!("\n{msg}")?;
   }
 
   if args.login_shell {
@@ -382,7 +382,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
 
   if let Ok(welcome) = env::var("SHELL_WELCOME") {
     // support for systemd's run0 message
-    eprintln!("{welcome}");
+    errln!("{welcome}")?;
   }
 
   Ok(raw_mode)
@@ -397,12 +397,12 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
       // try to fall back to no hist
       match ShedLine::new_no_hist(Prompt::new()) {
         Ok(rl) => {
-          eprintln!("Failed to load history: {e}");
+          errln!("Failed to load history: {e}")?;
           rl
         }
         Err(e) => {
           // that failed too. we probably arent in a context where readline can work at all.
-          eprintln!("Failed to initialize readline: {e}");
+          errln!("Failed to initialize readline: {e}")?;
           QUIT_CODE.store(1, Ordering::SeqCst);
           return Err(sherr!(CleanExit(1), "readline initialization failed",));
         }
@@ -414,7 +414,7 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
 
   let mut poll_fds: SmallVec<[PollFd; 2]> = SmallVec::new();
   let Some(tty_fd) = with_term(|t| unsafe { t.tty() }) else {
-    eprintln!("Failed to access terminal file descriptor");
+    errln!("Failed to access terminal file descriptor")?;
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "terminal access failed",));
   };
@@ -487,7 +487,7 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
         continue;
       }
       Err(e) => {
-        eprintln!("poll error: {e}");
+        errln!("poll error: {e}")?;
         break;
       }
       Ok(_) => {}

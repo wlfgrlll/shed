@@ -1,10 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::{
-  parse::lex::Span,
-  readline::{Prompt, ShedLine, annotate_input},
-  state::{with_term, write_logic, write_shopts},
-  testutil::TestGuard,
+  key, parse::lex::Span, readline::{Prompt, ShedLine, annotate_input}, state::{with_term, write_logic, write_shopts}, testutil::TestGuard
 };
 
 fn assert_annotated(input: &str, expected: &str) {
@@ -570,6 +567,22 @@ fn vi_auto_indent_siblings() {
     vi.editor.joined(),
     "if foo; then\n\techo foo\nelif bar; then\n\techo biz\nelse\n\techo bar\nfi"
   );
+}
+
+#[test]
+fn vi_auto_indent_funcdef() {
+  let (mut vi, _g) = test_vi("");
+
+  let bytes = b"func_def() {}";
+  with_term(|t| t.feed_bytes(bytes));
+  let keys = with_term(|t| t.drain_keys()).unwrap();
+  vi.process_input(keys).unwrap();
+  vi.process_input(vec![key!(Esc)]).unwrap();
+  vi.process_input(vec![key!('i')]).unwrap();
+  vi.process_input(vec![key!(Enter)]).unwrap();
+  vi.process_input(vec![key!(Esc)]).unwrap();
+  vi.process_input(vec![key!('O')]).unwrap();
+  assert_eq!(vi.editor.joined(), "func_def() {\n\t\n}");
 }
 
 fn hist_expansion_test(commands: &[&str], input: &str, expected: &str) {

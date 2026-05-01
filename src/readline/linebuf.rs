@@ -3229,6 +3229,18 @@ impl LineBuf {
     }
     self.indent_cache.as_ref().unwrap()
   }
+  pub fn indent_levels_for(&mut self, buf: &str) -> (Vec<(usize,usize)>, bool) {
+    self.indent_ctx.check_levels_per_row(buf)
+  }
+  /// Returns (depth-at-cursor, parse-failed). Computed from the prefix
+  /// up to the cursor — reflects whether we're inside an open block.
+  pub fn cursor_indent_level(&mut self) -> (usize, bool) {
+    let (to_cursor, _) = self.lines.clone().split_lines(self.cursor.pos);
+    let raw = to_cursor.join();
+    let (levels, failed) = self.indent_levels_for(&raw);
+    let depth = levels.last().cloned().unwrap_or_default().1;
+    (depth, failed)
+  }
   pub fn indent_levels_for_row(&mut self, row: usize) -> (usize,usize) {
     self.indent_levels()
       .get(row)

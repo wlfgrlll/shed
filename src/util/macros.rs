@@ -361,9 +361,9 @@ macro_rules! two_way_display {
 
 /*
  * Below are our primitives for writing to the shell's output channels.
- * It is basically a re-implementation of println! and eprintln! and the others,
- * but generally more reliable in an environment that experiences constant output redirection and swapping of the underlying file descriptors.
- * These can be considered more reliable because they just push bytes directly to the kernel and let the os figure it out
+ * It is basically a re-implementation of println! and eprintln! and the others.
+ * I may just be superstitious, but writing bytes directly to the file descriptor
+ * feels better than calling println!() and praying, when we are constantly performing I/O redirection.
  */
 
 #[macro_export]
@@ -390,6 +390,7 @@ macro_rules! out {
   }};
 }
 
+/// Not to be confused with sherr!, which creates a ShErr struct for error handling, this macro writes directly to stderr, and is intended for printing error messages to the user.
 #[macro_export]
 macro_rules! err {
   ($($arg:tt)*) => {{
@@ -398,6 +399,10 @@ macro_rules! err {
   }};
 }
 
+/// Post a status message to the shell's status line.
+///
+/// This is intended for transient messages that should be visible to the user but not take up space in the terminal output, such as "File saved" or "Syntax error on line 3".
+/// NOTE: This calls `write_meta()` internally. Calling this inside of a `write_meta()` closure will cause a RefCell panic.
 #[macro_export]
 macro_rules! status_msg {
   ($($arg:tt)*) => {{
@@ -405,6 +410,9 @@ macro_rules! status_msg {
   }};
 }
 
+/// Post a system message.
+///
+/// System messages appear above the prompt, and as such survive redraws. This mechanism is used for things like job status notifications. Good for important messages that the user shouldn't miss.
 #[macro_export]
 macro_rules! system_msg {
   ($($arg:tt)*) => {{

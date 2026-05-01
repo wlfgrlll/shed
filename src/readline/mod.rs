@@ -603,8 +603,7 @@ impl ShedLine {
     {
       return Ok(false);
     }
-    let (_, depth) = self.editor.indent_levels().last().copied().unwrap_or_default();
-    let failed = self.editor.parse_status;
+    let (depth, failed) = self.editor.cursor_indent_level();
     Ok(depth == 0 && !failed)
   }
 
