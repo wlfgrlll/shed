@@ -214,6 +214,8 @@ pub enum TkRule {
   CasePattern,
   BraceGrpStart,
   BraceGrpEnd,
+  SubshStart,
+  SubshEnd,
   Comment,
   HereDoc {
     start_delim: Box<Span>,
@@ -414,6 +416,8 @@ pub struct LexStream {
   quote_state: QuoteState,
   brc_grp_depth: usize,
   brc_grp_start: Option<usize>,
+  subsh_depth: usize,
+  subsh_start: Option<usize>,
   case_depth: usize,
   heredoc_skip: Option<usize>,
   flags: LexFlags,
@@ -432,6 +436,8 @@ impl LexStream {
       quote_state: QuoteState::default(),
       brc_grp_depth: 0,
       brc_grp_start: None,
+      subsh_depth: 0,
+      subsh_start: None,
       heredoc_skip: None,
       case_depth: 0,
     }
@@ -468,6 +474,9 @@ impl LexStream {
   pub fn in_brc_grp(&self) -> bool {
     self.brc_grp_depth > 0
   }
+  pub fn in_subsh(&self) -> bool {
+    self.subsh_depth > 0
+  }
   pub fn update_pos(&mut self) {
     if self.cursor < self.pos_offset {
       // cursor moved backwards? recompute I guess?
@@ -493,6 +502,18 @@ impl LexStream {
   }
   pub fn inc_cursor(&mut self, amt: usize) {
     self.update_cursor(self.cursor + amt);
+  }
+  pub fn enter_subsh(&mut self) {
+    if self.subsh_depth == 0 {
+      self.subsh_start = Some(self.cursor);
+    }
+    self.subsh_depth += 1;
+  }
+  pub fn leave_subsh(&mut self) {
+    self.subsh_depth -= 1;
+    if self.subsh_depth == 0 {
+      self.subsh_start = None;
+    }
   }
   pub fn enter_brc_grp(&mut self) {
     if self.brc_grp_depth == 0 {
@@ -984,8 +1005,13 @@ impl LexStream {
           pos += 1;
           flags |= TkFlags::IS_ARITH;
         } else {
-          //subshell
-          flags |= TkFlags::IS_SUBSH;
+          let mut tk = self.get_token(self.cursor..pos, TkRule::SubshStart);
+          tk.flags |= TkFlags::IS_CMD;
+          self.enter_subsh();
+          self.update_cursor(pos);
+          self.set_next_is_cmd(true);
+
+          return Ok(tk);
         }
         if !scan_parens(&mut chars, &mut pos, paren_count) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
           return Err(lex_err!(
@@ -1019,6 +1045,14 @@ impl LexStream {
         self.update_cursor(pos);
         return Ok(tk);
       }
+      ')' if pos == self.cursor && self.in_subsh() => {
+        pos += 1;
+        let tk = self.get_token(self.cursor..pos, TkRule::SubshEnd);
+        self.leave_subsh();
+        self.set_next_is_cmd(true);
+        self.update_cursor(pos);
+        return Ok(tk);
+      }
       '=' if chars.peek() == Some(&'(') => {
         pos += 1; // '='
         let mut depth = 1;
@@ -1045,6 +1079,20 @@ impl LexStream {
           }
           _ => pos += arr_ch.len_utf8(),
         });
+      }
+      ')' => {
+        if !self.in_subsh() {
+          pos += 1;
+          let bad_pos = pos;
+          self.update_cursor(pos);
+          return Err(lex_err!(
+            self,
+            pos,
+            bad_pos..pos,
+            "Unexpected ')'",
+          ));
+        }
+        break
       }
       _ if is_hard_sep(ch) => break,
       _ => pos += ch.len_utf8(),

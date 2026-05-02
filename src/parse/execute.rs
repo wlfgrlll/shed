@@ -287,6 +287,7 @@ impl Dispatcher {
       check_signals()?;
     }
     let result = match node.class {
+      NdRule::List { .. } => self.exec_list(node),
       NdRule::Conjunction { .. } => self.exec_conjunction(node),
       NdRule::Pipeline { .. } => self.exec_pipeline(node),
       NdRule::IfNode { .. } => self.exec_if(node),
@@ -295,6 +296,7 @@ impl Dispatcher {
       NdRule::ForArith { .. } => self.exec_for_arith(node),
       NdRule::CaseNode { .. } => self.exec_case(node),
       NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
+      NdRule::Subshell { .. } => self.exec_subsh(node),
       NdRule::FuncDef { .. } => self.exec_func_def(node),
       NdRule::Arithmetic { .. } => self.exec_arith(node),
       NdRule::Negate { .. } => self.exec_negated(node),
@@ -308,6 +310,15 @@ impl Dispatcher {
         return Err(e);
       }
       return Err(e);
+    }
+
+    Ok(())
+  }
+  pub fn exec_list(&mut self, node: Node) -> ShResult<()> {
+    let NdRule::List { commands } = node.class else { unreachable!() };
+    for node in commands {
+      let blame = node.get_span();
+      self.dispatch_node(node).try_blame(blame)?;
     }
 
     Ok(())
@@ -347,9 +358,7 @@ impl Dispatcher {
 
     let cmd_tk = node.get_command();
 
-    if is_subsh(cmd_tk) {
-      self.exec_subsh(node)
-    } else if is_func(&cmd_word) {
+    if is_func(&cmd_word) {
       self.exec_func(node)
     } else if cmd.flags.contains(TkFlags::BUILTIN) || BUILTIN_NAMES.contains(&cmd_word.as_str()) {
       self.exec_builtin(node)
@@ -456,42 +465,6 @@ impl Dispatcher {
     let result = expand_arithmetic_wrapped(body.as_str())?;
     let val: f64 = result.parse().unwrap_or(0.0);
     state::set_status_from_bool(val != 0.0);
-    Ok(())
-  }
-  fn exec_subsh(&mut self, subsh: Node) -> ShResult<()> {
-    let _blame = subsh.get_span().clone();
-    let NdRule::Command { assignments, argv } = subsh.class else {
-      unreachable!()
-    };
-    let src_name = self.source_name.clone();
-
-    let report_time = subsh.flags.contains(NdFlags::REPORT_TIME);
-
-    self.io_stack.append_to_frame(subsh.redirs);
-    let _guard = self.io_stack.pop_frame().redirect()?;
-
-    let subsh_raw = argv[0].span.as_str();
-    let subsh_body = subsh_raw[1..subsh_raw.len() - 1].to_string(); // Remove surrounding parentheses
-
-    let subsh_display = subsh_body
-      .graphemes(true)
-      .take(70) // maximum display length
-      .collect::<String>();
-    let name = format!("( {subsh_display} )");
-
-    self
-      .run_fork(&name, report_time, |s| {
-        if let Err(e) = s.set_assignments(assignments, AssignBehavior::Export) {
-          e.print_error();
-          return;
-        };
-
-        if let Err(e) = exec_input(subsh_body, None, Some(src_name)) {
-          e.print_error();
-        };
-      })
-      .unwrap();
-
     Ok(())
   }
   fn exec_func(&mut self, func: Node) -> ShResult<()> {
@@ -621,10 +594,7 @@ impl Dispatcher {
 
     let brc_grp_logic = |s: &mut Self| -> ShResult<()> {
       let _guard = shared_scope_guard();
-      for node in body {
-        let blame = node.get_span();
-        s.dispatch_node(node).try_blame(blame)?;
-      }
+      s.dispatch_node(*body)?;
 
       Ok(())
     };
@@ -636,6 +606,30 @@ impl Dispatcher {
       blame,
       brc_grp_logic,
     )
+  }
+  fn exec_subsh(&mut self, subsh: Node) -> ShResult<()> {
+    let NdRule::Subshell { body } = subsh.class else {
+      unreachable!()
+    };
+    let span = body.get_span();
+
+    let report_time = subsh.flags.contains(NdFlags::REPORT_TIME);
+
+    self.io_stack.append_to_frame(subsh.redirs);
+    let _guard = self.io_stack.pop_frame().redirect()?;
+
+    let body_raw = span.as_str();
+    let body_display = body_raw.graphemes(true).take(70).collect::<String>();
+    let name = format!("( {body_display} )");
+
+    self
+      .run_fork(&name, report_time, |s| {
+        if let Err(e) = s.dispatch_node(*body.clone()) {
+          e.print_error();
+        }
+      })?;
+
+    Ok(())
   }
   fn exec_case(&mut self, case_stmt: Node) -> ShResult<()> {
     let blame = case_stmt.get_span().clone();
@@ -671,9 +665,7 @@ impl Dispatcher {
           let pattern_regex = glob_to_regex(&pattern_exp, false);
           if pattern_regex.is_match(&pattern_raw) {
             let _guard = shared_scope_guard();
-            for node in &body {
-              s.dispatch_node(node.clone())?;
-            }
+            s.dispatch_node(*body)?;
             break 'outer;
           }
         }
@@ -707,19 +699,17 @@ impl Dispatcher {
         let status = state::get_status();
         if keep_going(kind, status) {
           let _guard = shared_scope_guard();
-          for node in &body {
-            if let Err(e) = s.dispatch_node(node.clone()) {
-              match e.kind() {
-                ShErrKind::LoopBreak(code) => {
-                  state::set_status(*code);
-                  break 'outer;
-                }
-                ShErrKind::LoopContinue(code) => {
-                  state::set_status(*code);
-                  continue 'outer;
-                }
-                _ => return Err(e),
+          if let Err(e) = s.dispatch_node(*(body.clone())) {
+            match e.kind() {
+              ShErrKind::LoopBreak(code) => {
+                state::set_status(*code);
+                break 'outer;
               }
+              ShErrKind::LoopContinue(code) => {
+                state::set_status(*code);
+                continue 'outer;
+              }
+              _ => return Err(e),
             }
           }
         } else {
@@ -764,19 +754,17 @@ impl Dispatcher {
         }
         let _guard = shared_scope_guard();
 
-        for node in body.clone() {
-          if let Err(e) = s.dispatch_node(node) {
-            match e.kind() {
-              ShErrKind::LoopBreak(code) => {
-                state::set_status(*code);
-                break 'outer;
-              }
-              ShErrKind::LoopContinue(code) => {
-                state::set_status(*code);
-                continue 'outer;
-              }
-              _ => return Err(e),
+        if let Err(e) = s.dispatch_node(*(body.clone())) {
+          match e.kind() {
+            ShErrKind::LoopBreak(code) => {
+              state::set_status(*code);
+              break 'outer;
             }
+            ShErrKind::LoopContinue(code) => {
+              state::set_status(*code);
+              continue 'outer;
+            }
+            _ => return Err(e),
           }
         }
 
@@ -838,19 +826,17 @@ impl Dispatcher {
 
         let _guard = shared_scope_guard();
 
-        for node in body.clone() {
-          if let Err(e) = s.dispatch_node(node) {
-            match e.kind() {
-              ShErrKind::LoopBreak(code) => {
-                state::set_status(*code);
-                break 'outer;
-              }
-              ShErrKind::LoopContinue(code) => {
-                state::set_status(*code);
-                continue 'outer;
-              }
-              _ => return Err(e),
+        if let Err(e) = s.dispatch_node(*(body.clone())) {
+          match e.kind() {
+            ShErrKind::LoopBreak(code) => {
+              state::set_status(*code);
+              break 'outer;
             }
+            ShErrKind::LoopContinue(code) => {
+              state::set_status(*code);
+              continue 'outer;
+            }
+            _ => return Err(e),
           }
         }
       }
@@ -888,9 +874,7 @@ impl Dispatcher {
           0 => {
             matched = true;
             let _guard = shared_scope_guard();
-            for body_node in body {
-              s.dispatch_node(body_node)?;
-            }
+            s.dispatch_node(*body)?;
             break; // Don't check remaining elif conditions
           }
           _ => continue,
@@ -898,11 +882,9 @@ impl Dispatcher {
       }
 
       if !matched {
-        if !else_block.is_empty() {
+        if let Some(body) = else_block {
           let _guard = shared_scope_guard();
-          for node in else_block {
-            s.dispatch_node(node)?;
-          }
+          s.dispatch_node(*body)?;
         } else {
           state::set_status(0);
         }
@@ -1580,5 +1562,240 @@ mod tests {
     // Without quotes, word splitting causes an empty var to be removed entirely, so the shell actually sees `[ -n ]`, testing the value of ']', which returns true
     test_input("[ -n $EMPTYVAR_PROBABLY_NOT_SET_TO_ANYTHING ]").unwrap();
     assert_eq!(state::get_status(), 0);
+  }
+
+  // ===================== command lists in compound statements =====================
+  // POSIX §2.9.4: conditions and bodies of compound statements are command lists,
+  // not single commands. Multiple statements separated by `;` or `\n` are valid;
+  // the exit status of the last command in the list determines the condition.
+
+  #[test]
+  fn if_multi_stmt_condition_last_true() {
+    let _g = TestGuard::new();
+    test_input("if true; true; then false; fi").unwrap();
+    // Condition's last command (true) → enters then-branch → false → status 1
+    assert_eq!(state::get_status(), 1);
+  }
+
+  #[test]
+  fn if_multi_stmt_condition_last_false() {
+    let _g = TestGuard::new();
+    test_input("if true; false; then echo a; else echo b; fi").unwrap();
+    // Condition's last command (false) → else-branch
+    assert_eq!(state::get_status(), 0);
+  }
+
+  #[test]
+  fn if_multi_stmt_condition_output() {
+    let g = TestGuard::new();
+    test_input("if echo a; echo b; then echo c; fi").unwrap();
+    // All three commands run; condition's last echo is success
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn if_multi_stmt_body() {
+    let g = TestGuard::new();
+    test_input("if true; then echo a; echo b; echo c; fi").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn if_multi_stmt_body_status_is_last() {
+    let _g = TestGuard::new();
+    test_input("if true; then true; false; fi").unwrap();
+    // Body's last command (false) determines if-statement's status
+    assert_eq!(state::get_status(), 1);
+  }
+
+  #[test]
+  fn while_multi_stmt_condition_never_enters() {
+    let g = TestGuard::new();
+    test_input("while echo a; false; do echo b; done").unwrap();
+    // Condition's last command (false) → loop never enters body
+    let out = g.read_output();
+    assert_eq!(out, "a\n");
+  }
+
+  #[test]
+  fn until_multi_stmt_condition() {
+    let g = TestGuard::new();
+    test_input("x=0; until echo iter; [ $x -ge 2 ]; do x=$((x+1)); done").unwrap();
+    // Condition's last command negated → loops until [ $x -ge 2 ] is true
+    let out = g.read_output();
+    assert_eq!(out, "iter\niter\niter\n");
+  }
+
+  #[test]
+  fn brc_grp_multi_stmt_body() {
+    let g = TestGuard::new();
+    test_input("{ echo a; echo b; echo c; }").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn func_multi_stmt_body() {
+    let g = TestGuard::new();
+    test_input("f() { echo a; echo b; echo c; }; f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn for_multi_stmt_body() {
+    let g = TestGuard::new();
+    test_input("for x in 1 2; do echo $x; echo done-$x; done").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "1\ndone-1\n2\ndone-2\n");
+  }
+
+  #[test]
+  fn case_arm_multi_stmt_body() {
+    let g = TestGuard::new();
+    test_input("case foo in foo) echo a; echo b; echo c;; esac").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn mixed_and_or_with_sequence() {
+    let g = TestGuard::new();
+    test_input("true && echo a; false || echo b; echo c").unwrap();
+    // && and || chains coexist with ; sequencing — all three echos run
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn nested_compounds_with_lists() {
+    let g = TestGuard::new();
+    test_input(
+      "if true; true; then if true; then echo a; echo b; fi; echo c; fi"
+    ).unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn top_level_sequence_runs_all() {
+    let g = TestGuard::new();
+    test_input("echo a; echo b; echo c").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn top_level_sequence_status_is_last() {
+    let _g = TestGuard::new();
+    test_input("true; true; false").unwrap();
+    assert_eq!(state::get_status(), 1);
+  }
+
+  // ===================== function bodies as compound commands =====================
+  // POSIX §2.9.5: function_body is compound_command, not just a brace group.
+  // Every compound command type should be a valid function body.
+
+  #[test]
+  fn func_body_subshell() {
+    let g = TestGuard::new();
+    test_input("f() ( echo a; echo b ); f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\n");
+  }
+
+  #[test]
+  fn func_body_subshell_isolates_state() {
+    let g = TestGuard::new();
+    // Subshell-bodied function shouldn't leak variable changes to caller.
+    test_input("x=outer; f() ( x=inner; echo $x ); f; echo $x").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "inner\nouter\n");
+  }
+
+  #[test]
+  fn func_body_brace_grp_leaks_state() {
+    let g = TestGuard::new();
+    // Counter-test: brace-bodied function DOES leak (no fork).
+    test_input("x=outer; f() { x=inner; echo $x; }; f; echo $x").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "inner\ninner\n");
+  }
+
+  #[test]
+  fn func_body_if() {
+    let g = TestGuard::new();
+    test_input("f() if true; then echo yes; else echo no; fi; f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "yes\n");
+  }
+
+  #[test]
+  fn func_body_if_takes_arg() {
+    let g = TestGuard::new();
+    test_input("f() if [ \"$1\" = ok ]; then echo good; else echo bad; fi; f ok; f nope")
+      .unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "good\nbad\n");
+  }
+
+  #[test]
+  fn func_body_while() {
+    let g = TestGuard::new();
+    test_input("f() while [ $i -lt 3 ]; do echo $i; i=$((i+1)); done; i=0; f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "0\n1\n2\n");
+  }
+
+  #[test]
+  fn func_body_until() {
+    let g = TestGuard::new();
+    test_input("f() until [ $i -ge 2 ]; do echo $i; i=$((i+1)); done; i=0; f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "0\n1\n");
+  }
+
+  #[test]
+  fn func_body_for() {
+    let g = TestGuard::new();
+    test_input("f() for x in a b c; do echo $x; done; f").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "a\nb\nc\n");
+  }
+
+  #[test]
+  fn func_body_case() {
+    let g = TestGuard::new();
+    test_input(
+      "classify() case $1 in foo) echo F;; bar) echo B;; *) echo other;; esac; \
+       classify foo; classify bar; classify quux",
+    )
+    .unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "F\nB\nother\n");
+  }
+
+  #[test]
+  fn func_body_status_propagates() {
+    let _g = TestGuard::new();
+    // Function exit status should be the last command's status, regardless
+    // of which compound command shape the body uses.
+    test_input("f() ( false ); f").unwrap();
+    assert_eq!(state::get_status(), 1);
+  }
+
+  #[test]
+  fn func_body_recursive_with_if() {
+    let g = TestGuard::new();
+    // Recursive function whose body is an if-else (not a brace group).
+    test_input(
+      "countdown() if [ $1 -le 0 ]; then echo done; else echo $1; countdown $(($1 - 1)); fi; \
+       countdown 3",
+    )
+    .unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "3\n2\n1\ndone\n");
   }
 }

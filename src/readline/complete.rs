@@ -18,12 +18,11 @@ use crate::{
   key,
   parse::{execute::exec_nonint, lex::Span},
   readline::{
-    Marker, annotate_input_recursive,
     context::{CtxTk, CtxTkRule, get_context_tokens},
     editmode::{EditMode, ViInsert},
     keys::{KeyCode as C, KeyEvent as K},
     linebuf::LineBuf,
-    markers::{self, is_marker, strip_markers},
+    markers::strip_markers,
     term::calc_str_width,
   },
   state::{
@@ -1860,63 +1859,6 @@ impl SimpleCompleter {
   pub fn slice_line(line: &str, cursor_pos: usize) -> (&str, &str) {
     let (before_cursor, after_cursor) = line.split_at(cursor_pos);
     (before_cursor, after_cursor)
-  }
-
-  pub fn get_subtoken_completion(&self, line: &str, cursor_pos: usize) -> (Vec<Marker>, usize) {
-    let annotated = annotate_input_recursive(line);
-    let mut ctx = vec![markers::NULL];
-    let mut last_priority = 0;
-    let mut ctx_start = 0;
-    let mut pos = 0;
-
-    for ch in annotated.chars() {
-      match ch {
-        _ if is_marker(ch) => match ch {
-          markers::COMMAND | markers::BUILTIN => {
-            if last_priority < 2 {
-              if last_priority > 0 {
-                ctx.pop();
-              }
-              ctx_start = pos;
-              last_priority = 2;
-              ctx.push(markers::COMMAND);
-            }
-          }
-          markers::VAR_SUB => {
-            if last_priority < 3 {
-              if last_priority > 0 {
-                ctx.pop();
-              }
-              ctx_start = pos;
-              last_priority = 3;
-              ctx.push(markers::VAR_SUB);
-            }
-          }
-          markers::ARG | markers::ASSIGNMENT => {
-            if last_priority < 1 {
-              ctx_start = pos;
-              ctx.push(markers::ARG);
-            }
-          }
-          markers::RESET => {
-            if ctx.len() > 1 {
-              ctx.pop();
-              last_priority = 0;
-            }
-          }
-          _ => {}
-        },
-        _ => {
-          last_priority = 0; // reset priority on normal characters
-          pos += 1; // we hit a normal character, advance our position
-          if pos >= cursor_pos {
-            break;
-          }
-        }
-      }
-    }
-
-    (ctx, ctx_start)
   }
 
   pub fn cycle_completion(&mut self, direction: i32) -> String {

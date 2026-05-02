@@ -256,6 +256,11 @@ impl Node {
     f(self);
 
     match self.class {
+      NdRule::List { ref mut commands } => {
+        for cmd in commands {
+          cmd.walk_tree(f);
+        }
+      }
       NdRule::IfNode {
         ref mut cond_nodes,
         ref mut else_block,
@@ -263,13 +268,11 @@ impl Node {
         for node in cond_nodes {
           let CondNode { cond, body } = node;
           cond.walk_tree(f);
-          for body_node in body {
-            body_node.walk_tree(f);
-          }
+          body.walk_tree(f);
         }
 
-        for else_node in else_block {
-          else_node.walk_tree(f);
+        if let Some(block) = else_block {
+          block.walk_tree(f);
         }
       }
       NdRule::LoopNode {
@@ -278,18 +281,14 @@ impl Node {
       } => {
         let CondNode { cond, body } = cond_node;
         cond.walk_tree(f);
-        for body_node in body {
-          body_node.walk_tree(f);
-        }
+        body.walk_tree(f);
       }
       NdRule::ForNode {
         vars: _,
         arr: _,
         ref mut body,
       } => {
-        for body_node in body {
-          body_node.walk_tree(f);
-        }
+        body.walk_tree(f);
       }
       NdRule::ForArith {
         ref mut init,
@@ -306,9 +305,7 @@ impl Node {
         if let Some(step) = step {
           step.walk_tree(f);
         }
-        for body_node in body {
-          body_node.walk_tree(f);
-        }
+        body.walk_tree(f);
       }
       NdRule::CaseNode {
         pattern: _,
@@ -316,9 +313,7 @@ impl Node {
       } => {
         for block in case_blocks {
           let CaseNode { pattern: _, body } = block;
-          for body_node in body {
-            body_node.walk_tree(f);
-          }
+          body.walk_tree(f);
         }
       }
       NdRule::Command {
@@ -340,10 +335,9 @@ impl Node {
           cmd.walk_tree(f);
         }
       }
+      NdRule::Subshell { ref mut body } |
       NdRule::BraceGrp { ref mut body } => {
-        for body_node in body {
-          body_node.walk_tree(f);
-        }
+        body.walk_tree(f);
       }
       NdRule::FuncDef {
         name: _,
@@ -594,13 +588,25 @@ pub enum RedirType {
 #[derive(Clone, Debug)]
 pub struct CondNode {
   pub cond: Box<Node>,
-  pub body: Vec<Node>,
+  pub body: Box<Node>,
 }
 
 #[derive(Clone, Debug)]
 pub struct CaseNode {
   pub pattern: Tk,
-  pub body: Vec<Node>,
+  pub body: Box<Node>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ListOp {
+  Sep,
+  Bg,
+}
+
+#[derive(Clone, Debug)]
+pub struct ListNode {
+  pub cmd: Box<Node>,
+  pub operator: ListOp,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -768,6 +774,7 @@ pub enum AssignKind {
 #[derive(Clone, Debug, PartialEq)]
 /// Flat NdRule names used mainly for debugging
 pub enum NdKind {
+  List,
   IfNode,
   LoopNode,
   ForNode,
@@ -779,6 +786,7 @@ pub enum NdKind {
   Conjunction,
   Assignment,
   BraceGrp,
+  Subsh,
   Negate,
   Test,
   FuncDef,
@@ -787,6 +795,7 @@ pub enum NdKind {
 impl crate::parse::NdRule {
   pub fn as_nd_kind(&self) -> NdKind {
     match self {
+      Self::List { .. } => NdKind::List,
       Self::Negate { .. } => NdKind::Negate,
       Self::IfNode { .. } => NdKind::IfNode,
       Self::LoopNode { .. } => NdKind::LoopNode,
@@ -801,15 +810,19 @@ impl crate::parse::NdRule {
       Self::BraceGrp { .. } => NdKind::BraceGrp,
       Self::Test { .. } => NdKind::Test,
       Self::FuncDef { .. } => NdKind::FuncDef,
+      Self::Subshell { .. } => NdKind::Subsh,
     }
   }
 }
 
 #[derive(Clone, Debug)]
 pub enum NdRule {
+  List {
+    commands: Vec<Node>,
+  },
   IfNode {
     cond_nodes: Vec<CondNode>,
-    else_block: Vec<Node>,
+    else_block: Option<Box<Node>>,
   },
   LoopNode {
     kind: LoopKind,
@@ -818,13 +831,13 @@ pub enum NdRule {
   ForNode {
     vars: Vec<Tk>,
     arr: Vec<Tk>,
-    body: Vec<Node>,
+    body: Box<Node>,
   },
   ForArith {
     init: Option<Box<Node>>,
     cond: Option<Box<Node>>,
     step: Option<Box<Node>>,
-    body: Vec<Node>,
+    body: Box<Node>,
   },
   Arithmetic {
     body: Tk,
@@ -851,8 +864,11 @@ pub enum NdRule {
     var: Tk,
     val: Tk,
   },
+  Subshell {
+    body: Box<Node>,
+  },
   BraceGrp {
-    body: Vec<Node>,
+    body: Box<Node>,
   },
   Test {
     cases: Vec<TestCase>,
@@ -1035,6 +1051,7 @@ impl ParseStream {
       } else {
         try_match!(self.parse_func_def()?);
         try_match!(self.parse_brc_grp(false /* from_func_def */)?);
+        try_match!(self.parse_subsh()?);
         try_match!(self.parse_case()?);
         try_match!(self.parse_loop()?);
         try_match!(self.parse_for()?);
@@ -1077,6 +1094,7 @@ impl ParseStream {
 
     let result = || -> ShResult<Option<Node>> {
       try_match!(self.parse_brc_grp(true /* from_func_def */)?);
+      try_match!(self.parse_subsh()?);
       try_match!(self.parse_case()?);
       try_match!(self.parse_loop()?);
       try_match!(self.parse_for()?);
@@ -1088,7 +1106,7 @@ impl ParseStream {
 
     Ok(result)
   }
-  fn parse_cmd_list(&mut self) -> ShResult<Option<Node>> {
+  fn parse_conjunction(&mut self) -> ShResult<Option<Node>> {
     let mut elements = vec![];
     let mut node_tks = vec![];
 
@@ -1125,6 +1143,20 @@ impl ParseStream {
         node_tks,
         NdRule::Conjunction { elements }
       )))
+    }
+  }
+  fn parse_cmd_list(&mut self) -> ShResult<Option<Node>> {
+    let mut commands = vec![];
+    let mut node_tks = vec![];
+    while let Some(command) = self.parse_conjunction()? {
+      node_tks.extend(command.tokens.clone());
+      commands.push(command);
+    }
+
+    if commands.is_empty() {
+      Ok(None)
+    } else {
+      Ok(Some(node!(self, node_tks, NdRule::List { commands })))
     }
   }
   fn parse_func_def(&mut self) -> ShResult<Option<Node>> {
@@ -1263,9 +1295,70 @@ impl ParseStream {
 
     Ok(Some(node!(self, node_tks, NdRule::Test { cases })))
   }
+  fn parse_subsh(&mut self) -> ShResult<Option<Node>> {
+    let mut node_tks: Vec<Tk> = vec![];
+    let mut body: Vec<Node> = vec![];
+    let mut body_tks: Vec<Tk> = vec![];
+    let mut redirs: Vec<Redir> = vec![];
+
+    if *self.next_tk_class() != TkRule::SubshStart {
+      return Ok(None);
+    }
+    node_tks.push(self.next_tk().unwrap());
+    self.catch_separator(&mut node_tks);
+
+    loop {
+      if *self.next_tk_class() == TkRule::SubshEnd {
+        node_tks.push(self.next_tk().unwrap());
+        break;
+      }
+      if let Some(node) = self.parse_conjunction()? {
+        node_tks.extend(node.tokens.clone());
+        body_tks.extend(node.tokens.clone());
+        body.push(node);
+      } else if *self.next_tk_class() != TkRule::SubshEnd {
+        let next = self.peek_tk().cloned();
+        let err = match next {
+          Some(tk) => Err(parse_err!(
+            self,
+            node_tks,
+            "Unexpected token '{}' in subshell body",
+            tk.as_str()
+          )),
+          None => Err(parse_err!(
+            self,
+            node_tks,
+            "Unexpected end of input while parsing subshell body"
+          )),
+        };
+        self.panic_mode(&mut node_tks);
+        return err;
+      }
+      self.catch_separator(&mut node_tks);
+      if !self.next_tk_is_some() {
+        bail!(
+          self,
+          node_tks,
+          "Expected a closing parenthesis for this subshell"
+        );
+      }
+    }
+
+    let body = Box::new(node!(self, body_tks, NdRule::List { commands: body }, vec![]));
+
+    self.parse_redir(&mut redirs, &mut node_tks)?;
+
+    Ok(Some(node!(
+      self,
+      node_tks,
+      NdRule::Subshell { body },
+      redirs
+    )))
+  }
   fn parse_brc_grp(&mut self, from_func_def: bool) -> ShResult<Option<Node>> {
     let mut node_tks: Vec<Tk> = vec![];
     let mut body: Vec<Node> = vec![];
+    let mut body_tks: Vec<Tk> = vec![];
     let mut redirs: Vec<Redir> = vec![];
 
     if *self.next_tk_class() != TkRule::BraceGrpStart {
@@ -1280,8 +1373,9 @@ impl ParseStream {
         node_tks.push(self.next_tk().unwrap());
         break;
       }
-      if let Some(node) = self.parse_cmd_list()? {
+      if let Some(node) = self.parse_conjunction()? {
         node_tks.extend(node.tokens.clone());
+        body_tks.extend(node.tokens.clone());
         body.push(node);
       } else if *self.next_tk_class() != TkRule::BraceGrpEnd {
         let next = self.peek_tk().cloned();
@@ -1310,6 +1404,8 @@ impl ParseStream {
         );
       }
     }
+
+    let body = Box::new(node!(self, body_tks, NdRule::List { commands: body }, vec![]));
 
     if !from_func_def {
       self.parse_redir(&mut redirs, &mut node_tks)?;
@@ -1432,7 +1528,6 @@ impl ParseStream {
       node_tks.push(case_pat_tk.clone());
       self.block_depth += 1;
 
-      let mut nodes = vec![];
       let mut found_end = false;
       while self.check_separator() {
         let sep = self.peek_tk().unwrap();
@@ -1445,34 +1540,34 @@ impl ParseStream {
           node_tks.push(self.next_tk().unwrap());
         }
       }
-      while !found_end && let Some(node) = self.parse_cmd_list()? {
-        node_tks.extend(node.tokens.clone());
-        let trailing_dbl_semi = node
-          .tokens
-          .iter()
-          .rev()
+      let mut arm_commands = vec![];
+      let mut arm_tks = vec![];
+
+      while !found_end {
+        let Some(conj) = self.parse_conjunction()? else { break };
+        arm_tks.extend(conj.tokens.clone());
+
+        let trailing_dbl_semi = conj.tokens.iter().rev()
           .take_while(|tk| matches!(tk.class, TkRule::Sep))
           .any(|tk| tk.has_double_semi());
+
+        arm_commands.push(conj);
+
         if trailing_dbl_semi {
-          nodes.push(node);
-          self.block_depth -= 1;
           found_end = true;
-          break;
-        } else {
-          nodes.push(node);
-        }
-      }
-      if !found_end {
-        // Empty case arm: parse_cmd_list returned None before consuming ;;
-        if self.peek_tk().is_some_and(|tk| tk.has_double_semi()) {
-          node_tks.push(self.next_tk().unwrap());
           self.block_depth -= 1;
         }
       }
 
+      let arm_body = if arm_commands.is_empty() {
+        continue
+      } else {
+        node!(self, arm_tks, NdRule::List { commands: arm_commands })
+      };
+
       let case_node = CaseNode {
         pattern: case_pat_tk,
-        body: nodes,
+        body: Box::new(arm_body),
       };
       case_blocks.push(case_node);
 
@@ -1593,7 +1688,7 @@ impl ParseStream {
     // Zero or one 'else'
     let mut node_tks: Vec<Tk> = vec![];
     let mut cond_nodes: Vec<CondNode> = vec![];
-    let mut else_block: Vec<Node> = vec![];
+    let mut else_block: Option<Node> = None;
     let mut redirs: Vec<Redir> = vec![];
 
     if !self.check_keyword("if") || !self.next_tk_is_some() {
@@ -1623,18 +1718,14 @@ impl ParseStream {
       node_tks.push(self.next_tk().unwrap());
       self.catch_separator(&mut node_tks);
 
-      let mut body_blocks = vec![];
-      while let Some(body_block) = self.parse_cmd_list()? {
-        node_tks.extend(body_block.tokens.clone());
-        body_blocks.push(body_block);
-      }
-
-      if body_blocks.is_empty() {
+      let Some(body) = self.parse_cmd_list()? else {
         bail!(self, node_tks, "Expected a command after 'then'");
       };
+      node_tks.extend(body.tokens.clone());
+
       let cond_node = CondNode {
         cond: Box::new(cond),
-        body: body_blocks,
+        body: Box::new(body),
       };
       cond_nodes.push(cond_node);
 
@@ -1661,13 +1752,10 @@ impl ParseStream {
 
       self.catch_separator(&mut node_tks);
 
-      while let Some(block) = self.parse_cmd_list()? {
-        else_block.push(block)
-      }
-
-      if else_block.is_empty() {
+      let Some(body) = self.parse_cmd_list()? else {
         bail!(self, node_tks, "Expected a command after 'else'");
-      }
+      };
+      else_block = Some(body);
 
       if !already_added {
         self.block_depth += 1;
@@ -1690,13 +1778,12 @@ impl ParseStream {
       node_tks,
       NdRule::IfNode {
         cond_nodes,
-        else_block
+        else_block: else_block.map(Box::new)
       },
       redirs
     )))
   }
   fn parse_for_arith(&mut self, mut node_tks: Vec<Tk>) -> ShResult<Option<Node>> {
-    let mut body: Vec<Node> = vec![];
     let mut redirs: Vec<Redir> = vec![];
 
     let arith_tk = self.next_tk().unwrap(); // we checked already
@@ -1714,9 +1801,9 @@ impl ParseStream {
     node_tks.push(self.next_tk().unwrap());
     self.catch_separator(&mut node_tks);
 
-    while let Some(node) = self.parse_cmd_list()? {
-      body.push(node)
-    }
+    let Some(body) = self.parse_cmd_list()? else {
+      bail!(self, node_tks, "Expected a command after 'do' in this loop");
+    };
 
     self.catch_separator(&mut node_tks);
     if !self.check_keyword("done") || !self.next_tk_is_some() {
@@ -1733,7 +1820,7 @@ impl ParseStream {
         init,
         cond,
         step,
-        body
+        body: Box::new(body)
       },
       redirs
     )))
@@ -1741,7 +1828,6 @@ impl ParseStream {
   fn parse_for_arr(&mut self, mut node_tks: Vec<Tk>) -> ShResult<Option<Node>> {
     let mut vars: Vec<Tk> = vec![];
     let mut arr: Vec<Tk> = vec![];
-    let mut body: Vec<Node> = vec![];
     let mut redirs: Vec<Redir> = vec![];
 
     while let Some(tk) = self.next_tk() {
@@ -1778,9 +1864,9 @@ impl ParseStream {
     node_tks.push(self.next_tk().unwrap());
     self.catch_separator(&mut node_tks);
 
-    while let Some(node) = self.parse_cmd_list()? {
-      body.push(node)
-    }
+    let Some(body) = self.parse_cmd_list()? else {
+      bail!(self, node_tks, "Expected a command after 'do' in this loop");
+    };
 
     self.catch_separator(&mut node_tks);
     if !self.check_keyword("done") || !self.next_tk_is_some() {
@@ -1793,7 +1879,7 @@ impl ParseStream {
     Ok(Some(node!(
       self,
       node_tks,
-      NdRule::ForNode { vars, arr, body },
+      NdRule::ForNode { vars, arr, body: Box::new(body) },
       redirs
     )))
   }
@@ -1847,12 +1933,7 @@ impl ParseStream {
     node_tks.push(self.next_tk().unwrap());
     self.catch_separator(&mut node_tks);
 
-    let mut body = vec![];
-    while let Some(block) = self.parse_cmd_list()? {
-      node_tks.extend(block.tokens.clone());
-      body.push(block);
-    }
-    if body.is_empty() {
+    let Some(body) = self.parse_cmd_list()? else {
       bail!(self, node_tks, "Expected a command after 'do' in this loop");
     };
 
@@ -1868,7 +1949,7 @@ impl ParseStream {
 
     cond_node = CondNode {
       cond: Box::new(cond),
-      body,
+      body: Box::new(body),
     };
 
     Ok(Some(node!(
@@ -2011,6 +2092,7 @@ impl ParseStream {
           | TkRule::ErrPipe
           | TkRule::And
           | TkRule::BraceGrpEnd
+          | TkRule::SubshEnd
           | TkRule::Or
           | TkRule::Bg => break,
           TkRule::Sep => {
@@ -2310,13 +2392,19 @@ fn parse_err_full(reason: &str, blame: &Span, context: LabelCtx) -> ShErr {
 pub mod tests {
   use pretty_assertions::assert_eq;
 
-  use super::NdKind;
+  use super::{NdKind, NdRule};
   use crate::testutil::get_ast;
 
   #[test]
   fn parse_hello_world() {
     let input = "echo hello world";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2328,12 +2416,15 @@ pub mod tests {
   fn parse_if_statement() {
     let input = "if echo foo; then echo bar; fi";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2350,6 +2441,7 @@ pub mod tests {
   fn parse_pipeline() {
     let input = "ls | grep foo | wc -l";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2368,6 +2460,7 @@ pub mod tests {
   fn parse_conjunction_and() {
     let input = "echo foo && echo bar";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2386,12 +2479,15 @@ pub mod tests {
   fn parse_while_loop() {
     let input = "while true; do echo hello; done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::LoopNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2408,9 +2504,11 @@ pub mod tests {
   fn parse_for_loop() {
     let input = "for i in a b c; do echo $i; done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::ForNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2427,12 +2525,15 @@ pub mod tests {
   fn parse_case_statement() {
     let input = "case foo in bar) echo bar;; baz) echo baz;; esac";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::CaseNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2449,10 +2550,12 @@ pub mod tests {
   fn parse_func_def() {
     let input = "foo() { echo hello; }";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::FuncDef,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2469,6 +2572,7 @@ pub mod tests {
   fn parse_assignment() {
     let input = "FOO=bar";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2486,6 +2590,7 @@ pub mod tests {
   fn parse_assignment_with_command() {
     let input = "FOO=bar echo hello";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2503,21 +2608,27 @@ pub mod tests {
   fn parse_if_elif_else() {
     let input = "if true; then echo a; elif false; then echo b; else echo c; fi";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2534,9 +2645,11 @@ pub mod tests {
   fn parse_brace_group() {
     let input = "{ echo hello; echo world; }";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2556,18 +2669,23 @@ pub mod tests {
   fn parse_nested_if_in_while() {
     let input = "while true; do if false; then echo no; fi; done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::LoopNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2583,7 +2701,13 @@ pub mod tests {
   #[test]
   fn parse_test_bracket() {
     let input = "[[ -n hello ]]";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Test].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Test,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2601,19 +2725,24 @@ pub mod tests {
 			done
 		}";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::FuncDef,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::ForNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Test,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2630,9 +2759,11 @@ pub mod tests {
   fn parse_pipeline_with_brace_groups() {
     let input = "{ echo foo; echo bar; } | { grep foo; wc -l; }";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2640,6 +2771,7 @@ pub mod tests {
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2665,24 +2797,31 @@ pub mod tests {
 			fi
 		fi";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2711,21 +2850,25 @@ pub mod tests {
 			;;
 		esac";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::CaseNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2751,18 +2894,22 @@ pub mod tests {
 			esac
 		}";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::FuncDef,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::CaseNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2783,12 +2930,15 @@ pub mod tests {
 			FOO=bar echo $line | grep pattern | wc -l
 		done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::LoopNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2814,18 +2964,23 @@ pub mod tests {
 			done
 		done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::ForNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::ForNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::LoopNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2842,6 +2997,7 @@ pub mod tests {
   fn parse_complex_conjunction_chain() {
     let input = "mkdir -p dir && cd dir && touch file || echo failed && echo done";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2871,14 +3027,17 @@ pub mod tests {
 			inner
 		}";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::FuncDef,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::FuncDef,
       NdKind::BraceGrp,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2904,23 +3063,29 @@ pub mod tests {
 			echo fallback | tee log.txt
 		fi";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::IfNode,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -2952,7 +3117,13 @@ pub mod tests {
   #[test]
   fn parse_basic_heredoc() {
     let input = "cat <<EOF\nhello world\nEOF";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2963,7 +3134,13 @@ pub mod tests {
   #[test]
   fn parse_heredoc_with_tab_strip() {
     let input = "cat <<-EOF\n\t\thello\n\t\tworld\nEOF";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2974,7 +3151,13 @@ pub mod tests {
   #[test]
   fn parse_literal_heredoc() {
     let input = "cat <<'EOF'\nhello $world\nEOF";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2985,7 +3168,13 @@ pub mod tests {
   #[test]
   fn parse_herestring() {
     let input = "cat <<< \"hello world\"";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -2997,6 +3186,7 @@ pub mod tests {
   fn parse_heredoc_in_pipeline() {
     let input = "cat <<EOF | grep hello\nhello world\ngoodbye world\nEOF";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -3014,6 +3204,7 @@ pub mod tests {
   fn parse_heredoc_in_conjunction() {
     let input = "cat <<EOF && echo done\nhello\nEOF";
     let expected = &mut [
+      NdKind::List,
       NdKind::Conjunction,
       NdKind::Pipeline,
       NdKind::Command,
@@ -3031,7 +3222,13 @@ pub mod tests {
   #[test]
   fn parse_heredoc_double_quoted_delimiter() {
     let input = "cat <<\"EOF\"\nhello $world\nEOF";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -3042,7 +3239,13 @@ pub mod tests {
   #[test]
   fn parse_heredoc_empty_body() {
     let input = "cat <<EOF\nEOF";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -3054,7 +3257,13 @@ pub mod tests {
   fn parse_heredoc_multiword_delimiter() {
     // delimiter should only be the first word
     let input = "cat <<DELIM\nsome content\nDELIM";
-    let expected = &mut [NdKind::Conjunction, NdKind::Pipeline, NdKind::Command].into_iter();
+    let expected = &mut [
+      NdKind::List,
+      NdKind::Conjunction,
+      NdKind::Pipeline,
+      NdKind::Command,
+    ]
+    .into_iter();
     let ast = get_ast(input).unwrap();
     let mut node = ast[0].clone();
     if let Err(e) = node.assert_structure(expected) {
@@ -3066,7 +3275,11 @@ pub mod tests {
   fn parse_two_heredocs_on_one_line() {
     let input = "cat <<A; cat <<B\nfoo\nA\nbar\nB";
     let ast = get_ast(input).unwrap();
-    assert_eq!(ast.len(), 2);
+    assert_eq!(ast.len(), 1);
+    let NdRule::List { ref commands } = ast[0].class else {
+      panic!("expected top-level List, got {:?}", ast[0].class.as_nd_kind());
+    };
+    assert_eq!(commands.len(), 2);
   }
 
   // ===================== Heredoc Execution =====================

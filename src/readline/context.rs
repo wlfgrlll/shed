@@ -206,6 +206,8 @@ impl CtxTk {
       | TkRule::And
       | TkRule::Or
       | TkRule::Bg
+      | TkRule::SubshStart
+      | TkRule::SubshEnd
       | TkRule::BraceGrpStart
       | TkRule::BraceGrpEnd => Some(CtxTkRule::Operator),
       TkRule::Sep => Some(CtxTkRule::Separator),
@@ -1582,37 +1584,35 @@ mod tests {
 
   // ===================== Subshell sub-token classification =====================
 
-  /// Helper: count CtxTk descendants of `tk` matching `class`.
-  fn count(tk: &CtxTk, class: CtxTkRule) -> usize {
-    let mut n = if tk.class == class { 1 } else { 0 };
-    for s in &tk.sub_tokens {
-      n += count(s, class);
-    }
-    n
+  #[test]
+  fn subshell_paren_classified_as_operator() {
+    // After the subshell refactor, `(` and `)` are separate SubshStart /
+    // SubshEnd tokens at the lex level, both classified as Operator at the
+    // CtxTk level. `(echo foo)` is no longer a single fat Subshell token.
+    let src = "(echo foo)";
+    let tks = get_context_tokens(src);
+    let opener = tks.first().expect("at least one token");
+    assert_eq!(opener.class, CtxTkRule::Operator);
+    assert_eq!(span_str(opener, src), "(");
+
+    let closer = tks.last().expect("at least one token");
+    assert_eq!(closer.class, CtxTkRule::Operator);
+    assert_eq!(span_str(closer, src), ")");
   }
 
   #[test]
-  fn subshell_classified_correctly() {
-    // `(echo foo)` at command position should produce a Subshell token.
+  fn subshell_body_classified_as_commands() {
+    // The body tokens between `(` and `)` lex normally, so `echo` should
+    // pick up a command classification (Valid/Invalid depending on cache).
     let src = "(echo foo)";
-    let tk = parse_first(src);
-    let s = find(&tk, CtxTkRule::Subshell).expect("Subshell");
-    assert_eq!(span_str(s, src), "(echo foo)");
-  }
-
-  #[test]
-  fn subshell_body_has_command_classification() {
-    // Body should be lexed via from_cmd_sub. `echo` is classified as
-    // ValidCommand if the builtin cache is populated, else InvalidCommand —
-    // either way it must hit a command-shaped class, not raw Argument.
-    // (parse_first doesn't init the cache, so we accept either form.)
-    let src = "(echo foo)";
-    let tk = parse_first(src);
-    let s = find(&tk, CtxTkRule::Subshell).expect("Subshell");
-    let cmds = count(s, CtxTkRule::ValidCommand) + count(s, CtxTkRule::InvalidCommand);
+    let tks = get_context_tokens(src);
+    let cmds = tks
+      .iter()
+      .filter(|t| matches!(t.class, CtxTkRule::ValidCommand | CtxTkRule::InvalidCommand))
+      .count();
     assert!(
       cmds >= 1,
-      "subshell body should classify echo as a command, tree = {s:#?}"
+      "subshell body should classify echo as a command, tokens = {tks:#?}"
     );
   }
 
