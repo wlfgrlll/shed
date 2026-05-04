@@ -70,7 +70,7 @@ pub fn glob_to_regex(glob: &str, anchored: bool) -> Regex {
       .unwrap_or(&pattern)
       .to_string()
   };
-  Regex::new(&pattern).unwrap()
+  Regex::new(&pattern).unwrap_or_else(|_| Regex::new(&regex::escape(glob)).unwrap())
 }
 
 #[cfg(test)]

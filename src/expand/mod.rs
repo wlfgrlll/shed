@@ -23,7 +23,6 @@ use crate::prelude::*;
 use crate::readline::markers;
 use crate::state::read_shopts;
 use crate::util::error::{ShResult, ShResultExt};
-use crate::util::has_any_unescaped;
 
 pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'];
 
@@ -91,11 +90,52 @@ impl Expander {
   }
   pub fn expand(&mut self) -> ShResult<Vec<String>> {
     let res = self.expand_inner();
-    if self.flags.contains(TkFlags::IS_HEREDOC) {
-      Ok(vec![res?])
+    let words = if self.flags.contains(TkFlags::IS_HEREDOC) {
+      vec![res?]
     } else {
-      Ok(self.split_words())
+      self.split_words()
+    };
+
+    if self.noglob {
+      return Ok(words.into_iter().map(|w| escape::strip_escape_markers(&w)).collect());
     }
+
+    let nullglob = read_shopts(|o| o.core.nullglob);
+    let mut glob_words = Vec::with_capacity(words.len());
+
+    for word in words {
+      let has_trailing_slash = word.ends_with('/');
+      let has_leading_dot_slash = word.starts_with("./");
+
+      // expand_glob returns a single-element vec when the word has no glob
+      // meta (or when globbing fails), the matches when it does, or an empty
+      // vec when meta was present but nothing matched.
+      let expansions = expand_glob(&word).unwrap_or_else(|_| vec![word.clone()]);
+
+      if expansions.is_empty() {
+        // Glob meta present but no match. POSIX: pass through literally.
+        // With nullglob set, drop the word entirely.
+        if !nullglob {
+          glob_words.push(escape::strip_escape_markers(&word));
+        }
+        continue;
+      }
+
+      for mut exp in expansions {
+        // glob crate may strip these — restore so tab completion etc. works.
+        if has_trailing_slash && !exp.ends_with('/') {
+          exp.push('/');
+        }
+        if has_leading_dot_slash && !exp.starts_with("./") {
+          exp.insert_str(0, "./");
+        }
+        // Glob matches are real filenames already; only the literal-fallback
+        // path above carries ESCAPE markers, but strip universally for safety.
+        glob_words.push(escape::strip_escape_markers(&exp));
+      }
+    }
+
+    Ok(glob_words)
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
@@ -115,27 +155,6 @@ impl Expander {
     let mut chars = self.raw.chars().peekable();
     self.raw = expand_raw(&mut chars)?;
 
-    let has_trailing_slash = self.raw.ends_with('/');
-    let has_leading_dot_slash = self.raw.starts_with("./");
-
-    if !self.noglob
-      && let Ok(glob_exp) = expand_glob(&self.raw)
-    {
-      if !glob_exp.is_empty() {
-        self.raw = glob_exp;
-      } else if read_shopts(|o| o.core.nullglob) && has_any_unescaped(&self.raw, &["*", "?", "["]) {
-        self.raw = markers::NULL_EXPAND.to_string();
-      }
-    }
-
-    if has_trailing_slash && !self.raw.ends_with('/') {
-      // glob expansion can remove trailing slashes and leading dot-slashes, but we
-      // want to preserve them so that things like tab completion don't break
-      self.raw.push('/');
-    }
-    if has_leading_dot_slash && !self.raw.starts_with("./") {
-      self.raw.insert_str(0, "./");
-    }
 
     Ok(self.raw.clone())
   }
@@ -157,6 +176,10 @@ impl Expander {
           in_delim_run = false;
           delim_has_non_ws = false;
           if let Some(next_ch) = chars.next() {
+            // Preserve the ESCAPE marker so glob expansion (running after
+            // split_words) treats backslash-escaped meta chars as literal.
+            // expand() will strip remaining ESCAPE markers after globbing.
+            cur_word.push(markers::ESCAPE);
             cur_word.push(next_ch);
           }
         }
@@ -171,7 +194,15 @@ impl Expander {
               was_quoted = true;
               continue 'outer; // Isn't rust cool
             }
-            _ => cur_word.push(q_ch),
+            _ => {
+              // Quote-region content: glob meta chars inside quotes must
+              // remain literal at glob time. Prepend ESCAPE so escape_glob
+              // converts them to glob-literal form.
+              if matches!(q_ch, '*' | '?' | '[' | ']') {
+                cur_word.push(markers::ESCAPE);
+              }
+              cur_word.push(q_ch);
+            }
           });
         }
         _ if ifs.contains(ch) || ch == markers::ARG_SEP => {
@@ -302,10 +333,10 @@ mod tests {
     let raw = format!("hello{}world", unescape_str("\\ "));
     let mut exp = Expander {
       raw,
-      noglob: false,
+      noglob: true,
       flags: TkFlags::empty(),
     };
-    let words = exp.split_words();
+    let words = exp.expand().unwrap();
     assert_eq!(words, vec!["hello world"]);
   }
 
@@ -316,10 +347,10 @@ mod tests {
     let raw = format!("hello{}world", unescape_str("\\\t"));
     let mut exp = Expander {
       raw,
-      noglob: false,
+      noglob: true,
       flags: TkFlags::empty(),
     };
-    let words = exp.split_words();
+    let words = exp.expand().unwrap();
     assert_eq!(words, vec!["hello\tworld"]);
   }
 
@@ -333,10 +364,10 @@ mod tests {
     let raw = format!("a{}b:c", unescape_str("\\:"));
     let mut exp = Expander {
       raw,
-      noglob: false,
+      noglob: true,
       flags: TkFlags::empty(),
     };
-    let words = exp.split_words();
+    let words = exp.expand().unwrap();
     assert_eq!(words, vec!["a:b", "c"]);
   }
 

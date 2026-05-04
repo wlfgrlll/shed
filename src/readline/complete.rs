@@ -477,13 +477,18 @@ impl Candidate {
 }
 
 pub fn complete_signals(start: &str) -> Vec<Candidate> {
-  Signal::iterator()
-    .map(|s| {
+  let map_closure = if start.starts_with("SIG") || start.is_empty() {
+    |s: Signal| {
       s.to_string()
-        .strip_prefix("SIG")
-        .unwrap_or(s.as_ref())
-        .to_string()
-    })
+    }
+  } else {
+    |s: Signal| s.to_string()
+      .strip_prefix("SIG")
+      .unwrap_or(s.as_ref())
+      .to_string()
+  };
+  Signal::iterator()
+    .map(map_closure)
     .map(Candidate::from)
     .filter(|s| s.is_match(start))
     .collect()

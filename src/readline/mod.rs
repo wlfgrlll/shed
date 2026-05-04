@@ -232,7 +232,7 @@ impl SimpleEditor {
     }
   }
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<()> {
-    let Some(cmd) = self.mode.handle_key(key) else {
+    let Some(mut cmd) = self.mode.handle_key(key) else {
       return Ok(());
     };
     if self.should_grab_history(&cmd) {
@@ -244,6 +244,16 @@ impl SimpleEditor {
       self.scroll_history(count);
       return Ok(());
     }
+    if let Some(VerbCmd(_, Verb::DeleteOrEof)) = cmd.verb_mut() {
+      // user pressed Ctrl+D in emacs mode
+      // we've gotta resolve this into either Delete or EndOfFile here
+      if self.buf.is_empty() {
+        cmd.verb_mut().unwrap().1 = Verb::EndOfFile;
+      } else {
+        cmd.verb_mut().unwrap().1 = Verb::Delete;
+      }
+    };
+
     self.buf.exec_cmd(cmd)
   }
 }
@@ -583,7 +593,7 @@ impl ShedLine {
   }
 
   fn should_complete(&mut self) -> bool {
-    !self.editor.cursor_in_leading_ws()
+    !self.focused_editor().cursor_in_leading_ws()
   }
 
   fn should_submit(&mut self) -> ShResult<bool> {

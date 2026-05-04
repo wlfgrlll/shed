@@ -208,11 +208,11 @@ pub fn escape_glob(raw: &str, use_markers: bool) -> String {
   out
 }
 
-pub fn expand_glob(raw: &str) -> ShResult<String> {
+pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
   let mut words = vec![];
 
   if !raw.contains(['*', '?', '[']) || read_shopts(|o| o.set.noglob) {
-    return Ok(raw.to_string());
+    return Ok(vec![raw.to_string()]);
   }
   let escaped = escape_glob(raw, true);
 
@@ -231,7 +231,7 @@ pub fn expand_glob(raw: &str) -> ShResult<String> {
 
     words.push(escaped)
   }
-  Ok(words.join(" "))
+  Ok(words)
 }
 
 #[cfg(test)]
@@ -380,7 +380,7 @@ mod tests {
     }
     std::fs::remove_dir_all(&tmp).ok();
 
-    let result = result.expect("expand_glob should succeed");
+    let result = result.expect("expand_glob should succeed").join(" ");
     // Glob expansion should match `my file.txt`. Result is escape-marker-
     // wrapped post-glob; check via strip_markers.
     use crate::readline::markers::strip_markers;
@@ -389,5 +389,122 @@ mod tests {
       stripped.contains("my file.txt"),
       "expected match for 'my\\ *'; got {stripped:?}"
     );
+  }
+
+  // ===================== Tk::expand glob tests (full pipeline) =====================
+
+  /// Helper: drive the full expansion pipeline (unescape_str → expand_raw →
+  /// split_words → expand_glob → strip ESCAPE) on a raw shell word.
+  fn expand_words_in(dir: &std::path::Path, raw: &str) -> Vec<String> {
+    use crate::expand::Expander;
+    use crate::parse::lex::TkFlags;
+
+    let saved = std::env::current_dir().ok();
+    std::env::set_current_dir(dir).unwrap();
+    let result = Expander::from_raw(raw, TkFlags::empty())
+      .unwrap()
+      .expand()
+      .unwrap();
+    if let Some(prev) = saved {
+      let _ = std::env::set_current_dir(prev);
+    }
+    result
+  }
+
+  /// Build a tempdir populated with the given filenames.
+  fn make_fixture(name: &str, files: &[&str]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in files {
+      std::fs::File::create(dir.join(f)).unwrap();
+    }
+    dir
+  }
+
+  #[test]
+  fn glob_quoted_prefix_unquoted_meta_matches() {
+    // `"path/"*` should glob — only `*` is unquoted, the prefix is literal.
+    // This is the cd-completion case.
+    let _g = TestGuard::new();
+    let dir = make_fixture("shed_glob_qprefix", &["alpha", "beta", "gamma"]);
+    let pattern = format!(r#""{}/"*"#, dir.display());
+    let words = expand_words_in(&dir, &pattern);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut got: Vec<String> = words
+      .iter()
+      .filter_map(|w| std::path::Path::new(w).file_name().map(|n| n.to_string_lossy().into_owned()))
+      .collect();
+    got.sort();
+    assert_eq!(got, vec!["alpha", "beta", "gamma"]);
+  }
+
+  #[test]
+  fn glob_fully_quoted_is_literal() {
+    // `"*"` should be a literal `*` — no expansion.
+    let _g = TestGuard::new();
+    let dir = make_fixture("shed_glob_full_quote", &["a", "b"]);
+    let words = expand_words_in(&dir, r#""*""#);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(words, vec!["*"]);
+  }
+
+  #[test]
+  fn glob_squote_is_literal() {
+    // `'*'` should be a literal `*` — no expansion.
+    let _g = TestGuard::new();
+    let dir = make_fixture("shed_glob_squote", &["a", "b"]);
+    let words = expand_words_in(&dir, "'*'");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(words, vec!["*"]);
+  }
+
+  #[test]
+  fn glob_backslash_escaped_is_literal() {
+    // `\*` should be a literal `*`.
+    let _g = TestGuard::new();
+    let dir = make_fixture("shed_glob_bs_escape", &["a", "b"]);
+    let words = expand_words_in(&dir, r"\*");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(words, vec!["*"]);
+  }
+
+  #[test]
+  fn glob_unquoted_expands() {
+    // Baseline: unquoted `*` globs as expected.
+    let _g = TestGuard::new();
+    let dir = make_fixture("shed_glob_unquoted", &["a.txt", "b.txt", "c.log"]);
+    let words = expand_words_in(&dir, "*.txt");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut got = words;
+    got.sort();
+    assert_eq!(got, vec!["a.txt", "b.txt"]);
+  }
+
+  #[test]
+  fn glob_quoted_prefix_with_subdir_unquoted_meta() {
+    // `"a/"*.txt` — prefix quoted, suffix has unquoted glob meta.
+    let _g = TestGuard::new();
+    let outer = make_fixture("shed_glob_subdir", &[]);
+    let sub = outer.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::File::create(sub.join("a.txt")).unwrap();
+    std::fs::File::create(sub.join("b.txt")).unwrap();
+
+    let pattern = format!(r#""{}/sub/"*.txt"#, outer.display());
+    let words = expand_words_in(&outer, &pattern);
+    let _ = std::fs::remove_dir_all(&outer);
+
+    let mut got: Vec<String> = words
+      .iter()
+      .filter_map(|w| std::path::Path::new(w).file_name().map(|n| n.to_string_lossy().into_owned()))
+      .collect();
+    got.sort();
+    assert_eq!(got, vec!["a.txt", "b.txt"]);
   }
 }
