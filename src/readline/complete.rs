@@ -795,7 +795,7 @@ impl BashCompSpec {
       jobs: flags.contains(CompFlags::JOBS),
       aliases: flags.contains(CompFlags::ALIAS),
       flags: opt_flags,
-      signals: false, // TODO: implement signal completion
+      signals: flags.contains(CompFlags::SIGNALS),
       source: String::new(),
     }
   }
