@@ -107,14 +107,9 @@ impl Expander {
       let has_trailing_slash = word.ends_with('/');
       let has_leading_dot_slash = word.starts_with("./");
 
-      // expand_glob returns a single-element vec when the word has no glob
-      // meta (or when globbing fails), the matches when it does, or an empty
-      // vec when meta was present but nothing matched.
       let expansions = expand_glob(&word).unwrap_or_else(|_| vec![word.clone()]);
 
       if expansions.is_empty() {
-        // Glob meta present but no match. POSIX: pass through literally.
-        // With nullglob set, drop the word entirely.
         if !nullglob {
           glob_words.push(escape::strip_escape_markers(&word));
         }
@@ -122,7 +117,6 @@ impl Expander {
       }
 
       for mut exp in expansions {
-        // glob crate may strip these — restore so tab completion etc. works.
         if has_trailing_slash && !exp.ends_with('/') {
           exp.push('/');
         }
@@ -139,14 +133,8 @@ impl Expander {
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
-    // Strip internal ESCAPE markers — split_words would consume them when
-    // called via expand(), but we're producing a clean String here.
     Ok(escape::strip_escape_markers(&raw))
   }
-  /// Like `expand_no_split`, but converts internal markers into glob-syntax
-  /// escapes so the result can be fed directly to `glob::Pattern`. Use this
-  /// for the pattern halves of `${var%pat}`, `${var#pat}`, `${var/pat/...}`,
-  /// etc., quoted/escaped metacharacters become literal in glob.
   pub fn expand_for_glob(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
     Ok(escape::markers_to_glob_escapes(&raw))
