@@ -38,7 +38,7 @@ impl super::Builtin for Defer {
 
 #[cfg(test)]
 mod tests {
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== defer: scope teardown =====================
 

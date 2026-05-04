@@ -123,7 +123,6 @@ pub fn sigint_pending() -> bool {
 
 pub fn check_signals() -> ShResult<()> {
   let pending = SIGNALS.swap(0, Ordering::SeqCst);
-  let quit = SHOULD_QUIT.load(Ordering::SeqCst);
 
   let got_signal = |sig: Signal| -> bool { pending & (1 << sig as u64) != 0 };
   let run_trap = |sig: Signal| -> ShResult<()> {

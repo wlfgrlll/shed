@@ -336,7 +336,7 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use std::fs;
   use tempfile::{NamedTempFile, TempDir};
 

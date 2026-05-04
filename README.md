@@ -281,10 +281,6 @@ pkgs = import nixpkgs {
 * The expanded content from the `PSR` variable doesn't work well with multi-line content
 * The line editor hasn't been optimized for very large buffers yet (1000+ lines or so), so its pretty slow/unpredictable with those.
 
-## Quirks
-
-* Single quotes can be escaped inside of single quoted strings. This is a slight deviation from the POSIX spec, which says that backslashes should always be literal in single quoted strings.
-
 ## AI Usage
 
 AI has been used to assist with development in some areas of this codebase.

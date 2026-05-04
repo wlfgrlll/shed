@@ -17,7 +17,7 @@ impl super::Builtin for Pwd {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use std::env;
   use tempfile::TempDir;
 

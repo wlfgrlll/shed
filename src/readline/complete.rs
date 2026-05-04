@@ -2077,7 +2077,7 @@ mod tests {
   use crate::{
     readline::{Prompt, ShedLine},
     state::{VarFlags, VarKind, write_vars},
-    testutil::TestGuard,
+    tests::testutil::TestGuard,
   };
   fn test_vi(initial: &str) -> (ShedLine, TestGuard) {
     let g = TestGuard::new();
@@ -2692,7 +2692,7 @@ mod tests {
 
   use crate::expand::escape::as_var_val_display;
   use crate::state::read_vars;
-  use crate::testutil::test_input;
+  use crate::tests::testutil::test_input;
 
   fn run_comp_func_with_args(cmd: &str, cword: &str, pword: &str) -> (String, String, String) {
     test_input("_capture() { CAP1=\"$1\"; CAP2=\"$2\"; CAP3=\"$3\"; }").unwrap();

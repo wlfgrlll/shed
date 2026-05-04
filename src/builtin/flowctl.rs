@@ -100,7 +100,7 @@ impl FlowCtl for Exit {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== break =====================
 

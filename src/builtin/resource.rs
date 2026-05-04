@@ -306,7 +306,7 @@ impl super::Builtin for UMask {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use nix::sys::resource::{Resource, getrlimit};
   use nix::sys::stat::{Mode, umask};
 

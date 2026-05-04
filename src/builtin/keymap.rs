@@ -139,7 +139,7 @@ mod tests {
   use super::*;
   use crate::expand::expand_keymap;
   use crate::state::{self, read_logic};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== KeyMap::compare =====================
 

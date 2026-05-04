@@ -174,7 +174,7 @@ mod tests {
   use super::*;
   use crate::parse::lex::Span;
   use crate::state::write_logic;
-  use crate::testutil::TestGuard;
+  use crate::tests::testutil::TestGuard;
 
   // ===================== parse_key_alias =====================
 

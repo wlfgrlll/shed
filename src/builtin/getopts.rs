@@ -247,7 +247,7 @@ fn getopts_inner(
 mod tests {
   use crate::getopt::OptArg;
   use crate::state::{self, read_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   fn get_var(name: &str) -> String {
     read_vars(|v| v.get_var(name))

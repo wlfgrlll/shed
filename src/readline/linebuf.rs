@@ -8,7 +8,6 @@ use std::{
 
 use ariadne::Span as AriadneSpan;
 use itertools::Either;
-use regex::Regex;
 use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -688,7 +687,7 @@ pub struct IndentCtx;
 
 impl IndentCtx {
   pub fn new() -> Self {
-    Self::default()
+    Self
   }
 
   pub fn check_levels_per_row(&mut self, input: &str) -> (Vec<(usize, usize)>, bool) {
@@ -2445,7 +2444,13 @@ impl LineBuf {
       LineAddr::Last => Ok(Some(self.lines.len().saturating_sub(1))),
       LineAddr::Offset(i) => Ok(Some(self.row().saturating_add_signed(*i))),
       dir @ (LineAddr::Pattern(re) | LineAddr::PatternRev(re)) => {
-        let reg = Regex::new(re).map_err(|e| sherr!(ParseErr, "Invalid search pattern: {e}"))?;
+        let reg = match write_meta(|m| m.get_regex(re.clone())) {
+          Ok(re) => re,
+          Err(e) => {
+            status_msg!("{e}");
+            return Ok(None)
+          }
+        };
         let off = if matches!(dir, LineAddr::Pattern(_)) {
           1
         } else {
@@ -2630,7 +2635,13 @@ impl LineBuf {
     let Motion::Search(pat, dir) = motion else {
       return None;
     };
-    let re = Regex::new(pat).unwrap_or_else(|_| Regex::new(&regex::escape(pat)).unwrap());
+    let re = match write_meta(|m| m.get_regex(pat.clone())) {
+      Ok(re) => re,
+      Err(e) => {
+        status_msg!("{e}");
+        return None
+      }
+    };
     let buf = self.joined();
     let cursor_byte = self.pos_to_byte(self.cursor.pos)?;
 
@@ -3069,8 +3080,13 @@ impl LineBuf {
       _ => (0, self.lines.len().saturating_sub(1)),
     };
 
-    let re =
-      Regex::new(re).map_err(|e| sherr!(ParseErr, "Invalid regex in global command: {e}"))?;
+    let re = match write_meta(|m| m.get_regex(re.to_string())) {
+      Ok(re) => re,
+      Err(e) => {
+        status_msg!("{e}");
+        return Ok(vec![])
+      }
+    };
     let mut acc = 0;
     let mut lines = vec![];
 
@@ -4313,11 +4329,11 @@ impl LineBuf {
           }
         };
 
-        let re = match regex::Regex::new(old) {
+        let re = match write_meta(|m| m.get_regex(old.clone())) {
           Ok(re) => re,
           Err(e) => {
             status_msg!("{e}");
-            return Ok(());
+            return Ok(())
           }
         };
 
@@ -5333,7 +5349,7 @@ impl LineBuf {
   pub fn search_match_spans(&self) -> Vec<Range<usize>> {
     if let Some(pat) = self.pending_search.as_ref()
       && !pat.is_empty()
-      && let Ok(re) = Regex::new(pat)
+      && let Ok(re) = write_meta(|m| m.get_regex(pat.clone()))
     {
       let buf = self.joined();
       let positions = self.byte_positions();
@@ -5358,7 +5374,7 @@ impl Display for LineBuf {
     // Layer 1: search match highlighting
     if let Some(pat) = self.pending_search.as_ref()
       && !pat.is_empty()
-      && let Ok(re) = Regex::new(pat)
+      && let Ok(re) = write_meta(|m| m.get_regex(pat.clone()))
     {
       let buf = self.joined();
       // Collect (start_pos, end_pos) pairs first, then insert in reverse

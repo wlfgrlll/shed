@@ -515,7 +515,7 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
 mod tests {
   use super::*;
   use crate::state::{VarFlags, VarKind, read_vars, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== ParamExp parsing =====================
 

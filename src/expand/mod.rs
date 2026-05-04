@@ -25,7 +25,7 @@ use crate::state::read_shopts;
 use crate::util::error::{ShResult, ShResultExt};
 use crate::util::has_any_unescaped;
 
-pub(crate) const PARAMETERS: [char; 7] = ['@', '*', '#', '$', '?', '!', '0'];
+pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'];
 
 impl Tk {
   /// Create a new expanded token
@@ -115,18 +115,14 @@ impl Expander {
       self.raw.insert_str(0, "./");
     }
 
-    if self.flags.contains(TkFlags::IS_HEREDOC) {
-      Ok(vec![self.raw.clone()])
-    } else {
-      Ok(self.split_words())
-    }
+    Ok(self.raw.clone())
   }
   pub fn split_words(&mut self) -> Vec<String> {
     let mut words = vec![];
     let mut chars = self.raw.chars();
     let mut cur_word = String::new();
     let mut was_quoted = false;
-    let ifs = env::var("IFS").unwrap_or_else(|_| " \t\n".to_string());
+    let ifs = state::util::get_separators();
 
     'outer: while let Some(ch) = chars.next() {
       match ch {

@@ -35,7 +35,7 @@ pub mod tests {
   use std::io::Write;
 
   use crate::state::{self, read_logic, read_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use tempfile::{NamedTempFile, TempDir};
 
   #[test]

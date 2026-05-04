@@ -2393,7 +2393,7 @@ pub mod tests {
   use pretty_assertions::assert_eq;
 
   use super::{NdKind, NdRule};
-  use crate::testutil::get_ast;
+  use crate::tests::testutil::get_ast;
 
   #[test]
   fn parse_hello_world() {
@@ -3285,7 +3285,7 @@ pub mod tests {
   // ===================== Heredoc Execution =====================
 
   use crate::state::{VarFlags, VarKind, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
   fn heredoc_basic_output() {

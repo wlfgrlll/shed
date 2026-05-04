@@ -72,7 +72,7 @@ impl super::Builtin for Unalias {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, read_logic};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use pretty_assertions::assert_eq;
 
   #[test]

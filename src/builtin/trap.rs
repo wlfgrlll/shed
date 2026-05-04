@@ -91,7 +91,7 @@ impl super::Builtin for Trap {
 mod tests {
   use super::TrapTarget;
   use crate::state::{self, read_logic};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use nix::sys::signal::Signal;
   use std::str::FromStr;
 

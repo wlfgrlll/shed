@@ -496,7 +496,7 @@ impl Builtin for CommandBuiltin {
 pub mod tests {
   use crate::{
     state,
-    testutil::{TestGuard, test_input},
+    tests::testutil::{TestGuard, test_input},
   };
 
   // You can never be too sure!!!!!!

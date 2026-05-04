@@ -560,7 +560,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
 
 #[cfg(test)]
 pub mod tests {
-  use crate::testutil::{TestGuard, has_cmd, has_cmds, test_input};
+  use crate::tests::testutil::{TestGuard, has_cmd, has_cmds, test_input};
   use pretty_assertions::assert_eq;
 
   #[test]

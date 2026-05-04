@@ -104,7 +104,7 @@ pub mod tests {
   use tempfile::TempDir;
 
   use crate::state::{self, VarFlags, VarKind, read_vars, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Basic Navigation =====================
 

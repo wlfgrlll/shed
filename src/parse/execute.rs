@@ -14,7 +14,7 @@ use super::{
 use crate::{
   builtin::{BUILTIN_NAMES, lookup_builtin, test::double_bracket_test, trap::TrapTarget},
   errln,
-  expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern, glob_to_regex},
+  expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
   prelude::*,
   procio::{IoStack, PipeGenerator},
@@ -662,11 +662,19 @@ impl Dispatcher {
 
         for pattern in block_patterns {
           let pattern_exp = expand_case_pattern(&pattern)?;
-          let pattern_regex = glob_to_regex(&pattern_exp, false);
-          if pattern_regex.is_match(&pattern_raw) {
-            let _guard = shared_scope_guard();
-            s.dispatch_node(*body)?;
-            break 'outer;
+          if pattern_exp.is_empty() {
+            if pattern_raw.is_empty() {
+              let _guard = shared_scope_guard();
+              s.dispatch_node(*body)?;
+              break 'outer;
+            }
+          } else {
+            let pattern_regex = write_meta(|m| m.get_glob_regex(pattern_exp.clone(), false));
+            if pattern_regex.is_match(&pattern_raw) {
+              let _guard = shared_scope_guard();
+              s.dispatch_node(*body)?;
+              break 'outer;
+            }
           }
         }
       }
@@ -1369,7 +1377,7 @@ pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShRe
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== while/until status =====================
 

@@ -6,7 +6,6 @@ use std::{
 
 use chrono::Utc;
 use chrono_english::{Dialect, Interval, parse_date_string};
-use regex::Regex;
 
 use crate::{
   getopt::{Opt, OptSpec},
@@ -14,7 +13,7 @@ use crate::{
     histimport,
     history::{HistEntry, History},
   },
-  sherr, state,
+  sherr, state::{self, write_meta},
   util::{
     error::{ShResult, ShResultExt},
     with_status, write_ln_err, write_ln_out,
@@ -256,15 +255,16 @@ impl HistQuery {
     }
 
     match &self.matches {
-      (Some(pat), not) => match Regex::new(pat) {
-        Ok(r) => Ok(
-          entries
-            .into_iter()
-            .filter(|e| r.is_match(e.1.command()) != *not)
-            .collect(),
-        ),
-        Err(e) => Err(sherr!(ParseErr, "Invalid regex for --matches: {e}")),
-      },
+      (Some(pat), not) => {
+        let re = match write_meta(|m| m.get_regex(pat.clone())) {
+          Ok(re) => re,
+          Err(e) => return Err(sherr!(ParseErr, "{e}")),
+        };
+        Ok(entries
+          .into_iter()
+          .filter(|e| re.is_match(e.1.command()) != *not)
+          .collect())
+      }
       _ => Ok(entries),
     }
   }

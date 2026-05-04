@@ -344,7 +344,7 @@ pub fn get_comp_opts(opts: Vec<Opt>) -> ShResult<CompOpts> {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, VarFlags, VarKind, read_meta, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   use std::fs;
   use tempfile::TempDir;
 

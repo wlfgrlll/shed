@@ -370,7 +370,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
 pub mod tests {
   use crate::{
     state::{self, read_meta},
-    testutil::{TestGuard, test_input},
+    tests::testutil::{TestGuard, test_input},
   };
   use pretty_assertions::{assert_eq, assert_ne};
   use std::{env, path::PathBuf};

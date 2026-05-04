@@ -109,7 +109,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::testutil::TestGuard;
+  use crate::tests::testutil::TestGuard;
 
   // ===================== Command Substitution (TestGuard) =====================
 

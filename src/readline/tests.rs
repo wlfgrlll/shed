@@ -1,31 +1,29 @@
 #![allow(non_snake_case)]
 
 use crate::{
-  key, parse::lex::Span, readline::{Prompt, ShedLine}, state::{with_term, write_logic, write_shopts}, testutil::TestGuard
+  key, parse::lex::Span, readline::{Prompt, ShedLine}, state::{with_term, write_logic, write_shopts}, tests::testutil::TestGuard
 };
 
 /// Tests for our vim logic emulation. Each test consists of an initial text, a sequence of keys to feed, and the expected final text and cursor position.
 macro_rules! vi_test {
-    { $($name:ident: $input:expr => $op:expr => $expected_text:expr,$expected_cursor:expr);* $(;)? } => {
-        $(
-            #[test]
-            fn $name() {
-              let (mut vi, _g) = test_vi($input);
-              with_term(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
-              let keys = with_term(|t| t.drain_keys()).unwrap();
-              vi.process_input(keys).unwrap();
+  { $($name:ident: $input:expr => $op:expr => $expected_text:expr,$expected_cursor:expr);* $(;)? } => {
+    $(#[test]
+      fn $name() {
+        let (mut vi, _g) = test_vi($input);
+        with_term(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
+        let keys = with_term(|t| t.drain_keys()).unwrap();
+        vi.process_input(keys).unwrap();
 
-              for byte in $op.as_bytes() {
-                with_term(|t| t.feed_bytes(&[*byte]));
-                let keys = with_term(|t| t.drain_keys()).unwrap();
-                vi.process_input(keys).unwrap();
-              }
-              assert_eq!(vi.editor.joined(), $expected_text);
-              assert_eq!(vi.editor.cursor_to_flat(), $expected_cursor);
-            }
-        )*
-
-    };
+        for byte in $op.as_bytes() {
+          with_term(|t| t.feed_bytes(&[*byte]));
+          let keys = with_term(|t| t.drain_keys()).unwrap();
+          vi.process_input(keys).unwrap();
+        }
+        assert_eq!(vi.editor.joined(), $expected_text);
+        assert_eq!(vi.editor.cursor_to_flat(), $expected_cursor);
+      }
+    )*
+  };
 }
 
 // Why can't I marry a programming language

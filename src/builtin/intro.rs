@@ -109,7 +109,7 @@ impl super::Builtin for Type {
 #[cfg(test)]
 mod tests {
   use crate::state::{self};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Builtins =====================
 

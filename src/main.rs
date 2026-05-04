@@ -18,9 +18,7 @@ pub mod state;
 pub mod util;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
-pub mod testutil;
+pub mod tests;
 
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;

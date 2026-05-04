@@ -76,7 +76,7 @@ impl Builtin for Echo {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, write_shopts};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
   fn echo_simple() {

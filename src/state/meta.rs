@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
   builtin::BUILTIN_NAMES,
-  expand::expand_keymap,
+  expand::{expand_keymap, glob_to_regex},
   jobs::Job,
   match_loop,
   prelude::*,
@@ -36,6 +36,7 @@ use nix::{
     time::TimeVal,
   },
 };
+use regex::Regex;
 
 #[derive(Debug)]
 pub enum StatusHeader {
@@ -819,6 +820,8 @@ pub struct MetaTab {
 
   old_path: Option<String>,
   old_pwd: Option<String>,
+  // regex cache - patterns we have seen before
+  regexes: HashMap<String, Regex>,
   // utility cache - commands, functions, aliases, etc
   util_cache: HashSet<Rc<Utility>>,
   // programmable completion specs
@@ -859,6 +862,7 @@ impl Default for MetaTab {
       loop_depth: 0,
       func_depth: 0,
       comp_add_candidates: vec![],
+      regexes: HashMap::new(),
       util_cache: HashSet::new(),
       comp_specs: HashMap::new(),
       pending_widget_keys: vec![],
@@ -1014,6 +1018,27 @@ impl MetaTab {
   pub fn set_pending_widget_keys(&mut self, keys: &str) {
     let exp = expand_keymap(keys);
     self.pending_widget_keys = exp;
+  }
+  pub fn get_regex(&mut self, pat: String) -> Result<Regex,String> {
+    if let Some(regex) = self.regexes.get(&pat) {
+      Ok(regex.clone())
+    } else {
+      let regex = match Regex::new(&pat) {
+        Ok(re) => re,
+        Err(e) => return Err(e.to_string())
+      };
+      self.regexes.insert(pat, regex.clone());
+      Ok(regex)
+    }
+  }
+  pub fn get_glob_regex(&mut self, pat: String, anchored: bool) -> Regex {
+    if let Some(regex) = self.regexes.get(&pat) {
+      regex.clone()
+    } else {
+      let regex = glob_to_regex(&pat, anchored);
+      self.regexes.insert(pat, regex.clone());
+      regex
+    }
   }
   pub fn take_pending_widget_keys(&mut self) -> Option<Vec<KeyEvent>> {
     if self.pending_widget_keys.is_empty() {

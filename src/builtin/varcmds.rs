@@ -202,7 +202,7 @@ impl super::Builtin for Local {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, VarFlags, read_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== readonly =====================
 

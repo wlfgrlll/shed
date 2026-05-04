@@ -82,7 +82,7 @@ impl super::Builtin for AutoCmdBuiltin {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, AutoCmdKind, read_logic};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Registration =====================
 

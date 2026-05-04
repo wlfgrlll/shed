@@ -32,7 +32,7 @@ impl super::Builtin for Exec {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
   // Testing exec is a bit tricky since it replaces the current process, so we just test that it correctly handles the case of no arguments and the case of a nonexistent command. We can't really test that it successfully executes a command since that would replace the test process itself.
 
   #[test]

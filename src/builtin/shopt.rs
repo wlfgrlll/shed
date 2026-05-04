@@ -45,7 +45,7 @@ impl super::Builtin for Shopt {
 #[cfg(test)]
 mod tests {
   use crate::state::{self, read_shopts};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Display =====================
 

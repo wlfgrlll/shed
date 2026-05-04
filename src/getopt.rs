@@ -646,7 +646,7 @@ mod tests {
   // ===================== Variable expansion through opts (TestGuard) =====================
 
   use crate::state::{self, VarFlags, VarKind, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
   fn expanded_var_opts_echo() {
