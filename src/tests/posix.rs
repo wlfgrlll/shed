@@ -18,7 +18,6 @@ macro_rules! __test_setup_vars {
     $(
       $crate::parse::execute::exec_nonint(
         format!("{}='{}'", $var, $value),
-        None,
         Some("test_input".into())
       ).unwrap();
     )*
@@ -48,7 +47,6 @@ macro_rules! test_input {
         $setup
         $crate::parse::execute::exec_nonint(
           $input.to_string(),
-          None,
           Some("test_input".into())
         ).unwrap();
         $crate::assert_output!(g, $expected);
@@ -63,7 +61,6 @@ macro_rules! test_input {
         let g = $crate::tests::testutil::TestGuard::new();
         $crate::parse::execute::exec_nonint(
           $input.to_string(),
-          None,
           Some("test_input".into())
         ).unwrap();
         $crate::assert_output!(g, $expected);

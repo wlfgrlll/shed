@@ -7,7 +7,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
   AssignKind, CaseNode, CondNode, ConjunctNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node,
-  ParsedSrc, Redir,
+  ParsedSrc,
   lex::{KEYWORDS, Span, Tk, TkFlags},
 };
 
@@ -17,15 +17,14 @@ use crate::{
   expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
   prelude::*,
-  procio::{IoStack, PipeGenerator},
+  procio::{PipeGenerator, RedirGuard, RedirSet, RedirSpec},
   sherr,
   shopt::xtrace_print,
   signal::{check_signals, signals_pending},
   state::{
-    self, ShFunc, ShellParam, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_jobs, write_logic, write_meta, write_vars
+    self, ShFunc, ShellParam, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_logic, write_meta, write_vars
   },
   util::{
-    RedirVecUtils,
     error::{ShErr, ShErrKind, ShResult, ShResultExt, next_color},
     guards::{scope_guard, shared_scope_guard, var_ctx_guard},
     strops::split_case_pat,
@@ -217,17 +216,16 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
 /// This controls whether or not the shell passes terminal control to child processes.
 pub fn exec_int(input: String, source_name: Option<Rc<str>>) -> ShResult<()> {
   let _guard = with_term(|t| t.interactive_guard(true));
-  exec_input(input, None, source_name)
+  exec_input(input, source_name)
 }
 
 /// Execute non-interactively
 pub fn exec_nonint(
   input: String,
-  io_stack: Option<IoStack>,
   source_name: Option<Rc<str>>,
 ) -> ShResult<()> {
   let _guard = with_term(|t| t.interactive_guard(false));
-  exec_input(input, io_stack, source_name)
+  exec_input(input, source_name)
 }
 
 /// Execute arbitrary shell input
@@ -236,7 +234,6 @@ pub fn exec_nonint(
 /// the caller's interactive status.
 pub fn exec_input(
   mut input: String,
-  io_stack: Option<IoStack>,
   source_name: Option<Rc<str>>,
 ) -> ShResult<()> {
   let interactive = with_term(|t| t.interactive());
@@ -263,16 +260,12 @@ pub fn exec_input(
   let nodes = parser.extract_nodes();
 
   let mut dispatcher = Dispatcher::new(nodes, source_name.clone());
-  if let Some(mut stack) = io_stack {
-    dispatcher.io_stack.extend(stack.drain(..));
-  }
   dispatcher.begin_dispatch()
 }
 
 pub struct Dispatcher {
   nodes: VecDeque<Node>,
   source_name: Rc<str>,
-  pub io_stack: IoStack,
   pub job_stack: JobStack,
   fg_job: bool,
 }
@@ -283,7 +276,6 @@ impl Dispatcher {
     Self {
       nodes,
       source_name,
-      io_stack: IoStack::new(),
       job_stack: JobStack::new(),
       fg_job: true,
     }
@@ -296,6 +288,8 @@ impl Dispatcher {
     Ok(())
   }
   pub fn dispatch_node(&mut self, node: Node) -> ShResult<()> {
+    let _guard = write_meta(|m| m.push_procsub_frame());
+
     while signals_pending() {
       // If we have received SIGINT,
       // this will stop the execution here
@@ -385,12 +379,8 @@ impl Dispatcher {
       && !is_in_path(cmd.span.as_str())
     {
       let dir = cmd.span.as_str().to_string();
-      let stack = IoStack {
-        stack: self.io_stack.clone(),
-      };
       exec_input(
         format!("cd {dir}"),
-        Some(stack),
         Some(self.source_name.clone()),
       )
     } else {
@@ -518,7 +508,8 @@ impl Dispatcher {
     let func_name = argv.remove(0);
     let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
 
-    self.io_stack.append_to_frame(func.redirs);
+    let redirs = RedirSet::from(func.redirs);
+    let _guard = redirs.apply()?;
 
     let name = func_name
       .clone()
@@ -534,7 +525,7 @@ impl Dispatcher {
       defer! {
         if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Return)) {
           let saved_status = state::get_status();
-          if let Err(e) = exec_nonint(trap, None, Some("trap RETURN".into())) {
+          if let Err(e) = exec_nonint(trap, Some("trap RETURN".into())) {
             e.print_error();
           }
           state::set_status(saved_status);
@@ -574,7 +565,7 @@ impl Dispatcher {
   fn run_compound<F>(
     &mut self,
     name: &str,
-    redirs: Vec<Redir>,
+    redirs: Vec<RedirSpec>,
     flags: NdFlags,
     blame: Span,
     logic: F,
@@ -585,8 +576,8 @@ impl Dispatcher {
     let fork_builtins = flags.contains(NdFlags::FORK_BUILTINS);
     let report_time = flags.contains(NdFlags::REPORT_TIME);
 
-    self.io_stack.append_to_frame(redirs);
-    let guard = self.io_stack.pop_frame().redirect()?;
+    let redirs = RedirSet::from(redirs);
+    let guard = redirs.apply()?;
 
     if fork_builtins {
       log::trace!("Forking compound command: {name}");
@@ -631,8 +622,8 @@ impl Dispatcher {
 
     let report_time = subsh.flags.contains(NdFlags::REPORT_TIME);
 
-    self.io_stack.append_to_frame(subsh.redirs);
-    let _guard = self.io_stack.pop_frame().redirect()?;
+    let redirs = RedirSet::from(subsh.redirs);
+    let _guard = redirs.apply()?;
 
     let body_raw = span.as_str();
     let body_display = body_raw.graphemes(true).take(70).collect::<String>();
@@ -954,8 +945,10 @@ impl Dispatcher {
     self.job_stack.new_job();
     self.fg_job = !is_bg && with_term(|t| t.interactive());
 
-    let (mut in_rdrs, mut out_rdrs) = self.io_stack.pop_frame().redirs.split_by_channel();
-    let mut pipes = PipeGenerator::new(num_cmds).as_io_frames();
+    let redirs = RedirSet::from(pipeline.redirs);
+
+    let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
+    let mut pipes = PipeGenerator::new(num_cmds);
     let mut result = Ok(());
 
     for (i, mut cmd) in cmds.into_iter().enumerate() {
@@ -964,14 +957,25 @@ impl Dispatcher {
         cmd.flags |= NdFlags::FORK_BUILTINS;
       }
 
-      let mut frame = pipes.next().unwrap();
+      let Some((r,w)) = pipes.next() else {
+        break
+      };
+      let _guard = RedirGuard::new();
+
       if i == 0 {
-        frame.extend(std::mem::take(&mut in_rdrs))
+        std::mem::take(&mut in_rdrs).apply_persistent().ok();
       };
+
+      if let Some(mut r) = r {
+        r.apply()?;
+      }
+      if let Some(mut w) = w {
+        w.apply()?;
+      }
+
       if i == last {
-        frame.extend(std::mem::take(&mut out_rdrs))
+        std::mem::take(&mut out_rdrs).apply_persistent().ok();
       };
-      let _guard = frame.redirect()?;
 
       result = if should_fork_segment(&cmd) {
         let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
@@ -1069,8 +1073,8 @@ impl Dispatcher {
 
     let no_fork = cmd.flags.contains(NdFlags::NO_FORK);
 
-    self.io_stack.append_to_frame(cmd.redirs);
-    let _guard = self.io_stack.pop_frame().redirect()?;
+    let redirs = RedirSet::from(cmd.redirs);
+    let _guard = redirs.apply()?;
     let existing_pgid = self.job_stack.curr_job_mut().unwrap().pgid();
 
     let fg_job = self.fg_job;
@@ -1135,10 +1139,6 @@ impl Dispatcher {
       ForkResult::Child => child_logic(existing_pgid),
       ForkResult::Parent { child } => {
         let job = self.job_stack.curr_job_mut().unwrap();
-        // Close proc sub pipe fds - the child has inherited them
-        // and will access them via /proc/self/fd/N. Keeping them
-        // open here would prevent EOF on the pipe.
-        write_jobs(|j| j.drain_registered_fds());
 
         let child_pgid = if let Some(pgid) = existing_pgid {
           pgid
@@ -1164,7 +1164,6 @@ impl Dispatcher {
         unsafe { libc::_exit(state::get_status()) }
       }
       ForkResult::Parent { child } => {
-        write_jobs(|j| j.drain_registered_fds());
         let job = self.job_stack.curr_job_mut().unwrap();
         let child_pgid = if let Some(pgid) = existing_pgid {
           pgid
@@ -1370,7 +1369,7 @@ pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShRe
   if state::get_status() != 0 && !flags.contains(NdFlags::NOT_ERR) {
     if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Error)) {
       let saved_status = state::get_status();
-      exec_nonint(trap, None, Some("trap ERR".into()))?;
+      exec_nonint(trap, Some("trap ERR".into()))?;
       state::set_status(saved_status);
     }
     if read_shopts(|o| o.set.errexit) {

@@ -790,7 +790,7 @@ impl Drop for FuncGuard {
 }
 
 /// Miscellaneous global data storage
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct MetaTab {
   // Time when the shell was started, used for calculating shell uptime
   shell_time: Instant,
@@ -827,6 +827,9 @@ pub struct MetaTab {
   // programmable completion specs
   comp_specs: HashMap<String, Box<dyn CompSpec>>,
 
+  // stack of currently open procsubs
+  procsub_stack: Vec<Vec<OwnedFd>>,
+
   // pending keys from widget function
   pending_widget_keys: Vec<KeyEvent>,
 
@@ -840,6 +843,38 @@ pub struct MetaTab {
   last_was_func_def: bool,
 
   main_loop_timeout: Option<PollTimeout>,
+}
+
+impl Clone for MetaTab {
+  fn clone(&self) -> Self {
+    Self {
+      shell_time: self.shell_time,
+      runtime_start: self.runtime_start,
+      runtime_stop: self.runtime_stop,
+      socket: self.socket.clone(),
+      subscribers: self.subscribers.clone(),
+      last_job: self.last_job.clone(),
+      system_msg: self.system_msg.clone(),
+      system_msg_hist: self.system_msg_hist.clone(),
+      status_msg: self.status_msg.clone(),
+      status_msg_hist: self.status_msg_hist.clone(),
+      dir_stack: self.dir_stack.clone(),
+      getopts_offset: self.getopts_offset,
+      old_path: self.old_path.clone(),
+      old_pwd: self.old_pwd.clone(),
+      loop_depth: self.loop_depth,
+      func_depth: self.func_depth,
+      comp_add_candidates: self.comp_add_candidates.clone(),
+      regexes: self.regexes.clone(),
+      util_cache: self.util_cache.clone(),
+      comp_specs: self.comp_specs.clone(),
+      pending_widget_keys: self.pending_widget_keys.clone(),
+      last_was_func_def: self.last_was_func_def,
+      main_loop_timeout: self.main_loop_timeout,
+
+      procsub_stack: vec![], // does not implement clone
+    }
+  }
 }
 
 impl Default for MetaTab {
@@ -861,6 +896,7 @@ impl Default for MetaTab {
       old_pwd: None,
       loop_depth: 0,
       func_depth: 0,
+      procsub_stack: vec![],
       comp_add_candidates: vec![],
       regexes: HashMap::new(),
       util_cache: HashSet::new(),
@@ -869,6 +905,13 @@ impl Default for MetaTab {
       last_was_func_def: false,
       main_loop_timeout: None,
     }
+  }
+}
+
+pub struct ProcSubGuard;
+impl Drop for ProcSubGuard {
+  fn drop(&mut self) {
+    write_meta(|m| m.pop_procsub_frame())
   }
 }
 
@@ -887,6 +930,24 @@ impl MetaTab {
   }
   pub fn take_poll_timeout(&mut self) -> Option<PollTimeout> {
     self.main_loop_timeout.take()
+  }
+
+  pub fn push_procsub_frame(&mut self) -> ProcSubGuard {
+    self.procsub_stack.push(vec![]);
+    ProcSubGuard
+  }
+
+  pub fn pop_procsub_frame(&mut self) {
+    self.procsub_stack.pop();
+  }
+
+  pub fn save_procsub_fd(&mut self, fd: OwnedFd) {
+    if self.procsub_stack.is_empty() {
+      self.push_procsub_frame();
+    }
+    if let Some(frame) = self.procsub_stack.last_mut() {
+      frame.push(fd);
+    }
   }
 
   pub fn shell_time(&self) -> Instant {

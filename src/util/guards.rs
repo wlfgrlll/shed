@@ -4,7 +4,6 @@ use scopeguard::guard;
 
 use crate::parse::execute::exec_nonint;
 use crate::parse::lex::Span;
-use crate::procio::IoFrame;
 use crate::state::write_vars;
 
 // ============================================================================
@@ -15,7 +14,7 @@ fn guard_drop(_: ()) {
   let mut deferred = write_vars(|v| v.cur_scope_mut().take_deferred_cmds());
 
   while let Some(cmd) = deferred.pop() {
-    if let Err(e) = exec_nonint(cmd, None, Some("defer".into())) {
+    if let Err(e) = exec_nonint(cmd, Some("defer".into())) {
       e.print_error();
     }
   }
@@ -61,26 +60,3 @@ pub fn var_ctx_guard(
 // ============================================================================
 // RedirGuard - RAII I/O redirection restoration
 // ============================================================================
-
-#[derive(Debug)]
-pub struct RedirGuard(pub(crate) IoFrame);
-
-impl RedirGuard {
-  pub(crate) fn new(frame: IoFrame) -> Self {
-    Self(frame)
-  }
-  pub fn persist(mut self) {
-    use nix::unistd::close;
-    if let Some(saved) = self.0.saved_io.take() {
-      close(saved.0).ok();
-      close(saved.1).ok();
-      close(saved.2).ok();
-    }
-  }
-}
-
-impl Drop for RedirGuard {
-  fn drop(&mut self) {
-    self.0.restore().ok();
-  }
-}

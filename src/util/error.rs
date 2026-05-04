@@ -219,6 +219,12 @@ impl ShErr {
   pub fn is_flow_control(&self) -> bool {
     self.kind.is_flow_control()
   }
+  pub fn option_promote(self, span: Option<Span>) -> Self {
+    match span {
+      Some(span) => self.promote(span),
+      None => self,
+    }
+  }
   /// Promotes a shell error from a simple error to an error that blames a span
   pub fn promote(mut self, span: Span) -> Self {
     if self.notes.is_empty() {

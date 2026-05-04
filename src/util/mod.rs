@@ -10,7 +10,7 @@ use ariadne::Span as AriadneSpan;
 
 use crate::parse::execute::exec_nonint;
 use crate::parse::lex::{Span, Tk, TkRule};
-use crate::parse::{Node, Redir, RedirType};
+use crate::parse::Node;
 use crate::procio::borrow_fd;
 use crate::state::AutoCmd;
 use crate::util::error::ShResult;
@@ -37,13 +37,6 @@ pub trait AutoCmdVecUtils {
   fn exec(&self);
 }
 
-pub trait RedirVecUtils<Redir> {
-  /// Splits the vector of redirections into two vectors
-  ///
-  /// One vector contains input redirs, the other contains output redirs
-  fn split_by_channel(self) -> (Vec<Redir>, Vec<Redir>);
-}
-
 pub trait NodeVecUtils<Node> {
   fn get_span(&self) -> Option<Span>;
 }
@@ -53,7 +46,7 @@ impl AutoCmdVecUtils for Vec<AutoCmd> {
     let saved_status = crate::state::get_status();
     for cmd in self {
       let AutoCmd { kind: _, command } = cmd;
-      if let Err(e) = exec_nonint(command.clone(), None, Some("autocmd".into())) {
+      if let Err(e) = exec_nonint(command.clone(), Some("autocmd".into())) {
         e.print_error();
       }
     }
@@ -143,24 +136,6 @@ impl TkVecUtils<Tk> for Vec<Tk> {
   }
 }
 
-impl RedirVecUtils<Redir> for Vec<Redir> {
-  fn split_by_channel(self) -> (Vec<Redir>, Vec<Redir>) {
-    let mut input = vec![];
-    let mut output = vec![];
-    for redir in self {
-      match redir.class {
-        RedirType::Input => input.push(redir),
-        RedirType::Pipe => match redir.io_mode.tgt_fd() {
-          STDIN_FILENO => input.push(redir),
-          STDOUT_FILENO | STDERR_FILENO => output.push(redir),
-          _ => unreachable!(),
-        },
-        _ => output.push(redir),
-      }
-    }
-    (input, output)
-  }
-}
 
 impl NodeVecUtils<Node> for Vec<Node> {
   fn get_span(&self) -> Option<Span> {

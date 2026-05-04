@@ -127,7 +127,7 @@ pub fn check_signals() -> ShResult<()> {
   let got_signal = |sig: Signal| -> bool { pending & (1 << sig as u64) != 0 };
   let run_trap = |sig: Signal| -> ShResult<()> {
     if let Some(command) = read_logic(|l| l.get_trap(TrapTarget::Signal(sig))) {
-      exec_nonint(command, None, Some("trap".into()))?;
+      exec_nonint(command, Some("trap".into()))?;
     }
     Ok(())
   };
@@ -359,7 +359,6 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
    * if it is not a foreground job, then it exists in the job table
    * If this assumption is incorrect, the code has gone wrong somewhere.
    */
-  write_jobs(|j| j.close_job_fds(pid));
   if let Some((pgid, is_fg, is_finished)) = write_jobs(|j| {
     let fg_pgid = j.get_fg().map(|job| job.pgid());
     if let Some(job) = j.query_mut(JobID::Pid(pid)) {

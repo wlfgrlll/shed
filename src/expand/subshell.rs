@@ -1,18 +1,15 @@
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
-use crate::parse::{Redir, RedirType};
 use crate::prelude::*;
-use crate::procio::{IoBuf, IoFrame, IoMode, IoStack};
+use crate::procio::{Redir, RedirGuard, RedirType, read_fd_to_string};
 use crate::sherr;
-use crate::state::{self, write_jobs};
+use crate::state::{self, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
-  // FIXME: Still a lot of issues here
-  // Seems like debugging will be a massive effort
-  let (rpipe, wpipe) = IoMode::get_pipes_no_cloexec();
-  let rpipe_raw = rpipe.src_fd();
-  let wpipe_raw = wpipe.src_fd();
+  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let rpipe_raw = rpipe.as_raw_fd();
+  let wpipe_raw = wpipe.as_raw_fd();
 
   let (proc_fd, register_fd, redir_type, path) = match is_input {
     false => (
@@ -29,23 +26,28 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
     ),
   };
 
+  let target_fd = match redir_type {
+    RedirType::Input => 0,
+    RedirType::Output => 1,
+    _ => unreachable!(),
+  };
+
   match unsafe { fork()? } {
     ForkResult::Child => {
       drop(register_fd);
 
-      let redir = Redir::new(proc_fd, redir_type);
-      let io_frame = IoFrame::from_redir(redir);
-      let mut io_stack = IoStack::new();
-      io_stack.push_frame(io_frame);
+      let _guard = RedirGuard::new();
+      let mut redir = Redir::new(target_fd, proc_fd);
+      redir.apply()?;
 
-      if let Err(e) = exec_nonint(raw.to_string(), Some(io_stack), Some("process_sub".into())) {
+      if let Err(e) = exec_nonint(raw.to_string(), Some("process_sub".into())) {
         e.print_error();
         exit(1);
       }
       exit(0);
     }
-    ForkResult::Parent { child } => {
-      write_jobs(|j| j.register_fd(child, register_fd));
+    ForkResult::Parent {..} => {
+      write_meta(|m| m.save_procsub_fd(register_fd));
       // Do not wait; process may run in background
       Ok(path)
     }
@@ -57,15 +59,15 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
   if raw.starts_with('(') && raw.ends_with(')') {
     return expand_arithmetic_wrapped(raw);
   }
-  let (rpipe, wpipe) = IoMode::get_pipes();
-  let cmd_sub_redir = Redir::new(wpipe, RedirType::Output);
-  let cmd_sub_io_frame = IoFrame::from_redir(cmd_sub_redir);
-  let mut io_buf = IoBuf::new(rpipe);
+  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let mut redir = Redir::new(1, wpipe);
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      let _guard = cmd_sub_io_frame.redirect().ok();
-      if let Err(e) = exec_nonint(raw.to_string(), None, Some("command_sub".into())) {
+      let _guard = RedirGuard::new();
+      redir.apply()?;
+
+      if let Err(e) = exec_nonint(raw.to_string(), Some("command_sub".into())) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
         }
@@ -76,17 +78,11 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
       unsafe { libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
-      std::mem::drop(cmd_sub_io_frame); // Closes the write pipe
+      std::mem::drop(redir); // Closes the write pipe
 
       // Read output first (before waiting) to avoid deadlock if
       // child fills pipe buffer
-      loop {
-        match io_buf.fill_buffer() {
-          Ok(()) => break,
-          Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-          Err(e) => return Err(e.into()),
-        }
-      }
+      let output = read_fd_to_string(rpipe)?;
 
       // Wait for child with EINTR retry
       let status = loop {
@@ -100,7 +96,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
       match status {
         WtStat::Exited(_, code) => {
           state::set_status(code);
-          Ok(io_buf.as_str()?.trim_end().to_string())
+          Ok(output.trim_end_matches('\n').to_string())
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),
       }

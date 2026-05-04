@@ -20,10 +20,10 @@ use crate::{
   expand::alias::AliasExpander,
   match_loop, motion,
   parse::{
-    ParseFlags, ParsedSrc, Redir, RedirType, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
+    ParseFlags, ParsedSrc, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
   },
   prelude::*,
-  procio::{self, IoFrame, IoMode, IoStack, capture_command},
+  procio::{self, RedirSet, RedirSpec, capture_command},
   readline::{
     context::{CtxTkRule, get_context_tokens},
     editcmd::{LineAddr, ReadSrc, StashArgs, StashListArg, VerbCmd, WriteDest},
@@ -3923,22 +3923,17 @@ impl LineBuf {
         }
         WriteDest::Cmd(cmd) => {
           let buf = self.joined();
-          let io_mode = IoMode::Buffer {
-            tgt_fd: STDIN_FILENO,
-            buf,
-            flags: TkFlags::IS_HEREDOC | TkFlags::LIT_HEREDOC,
-          };
-          let redir = Redir::new(io_mode, RedirType::Input);
-          let mut frame = IoFrame::new();
-
-          frame.push(redir);
-          let mut stack = IoStack::new();
-          stack.push_frame(frame);
+          // Buffer becomes the command's stdin via a memfd. Materialize the
+          // spec into a Redir, apply it under a RedirGuard so stdin restores
+          // when the guard drops at the end of this scope.
+          let spec = RedirSpec::Buffer { fd: STDIN_FILENO, buf };
+          let redirs = RedirSet::from(spec);
+          let _guard = redirs.apply()?;
 
           let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
           let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
           pre_cmd.exec();
-          exec_nonint(cmd.to_string(), Some(stack), Some("ex write".into()))?;
+          exec_nonint(cmd.to_string(), Some("ex write".into()))?;
           post_cmd.exec();
         }
       },

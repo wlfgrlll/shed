@@ -1,16 +1,10 @@
-use std::{
-  fmt::Debug,
-  iter::Map,
-  ops::{Deref, DerefMut},
-};
+use std::{ fmt::Debug, os::fd::AsFd, str::FromStr };
 
 use crate::{
-  expand::Expander,
-  parse::{Redir, RedirType, execute::exec_nonint, get_redir_file, lex::TkFlags},
-  prelude::*,
-  sherr,
-  state::{self, with_term},
-  util::error::{ShErr, ShErrKind, ShResult},
+  expand::Expander, match_loop, parse::{
+    execute::exec_nonint,
+    lex::{Span, Tk, TkFlags},
+  }, prelude::*, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
 };
 
 // Credit to fish-shell for many of the implementation ideas present in this
@@ -22,418 +16,490 @@ const MIN_INTERNAL_FD: RawFd = 10;
 
 /// Like `dup()`, but places the new fd at `MIN_INTERNAL_FD` or above so it
 /// doesn't collide with user-managed fds.
-fn dup_high(fd: RawFd) -> nix::Result<RawFd> {
-  fcntl(fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))
+fn dup_high(fd: RawFd) -> nix::Result<OwnedFd> {
+  let fd = fcntl(fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
+  unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
-#[derive(Clone, Debug)]
-pub enum IoMode {
-  Fd {
-    tgt_fd: RawFd,
-    src_fd: RawFd, // Just the fd number - dup2 will handle it at execution time
-  },
-  OpenedFile {
-    tgt_fd: RawFd,
-    file: Arc<OwnedFd>, // Owns the opened file descriptor
-  },
-  File {
-    tgt_fd: RawFd,
-    path: PathBuf,
-    mode: RedirType,
-  },
-  Pipe {
-    tgt_fd: RawFd,
-    pipe: Arc<OwnedFd>,
-  },
-  Buffer {
-    tgt_fd: RawFd,
-    buf: String,
-    flags: TkFlags, // so we can see if its a heredoc or not
-  },
-  Close {
-    tgt_fd: RawFd,
-  },
+/// Basically just a fancy deferred dup2() call.
+///
+/// If constructed using Redir::close(), this will close the target fd when applied.
+#[derive(Debug)]
+pub struct Redir {
+  fd: RawFd,
+  from: Option<OwnedFd>,
+  span: Option<Span>,
 }
 
-impl IoMode {
-  pub fn fd(tgt_fd: RawFd, src_fd: RawFd) -> Self {
-    // Just store the fd number - dup2 will use it directly at execution time
-    Self::Fd { tgt_fd, src_fd }
-  }
-  pub fn file(tgt_fd: RawFd, path: PathBuf, mode: RedirType) -> Self {
-    Self::File { tgt_fd, path, mode }
-  }
-  pub fn pipe(tgt_fd: RawFd, pipe: OwnedFd) -> Self {
-    let pipe = pipe.into();
-    Self::Pipe { tgt_fd, pipe }
-  }
-  pub fn tgt_fd(&self) -> RawFd {
-    match self {
-      IoMode::Fd { tgt_fd, .. }
-      | IoMode::OpenedFile { tgt_fd, .. }
-      | IoMode::File { tgt_fd, .. }
-      | IoMode::Pipe { tgt_fd, .. } => *tgt_fd,
-      _ => panic!(),
-    }
-  }
-  pub fn src_fd(&self) -> RawFd {
-    match self {
-      IoMode::Fd { src_fd, .. } => *src_fd,
-      IoMode::OpenedFile { file, .. } => file.as_raw_fd(),
-      IoMode::File { .. } => panic!("Attempted to obtain src_fd from file before opening"),
-      IoMode::Pipe { pipe, .. } => pipe.as_raw_fd(),
-      _ => panic!(),
-    }
-  }
-  pub fn open_file(mut self) -> ShResult<Self> {
-    if let IoMode::File { tgt_fd, path, mode } = self {
-      let path_raw = path.as_os_str().to_str().unwrap_or_default().to_string();
-
-      let expanded_path = Expander::from_raw(&path_raw, TkFlags::empty())?
-        .expand()?
-        .join(" "); // should just be one string, will have to find some way to handle a return of multiple paths
-
-      let expanded_pathbuf = PathBuf::from(expanded_path);
-
-      let file = get_redir_file(mode, expanded_pathbuf)?;
-      // Move the opened fd above the user-accessible range so it never
-      // collides with the target fd (e.g. `3>/tmp/foo` where open() returns 3,
-      // causing dup2(3,3) to be a no-op and then OwnedFd drop closes it).
-      let raw = file.as_raw_fd();
-      let high = fcntl(raw, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD)).map_err(ShErr::from)?;
-      drop(file); // closes the original low fd
-      self = IoMode::OpenedFile {
-        tgt_fd,
-        file: Arc::new(unsafe { OwnedFd::from_raw_fd(high) }),
-      }
-    }
-    Ok(self)
-  }
-  pub fn buffer(tgt_fd: RawFd, buf: String, flags: TkFlags) -> ShResult<Self> {
-    Ok(Self::Buffer { tgt_fd, buf, flags })
-  }
-  pub fn loaded_pipe(tgt_fd: RawFd, buf: &[u8]) -> ShResult<Self> {
-    let (rpipe, wpipe) = nix::unistd::pipe()?;
-    write(wpipe, buf)?;
-    Ok(Self::Pipe {
-      tgt_fd,
-      pipe: rpipe.into(),
-    })
-  }
-  pub fn get_pipes() -> (Self, Self) {
-    let (rpipe, wpipe) = nix::unistd::pipe2(OFlag::O_CLOEXEC).unwrap();
-    (
-      Self::Pipe {
-        tgt_fd: STDIN_FILENO,
-        pipe: rpipe.into(),
-      },
-      Self::Pipe {
-        tgt_fd: STDOUT_FILENO,
-        pipe: wpipe.into(),
-      },
-    )
-  }
-  pub fn get_pipes_no_cloexec() -> (Self, Self) {
-    let (rpipe, wpipe) = nix::unistd::pipe().unwrap();
-    (
-      Self::Pipe {
-        tgt_fd: STDIN_FILENO,
-        pipe: rpipe.into(),
-      },
-      Self::Pipe {
-        tgt_fd: STDOUT_FILENO,
-        pipe: wpipe.into(),
-      },
-    )
-  }
-}
-
-impl Read for IoMode {
-  fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    let src_fd = self.src_fd();
-    Ok(read(src_fd, buf)?)
-  }
-}
-
-pub struct IoBuf<R: Read> {
-  buf: Vec<u8>,
-  reader: R,
-}
-
-impl<R: Read> IoBuf<R> {
-  pub fn new(reader: R) -> Self {
+impl Redir {
+  pub fn new(fd: RawFd, from: OwnedFd) -> Self {
     Self {
-      buf: Vec::new(),
-      reader,
+      fd,
+      from: Some(from),
+      span: None,
     }
   }
-
-  /// Reads exactly `size` bytes (or fewer if EOF) into the buffer
-  pub fn read_buffer(&mut self, size: usize) -> io::Result<()> {
-    let mut temp_buf = vec![0; size]; // Temporary buffer
-    let bytes_read = self.reader.read(&mut temp_buf)?;
-    self.buf.extend_from_slice(&temp_buf[..bytes_read]); // Append only what was read
-    Ok(())
+  pub fn close(fd: RawFd) -> Self {
+    Self {
+      fd,
+      from: None,
+      span: None,
+    }
   }
-
-  /// Continuously reads until EOF
-  pub fn fill_buffer(&mut self) -> io::Result<()> {
-    let mut temp_buf = vec![0; 1024]; // Read in chunks
-    loop {
-      let bytes_read = self.reader.read(&mut temp_buf)?;
-      if bytes_read == 0 {
-        break; // EOF reached
-      }
-      self.buf.extend_from_slice(&temp_buf[..bytes_read]);
+  pub fn apply(&mut self) -> ShResult<()> {
+    if let Some(from) = &self.from {
+      nix::unistd::dup2(from.as_raw_fd(), self.fd)?;
+    } else {
+      nix::unistd::close(self.fd)?;
     }
     Ok(())
   }
-
-  /// Get current buffer contents as a string (if valid UTF-8)
-  pub fn as_str(&self) -> ShResult<&str> {
-    std::str::from_utf8(&self.buf).map_err(|_| sherr!(InternalErr, "Invalid utf-8 in IoBuf"))
+  pub fn with_span(mut self, span: Span) -> Self {
+    self.span = Some(span);
+    self
+  }
+  pub fn target_fd(&self) -> RawFd {
+    self.fd
+  }
+  pub fn source_fd(&self) -> Option<BorrowedFd<'_>> {
+    self.from.as_ref().map(|fd| fd.as_fd())
   }
 }
 
-// this was originally here, but moved to util::guards
-pub use crate::util::guards::RedirGuard;
-
-/// A struct wrapping three fildescs representing `stdin`, `stdout`, and
-/// `stderr` respectively
-#[derive(Debug, Clone)]
-pub struct IoGroup(pub RawFd, pub RawFd, pub RawFd);
-
-/// A single stack frame used with the IoStack
-/// Each stack frame represents the redirections of a single command
-#[derive(Default, Clone, Debug)]
-pub struct IoFrame {
-  pub redirs: Vec<Redir>,
-  pub saved_io: Option<IoGroup>,
+#[derive(Default, Debug)]
+pub struct RedirBldr {
+  pub fd: Option<RawFd>,
+  pub class: Option<RedirType>,
+  pub target: Option<RedirTarget>,
+  pub span: Option<Span>,
 }
 
-impl<'e> IoFrame {
+impl RedirBldr {
   pub fn new() -> Self {
     Default::default()
   }
-  pub fn from_redirs(redirs: Vec<Redir>) -> Self {
+  pub fn with_fd(self, fd: RawFd) -> Self {
     Self {
-      redirs,
-      saved_io: None,
+      fd: Some(fd),
+      ..self
     }
   }
-  pub fn from_redir(redir: Redir) -> Self {
+  pub fn with_class(self, class: RedirType) -> Self {
     Self {
-      redirs: vec![redir],
-      saved_io: None,
+      class: Some(class),
+      ..self
     }
   }
-
-  pub fn save(&'e mut self) {
-    let saved_in = dup_high(STDIN_FILENO).unwrap();
-    let saved_out = dup_high(STDOUT_FILENO).unwrap();
-    let saved_err = dup_high(STDERR_FILENO).unwrap();
-    self.saved_io = Some(IoGroup(saved_in, saved_out, saved_err));
-  }
-  pub fn redirect(mut self) -> ShResult<RedirGuard> {
-    self.save();
-    if let Err(e) = self.apply_redirs() {
-      // Restore saved fds before propagating the error so they don't leak.
-      self.restore().ok();
-      return Err(e);
+  pub fn with_target(self, target: RedirTarget) -> Self {
+    Self {
+      target: Some(target),
+      ..self
     }
-    Ok(RedirGuard::new(self))
   }
-  fn apply_redirs(&mut self) -> ShResult<()> {
-    for redir in &mut self.redirs {
-      let io_mode = &mut redir.io_mode;
-      match io_mode {
-        IoMode::Close { tgt_fd } => {
-          if with_term(|t| t.fd_is_tty(*tgt_fd)) {
-            // Don't let user close the shell's tty fd.
-            continue;
-          }
-          close(*tgt_fd).ok();
-          continue;
-        }
-        IoMode::File { .. } => match io_mode.clone().open_file() {
-          Ok(file) => *io_mode = file,
-          Err(e) => {
-            if let Some(span) = redir.span.as_ref() {
-              return Err(e.promote(span.clone()));
-            }
-            return Err(e);
-          }
-        },
-        IoMode::Buffer { tgt_fd, buf, flags } => {
-          let (rpipe, wpipe) = nix::unistd::pipe()?;
-          let mut text = if flags.contains(TkFlags::LIT_HEREDOC) {
-            buf.clone()
-          } else {
-            let words = Expander::from_raw(buf, *flags)?.expand()?;
-            if flags.contains(TkFlags::IS_HEREDOC) {
-              words.into_iter().next().unwrap_or_default()
-            } else {
-              let ifs = state::get_separator();
-              words.join(&ifs).trim().to_string() + "\n"
-            }
-          };
-          if flags.contains(TkFlags::TAB_HEREDOC) {
-            let lines = text.lines();
-            let mut min_tabs = usize::MAX;
-            for line in lines {
-              if line.is_empty() {
-                continue;
-              }
-              let line_len = line.len();
-              let after_strip = line.trim_start_matches('\t').len();
-              let delta = line_len - after_strip;
-              min_tabs = min_tabs.min(delta);
-            }
-            if min_tabs == usize::MAX {
-              // let's avoid possibly allocating a string with 18 quintillion tabs
-              min_tabs = 0;
-            }
+  pub fn with_span(self, span: Span) -> Self {
+    Self {
+      span: Some(span),
+      ..self
+    }
+  }
+  pub fn build(self) -> ShResult<RedirSpec> {
+    let Some(fd) = self.fd else {
+      return Err(sherr!(ParseErr, "Redirection missing target fd").option_promote(self.span));
+    };
+    let Some(class) = self.class else {
+      return Err(sherr!(ParseErr, "Redirection missing class").option_promote(self.span));
+    };
+    let Some(target) = self.target else {
+      return Err(sherr!(ParseErr, "Redirection missing target").option_promote(self.span));
+    };
 
-            if min_tabs > 0 {
-              let stripped = text
-                .lines()
-                .fold(vec![], |mut acc, ln| {
-                  if ln.is_empty() {
-                    acc.push("");
-                    return acc;
-                  }
-                  let stripped_ln = ln.strip_prefix(&"\t".repeat(min_tabs)).unwrap();
-                  acc.push(stripped_ln);
-                  acc
-                })
-                .join("\n");
-              text = stripped + "\n";
-            }
-          }
-          write(wpipe, text.as_bytes())?;
-          *io_mode = IoMode::Pipe {
-            tgt_fd: *tgt_fd,
-            pipe: rpipe.into(),
-          };
-        }
-        _ => {}
+    match target {
+      RedirTarget::Path(path) if class.is_file_op() => {
+        Ok(RedirSpec::file(fd, path, class))
       }
-      let tgt_fd = io_mode.tgt_fd();
-      let src_fd = io_mode.src_fd();
-      if let Err(e) = dup2(src_fd, tgt_fd) {
-        if let Some(span) = redir.span.as_ref() {
-          return Err(ShErr::from(e).promote(span.clone()));
+      RedirTarget::Close => {
+        Ok(RedirSpec::close(fd))
+      }
+      RedirTarget::Fd(src_fd) if class.is_dup_op() => {
+        Ok(RedirSpec::dup(src_fd, fd, class))
+      }
+      RedirTarget::HereDoc { body, flags } => {
+        // Strip leading tabs per line BEFORE expansion (POSIX order).
+        let mut buf = if flags.contains(TkFlags::TAB_HEREDOC) {
+          let trailing_nl = body.ends_with('\n');
+          let stripped: Vec<&str> = body.lines()
+            .map(|line| line.trim_start_matches('\t'))
+            .collect();
+          let mut s = stripped.join("\n");
+          if trailing_nl { s.push('\n'); }
+          s
         } else {
-          return Err(e.into());
+          body
+        };
+
+        if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
+          buf = Expander::from_raw(&buf, flags)?
+            .expand()?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        }
+
+        RedirSpec::buffer(fd, buf)
+      }
+      _ => Err(sherr!(ParseErr, "Invalid redirection target for redirection type").option_promote(self.span)),
+    }
+  }
+}
+
+impl FromStr for RedirBldr {
+  type Err = ShErr;
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let mut chars = s.chars().peekable();
+    let mut src_fd = String::new();
+    let mut tgt_fd = String::new();
+    let mut redir = RedirBldr::new();
+
+    match_loop!(chars.next() => ch, {
+      '>' => {
+        redir = redir.with_class(RedirType::Output);
+        if let Some('>') = chars.peek() {
+          chars.next();
+          redir = redir.with_class(RedirType::Append);
+        } else if let Some('|') = chars.peek() {
+          chars.next();
+          redir = redir.with_class(RedirType::OutputForce);
         }
       }
+      '<' => {
+        redir = redir.with_class(RedirType::Input);
+        let mut count = 0;
+
+        if chars.peek() == Some(&'>') {
+          chars.next(); // consume the '>'
+          redir = redir.with_class(RedirType::ReadWrite);
+        } else {
+          while count < 2 && matches!(chars.peek(), Some('<')) {
+            chars.next();
+            count += 1;
+          }
+        }
+
+        redir = match count {
+          1 => redir.with_class(RedirType::HereDoc),
+          2 => redir.with_class(RedirType::HereString),
+          _ => redir, // Default case remains RedirType::Input
+        };
+      }
+      '&' => {
+        if chars.peek() == Some(&'-') {
+          chars.next();
+          src_fd.push('-');
+        } else {
+          while let Some(next_ch) = chars.next() {
+            if next_ch.is_ascii_digit() {
+              src_fd.push(next_ch)
+            } else {
+              break;
+            }
+          }
+        }
+        if src_fd.is_empty() {
+          return Err(sherr!(
+              ParseErr,
+              "Invalid character '{}' in redirection operator",
+              ch,
+          ));
+        }
+      }
+      _ if ch.is_ascii_digit() && tgt_fd.is_empty() => {
+        tgt_fd.push(ch);
+        while let Some(next_ch) = chars.peek() {
+          if next_ch.is_ascii_digit() {
+            let next_ch = chars.next().unwrap();
+            tgt_fd.push(next_ch);
+          } else {
+            break;
+          }
+        }
+      }
+      _ => {
+        return Err(sherr!(
+            ParseErr,
+            "Invalid character '{}' in redirection operator",
+            ch,
+        ));
+      }
+    });
+
+    let tgt_fd = tgt_fd
+      .parse::<i32>()
+      .unwrap_or_else(|_| match redir.class.unwrap() {
+        RedirType::Input | RedirType::ReadWrite | RedirType::HereDoc | RedirType::HereString => 0,
+        _ => 1,
+      });
+    redir = redir.with_fd(tgt_fd);
+    if src_fd.as_str() == "-" {
+      redir = redir.with_target(RedirTarget::Close);
+    } else if let Ok(src_fd) = src_fd.parse::<i32>() {
+      redir = redir.with_target(RedirTarget::Fd(src_fd));
     }
-    Ok(())
-  }
-  pub fn restore(&mut self) -> ShResult<()> {
-    if let Some(saved) = self.saved_io.take() {
-      dup2(saved.0, STDIN_FILENO)?;
-      close(saved.0)?;
-      dup2(saved.1, STDOUT_FILENO)?;
-      close(saved.1)?;
-      dup2(saved.2, STDERR_FILENO)?;
-      close(saved.2)?;
-    }
-    Ok(())
+    Ok(redir)
   }
 }
 
-impl Deref for IoFrame {
-  type Target = Vec<Redir>;
-  fn deref(&self) -> &Self::Target {
-    &self.redirs
-  }
-}
+impl TryFrom<Tk> for RedirBldr {
+  type Error = ShErr;
+  fn try_from(tk: Tk) -> Result<Self, Self::Error> {
+    let span = tk.span.clone();
+    if tk.flags.contains(TkFlags::IS_HEREDOC) {
+      let flags = tk.flags;
 
-impl DerefMut for IoFrame {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    &mut self.redirs
-  }
-}
-
-/// A stack that maintains the current state of I/O for commands
-///
-/// This struct maintains the current state of I/O for the `Dispatcher` struct
-/// Each executed command requires an `IoFrame` in order to perform
-/// redirections. As nodes are walked through by the `Dispatcher`, it pushes new
-/// frames in certain contexts, and pops frames in others. Each command calls
-/// pop_frame() in order to get the current IoFrame in order to perform
-/// redirection
-#[derive(Debug, Default)]
-pub struct IoStack {
-  pub stack: Vec<IoFrame>,
-}
-
-impl IoStack {
-  pub fn new() -> Self {
-    Self {
-      stack: vec![IoFrame::new()],
-    }
-  }
-  pub fn curr_frame(&self) -> &IoFrame {
-    self.stack.last().unwrap()
-  }
-  pub fn curr_frame_mut(&mut self) -> &mut IoFrame {
-    self.stack.last_mut().unwrap()
-  }
-  pub fn push_to_frame(&mut self, redir: Redir) {
-    self.curr_frame_mut().push(redir)
-  }
-  pub fn append_to_frame(&mut self, mut other: Vec<Redir>) {
-    self.curr_frame_mut().append(&mut other)
-  }
-  /// Pop the current stack frame
-  /// This differs from using `pop()` because it always returns a stack frame
-  /// If `self.pop()` would empty the `IoStack`, it instead uses
-  /// `std::mem::take()` to take the last frame There will always be at least
-  /// one frame in the `IoStack`.
-  pub fn pop_frame(&mut self) -> IoFrame {
-    if self.stack.len() > 1 {
-      self.pop().unwrap()
+      Ok(RedirBldr {
+        fd: Some(0),
+        class: Some(RedirType::HereDoc),
+        target: Some(RedirTarget::HereDoc {
+          body: tk.to_string(),
+          flags,
+        }),
+        span: Some(span),
+      })
     } else {
-      std::mem::take(self.curr_frame_mut())
+      match Self::from_str(tk.as_str()) {
+        Ok(bldr) => Ok(bldr.with_span(span)),
+        Err(e) => Err(e.promote(span)),
+      }
     }
   }
-  /// Push a new stack frame.
-  pub fn push_frame(&mut self, frame: IoFrame) {
-    self.push(frame)
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum RedirType {
+  Null,          // Default
+  Input,         // <
+  Output,        // >
+  OutputForce,   // >|
+  Append,        // >>
+  HereDoc,       // <<
+  IndentHereDoc, // <<-, strips leading tabs
+  HereString,    // <<<
+  ReadWrite,     // <>, fd is opened for reading and writing
+}
+
+impl RedirType {
+  pub fn is_input(&self) -> bool {
+    matches!(
+      self,
+      RedirType::Input |
+      RedirType::HereDoc |
+      RedirType::IndentHereDoc |
+      RedirType::HereString |
+      RedirType::ReadWrite
+    )
+  }
+  pub fn is_output(&self) -> bool {
+    matches!(
+      self,
+      RedirType::Output |
+      RedirType::OutputForce |
+      RedirType::Append |
+      RedirType::ReadWrite
+    )
+  }
+  pub fn is_file_op(&self) -> bool {
+    matches!(
+      self,
+      RedirType::Output |
+      RedirType::OutputForce |
+      RedirType::Append |
+      RedirType::Input |
+      RedirType::ReadWrite
+    )
+  }
+  pub fn is_dup_op(&self) -> bool {
+    matches!(self,
+      RedirType::Output |
+      RedirType::Input
+    )
   }
 }
 
-impl Deref for IoStack {
-  type Target = Vec<IoFrame>;
-  fn deref(&self) -> &Self::Target {
-    &self.stack
+#[derive(Clone, Debug)]
+pub enum RedirTarget {
+  Path(Tk),
+  Fd(RawFd),
+  Close,
+  HereDoc { body: String, flags: TkFlags },
+}
+
+#[derive(Debug, Clone)]
+pub enum RedirSpec {
+  File { fd: RawFd, path: Tk, mode: RedirType },
+  Dup { from: RawFd, to: RawFd, mode: RedirType },
+  Close { fd: RawFd },
+  Buffer { fd: RawFd, buf: String }
+}
+
+impl RedirSpec {
+  pub fn file(fd: RawFd, path: Tk, mode: RedirType) -> Self {
+    Self::File { fd, path, mode }
+  }
+  pub fn dup(from: RawFd, to: RawFd, mode: RedirType) -> Self {
+    Self::Dup { from, to, mode }
+  }
+  pub fn close(fd: RawFd) -> Self {
+    Self::Close { fd }
+  }
+  pub fn buffer(fd: RawFd, buf: String) -> ShResult<Self> {
+    Ok(Self::Buffer { fd, buf })
+  }
+  pub fn mode(&self) -> RedirType {
+    match self {
+      RedirSpec::File { mode, .. } => *mode,
+      RedirSpec::Dup { mode, .. } => *mode,
+      RedirSpec::Close { .. } => RedirType::Null,
+      RedirSpec::Buffer { .. } => RedirType::HereDoc,
+    }
+  }
+  pub fn into_redir(self) -> ShResult<Redir> {
+    match self {
+      RedirSpec::File { fd, path, mode } => {
+        let span = path.span.clone();
+        let path = path.clone().expand()
+          .map(|tk| tk.get_words())
+          .unwrap_or_default();
+
+        if path.len() != 1 {
+          return Err(sherr!(ExecFail @ span, "Redirection path must expand to exactly one word"));
+        }
+
+        let path = path.into_iter().next().unwrap();
+
+        let file: OwnedFd = get_redir_file(mode, path)?.into();
+        Ok(Redir::new(fd, file))
+      }
+      RedirSpec::Dup { from, to, mode: _ } => {
+        let borrowed = unsafe { BorrowedFd::borrow_raw(from) };
+        let owned = borrowed.try_clone_to_owned()
+          .map_err(|e| sherr!(InternalErr, "Failed to duplicate fd {}: {}", from, e))?;
+        Ok(Redir::new(to, owned))
+      }
+      RedirSpec::Close { fd } => {
+        Ok(Redir::close(fd))
+      }
+      RedirSpec::Buffer { fd, buf } => {
+        use nix::sys::memfd::{memfd_create, MemFdCreateFlag};
+        use std::ffi::CString;
+        use std::io::{Seek, SeekFrom, Write};
+
+        let name = CString::new("shed_heredoc").unwrap();
+        let owned = memfd_create(&name, MemFdCreateFlag::MFD_CLOEXEC)
+          .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
+
+        let mut file = std::fs::File::from(owned);
+        file.write_all(buf.as_bytes())
+          .map_err(|e| sherr!(InternalErr, "heredoc write failed: {e}"))?;
+        file.seek(SeekFrom::Start(0))
+          .map_err(|e| sherr!(InternalErr, "heredoc seek failed: {e}"))?;
+
+        Ok(Redir::new(fd, file.into()))
+      }
+    }
   }
 }
 
-impl DerefMut for IoStack {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    &mut self.stack
+#[derive(Default, Debug)]
+pub struct RedirSet(pub Vec<RedirSpec>);
+
+impl RedirSet {
+  pub fn apply_persistent(self) -> ShResult<()> {
+    for spec in self.0 {
+      let mut redir = spec.into_redir()?;
+      redir.apply()?;
+    }
+    Ok(())
+  }
+  pub fn apply(self) -> ShResult<RedirGuard> {
+    let guard = RedirGuard::new()?;
+    for spec in self.0 {
+      let mut redir = spec.into_redir()?;
+      redir.apply()?;
+    }
+    Ok(guard)
+  }
+  pub fn split_by_channel(self) -> (RedirSet, RedirSet) {
+    let mut in_redirs = vec![];
+    let mut out_redirs = vec![];
+    for spec in self.0 {
+      if spec.mode().is_input() {
+        in_redirs.push(spec);
+      } else if spec.mode().is_output() {
+        out_redirs.push(spec);
+      }
+    }
+    (RedirSet(in_redirs), RedirSet(out_redirs))
   }
 }
 
-impl From<Vec<IoFrame>> for IoStack {
-  fn from(frames: Vec<IoFrame>) -> Self {
-    Self { stack: frames }
+impl From<Vec<RedirSpec>> for RedirSet {
+  fn from(value: Vec<RedirSpec>) -> Self {
+    Self(value)
   }
 }
 
-/// Borrow a raw file descriptor, for use with std/nix file descriptor operations that expect OwnedFd/BorrowedFd.
-///
-/// Safety note: only use this with FDs that can be assumed to be open, like 0, 1, 2, and /dev/tty. Do not use this with FDs that might be closed or reused by the OS, as it can lead to undefined behavior if the FD is used after being closed or repurposed.
-///
-/// FDs that have a lifetime should always be wrapped in an OwnedFd or similar.
-pub fn borrow_fd<'f>(fd: i32) -> BorrowedFd<'f> {
-  unsafe { BorrowedFd::borrow_raw(fd) }
+impl From<RedirSpec> for RedirSet {
+  fn from(value: RedirSpec) -> Self {
+    Self(vec![value])
+  }
 }
 
-type PipeFrames = Map<PipeGenerator, fn((Option<Redir>, Option<Redir>)) -> IoFrame>;
+#[derive(Debug)]
+pub struct RedirGuard {
+  saved: Option<IoGroup>
+}
+
+impl RedirGuard {
+  pub fn new() -> ShResult<Self> {
+    let saved = Some(IoGroup::capture_state()?);
+    Ok(Self { saved })
+  }
+  pub fn persist(mut self) {
+    use std::mem::{take, drop};
+    drop(take(&mut self.saved));
+  }
+}
+
+impl Drop for RedirGuard {
+  fn drop(&mut self) {
+    if let Some(saved) = self.saved.as_ref() {
+      saved.restore().ok();
+    }
+  }
+}
+
+/// A struct wrapping three fildescs representing `stdin`, `stdout`, and
+/// `stderr` respectively
+#[derive(Debug)]
+pub struct IoGroup {
+  stdin: OwnedFd,
+  stdout: OwnedFd,
+  stderr: OwnedFd,
+}
+
+impl IoGroup {
+  pub fn capture_state() -> ShResult<Self> {
+    let stdin = dup_high(0)?;
+    let stdout = dup_high(1)?;
+    let stderr = dup_high(2)?;
+    Ok(Self { stdin, stdout, stderr })
+  }
+  pub fn restore(&self) -> ShResult<()> {
+    nix::unistd::dup2(self.stdin.as_raw_fd(), 0)?;
+    nix::unistd::dup2(self.stdout.as_raw_fd(), 1)?;
+    nix::unistd::dup2(self.stderr.as_raw_fd(), 2)?;
+    Ok(())
+  }
+}
 
 /// An iterator that lazily creates a specific number of pipes.
 pub struct PipeGenerator {
@@ -450,18 +516,6 @@ impl PipeGenerator {
       last_rpipe: None,
     }
   }
-  pub fn as_io_frames(self) -> PipeFrames {
-    self.map(|(r, w)| {
-      let mut frame = IoFrame::new();
-      if let Some(r) = r {
-        frame.push(r);
-      }
-      if let Some(w) = w {
-        frame.push(w);
-      }
-      frame
-    })
-  }
 }
 
 impl Iterator for PipeGenerator {
@@ -475,43 +529,72 @@ impl Iterator for PipeGenerator {
 
     let rpipe = self.last_rpipe.take(); // None if this is the first command
     let wpipe = needs_write.then(|| {
-      let (r, w) = IoMode::get_pipes();
-      let read = Redir::new(r, RedirType::Input);
-      let write = Redir::new(w, RedirType::Output);
+      let (r, w) = nix::unistd::pipe().ok()?;
+      let read = Redir::new(0, r);
+      let write = Redir::new(1, w);
       self.last_rpipe = Some(read);
-      write
-    });
+      Some(write)
+    }).flatten();
 
     self.cursor += 1;
     Some((rpipe, wpipe))
   }
 }
 
+/// Split a list of RedirSpecs into a list of input redirs and output redirs
+///
+/// Returned as (input_redirs, output_redirs).
+pub fn split_by_channel(specs: Vec<RedirSpec>) -> (Vec<RedirSpec>, Vec<RedirSpec>) {
+  let mut out_redirs = vec![];
+  let mut in_redirs = vec![];
+  for spec in specs {
+    if spec.mode().is_input() {
+      in_redirs.push(spec);
+    } else if spec.mode().is_output() {
+      out_redirs.push(spec);
+    }
+  }
+  (in_redirs, out_redirs)
+}
+
+/// Borrow a raw file descriptor, for use with std/nix file descriptor operations that expect OwnedFd/BorrowedFd.
+///
+/// Safety note: only use this with FDs that can be assumed to be open, like 0, 1, and 2.
+/// Do not use this with FDs that might be closed
+///
+/// FDs that have a lifetime should always be wrapped in an OwnedFd or similar.
+pub fn borrow_fd<'f>(fd: i32) -> BorrowedFd<'f> {
+  unsafe { BorrowedFd::borrow_raw(fd) }
+}
+
+pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
+  use std::io::Read;
+  let mut file = std::fs::File::from(fd);
+  let mut buf = Vec::new();
+  file.read_to_end(&mut buf)?;
+  String::from_utf8(buf).map_err(|e| sherr!(InternalErr, "Failed to read fd: {}", e))
+}
+
 pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
-  let (rpipe, wpipe) = IoMode::get_pipes();
-  let child_stdout = Redir::new(wpipe, RedirType::Output);
-  let mut child_io_frame = IoFrame::from_redir(child_stdout);
-  let mut stdout_io_buf = IoBuf::new(rpipe);
+  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let child_stdout = Redir::new(1, wpipe);
+  let mut child_stdin = None;
 
   let (mut stdin_pipe, stdin_write_fd) = if stdin.is_some() {
-    let (r, w) = IoMode::get_pipes();
-    let write_fd = w.src_fd();
-    let child_stdin = Redir::new(r, RedirType::Input);
-    child_io_frame.push(child_stdin);
+    let (r, w) = nix::unistd::pipe()?;
+    let write_fd = w.as_raw_fd();
+    child_stdin = Some(Redir::new(0, r));
     (Some(w), Some(write_fd))
   } else {
     (None, None)
   };
-
-  let mut io_stack = IoStack::new();
-  io_stack.push_frame(child_io_frame);
 
   match unsafe { fork()? } {
     ForkResult::Child => {
       if let Some(fd) = stdin_write_fd {
         close(fd).ok(); // close child's copy of stdin write end
       }
-      if let Err(e) = exec_nonint(cmd.to_string(), Some(io_stack), Some("command_sub".into())) {
+      if let Err(e) = exec_nonint(cmd.to_string(), Some("command_sub".into())) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
         }
@@ -522,25 +605,16 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
       unsafe { libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
-      std::mem::drop(io_stack); // closes parent's copy of child fds
+      std::mem::drop(child_stdin); // closes parent's copy of child fds
+      std::mem::drop(child_stdout); // closes parent's copy of child fds
 
       if let Some(pipe) = stdin_pipe.take() {
-        write(borrow_fd(pipe.src_fd()), stdin.unwrap().as_bytes())?;
-        std::mem::drop(pipe);
+        write(pipe, stdin.unwrap().as_bytes())?;
       }
 
-      loop {
-        match stdout_io_buf.fill_buffer() {
-          Ok(()) => break,
-          Err(e) => {
-            if e.kind() == io::ErrorKind::Interrupted {
-              continue;
-            } else {
-              return Err(e.into());
-            }
-          }
-        }
-      }
+      let captured = read_fd_to_string(rpipe)?
+        .trim_end()
+        .to_string();
 
       let status = loop {
         match waitpid(child, Some(WtFlag::WSTOPPED)) {
@@ -553,13 +627,49 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
       match status {
         WtStat::Exited(_, code) => {
           state::set_status(code);
-          Ok(stdout_io_buf.as_str()?.trim_end().to_string())
+          Ok(captured)
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),
       }
     }
   }
 }
+
+pub fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<File> {
+  let path = path.as_ref();
+  let result = match class {
+    RedirType::Input => OpenOptions::new().read(true).open(Path::new(&path)),
+    RedirType::Output => {
+      if read_shopts(|o| o.set.noclobber) && path.is_file() {
+        return Err(sherr!(
+          ExecFail,
+          "shopt core.noclobber is set, refusing to overwrite existing file `{}`",
+          path.display()
+        ));
+      }
+      OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+    }
+    RedirType::ReadWrite => OpenOptions::new()
+      .write(true)
+      .read(true)
+      .create(true)
+      .truncate(false)
+      .open(path),
+    RedirType::OutputForce => OpenOptions::new()
+      .write(true)
+      .create(true)
+      .truncate(true)
+      .open(path),
+    RedirType::Append => OpenOptions::new().create(true).append(true).open(path),
+    _ => unimplemented!("Unimplemented redir type: {:?}", class),
+  };
+  Ok(result?)
+}
+
 
 #[cfg(test)]
 pub mod tests {

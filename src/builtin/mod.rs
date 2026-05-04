@@ -2,20 +2,15 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use crate::{
-  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
-  jobs::ChildProc,
-  parse::{
+  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict}, jobs::ChildProc, parse::{
     NdFlags, NdRule, Node,
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
     lex::{Span, Tk},
-  },
-  sherr,
-  state::read_meta,
-  util::{
+  }, procio::RedirSet, sherr, state::read_meta, util::{
     error::{ShErrKind, ShResult},
     guards::var_ctx_guard,
     with_status,
-  },
+  }
 };
 
 pub mod alias;
@@ -61,7 +56,7 @@ macro_rules! register_completions {
 
     pub fn source_builtin_completions() {
       for (name, src) in COMPLETIONS {
-        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), None, Some(format!("{name} comp").into())) {
+        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into())) {
           e.print_error();
         }
       }
@@ -75,7 +70,6 @@ macro_rules! register_completions {
           .filter(|(name,src)| {
             $crate::parse::execute::exec_nonint(
               src.to_string(),
-              None,
               Some(format!("{name} comp").into())
             ).is_err()
           })
@@ -301,16 +295,13 @@ pub trait Builtin: Sync {
       // is this a hack? only the nose knows.
       return exec_nonint(
         format!("help builtin-{cmd_raw}"),
-        None,
         Some("<builtin-help>".into()),
       );
     }
 
     // Set up redirections here so we can attach the guard to propagated errors.
-    dispatcher
-      .io_stack
-      .append_to_frame(std::mem::take(&mut node.redirs));
-    let guard = dispatcher.io_stack.pop_frame().redirect()?;
+    let redirs: RedirSet = RedirSet::from(std::mem::take(&mut node.redirs));
+    let guard = redirs.apply()?;
 
     // Register ChildProc in current job
     let job = dispatcher.job_stack.curr_job_mut().unwrap();

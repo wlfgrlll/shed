@@ -208,7 +208,7 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
 
     let editor_cmd = format!("{editor} {}", tmp.path().display());
 
-    exec_input(editor_cmd, None, Some("fc edit".into()))?;
+    exec_input(editor_cmd, Some("fc edit".into()))?;
 
     tmp.rewind()?;
     tmp.read_to_string(&mut new_cmd)?;
@@ -216,7 +216,7 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
 
     should_push = new_cmd != old_cmd;
 
-    exec_input(new_cmd.clone(), None, Some("fc re-exec".into()))?;
+    exec_input(new_cmd.clone(), Some("fc re-exec".into()))?;
 
     if should_push {
       hist.push(new_cmd)?;
@@ -243,7 +243,7 @@ fn fc_reexec(hist: History, opts: FixCmdOpts) -> ShResult<()> {
       }
     }
 
-    exec_input(command.clone(), None, Some("fc re-exec".into()))?;
+    exec_input(command.clone(), Some("fc re-exec".into()))?;
     if should_push {
       hist.push(command)?;
     }

@@ -497,7 +497,7 @@ pub fn source_file(path: PathBuf) -> ShResult<()> {
 
   let mut buf = String::new();
   file.read_to_string(&mut buf)?;
-  exec_nonint(buf, None, Some(source_name.into()))?;
+  exec_nonint(buf, Some(source_name.into()))?;
   Ok(())
 }
 

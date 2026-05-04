@@ -35,7 +35,7 @@ use crate::builtin::source_builtin_completions;
 use crate::builtin::trap::TrapTarget;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
 use crate::prelude::*;
-use crate::procio::borrow_fd;
+use crate::procio::{RedirType, borrow_fd};
 use crate::readline::editmode::ModeReport;
 use crate::readline::linebuf::{Hint, Lines, Pos};
 use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
@@ -102,7 +102,7 @@ fn setup_panic_handler() {
     let log_dir = data_dir.join("shed").join("log");
     std::fs::create_dir_all(&log_dir).unwrap();
     let log_file_path = log_dir.join("panic.log");
-    let mut log_file = parse::get_redir_file(parse::RedirType::Output, log_file_path).unwrap();
+    let mut log_file = procio::get_redir_file(RedirType::Output, log_file_path).unwrap();
 
     let panic_info_raw = info.to_string();
     log_file.write_all(panic_info_raw.as_bytes()).unwrap();
@@ -190,7 +190,7 @@ fn main() -> ExitCode {
   };
 
   if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Exit))
-    && let Err(e) = exec_nonint(trap, None, Some("trap".into()))
+    && let Err(e) = exec_nonint(trap, Some("trap".into()))
   {
     e.print_error();
   }
@@ -198,7 +198,7 @@ fn main() -> ExitCode {
   let mut deferred = write_vars(|v| v.cur_scope_mut().take_deferred_cmds());
 
   while let Some(cmd) = deferred.pop() {
-    if let Err(e) = exec_nonint(cmd, None, Some("defer".into())) {
+    if let Err(e) = exec_nonint(cmd, Some("defer".into())) {
       e.print_error();
     }
   }
@@ -242,7 +242,7 @@ fn read_commands(args: Vec<String>) -> ShResult<()> {
     }
   });
 
-  exec_nonint(commands, None, None)
+  exec_nonint(commands, None)
 }
 
 fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
@@ -270,7 +270,7 @@ fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
     }
   });
 
-  exec_nonint(input, None, Some(path_raw.into()))
+  exec_nonint(input, Some(path_raw.into()))
 }
 
 fn first_run_setup() -> ShResult<()> {

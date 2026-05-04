@@ -56,8 +56,8 @@ macro_rules! assert_status_ne {
 
 use crate::{
   expand::expand_aliases,
-  parse::{NdKind, ParsedSrc, Redir, RedirType, execute::exec_nonint, lex::LexFlags},
-  procio::{IoFrame, IoMode, RedirGuard, borrow_fd},
+  parse::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
+  procio::{RedirGuard, RedirSet, RedirSpec, RedirType, borrow_fd},
   readline::register::{restore_registers, save_registers},
   state::{self, MetaTab, with_term},
   util::error::ShResult,
@@ -77,7 +77,7 @@ pub fn has_cmd(cmd: &str) -> bool {
 }
 
 pub fn test_input(input: impl Into<String>) -> ShResult<()> {
-  exec_nonint(input.into(), None, None)
+  exec_nonint(input.into(), None)
 }
 
 pub struct TestGuard {
@@ -123,30 +123,13 @@ impl TestGuard {
 
     let (stdin_read, stdin_write) = pipe().unwrap();
 
-    let mut frame = IoFrame::new();
-    frame.push(Redir::new(
-      IoMode::Fd {
-        tgt_fd: 0,
-        src_fd: stdin_read.as_raw_fd(),
-      },
-      RedirType::Input,
-    ));
-    frame.push(Redir::new(
-      IoMode::Fd {
-        tgt_fd: 1,
-        src_fd: pty_slave.as_raw_fd(),
-      },
-      RedirType::Output,
-    ));
-    frame.push(Redir::new(
-      IoMode::Fd {
-        tgt_fd: 2,
-        src_fd: pty_slave.as_raw_fd(),
-      },
-      RedirType::Output,
-    ));
+    let redirs: RedirSet = vec![
+      RedirSpec::dup(stdin_read.as_raw_fd(), 0, RedirType::Input),
+      RedirSpec::dup(pty_slave.as_raw_fd(),  1, RedirType::Output),
+      RedirSpec::dup(pty_slave.as_raw_fd(),  2, RedirType::Output),
+    ].into();
 
-    let _redir_guard = frame.redirect().unwrap();
+    let _redir_guard = redirs.apply().unwrap();
 
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();

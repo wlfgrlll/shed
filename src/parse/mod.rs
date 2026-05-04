@@ -6,12 +6,10 @@ use fmt::Display;
 use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
 
 use crate::{
-  match_loop,
   parse::lex::clean_input,
   prelude::*,
-  procio::IoMode,
+  procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
-  state::read_shopts,
   util::{
     NodeVecUtils,
     error::{ShErr, ShResult, last_color, next_color},
@@ -227,7 +225,7 @@ pub type LabelCtx = VecDeque<(SpanSource, Label<Span>)>;
 pub struct Node {
   pub class: NdRule,
   pub flags: NdFlags,
-  pub redirs: Vec<Redir>,
+  pub redirs: Vec<RedirSpec>,
   pub tokens: Vec<Tk>,
   pub context: LabelCtx,
 }
@@ -381,208 +379,6 @@ bitflags! {
     const PIPE_CMD      = 1 << 6; // is not the last command in a pipeline
     const REPORT_TIME   = 1 << 7; // whether this node should be reported by the time keyword
   }
-}
-
-#[derive(Clone, Debug)]
-pub struct Redir {
-  pub io_mode: IoMode,
-  pub class: RedirType,
-  pub span: Option<Span>,
-}
-
-impl Redir {
-  pub fn new(io_mode: IoMode, class: RedirType) -> Self {
-    Self {
-      io_mode,
-      class,
-      span: None,
-    }
-  }
-  pub fn with_span(mut self, span: Span) -> Self {
-    self.span = Some(span);
-    self
-  }
-}
-
-#[derive(Default, Debug)]
-pub struct RedirBldr {
-  pub io_mode: Option<IoMode>,
-  pub class: Option<RedirType>,
-  pub tgt_fd: Option<RawFd>,
-  pub span: Option<Span>,
-}
-
-impl RedirBldr {
-  pub fn new() -> Self {
-    Default::default()
-  }
-  pub fn with_io_mode(self, io_mode: IoMode) -> Self {
-    Self {
-      io_mode: Some(io_mode),
-      ..self
-    }
-  }
-  pub fn with_class(self, class: RedirType) -> Self {
-    Self {
-      class: Some(class),
-      ..self
-    }
-  }
-  pub fn with_tgt(self, tgt_fd: RawFd) -> Self {
-    Self {
-      tgt_fd: Some(tgt_fd),
-      ..self
-    }
-  }
-  pub fn with_span(self, span: Span) -> Self {
-    Self {
-      span: Some(span),
-      ..self
-    }
-  }
-  pub fn build(self) -> Redir {
-    let new = Redir::new(self.io_mode.unwrap(), self.class.unwrap());
-    if let Some(span) = self.span {
-      new.with_span(span)
-    } else {
-      new
-    }
-  }
-}
-
-impl FromStr for RedirBldr {
-  type Err = ShErr;
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    let mut chars = s.chars().peekable();
-    let mut src_fd = String::new();
-    let mut tgt_fd = String::new();
-    let mut redir = RedirBldr::new();
-
-    match_loop!(chars.next() => ch, {
-      '>' => {
-        redir = redir.with_class(RedirType::Output);
-        if let Some('>') = chars.peek() {
-          chars.next();
-          redir = redir.with_class(RedirType::Append);
-        } else if let Some('|') = chars.peek() {
-          chars.next();
-          redir = redir.with_class(RedirType::OutputForce);
-        }
-      }
-      '<' => {
-        redir = redir.with_class(RedirType::Input);
-        let mut count = 0;
-
-        if chars.peek() == Some(&'>') {
-          chars.next(); // consume the '>'
-          redir = redir.with_class(RedirType::ReadWrite);
-        } else {
-          while count < 2 && matches!(chars.peek(), Some('<')) {
-            chars.next();
-            count += 1;
-          }
-        }
-
-        redir = match count {
-          1 => redir.with_class(RedirType::HereDoc),
-          2 => redir.with_class(RedirType::HereString),
-          _ => redir, // Default case remains RedirType::Input
-        };
-      }
-      '&' => {
-        if chars.peek() == Some(&'-') {
-          chars.next();
-          src_fd.push('-');
-        } else {
-          while let Some(next_ch) = chars.next() {
-            if next_ch.is_ascii_digit() {
-              src_fd.push(next_ch)
-            } else {
-              break;
-            }
-          }
-        }
-        if src_fd.is_empty() {
-          return Err(sherr!(
-              ParseErr,
-              "Invalid character '{}' in redirection operator",
-              ch,
-          ));
-        }
-      }
-      _ if ch.is_ascii_digit() && tgt_fd.is_empty() => {
-        tgt_fd.push(ch);
-        while let Some(next_ch) = chars.peek() {
-          if next_ch.is_ascii_digit() {
-            let next_ch = chars.next().unwrap();
-            tgt_fd.push(next_ch);
-          } else {
-            break;
-          }
-        }
-      }
-      _ => {
-        return Err(sherr!(
-            ParseErr,
-            "Invalid character '{}' in redirection operator",
-            ch,
-        ));
-      }
-    });
-
-    let tgt_fd = tgt_fd
-      .parse::<i32>()
-      .unwrap_or_else(|_| match redir.class.unwrap() {
-        RedirType::Input | RedirType::ReadWrite | RedirType::HereDoc | RedirType::HereString => 0,
-        _ => 1,
-      });
-    redir = redir.with_tgt(tgt_fd);
-    if src_fd.as_str() == "-" {
-      let io_mode = IoMode::Close { tgt_fd };
-      redir = redir.with_io_mode(io_mode);
-    } else if let Ok(src_fd) = src_fd.parse::<i32>() {
-      let io_mode = IoMode::fd(tgt_fd, src_fd);
-      redir = redir.with_io_mode(io_mode);
-    }
-    Ok(redir)
-  }
-}
-
-impl TryFrom<Tk> for RedirBldr {
-  type Error = ShErr;
-  fn try_from(tk: Tk) -> Result<Self, Self::Error> {
-    let span = tk.span.clone();
-    if tk.flags.contains(TkFlags::IS_HEREDOC) {
-      let flags = tk.flags;
-
-      Ok(RedirBldr {
-        io_mode: Some(IoMode::buffer(0, tk.to_string(), flags)?),
-        class: Some(RedirType::HereDoc),
-        tgt_fd: Some(0),
-        span: Some(span),
-      })
-    } else {
-      match Self::from_str(tk.as_str()) {
-        Ok(bldr) => Ok(bldr.with_span(span)),
-        Err(e) => Err(e.promote(span)),
-      }
-    }
-  }
-}
-
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum RedirType {
-  Null,          // Default
-  Pipe,          // |
-  PipeAnd,       // |&, redirs stderr and stdout
-  Input,         // <
-  Output,        // >
-  OutputForce,   // >|
-  Append,        // >>
-  HereDoc,       // <<
-  IndentHereDoc, // <<-, strips leading tabs
-  HereString,    // <<<
-  ReadWrite,     // <>, fd is opened for reading and writing
 }
 
 #[derive(Clone, Debug)]
@@ -1161,7 +957,6 @@ impl ParseStream {
   }
   fn parse_func_def(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks: Vec<Tk> = vec![];
-    let body;
 
     let has_func_kw = self.check_keyword("function");
 
@@ -1210,7 +1005,7 @@ impl ParseStream {
       );
     };
     self.parse_redir(&mut compound_cmd.redirs, &mut node_tks)?;
-    body = Box::new(compound_cmd);
+    let body = Box::new(compound_cmd);
     // Replace placeholder with full-span label
     self.context.pop_back();
 
@@ -1296,10 +1091,10 @@ impl ParseStream {
     Ok(Some(node!(self, node_tks, NdRule::Test { cases })))
   }
   fn parse_subsh(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-    let mut body: Vec<Node> = vec![];
-    let mut body_tks: Vec<Tk> = vec![];
-    let mut redirs: Vec<Redir> = vec![];
+    let mut node_tks = vec![];
+    let mut body = vec![];
+    let mut body_tks = vec![];
+    let mut redirs = vec![];
 
     if *self.next_tk_class() != TkRule::SubshStart {
       return Ok(None);
@@ -1356,10 +1151,10 @@ impl ParseStream {
     )))
   }
   fn parse_brc_grp(&mut self, from_func_def: bool) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-    let mut body: Vec<Node> = vec![];
-    let mut body_tks: Vec<Tk> = vec![];
-    let mut redirs: Vec<Redir> = vec![];
+    let mut node_tks = vec![];
+    let mut body = vec![];
+    let mut body_tks = vec![];
+    let mut redirs = vec![];
 
     if *self.next_tk_class() != TkRule::BraceGrpStart {
       return Ok(None);
@@ -1423,52 +1218,40 @@ impl ParseStream {
     mut next: F,
     node_tks: &mut Vec<Tk>,
     context: LabelCtx,
-  ) -> ShResult<Redir> {
+  ) -> ShResult<RedirSpec> {
     let redir_bldr = RedirBldr::try_from(redir_tk.clone())?;
-    let next_tk = if redir_bldr.io_mode.is_none() {
-      next()
-    } else {
-      None
-    };
-    if redir_bldr.io_mode.is_some() {
-      return Ok(redir_bldr.build());
+    if redir_bldr.target.is_some() {
+      return redir_bldr.build();
     }
-    let Some(redir_type) = redir_bldr.class else {
-      return Err(parse_err_full(
-        "Malformed redirection operator",
-        &redir_tk.span,
-        context.clone(),
-      ));
+
+    let Some(class) = redir_bldr.class else {
+      return Err(sherr!(
+        ParseErr @ redir_tk.span.clone(),
+        "Invalid redirection operator"
+      ).with_context(context));
     };
-    match redir_type {
+    let Some(next_tk) = next().filter(|tk| tk.class != TkRule::EOI) else {
+      return Err(sherr!(
+        ParseErr @ redir_tk.span.clone(),
+        "Expected a filename after this redirection",
+      ).with_context(context));
+    };
+
+    let target = match class {
       RedirType::HereString => {
-        if next_tk.as_ref().is_none_or(|tk| tk.class == TkRule::EOI) {
-          return Err(sherr!(
-            ParseErr @ next_tk.unwrap_or(redir_tk.clone()).span.clone(),
-            "Expected a string after this redirection",
-          ));
-        }
-        let mut string = next_tk.unwrap().expand()?.get_words().join(" ");
-        string.push('\n');
-        let io_mode = IoMode::buffer(redir_bldr.tgt_fd.unwrap_or(0), string, redir_tk.flags)?;
-        Ok(redir_bldr.with_io_mode(io_mode).build())
+        let mut body = next_tk.clone().expand_no_split()?;
+        body.push('\n');
+        RedirTarget::HereDoc { body, flags: redir_tk.flags }
       }
       _ => {
-        if next_tk.as_ref().is_none_or(|tk| tk.class == TkRule::EOI) {
-          return Err(sherr!(
-            ParseErr @ redir_tk.span.clone(),
-            "Expected a filename after this redirection",
-          ));
-        }
-        let path_tk = next_tk.unwrap();
-        node_tks.push(path_tk.clone());
-        let pathbuf = PathBuf::from(path_tk.span.as_str());
-        let io_mode = IoMode::file(redir_bldr.tgt_fd.unwrap(), pathbuf, redir_type);
-        Ok(redir_bldr.with_io_mode(io_mode).build())
+        node_tks.push(next_tk.clone());
+        RedirTarget::Path(next_tk)
       }
-    }
+    };
+
+    redir_bldr.with_target(target).build()
   }
-  fn parse_redir(&mut self, redirs: &mut Vec<Redir>, node_tks: &mut Vec<Tk>) -> ShResult<()> {
+  fn parse_redir(&mut self, redirs: &mut Vec<RedirSpec>, node_tks: &mut Vec<Tk>) -> ShResult<()> {
     while self.check_redir() {
       let tk = self.next_tk().unwrap();
       node_tks.push(tk.clone());
@@ -1490,7 +1273,7 @@ impl ParseStream {
     let mut node_tks: Vec<Tk> = vec![];
 
     let mut case_blocks: Vec<CaseNode> = vec![];
-    let redirs: Vec<Redir> = vec![];
+    let redirs = vec![];
 
     if !self.check_keyword("case") || !self.next_tk_is_some() {
       return Ok(None);
@@ -1635,7 +1418,7 @@ impl ParseStream {
   }
   fn parse_arith(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks: Vec<Tk> = vec![];
-    let mut redirs: Vec<Redir> = vec![];
+    let mut redirs = vec![];
 
     if !self.check_flags(TkFlags::IS_ARITH) || !self.next_tk_is_some() {
       return Ok(None);
@@ -1689,7 +1472,7 @@ impl ParseStream {
     let mut node_tks: Vec<Tk> = vec![];
     let mut cond_nodes: Vec<CondNode> = vec![];
     let mut else_block: Option<Node> = None;
-    let mut redirs: Vec<Redir> = vec![];
+    let mut redirs = vec![];
 
     if !self.check_keyword("if") || !self.next_tk_is_some() {
       return Ok(None);
@@ -1784,7 +1567,7 @@ impl ParseStream {
     )))
   }
   fn parse_for_arith(&mut self, mut node_tks: Vec<Tk>) -> ShResult<Option<Node>> {
-    let mut redirs: Vec<Redir> = vec![];
+    let mut redirs = vec![];
 
     let arith_tk = self.next_tk().unwrap(); // we checked already
     node_tks.push(arith_tk.clone());
@@ -1828,7 +1611,7 @@ impl ParseStream {
   fn parse_for_arr(&mut self, mut node_tks: Vec<Tk>) -> ShResult<Option<Node>> {
     let mut vars: Vec<Tk> = vec![];
     let mut arr: Vec<Tk> = vec![];
-    let mut redirs: Vec<Redir> = vec![];
+    let mut redirs = vec![];
 
     while let Some(tk) = self.next_tk() {
       node_tks.push(tk.clone());
@@ -1900,7 +1683,6 @@ impl ParseStream {
   fn parse_loop(&mut self) -> ShResult<Option<Node>> {
     // Requires a single CondNode and a LoopKind
 
-    let cond_node: CondNode;
     let mut node_tks = vec![];
     let mut redirs = vec![];
 
@@ -1947,7 +1729,7 @@ impl ParseStream {
 
     self.assert_separator(&mut node_tks)?;
 
-    cond_node = CondNode {
+    let cond_node = CondNode {
       cond: Box::new(cond),
       body: Box::new(body),
     };
@@ -2298,41 +2080,6 @@ fn node_is_punctuated(tokens: &[Tk]) -> bool {
   tokens
     .last()
     .is_some_and(|tk| matches!(tk.class, TkRule::Sep))
-}
-
-pub fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<File> {
-  let path = path.as_ref();
-  let result = match class {
-    RedirType::Input => OpenOptions::new().read(true).open(Path::new(&path)),
-    RedirType::Output => {
-      if read_shopts(|o| o.set.noclobber) && path.is_file() {
-        return Err(sherr!(
-          ExecFail,
-          "shopt core.noclobber is set, refusing to overwrite existing file `{}`",
-          path.display()
-        ));
-      }
-      OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-    }
-    RedirType::ReadWrite => OpenOptions::new()
-      .write(true)
-      .read(true)
-      .create(true)
-      .truncate(false)
-      .open(path),
-    RedirType::OutputForce => OpenOptions::new()
-      .write(true)
-      .create(true)
-      .truncate(true)
-      .open(path),
-    RedirType::Append => OpenOptions::new().create(true).append(true).open(path),
-    _ => unimplemented!("Unimplemented redir type: {:?}", class),
-  };
-  Ok(result?)
 }
 
 #[allow(clippy::type_complexity)]
@@ -3334,7 +3081,7 @@ pub mod tests {
     let guard = TestGuard::new();
     test_input("cat <<-EOF\n\t\t\thello\n\tworld\nEOF".to_string()).unwrap();
     let out = guard.read_output();
-    assert_eq!(out, "\t\thello\nworld\n");
+    assert_eq!(out, "hello\nworld\n");
   }
 
   #[test]

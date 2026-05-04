@@ -20,7 +20,7 @@ pub use var::{expand_glob, expand_raw, expand_var};
 use crate::{match_loop, state};
 use crate::parse::lex::{Tk, TkFlags, TkRule};
 use crate::prelude::*;
-use crate::readline::markers;
+use crate::readline::markers::{self, strip_markers};
 use crate::state::read_shopts;
 use crate::util::error::{ShResult, ShResultExt};
 
@@ -45,6 +45,15 @@ impl Tk {
     let class = TkRule::Expanded { exp };
     Ok(Self { class, span, flags })
   }
+  pub fn expand_no_split(self) -> ShResult<String> {
+    let span = self.span.clone();
+    let exp = Expander::new(self)?
+      .no_glob()
+      .no_split()
+      .expand_no_split()
+      .promote_err(span.clone())?;
+    Ok(exp)
+  }
   /// Perform word splitting
   pub fn get_words(&self) -> Vec<String> {
     match &self.class {
@@ -61,6 +70,7 @@ impl Tk {
 pub struct Expander {
   flags: TkFlags,
   noglob: bool,
+  nosplit: bool,
   raw: String,
 }
 
@@ -79,6 +89,7 @@ impl Expander {
     Ok(Self {
       raw: unescaped,
       noglob: false,
+      nosplit: false,
       flags,
     })
   }
@@ -88,9 +99,15 @@ impl Expander {
       ..self
     }
   }
+  pub fn no_split(self) -> Self {
+    Self {
+      nosplit: true,
+      ..self
+    }
+  }
   pub fn expand(&mut self) -> ShResult<Vec<String>> {
     let res = self.expand_inner();
-    let words = if self.flags.contains(TkFlags::IS_HEREDOC) {
+    let words = if self.flags.contains(TkFlags::IS_HEREDOC) || self.nosplit {
       vec![res?]
     } else {
       self.split_words()
@@ -133,7 +150,7 @@ impl Expander {
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
-    Ok(escape::strip_escape_markers(&raw))
+    Ok(strip_markers(&raw))
   }
   pub fn expand_for_glob(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
@@ -260,6 +277,7 @@ mod tests {
     let mut exp = Expander {
       raw: "hello world\tfoo".to_string(),
       noglob: false,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.split_words();
@@ -276,6 +294,7 @@ mod tests {
     let mut exp = Expander {
       raw: "a:b:c".to_string(),
       noglob: false,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.split_words();
@@ -292,6 +311,7 @@ mod tests {
     let mut exp = Expander {
       raw: "hello world".to_string(),
       noglob: false,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.split_words();
@@ -306,6 +326,7 @@ mod tests {
     let mut exp = Expander {
       raw,
       noglob: false,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.split_words();
@@ -322,6 +343,7 @@ mod tests {
     let mut exp = Expander {
       raw,
       noglob: true,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.expand().unwrap();
@@ -336,6 +358,7 @@ mod tests {
     let mut exp = Expander {
       raw,
       noglob: true,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.expand().unwrap();
@@ -353,6 +376,7 @@ mod tests {
     let mut exp = Expander {
       raw,
       noglob: true,
+      nosplit: false,
       flags: TkFlags::empty(),
     };
     let words = exp.expand().unwrap();

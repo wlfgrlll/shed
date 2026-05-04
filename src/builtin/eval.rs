@@ -18,7 +18,7 @@ impl super::Builtin for Eval {
       .collect::<Vec<_>>()
       .join(&sep);
 
-    exec_nonint(command, None, Some("eval".into()))
+    exec_nonint(command, Some("eval".into()))
   }
 }
 

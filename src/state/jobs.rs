@@ -3,9 +3,9 @@ use super::*;
 use scopeguard::defer;
 
 use crate::{
-  jobs::{Job, JobCmdFlags, JobID, RegisteredFd, code_from_status, take_term, wait_fg},
+  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg},
   prelude::*,
-  procio::{IoMode, borrow_fd},
+  procio::borrow_fd,
   signal::{disable_reaping, enable_reaping},
   state,
   util::error::ShResult,
@@ -17,7 +17,6 @@ pub struct JobTab {
   order: Vec<usize>,
   new_updates: Vec<usize>,
   jobs: Vec<Option<Job>>,
-  fd_registry: Vec<RegisteredFd>,
 }
 
 impl JobTab {
@@ -61,21 +60,6 @@ impl JobTab {
       }
     }
     None
-  }
-  pub fn close_job_fds(&mut self, pid: Pid) {
-    self.fd_registry.retain(|fd| fd.owner_pid != pid)
-  }
-  pub fn registered_fds(&self) -> &[RegisteredFd] {
-    &self.fd_registry
-  }
-  pub fn register_fd(&mut self, owner_pid: Pid, fd: IoMode) {
-    let registered_fd = RegisteredFd { fd, owner_pid };
-    self.fd_registry.push(registered_fd)
-  }
-  /// Close all registered proc sub fds. Called after fork in exec_cmd
-  /// so the parent doesn't hold pipe ends that prevent EOF.
-  pub fn drain_registered_fds(&mut self) {
-    self.fd_registry.clear();
   }
   fn prune_jobs(&mut self) {
     while let Some(job) = self.jobs.last() {

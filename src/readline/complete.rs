@@ -868,7 +868,7 @@ impl BashCompSpec {
       as_var_val_display(&cword_str),
       as_var_val_display(&pword_str),
     );
-    exec_nonint(input, None, Some("comp_function".into()))?;
+    exec_nonint(input, Some("comp_function".into()))?;
 
     let comp_reply: Vec<Candidate> = read_vars(|v| v.get_arr_elems("COMPREPLY"))
       .into_iter()

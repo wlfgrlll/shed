@@ -8,7 +8,7 @@ use yansi::Color;
 
 use crate::{
   prelude::*,
-  procio::{IoMode, borrow_fd},
+  procio::borrow_fd,
   sherr,
   signal::{disable_reaping, enable_reaping},
   state::{
@@ -155,12 +155,6 @@ impl ChildProc {
   pub fn exited(&self) -> bool {
     matches!(self.stat, WtStat::Exited(..))
   }
-}
-
-#[derive(Clone, Debug)]
-pub struct RegisteredFd {
-  pub fd: IoMode,
-  pub owner_pid: Pid,
 }
 
 #[derive(Debug)]
