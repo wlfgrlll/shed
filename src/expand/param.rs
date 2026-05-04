@@ -2,9 +2,10 @@ use std::str::FromStr;
 
 use glob::Pattern;
 
-use crate::expand::escape::{strip_escape_markers, unescape_str};
+use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw;
+use crate::parse::lex::TkFlags;
 use crate::sherr;
 use crate::state::{VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars};
 use crate::util::error::{ShErr, ShResult};
@@ -342,9 +343,9 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::RemShortestPrefix(prefix) => {
         let value = read_vars(get);
-        let unescaped = unescape_str(&prefix);
-        let expanded =
-          strip_escape_markers(&expand_raw(&mut unescaped.chars().peekable()).unwrap_or(prefix));
+        let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
         for i in 0..=value.len() {
           let sliced = &value[..i];
@@ -358,9 +359,9 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::RemLongestPrefix(prefix) => {
         let value = read_vars(get);
-        let unescaped = unescape_str(&prefix);
-        let expanded =
-          strip_escape_markers(&expand_raw(&mut unescaped.chars().peekable()).unwrap_or(prefix));
+        let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
@@ -374,9 +375,9 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::RemShortestSuffix(suffix) => {
         let value = read_vars(get);
-        let unescaped = unescape_str(&suffix);
-        let expanded =
-          strip_escape_markers(&expand_raw(&mut unescaped.chars().peekable()).unwrap_or(suffix));
+        let expanded = Expander::from_raw(&suffix, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
@@ -390,10 +391,9 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::RemLongestSuffix(suffix) => {
         let value = read_vars(get);
-        let unescaped = unescape_str(&suffix);
-        let expanded_suffix = strip_escape_markers(
-          &expand_raw(&mut unescaped.chars().peekable()).unwrap_or(suffix.clone()),
-        );
+        let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
         let pattern = Pattern::new(&expanded_suffix).unwrap();
         for i in 0..=value.len() {
           let sliced = &value[i..];
@@ -407,12 +407,12 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::ReplaceFirstMatch(search, replace) => {
         let value = read_vars(get);
-        let search = unescape_str(&search);
-        let replace = unescape_str(&replace);
-        let expanded_search =
-          strip_escape_markers(&expand_raw(&mut search.chars().peekable()).unwrap_or(search));
-        let expanded_replace =
-          strip_escape_markers(&expand_raw(&mut replace.chars().peekable()).unwrap_or(replace));
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+          .no_glob()
+          .expand_no_split()?;
         let regex = glob_to_regex(&expanded_search, false); // unanchored pattern
 
         if let Some(mat) = regex.find(&value) {
@@ -428,12 +428,12 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::ReplaceAllMatches(search, replace) => {
         let value = read_vars(get);
-        let search = unescape_str(&search);
-        let replace = unescape_str(&replace);
-        let expanded_search =
-          strip_escape_markers(&expand_raw(&mut search.chars().peekable()).unwrap_or(search));
-        let expanded_replace =
-          strip_escape_markers(&expand_raw(&mut replace.chars().peekable()).unwrap_or(replace));
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+          .no_glob()
+          .expand_no_split()?;
         let regex = glob_to_regex(&expanded_search, false);
         let mut result = String::new();
         let mut last_match_end = 0;
@@ -451,12 +451,12 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::ReplacePrefix(search, replace) => {
         let value = read_vars(get);
-        let search = unescape_str(&search);
-        let replace = unescape_str(&replace);
-        let expanded_search =
-          strip_escape_markers(&expand_raw(&mut search.chars().peekable()).unwrap_or(search));
-        let expanded_replace =
-          strip_escape_markers(&expand_raw(&mut replace.chars().peekable()).unwrap_or(replace));
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+          .no_glob()
+          .expand_no_split()?;
         let pattern = Pattern::new(&expanded_search).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
@@ -470,12 +470,12 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::ReplaceSuffix(search, replace) => {
         let value = read_vars(get);
-        let search = unescape_str(&search);
-        let replace = unescape_str(&replace);
-        let expanded_search =
-          strip_escape_markers(&expand_raw(&mut search.chars().peekable()).unwrap_or(search));
-        let expanded_replace =
-          strip_escape_markers(&expand_raw(&mut replace.chars().peekable()).unwrap_or(replace));
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+          .no_glob()
+          .expand_for_glob()?;
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+          .no_glob()
+          .expand_no_split()?;
         let pattern = Pattern::new(&expanded_search).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];

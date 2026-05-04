@@ -10,7 +10,7 @@ use crate::{
   prelude::*,
   sherr,
   state::{self, with_term},
-  util::error::{ShErr, ShResult},
+  util::error::{ShErr, ShErrKind, ShResult},
 };
 
 // Credit to fish-shell for many of the implementation ideas present in this
@@ -512,6 +512,9 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
         close(fd).ok(); // close child's copy of stdin write end
       }
       if let Err(e) = exec_nonint(cmd.to_string(), Some(io_stack), Some("command_sub".into())) {
+        if let ShErrKind::CleanExit(code) = e.kind() {
+          std::process::exit(*code);
+        }
         e.print_error();
         unsafe { libc::_exit(1) };
       }

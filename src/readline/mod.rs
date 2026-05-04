@@ -1,9 +1,6 @@
-use crate::parse::lex::LexStream;
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
 use crate::readline::linebuf::{Pos, ordered};
-use crate::util::strops::QuoteState;
 use crate::{flush_term, motion, status_msg, verb, write_term};
-use ariadne::Span;
 use editcmd::{CmdFlags, EditCmd, Motion, MotionCmd, RegisterName, Verb, VerbCmd};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
 use history::History;
@@ -12,7 +9,6 @@ use keys::{KeyCode, KeyEvent, ModKeys};
 use linebuf::LineBuf;
 use nix::poll::PollTimeout;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use term::Layout;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -26,13 +22,12 @@ use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
 use crate::readline::history::HistEntry;
 use crate::readline::term::{calc_str_width, clear_rows, move_cursor_to_end, redraw};
 use crate::state::{
-  self, AutoCmdKind, ShellParam, Var, VarFlags, VarKind, read_logic, read_shopts, with_term,
+  self, AutoCmdKind, Var, VarFlags, VarKind, read_logic, read_shopts, with_term,
   with_vars, write_meta, write_vars,
 };
 use crate::util::AutoCmdVecUtils;
 use crate::{
-  key, match_loop,
-  parse::lex::{self, LexFlags, Tk, TkFlags, TkRule},
+  key,
   readline::complete::{CompResponse, Completer},
   util::error::ShResult,
 };

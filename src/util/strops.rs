@@ -1,7 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
 use crate::{
-  expand::escape::{read_hex, read_octal},
+  expand::escape::{read_hex, read_octal, read_stty_escape},
   match_loop,
   parse::lex::{Span, Tk},
   sherr,
@@ -339,12 +339,16 @@ pub fn expand_ansi_c(s: &str) -> String {
         result.push('\x08');
         chars.next();
       }
-      'e' => {
+      'c' => {
+        chars.next();
+        read_stty_escape(&mut chars, &mut result);
+      }
+      'e' | 'E' => {
         result.push('\x1B');
         chars.next();
       }
-      'E' => {
-        result.push('\x1B');
+      'f' => {
+        result.push('\x0C');
         chars.next();
       }
       'v' => {
@@ -355,9 +359,14 @@ pub fn expand_ansi_c(s: &str) -> String {
         chars.next();
         read_hex(&mut chars, &mut result);
       }
-      '0' => {
+      'o' => {
         chars.next();
-        read_octal(&mut chars, &mut result);
+        read_octal(&mut chars, &mut result, None);
+      }
+      _ if next.is_ascii_digit() => read_octal(&mut chars, &mut result, None),
+      '\'' => {
+        result.push('\'');
+        chars.next();
       }
       '\\' => {
         result.push('\\');

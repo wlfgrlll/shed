@@ -382,8 +382,13 @@ bitflags! {
 pub fn clean_input(input: &str) -> String {
   let mut chars = input.chars().peekable();
   let mut output = String::new();
+  let mut in_squote = false;
   match_loop!(chars.next() => ch, {
-    '\\' if chars.peek() == Some(&'\n') => {
+    '\'' => {
+      in_squote = !in_squote;
+      output.push(ch);
+    }
+    '\\' if !in_squote && chars.peek() == Some(&'\n') => {
       chars.next();
       while chars.peek().is_some_and(|c| c.is_whitespace() && *c != '\n') {
         chars.next();

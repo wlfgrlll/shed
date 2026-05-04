@@ -188,13 +188,6 @@ fn read_subsh(chars: &mut Peekable<Chars>, result: &mut String) {
 fn read_sng_quote(chars: &mut Peekable<Chars>, result: &mut String) {
   result.push(markers::SNG_QUOTE);
   match_loop!(chars.next() => q_ch, {
-    '\\' => match chars.peek() {
-      Some(&'\\') | Some(&'\'') => {
-        let ch = chars.next().unwrap();
-        result.push(ch);
-      }
-      _ => result.push(q_ch),
-    },
     '\'' => {
       result.push(markers::SNG_QUOTE);
       break;
@@ -249,23 +242,77 @@ fn read_dollar_quote(chars: &mut Peekable<Chars>, result: &mut String) {
         'n' => result.push('\n'),
         't' => result.push('\t'),
         'r' => result.push('\r'),
+        '"' => result.push('"'),
         '\'' => result.push('\''),
         '\\' => result.push('\\'),
         'a' => result.push('\x07'),
         'b' => result.push('\x08'),
+        'c' => read_stty_escape(chars, result),
         'e' | 'E' => result.push('\x1b'),
+        'f' => result.push('\x0c'),
         'v' => result.push('\x0b'),
         'x' => read_hex(chars, result),
-        'o' => read_octal(chars, result),
-        _ => result.push(esc),
+        _ if esc.is_ascii_digit() => read_octal(chars, result, Some(esc)),
+        'o' => read_octal(chars, result, None),
+        _ => {
+          result.push('\\');
+          result.push(esc);
+        }
       }
     }
     _ => result.push(q_ch),
   });
 }
 
-pub fn read_octal(chars: &mut Peekable<Chars>, result: &mut String) {
+pub fn read_stty_escape(chars: &mut Peekable<Chars>, result: &mut String) {
+  let mut peeker = chars.clone();
+
+  let Some(first) = peeker.next() else {
+    result.push('\\');
+    result.push('c');
+    return;
+  };
+
+  let (target, consume_count) = if first == '\\' {
+    let Some(second) = peeker.next() else {
+      result.push('\\');
+      result.push('c');
+      return;
+    };
+    if second != '\\' {
+      result.push('\\');
+      result.push('c');
+      return;
+    }
+    ('\\', 2)
+  } else {
+    (first, 1)
+  };
+
+  let upper = target.to_ascii_uppercase();
+  if !matches!(upper, '@'..='_' | '?') {
+    result.push('\\');
+    result.push('c');
+    return;
+  }
+
+  for _ in 0..consume_count {
+    chars.next();
+  }
+
+  // fun fact: all of the ascii control chars are exactly
+  // the printable ascii chars with the high bit cleared.
+  // so if we xor this char by 0x40, we automagically get our
+  // control character
+  let code = (upper as u8) ^ 0x40;
+  result.push(code as char);
+}
+
+pub fn read_octal(chars: &mut Peekable<Chars>, result: &mut String, first: Option<char>) {
   let mut oct = String::new();
+  if let Some(first) = first {
+    oct.push(first);
+  }
   for _ in 0..3 {
     if let Some(o) = chars.peek() {
       if o.is_digit(8) {
@@ -569,18 +616,17 @@ pub fn as_var_val_display(s: &str) -> String {
     }
     format!("$'{result}'")
   } else if has_special {
-    // Single quotes: only ' needs escaping, and \ only needs escaping when
-    // it precedes ' (to avoid \' being misread as an escaped quote)
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-      match ch {
-        '\\' if chars.peek() == Some(&'\'') => result.push_str("\\\\"),
-        '\'' => result.push_str("\\'"),
-        c => result.push(c),
+    let mut result = String::with_capacity(s.len() + 2);
+    result.push('\'');
+    for ch in s.chars() {
+      if ch == '\'' {
+        result.push_str("'\\''");
+      } else {
+        result.push(ch);
       }
     }
-    format!("'{result}'")
+    result.push('\'');
+    result
   } else {
     s.to_string()
   }
@@ -688,14 +734,13 @@ mod tests {
   }
 
   #[test]
-  fn display_backslash_before_quote_escaped() {
-    // backslash before ' must be escaped to avoid \' being read as escaped quote
-    assert_eq!(as_var_val_display("bar\\' biz"), "'bar\\\\\\' biz'");
+  fn display_backslash_passthrough_inside_squotes() {
+    assert_eq!(as_var_val_display("bar\\' biz"), "'bar\\'\\'' biz'");
   }
 
   #[test]
-  fn display_single_quote_escaped() {
-    assert_eq!(as_var_val_display("it's"), "'it\\'s'");
+  fn display_single_quote_uses_posix_idiom() {
+    assert_eq!(as_var_val_display("it's"), "'it'\\''s'");
   }
 
   #[test]

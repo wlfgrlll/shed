@@ -22,8 +22,7 @@ use crate::{
   shopt::xtrace_print,
   signal::{check_signals, signals_pending},
   state::{
-    self, ShFunc, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term,
-    write_jobs, write_logic, write_meta, write_vars,
+    self, ShFunc, ShellParam, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_jobs, write_logic, write_meta, write_vars
   },
   util::{
     RedirVecUtils,
@@ -129,15 +128,32 @@ impl ExecArgs {
 /// Execute a `-c` command string, optimizing single simple commands to exec
 /// directly without forking. This avoids process group issues where grandchild
 /// processes (e.g. nvim spawning opencode) lose their controlling terminal.
-pub fn exec_dash_c(input: String) -> ShResult<()> {
+pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
   let _guard = with_term(|t| t.interactive_guard(false));
+  let name = args.first().cloned().unwrap_or("<shed -c>".into());
+
+  write_vars(|v| {
+    v.set_param(ShellParam::ShellName, &name); // $0
+    let scope = v.cur_scope_mut();
+    scope.sh_argv_mut().clear();
+    // bpush_arg (vs raw push_back) runs update_arg_params, keeping
+    // $#, $@, $* in sync with sh_argv.
+    scope.bpush_arg(name.clone());
+    for (i, arg) in args.into_iter().enumerate() {
+      if i == 0 {
+        continue;
+      }
+      scope.bpush_arg(arg);
+    }
+  });
 
   write_meta(|m| m.rehash());
   let expanded = expand_aliases(input);
-  let source_name: Rc<str> = "<shed -c>".into();
+  let source_name: Rc<str> = name.into();
   let mut parser = ParsedSrc::new(expanded.into())
     .with_lex_flags(super::lex::LexFlags::empty())
     .with_name(source_name.clone());
+
   if let Err(errors) = parser.parse_src() {
     for error in errors {
       error.print_error();
@@ -625,6 +641,9 @@ impl Dispatcher {
     self
       .run_fork(&name, report_time, |s| {
         if let Err(e) = s.dispatch_node(*body.clone()) {
+          if let ShErrKind::CleanExit(code) = e.kind() {
+            std::process::exit(*code);
+          }
           e.print_error();
         }
       })?;

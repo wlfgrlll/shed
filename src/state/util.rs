@@ -280,8 +280,8 @@ pub fn get_separator() -> String {
     .unwrap_or(String::from(" "))
     .graphemes(true)
     .next()
-    .unwrap()
-    .to_string()
+    .map(|ch| ch.to_string())
+    .unwrap_or_default()
 }
 
 /// Get the entire IFS variable

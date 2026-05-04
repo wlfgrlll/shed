@@ -17,7 +17,7 @@ pub use subshell::{expand_cmd_sub, expand_proc_sub};
 pub use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
 pub use var::{expand_glob, expand_raw, expand_var};
 
-use crate::match_loop;
+use crate::{match_loop, state};
 use crate::parse::lex::{Tk, TkFlags, TkRule};
 use crate::prelude::*;
 use crate::readline::markers;
@@ -90,6 +90,28 @@ impl Expander {
     }
   }
   pub fn expand(&mut self) -> ShResult<Vec<String>> {
+    let res = self.expand_inner();
+    if self.flags.contains(TkFlags::IS_HEREDOC) {
+      Ok(vec![res?])
+    } else {
+      Ok(self.split_words())
+    }
+  }
+  pub fn expand_no_split(&mut self) -> ShResult<String> {
+    let raw = self.expand_inner()?;
+    // Strip internal ESCAPE markers — split_words would consume them when
+    // called via expand(), but we're producing a clean String here.
+    Ok(escape::strip_escape_markers(&raw))
+  }
+  /// Like `expand_no_split`, but converts internal markers into glob-syntax
+  /// escapes so the result can be fed directly to `glob::Pattern`. Use this
+  /// for the pattern halves of `${var%pat}`, `${var#pat}`, `${var/pat/...}`,
+  /// etc., quoted/escaped metacharacters become literal in glob.
+  pub fn expand_for_glob(&mut self) -> ShResult<String> {
+    let raw = self.expand_inner()?;
+    Ok(escape::markers_to_glob_escapes(&raw))
+  }
+  pub fn expand_inner(&mut self) -> ShResult<String> {
     let mut chars = self.raw.chars().peekable();
     self.raw = expand_raw(&mut chars)?;
 
@@ -161,6 +183,9 @@ impl Expander {
     }
 
     words.retain(|w| w != &markers::NULL_EXPAND.to_string());
+    for w in words.iter_mut() {
+      *w = w.replace(markers::NULL_EXPAND, "");
+    }
     words
   }
 }
@@ -171,7 +196,7 @@ mod tests {
   use std::collections::VecDeque;
 
   use crate::state::{ArrIndex, VarFlags, VarKind, read_vars, write_vars};
-  use crate::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Word Splitting (TestGuard) =====================
 

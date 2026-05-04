@@ -64,15 +64,14 @@ bitflags! {
     const QUOTE             = 1 << 5;  // "..."
     const ESCAPE            = 1 << 6;  // \x
     const GLOB              = 1 << 7;  // *, ?, [...]
-    const HIST_EXP          = 1 << 8; // !!
-    const TILDE             = 1 << 9; // ~user
-    const ESCAPE_QUOTE_ONLY = 1 << 10; // escapes inside single quotes
+    const HIST_EXP          = 1 << 8;  // !!
+    const TILDE             = 1 << 9;  // ~user
   }
 }
 
 impl ScanCtx {
   // useful constants
-  pub const TOP_LEVEL: Self = Self::ESCAPE_QUOTE_ONLY.complement(); // everything but ESCAPE_QUOTE_ONLY
+  pub const TOP_LEVEL: Self = Self::all();
 
   pub const DOUBLE_QUOTE: Self = Self::VAR_SUB
     .union(Self::CMD_SUB)
@@ -83,7 +82,7 @@ impl ScanCtx {
 
   pub const DOLLAR_QUOTE: Self = Self::ESCAPE;
 
-  pub const SINGLE_QUOTE: Self = Self::ESCAPE_QUOTE_ONLY;
+  pub const SINGLE_QUOTE: Self = Self::empty();
 
   pub const ARITH: Self = Self::VAR_SUB
     .union(Self::CMD_SUB)
@@ -695,20 +694,15 @@ fn scan_subspans(
     }
 
     match ch {
-      '\\' => {
-        let escapes_any = scan_ctx.contains(S::ESCAPE);
-        let escapes_quote =
-          scan_ctx.contains(S::ESCAPE_QUOTE_ONLY) && chars.peek().is_some_and(|(_, c)| *c == '\'');
-        if escapes_any || escapes_quote {
-          let esc_start = i + span.range().start;
-          if let Some((_, esc_ch)) = consume(chars, consumed) {
-            let esc_end = esc_start + 1 + esc_ch.len_utf8();
-            sub_tokens.push(CtxTk {
-              span: Span::new(esc_start..esc_end, span.get_source()),
-              class: CtxTkRule::Escape,
-              sub_tokens: vec![],
-            });
-          }
+      '\\' if scan_ctx.contains(S::ESCAPE) => {
+        let esc_start = i + span.range().start;
+        if let Some((_, esc_ch)) = consume(chars, consumed) {
+          let esc_end = esc_start + 1 + esc_ch.len_utf8();
+          sub_tokens.push(CtxTk {
+            span: Span::new(esc_start..esc_end, span.get_source()),
+            class: CtxTkRule::Escape,
+            sub_tokens: vec![],
+          });
         }
       }
       '('

@@ -29,27 +29,32 @@ pub fn expand_raw_inner(
         username.push(ch);
       }
 
-      let home = if username.is_empty() {
+      let (home, expanded) = if username.is_empty() {
         // standard '~' expansion
-        env::var("HOME").unwrap_or_default()
+        (env::var("HOME").unwrap_or_default(), true)
       } else if let Ok(result) = User::from_name(&username)
         && let Some(user) = result
       {
         // username expansion like '~user'
-        user.dir.to_string_lossy().to_string()
+        (user.dir.to_string_lossy().to_string(), true)
       } else if let Ok(id) = username.parse::<u32>()
         && let Ok(result) = User::from_uid(Uid::from_raw(id))
           && let Some(user) = result
       {
         // uid expansion like '~1000'
         // shed only feature btw B)
-        user.dir.to_string_lossy().to_string()
+        (user.dir.to_string_lossy().to_string(), true)
       } else {
-        // no match, use literal
-        format!("~{username}")
+        (format!("~{username}"), false)
       };
 
-      result.push_str(&home);
+      if expanded {
+        result.push(markers::DUB_QUOTE);
+        result.push_str(&home);
+        result.push(markers::DUB_QUOTE);
+      } else {
+        result.push_str(&home);
+      }
     }
     markers::PROC_SUB_OUT if expand_cmd_subs => {
       let mut inner = String::new();
@@ -120,6 +125,29 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
       let val = perform_param_expansion(&var_name)?;
       return Ok(val);
     }
+    markers::ESCAPE if brace_depth > 0 => {
+      chars.next();
+      var_name.push(markers::ESCAPE);
+      if let Some(next_ch) = chars.next() {
+        var_name.push(next_ch);
+      }
+    }
+    markers::DUB_QUOTE | markers::SNG_QUOTE if brace_depth > 0 => {
+      let opener = ch;
+      chars.next();
+      var_name.push(opener);
+      while let Some(&next_ch) = chars.peek() {
+        chars.next();
+        var_name.push(next_ch);
+        if next_ch == opener {
+          break;
+        }
+        if next_ch == markers::ESCAPE
+        && let Some(esc_ch) = chars.next() {
+          var_name.push(esc_ch);
+        }
+      }
+    }
     ch if brace_depth > 0 => {
       chars.next(); // safe to consume
       if ch == '{' {
@@ -130,9 +158,9 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
       }
       var_name.push(ch);
     }
-    ch if var_name.is_empty() && PARAMETERS.contains(&ch) => {
+    ch if var_name.is_empty() && (PARAMETERS.contains(&ch) || ch.is_ascii_digit()) => {
       chars.next();
-      let parameter = format!("{ch}");
+      let parameter = ch.to_string();
       let val = read_vars(|v| v.get_var(&parameter));
 
       if (ch == '@' || ch == '*') && val.is_empty() {
@@ -141,7 +169,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
 
       return Ok(val);
     }
-    ch if is_hard_sep(ch) || !(ch.is_alphanumeric() || ch == '_' || ch == '-') => {
+    ch if is_hard_sep(ch) || !(ch.is_alphanumeric() || ch == '_') => {
       let val = read_vars(|v| v.try_get_var(&var_name));
       if val.is_none() && read_shopts(|o| o.set.nounset) {
         return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
@@ -211,7 +239,7 @@ mod tests {
   use super::*;
   use crate::expand::escape::unescape_str;
   use crate::state::{VarFlags, VarKind, write_vars};
-  use crate::testutil::TestGuard;
+  use crate::tests::testutil::TestGuard;
 
   // ===================== Variable Expansion (TestGuard) =====================
 
@@ -264,7 +292,10 @@ mod tests {
 
     let raw = unescape_str("~/foo");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
-    assert_eq!(result, format!("{}/foo", home));
+    assert_eq!(
+      result,
+      format!("{}{}{}/foo", markers::DUB_QUOTE, home, markers::DUB_QUOTE)
+    );
   }
 
   #[test]
@@ -274,7 +305,10 @@ mod tests {
 
     let raw = unescape_str("~");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
-    assert_eq!(result, home);
+    assert_eq!(
+      result,
+      format!("{}{}{}", markers::DUB_QUOTE, home, markers::DUB_QUOTE)
+    );
   }
 
   // ===================== escape_glob =====================

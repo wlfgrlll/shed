@@ -5,7 +5,7 @@ use crate::prelude::*;
 use crate::procio::{IoBuf, IoFrame, IoMode, IoStack};
 use crate::sherr;
 use crate::state::{self, write_jobs};
-use crate::util::error::ShResult;
+use crate::util::error::{ShErrKind, ShResult};
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
   // FIXME: Still a lot of issues here
@@ -60,13 +60,15 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
   let (rpipe, wpipe) = IoMode::get_pipes();
   let cmd_sub_redir = Redir::new(wpipe, RedirType::Output);
   let cmd_sub_io_frame = IoFrame::from_redir(cmd_sub_redir);
-  let mut io_stack = IoStack::new();
   let mut io_buf = IoBuf::new(rpipe);
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      io_stack.push_frame(cmd_sub_io_frame);
-      if let Err(e) = exec_nonint(raw.to_string(), Some(io_stack), Some("command_sub".into())) {
+      let _guard = cmd_sub_io_frame.redirect().ok();
+      if let Err(e) = exec_nonint(raw.to_string(), None, Some("command_sub".into())) {
+        if let ShErrKind::CleanExit(code) = e.kind() {
+          std::process::exit(*code);
+        }
         e.print_error();
         unsafe { libc::_exit(1) };
       }
@@ -76,8 +78,8 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
     ForkResult::Parent { child } => {
       std::mem::drop(cmd_sub_io_frame); // Closes the write pipe
 
-      // Read output first (before waiting) to avoid deadlock if child fills pipe
-      // buffer
+      // Read output first (before waiting) to avoid deadlock if
+      // child fills pipe buffer
       loop {
         match io_buf.fill_buffer() {
           Ok(()) => break,

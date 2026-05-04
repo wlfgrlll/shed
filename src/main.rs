@@ -177,7 +177,7 @@ fn main() -> ExitCode {
   state::init_db_conn();
 
   if let Err(e) = if let Some(cmd) = args.command {
-    exec_dash_c(cmd)
+    exec_dash_c(cmd, args.script_args)
   } else if args.stdin || !isatty(STDIN_FILENO).unwrap_or(false) {
     read_commands(args.script_args)
   } else if !args.script_args.is_empty() {
@@ -232,9 +232,15 @@ fn read_commands(args: Vec<String>) -> ShResult<()> {
   }
 
   let commands = String::from_utf8_lossy(&input).to_string();
-  for arg in args {
-    write_vars(|v| v.cur_scope_mut().bpush_arg(arg))
-  }
+  write_vars(|v| {
+    let scope = v.cur_scope_mut();
+    let zero = scope.sh_argv().front().cloned().unwrap_or_default();
+    scope.sh_argv_mut().clear();
+    scope.bpush_arg(zero);
+    for arg in args {
+      scope.bpush_arg(arg);
+    }
+  });
 
   exec_nonint(commands, None, None)
 }
@@ -253,13 +259,16 @@ fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
     return Err(sherr!(CleanExit(1), "failed to read input file",));
   };
 
+  let path_str = path.to_string_lossy().to_string();
   write_vars(|v| {
-    v.cur_scope_mut()
-      .bpush_arg(path.to_string_lossy().to_string())
+    v.set_param(state::ShellParam::ShellName, &path_str); // $0
+    let scope = v.cur_scope_mut();
+    scope.sh_argv_mut().clear();
+    scope.bpush_arg(path_str.clone());
+    for arg in args {
+      scope.bpush_arg(arg);
+    }
   });
-  for arg in args {
-    write_vars(|v| v.cur_scope_mut().bpush_arg(arg))
-  }
 
   exec_nonint(input, None, Some(path_raw.into()))
 }
