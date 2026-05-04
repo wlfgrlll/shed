@@ -23,6 +23,11 @@ pub fn expand_case_pattern(raw: &str) -> ShResult<String> {
     }
     markers::ESCAPE => {
       if let Some(next_ch) = chars.next() {
+        // Backslash-escaped glob meta-chars must remain literal in the resulting
+        // pattern, otherwise glob_to_regex would treat them as wildcards.
+        if matches!(next_ch, '*' | '?' | '[' | ']') {
+          result.push('\\');
+        }
         result.push(next_ch);
       }
     }

@@ -145,15 +145,24 @@ impl Expander {
     let mut cur_word = String::new();
     let mut was_quoted = false;
     let ifs = state::util::get_separators();
+    // Delimiter-run tracking: whitespace and non-whitespace IFS chars combine
+    // into one run that delimits a single field. A second non-WS IFS in the
+    // same run emits an additional empty field (per POSIX step 5).
+    let mut in_delim_run = false;
+    let mut delim_has_non_ws = false;
 
     'outer: while let Some(ch) = chars.next() {
       match ch {
         markers::ESCAPE => {
+          in_delim_run = false;
+          delim_has_non_ws = false;
           if let Some(next_ch) = chars.next() {
             cur_word.push(next_ch);
           }
         }
         markers::DUB_QUOTE | markers::SNG_QUOTE | markers::SUBSH => {
+          in_delim_run = false;
+          delim_has_non_ws = false;
           match_loop!(chars.next() => q_ch, {
             markers::ARG_SEP if ch == markers::DUB_QUOTE => {
               words.push(mem::take(&mut cur_word));
@@ -166,23 +175,48 @@ impl Expander {
           });
         }
         _ if ifs.contains(ch) || ch == markers::ARG_SEP => {
-          if cur_word.is_empty() && !was_quoted {
-            cur_word.clear();
-          } else {
-            words.push(mem::take(&mut cur_word));
+          let is_ws = matches!(ch, ' ' | '\t' | '\n') || ch == markers::ARG_SEP;
+          if !in_delim_run {
+            // Just exited a field (or saw leading IFS). Decide whether to emit.
+            if is_ws {
+              if !cur_word.is_empty() || was_quoted {
+                words.push(mem::take(&mut cur_word));
+                was_quoted = false;
+              }
+            } else {
+              // Non-WS IFS always emits (preserves leading/middle empty fields).
+              words.push(mem::take(&mut cur_word));
+              was_quoted = false;
+              delim_has_non_ws = true;
+            }
+            in_delim_run = true;
+          } else if !is_ws {
+            // Already in a delimiter run and we hit another non-WS IFS char.
+            if delim_has_non_ws {
+              // Second non-WS in this run -> emit an empty field.
+              words.push(String::new());
+            } else {
+              // First non-WS adjacent to WS in the run -> just absorb into the run.
+              delim_has_non_ws = true;
+            }
           }
-          was_quoted = false;
+          // else: WS within an existing delim run -> absorb
         }
-        _ => cur_word.push(ch),
+        _ => {
+          in_delim_run = false;
+          delim_has_non_ws = false;
+          cur_word.push(ch);
+        }
       }
     }
     if words.is_empty() && (cur_word.is_empty() && !was_quoted) {
       return words;
-    } else {
+    } else if !cur_word.is_empty() || was_quoted {
       words.push(cur_word);
     }
 
-    words.retain(|w| w != &markers::NULL_EXPAND.to_string());
+    let null_exp = markers::NULL_EXPAND.to_string();
+    words.retain(|w| w != &null_exp);
     for w in words.iter_mut() {
       *w = w.replace(markers::NULL_EXPAND, "");
     }

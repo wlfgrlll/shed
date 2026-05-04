@@ -3,6 +3,7 @@ pub mod posix;
 
 use testutil::{TestGuard, test_input};
 // General miscellaneous test module for stuff that doesn't quite fit in elsewhere
+// Stuff written in here is usually "I found a random bug and wrote a test case that asserts its non-existence"
 
 // ===================== Dollar quoting =====================
 
@@ -20,14 +21,6 @@ fn dollar_quote_standalone() {
   test_input("echo $'hello\\nworld'").unwrap();
   let out = guard.read_output();
   assert_eq!(out, "hello\nworld\n");
-}
-
-#[test]
-fn dollar_quote_in_double_quotes() {
-  let guard = TestGuard::new();
-  test_input("echo \"$'foo\\t'\"").unwrap();
-  let out = guard.read_output();
-  assert_eq!(out, "foo\t\n");
 }
 
 #[test]
@@ -131,14 +124,6 @@ fn cmd_sub_in_double_quotes() {
 // ===================== Quoting =====================
 
 #[test]
-fn single_quote_preserves_literal() {
-  let guard = TestGuard::new();
-  test_input("echo 'hello $USER \\n'").unwrap();
-  let out = guard.read_output();
-  assert_eq!(out, "hello $USER \\n\n");
-}
-
-#[test]
 fn double_quote_expands_vars() {
   let guard = TestGuard::new();
   test_input("FOO=bar; echo \"hello $FOO\"").unwrap();
@@ -160,14 +145,6 @@ fn double_quote_backslash_preserves_non_special() {
   test_input("echo \"a\\zb\"").unwrap();
   let out = guard.read_output();
   assert_eq!(out, "a\\zb\n");
-}
-
-#[test]
-fn double_quote_dollar_quote_inside() {
-  let guard = TestGuard::new();
-  test_input("echo \"prefix$'\\t'suffix\"").unwrap();
-  let out = guard.read_output();
-  assert_eq!(out, "prefix\tsuffix\n");
 }
 
 #[test]

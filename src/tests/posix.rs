@@ -3,6 +3,13 @@
  *
  * This module goes through the Shell Command Language chapter, one section at a time
  * and provides tests that assert the specified behaviors.
+ *
+ * Note on compliance: shed's posix compliance is best effort, not a hard requirement.
+ * There are areas where shed does not conform with posix, such as the lexing/parsing strategy.
+ * These known deviations are noted where applicable.
+ *
+ * Throughout this module, C-style comments /* like this */ are used to quote the specification.
+ * Regular comments like // are used for my own notes and commentary.
  */
 
 #[macro_export]
@@ -329,7 +336,7 @@ mod quoting_2_2 {
   // That is, these characters are sometimes special depending on conditions described elsewhere.
   // * ? [ ] ^ - ! # ~ = % { , }
 
-  mod section_1_escape {
+  mod _1_escape {
     /*
      * §2.2.1 Escape Character (Backslash)
      *
@@ -358,7 +365,7 @@ mod quoting_2_2 {
     }
   }
 
-  mod section_2_single_quotes {
+  mod _2_single_quotes {
     /*
      * §2.2.2 Single Quotes
      * Enclosing characters in single-quotes ('') shall preserve the literal value of each character
@@ -386,7 +393,7 @@ mod quoting_2_2 {
     }
   }
 
-  mod section_3_double_quotes {
+  mod _3_double_quotes {
     /*
      * §2.2.3 Double Quotes
      * Enclosing characters in double-quotes ("") shall preserve the literal value of all characters within the double-quotes,
@@ -449,9 +456,16 @@ mod quoting_2_2 {
       dquote_hash        : r#"echo "a#b""#   => "a#b\n";
       dquote_lbrace      : r#"echo "a{b""#   => "a{{b\n";
     }
+
+    test_input! {
+      dquote_dollar_squote_literal    : r#"echo "$'foo'""#  => "$'foo'\n";
+      dquote_dollar_squote_escape_seq : r#"echo "$'a\nb'""# => "$'a\\nb'\n";
+      dquote_dollar_squote_in_word    : r#"echo "x$'y'z""#  => "x$'y'z\n";
+      dquote_dollar_squote_empty      : r#"echo "$''""#     => "$''\n";
+    }
   }
 
-  mod section_4_dollar_quotes {
+  mod _4_dollar_quotes {
     /*
      * §2.2.4 Dollar-Single-Quotes
      * A sequence of characters starting with a <dollar-sign> immediately followed by a single quote ($')
@@ -605,7 +619,7 @@ mod params_and_vars_2_5 {
    * operations that are described in this standard in terms of characters.
    */
 
-  mod section_1_pos_params {
+  mod _1_pos_params {
     /*
      * §2.5.1 Positional Parameters
      *
@@ -675,7 +689,7 @@ mod params_and_vars_2_5 {
     }
   }
 
-  mod section_2_special_params {
+  mod _2_special_params {
     /*
      * Listed below are the special parameters and the values to which they shall expand.
      *
@@ -757,7 +771,7 @@ mod word_expansions_2_6 {
    * 4. Quote removal, if performed, shall always be performed last.
    */
 
-  mod section_1_tilde {
+  mod _1_tilde {
     /*
      * §2.6.1 Tilde Expansion
      *
@@ -806,7 +820,7 @@ mod word_expansions_2_6 {
     }
   }
 
-  mod section_2_param_expansion {
+  mod _2_param_expansion {
     /*
      * §2.6.2 Parameter Expansion
      * The format for parameter expansion is as follows:
@@ -1040,7 +1054,7 @@ mod word_expansions_2_6 {
     }
   }
 
-  mod section_3_command_sub {
+  mod _3_command_sub {
     /*
      * §2.6.3 Command Substitution
      *
@@ -1091,7 +1105,7 @@ mod word_expansions_2_6 {
     }
   }
 
-  mod section_4_arithmetic_sub {
+  mod _4_arithmetic_sub {
     /*
      * §2.6.4 Arithmetic Expansion
      *
@@ -1184,4 +1198,145 @@ mod word_expansions_2_6 {
       arith_nested           : "echo $(( $((2 + 3)) * 4 ))"  => "20\n";
     }
   }
+
+  mod _5_field_splitting {
+    /*
+     * §2.6.5 Field Splitting
+     *
+     * After parameter expansion, command substitution, and arithmetic expansion, if the shell variable
+     * IFS is set and its value is not empty, or if IFS is unset, the shell shall scan each field containing
+     * results of expansions and substitutions that did not occur in double quotes for field splitting.
+     * Zero, one, or multiple fields can result.
+     */
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a b c"]); },
+      ifs_default_three_fields : r#"for x in $v; do echo "[$x]"; done"# => "[a]\n[b]\n[c]\n";
+    }
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "  a   b  "]); },
+      ifs_default_collapses_ws : r#"for x in $v; do echo "[$x]"; done"# => "[a]\n[b]\n";
+    }
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "single"]); },
+      ifs_default_one_field : r#"for x in $v; do echo "[$x]"; done"# => "[single]\n";
+    }
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a:b:c"]); },
+      ifs_colon_three_fields : r#"IFS=:; for x in $v; do echo "[$x]"; done"# => "[a]\n[b]\n[c]\n";
+    }
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a::b"]); },
+      ifs_colon_empty_between : r#"IFS=:; for x in $v; do echo "[$x]"; done"# => "[a]\n[]\n[b]\n";
+    }
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => ":a:b:"]); },
+      ifs_colon_leading_trailing : r#"IFS=:; for x in $v; do echo "[$x]"; done"# => "[]\n[a]\n[b]\n";
+    }
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a : b : c"]); },
+      ifs_mixed_absorbs_ws : r#"IFS=': '; for x in $v; do echo "[$x]"; done"# => "[a]\n[b]\n[c]\n";
+    }
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => " a b "]); },
+      ifs_mixed_trims_ws_only : r#"IFS=': '; for x in $v; do echo "[$x]"; done"# => "[a]\n[b]\n";
+    }
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a b c"]); },
+      ifs_empty_no_split : r#"IFS=""; for x in $v; do echo "[$x]"; done"# => "[a b c]\n";
+    }
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["v" => "a b c"]); },
+      ifs_quoted_no_split : r#"for x in "$v"; do echo "[$x]"; done"# => "[a b c]\n";
+    }
+
+    test_input! {
+      setup: { crate::__test_setup_vars!(["a" => "x y", "b" => "z w"]); },
+      ifs_adjacent_glue : r#"for v in $a$b; do echo "[$v]"; done"# => "[x]\n[yz]\n[w]\n";
+    }
+
+    test_input! {
+      ifs_unset_var_zero_fields  : r#"for x in pre $unset_var post; do echo "[$x]"; done"#   => "[pre]\n[post]\n";
+      ifs_quoted_empty_one_field : r#"for x in "$unset_var"; do echo "[$x]"; done"#          => "[]\n";
+      ifs_cmdsub_splits          : r#"for x in $(printf 'a\nb\nc'); do echo "[$x]"; done"#   => "[a]\n[b]\n[c]\n";
+      ifs_cmdsub_quoted_no_split : r#"for x in "$(printf 'a\nb\nc')"; do echo "[$x]"; done"# => "[a\nb\nc]\n";
+    }
+  }
+
+  mod _6_path_expansion {
+    /*
+     * §2.6.6 Pathname Expansion
+     * After field splitting, if set -f is not in effect, each field in the resulting command line
+     * shall be expanded using the algorithm described in §2.14 Pattern Matching Notation, qualified
+     * by the rules in §2.14.3 Patterns Used for Filename Expansion.
+     */
+
+    // TODO: actually figure out a way to test with filesystem I/O
+    // so that we can glob on actual files
+  }
+
+  mod _7_quote_removal {
+    /*
+     * The quote character sequence <dollar-sign> single-quote and the single-character quotes
+     * (<backslash>, single-quote, and double-quote) that were present in the original word shall
+     * be removed unless they have themselves been quoted. Note that the single-quote character
+     * that terminates a <dollar-sign> single-quote sequence is itself a single-character quote character.
+     *
+     * Note: After quote removal the shell shall remember which characters were quoted. This is necessary for
+     * purposes such as matching patterns in a case conditional construct.
+     */
+
+    test_input! {
+      qrm_squote_removed     : "echo 'foo'"             => "foo\n";
+      qrm_dquote_removed     : r#"echo "foo""#          => "foo\n";
+      qrm_dollar_squote_remov: r#"echo $'foo'"#         => "foo\n";
+      qrm_concat_quotes      : r#"echo a'b'c"d"e"#      => "abcde\n";
+      qrm_empty_quotes_join  : "echo a''b"              => "ab\n";
+      qrm_empty_dquotes_join : r#"echo a""b"#           => "ab\n";
+    }
+
+    test_input! {
+      qrm_dquote_in_squote   : r#"echo '"'"#            => "\"\n";
+      qrm_squote_in_dquote   : r#"echo "'""#            => "'\n";
+      qrm_backslash_escape   : r#"echo \\"#             => "\\\n";
+      qrm_backslash_in_dq    : r#"echo "\\""#           => "\\\n";
+      qrm_dollar_in_squote   : r#"echo '$foo'"#         => "$foo\n";
+    }
+
+    // The shell "remembers" which characters were quoted: glob/case meta-chars
+    // in a quoted pattern are treated as literal at match time.
+    test_input! {
+      qrm_quoted_pattern_literal_star : r#"case foo in '*') echo glob ;; foo) echo lit ;; esac"# => "lit\n";
+      qrm_unquoted_pattern_star       : r#"case foo in *) echo glob ;; esac"#                    => "glob\n";
+      qrm_quoted_pattern_matches_lit  : r#"case '*' in '*') echo lit ;; *) echo any ;; esac"#    => "lit\n";
+      qrm_dquote_pattern_literal      : r#"case foo in "*") echo glob ;; foo) echo lit ;; esac"# => "lit\n";
+      qrm_escaped_pattern_meta        : r#"case foo in \*) echo glob ;; foo) echo lit ;; esac"#  => "lit\n";
+    }
+  }
+}
+
+mod redirection_2_7 {
+  /*
+   * §2.7 Redirection
+   *
+   * Redirection is used to open and close files for the current shell execution environment
+   * or for any command. Redirection operators can be used with numbers representing file descriptors.
+   */
+
+  // TODO: make a good test fixture for this.
+}
+
+mod exit_status_2_8 {
+  /*
+   * §2.8 Exit Status
+   *
+   * Certain errors shall cause the shell to write a diagnostic message to
+   * standard error and exit.
+   */
+
+  // TODO: find a way to inspect errors
 }

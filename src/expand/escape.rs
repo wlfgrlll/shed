@@ -213,8 +213,9 @@ fn read_dub_quote(chars: &mut Peekable<Chars>, result: &mut String) {
       }
     }
     '$' if chars.peek() == Some(&'\'') => {
-      chars.next();
-      read_dollar_quote(chars, result);
+      result.push(q_ch);
+      let sng_quote = chars.next().unwrap();
+      result.push(sng_quote);
     }
     '$' => {
       if read_varsub(chars, result) && chars.peek() == Some(&'(') {
