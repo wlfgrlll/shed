@@ -9,6 +9,7 @@ use crate::util::error::{ShErr, ShResult, next_color};
 use crate::{match_loop, sherr};
 
 #[derive(Debug)]
+#[derive(Clone)]
 enum ArithOp {
   // math
   Add,
@@ -26,6 +27,12 @@ enum ArithOp {
   // logical
   And,
   Or,
+  // bitwise
+  BitAnd,
+  BitOr,
+  BitXor,
+  ShiftL,
+  ShiftR,
   // assign
   Assign,
   PlusAssign,
@@ -33,6 +40,11 @@ enum ArithOp {
   MulAssign,
   DivAssign,
   ModAssign,
+  BitAndAssign,
+  BitOrAssign,
+  BitXorAssign,
+  ShiftLAssign,
+  ShiftRAssign,
 }
 
 impl FromStr for ArithOp {
@@ -52,47 +64,75 @@ impl FromStr for ArithOp {
       "!=" => Ok(Self::Ne),
       "&&" => Ok(Self::And),
       "||" => Ok(Self::Or),
+      "&" => Ok(Self::BitAnd),
+      "|" => Ok(Self::BitOr),
+      "^" => Ok(Self::BitXor),
+      "<<" => Ok(Self::ShiftL),
+      ">>" => Ok(Self::ShiftR),
       "=" => Ok(Self::Assign),
       "+=" => Ok(Self::PlusAssign),
       "-=" => Ok(Self::MinusAssign),
       "*=" => Ok(Self::MulAssign),
       "/=" => Ok(Self::DivAssign),
       "%=" => Ok(Self::ModAssign),
+      "&=" => Ok(Self::BitAndAssign),
+      "|=" => Ok(Self::BitOrAssign),
+      "^=" => Ok(Self::BitXorAssign),
+      "<<=" => Ok(Self::ShiftLAssign),
+      ">>=" => Ok(Self::ShiftRAssign),
       _ => Err(sherr!(ParseErr, "Unknown operator: '{s}'")),
     }
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ArithTk {
-  Num(f64),
+  Num(i64),
   Op(ArithOp),
   Comma,
   LParen,
   RParen,
-  Inc, // ++ (raw, resolved to prefix/postfix during to_rpn)
-  Dec, // -- (raw, resolved to prefix/postfix during to_rpn)
-  Not, // !
-  Neg, // unary -
+  Inc,      // ++ (raw, resolved to prefix/postfix during to_rpn)
+  Dec,      // -- (raw, resolved to prefix/postfix during to_rpn)
+  Not,      // !
+  Neg,      // unary -
+  UPlus,    // unary +
+  BitNot,   // ~
+  Question, // ? (lex token)
+  Colon,    // : (lex token)
   Var(String),
+
+  // RPN-only opcodes for control flow (jump-based short-circuit + ternary)
+  JumpIfZero(usize),         // pop, if 0 jump to offset
+  JumpIfZeroPeek(usize),     // peek, if 0 jump (used by &&)
+  JumpIfNonZeroPeek(usize),  // peek, if non-zero jump (used by ||)
+  Jump(usize),               // unconditional jump
+  Pop,                       // discard top of stack
+  Nez,                       // replace top with 0 if it's 0, else 1
+
+  // Ops-stack-only pending markers (carry indices to patch when flushed)
+  PendingAnd(usize),          // jump_idx of the placeholder JIFZ_PEEK
+  PendingOr(usize),           // jump_idx of the placeholder JIFNZ_PEEK
+  PendingTernaryThen(usize),  // jump_idx of the placeholder JIFZ (cond→else)
+  PendingTernaryElse(usize),  // jump_idx of the placeholder JMP (then→end)
 }
 
-// Stack value used during eval_rpn - keeps Var names alive for assignment targets
+// Stack value used during eval_rpn, keeps Var names alive for assignment targets
 enum StackVal {
-  Num(f64),
+  Num(i64),
   Var(String),
 }
 
 impl StackVal {
-  fn to_num(&self) -> ShResult<f64> {
+  fn to_num(&self) -> ShResult<i64> {
     match self {
       StackVal::Num(n) => Ok(*n),
       StackVal::Var(name) => {
         let val = read_vars(|v| v.try_get_var(name)).unwrap_or_else(|| "0".into());
-        val.parse::<f64>().map_err(|_| {
+        val.parse::<i64>().map_err(|_| {
           sherr!(
             ParseErr,
-            "Variable '{}' does not contain a number",
+            "Variable '{}' does not contain an integer",
             name.fg(next_color()),
           )
         })
@@ -101,12 +141,12 @@ impl StackVal {
   }
 }
 
-fn read_var_as_f64(name: &str) -> ShResult<f64> {
+fn read_var_as_i64(name: &str) -> ShResult<i64> {
   let val = read_vars(|v| v.try_get_var(name)).unwrap_or_else(|| "0".into());
-  val.parse::<f64>().map_err(|_| {
+  val.parse::<i64>().map_err(|_| {
     sherr!(
       ParseErr,
-      "Variable '{}' does not contain a number",
+      "Variable '{}' does not contain an integer",
       name.fg(next_color()),
     )
   })
@@ -123,20 +163,60 @@ impl ArithTk {
     match_loop!(chars.peek() => &ch => ch, {
       ' ' | '\t' => { chars.next(); }
 
-      '0'..='9' | '.' => {
+      '0'..='9' => {
         let mut num = String::new();
-        while let Some(&digit) = chars.peek() {
-          if digit.is_ascii_digit() || digit == '.' {
-            num.push(digit);
-            chars.next();
-          } else {
-            break;
+        let first = chars.next().unwrap();
+        num.push(first);
+
+        // Hex (0x... / 0X...) or octal (0NNN); otherwise decimal.
+        let parsed: i64 = if first == '0' && matches!(chars.peek(), Some('x' | 'X')) {
+          chars.next(); // consume x/X
+          let mut hex = String::new();
+          while let Some(&d) = chars.peek() {
+            if d.is_ascii_hexdigit() {
+              hex.push(d);
+              chars.next();
+            } else {
+              break;
+            }
           }
-        }
-        let num = num.parse::<f64>().map_err(|_| sherr!(
-          ParseErr, "Invalid number in arithmetic expression: '{}'", num,
-        ))?;
-        tokens.push(Self::Num(num));
+          if hex.is_empty() {
+            return Err(sherr!(ParseErr, "Invalid hex literal '0{}'", first));
+          }
+          i64::from_str_radix(&hex, 16).map_err(|_| sherr!(
+            ParseErr, "Invalid hex literal: '0x{}'", hex,
+          ))?
+        } else if first == '0' && chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+          // Octal, collect remaining octal digits.
+          let mut oct = String::new();
+          while let Some(&d) = chars.peek() {
+            if matches!(d, '0'..='7') {
+              oct.push(d);
+              chars.next();
+            } else if d.is_ascii_digit() {
+              return Err(sherr!(ParseErr, "Invalid digit '{}' in octal literal", d));
+            } else {
+              break;
+            }
+          }
+          i64::from_str_radix(&oct, 8).map_err(|_| sherr!(
+            ParseErr, "Invalid octal literal: '0{}'", oct,
+          ))?
+        } else {
+          while let Some(&d) = chars.peek() {
+            if d.is_ascii_digit() {
+              num.push(d);
+              chars.next();
+            } else {
+              break;
+            }
+          }
+          num.parse::<i64>().map_err(|_| sherr!(
+            ParseErr, "Invalid number in arithmetic expression: '{}'", num,
+          ))?
+        };
+
+        tokens.push(Self::Num(parsed));
         last_was_operand = true;
       }
 
@@ -155,7 +235,7 @@ impl ArithTk {
           last_was_operand = false;
         } else {
           tokens.push(Self::Neg);
-          // last_was_operand stays false - Neg is unary prefix
+          // last_was_operand stays false, Neg is unary prefix
         }
       }
 
@@ -168,9 +248,12 @@ impl ArithTk {
           chars.next();
           tokens.push(Self::Op(ArithOp::PlusAssign));
           last_was_operand = false;
-        } else {
+        } else if last_was_operand {
           tokens.push(Self::Op(ArithOp::Add));
           last_was_operand = false;
+        } else {
+          tokens.push(Self::UPlus);
+          // last_was_operand stays false, UPlus is unary prefix
         }
       }
 
@@ -212,6 +295,14 @@ impl ArithTk {
         if chars.peek() == Some(&'=') {
           chars.next();
           tokens.push(Self::Op(ArithOp::Le));
+        } else if chars.peek() == Some(&'<') {
+          chars.next();
+          if chars.peek() == Some(&'=') {
+            chars.next();
+            tokens.push(Self::Op(ArithOp::ShiftLAssign));
+          } else {
+            tokens.push(Self::Op(ArithOp::ShiftL));
+          }
         } else {
           tokens.push(Self::Op(ArithOp::Lt));
         }
@@ -223,6 +314,14 @@ impl ArithTk {
         if chars.peek() == Some(&'=') {
           chars.next();
           tokens.push(Self::Op(ArithOp::Ge));
+        } else if chars.peek() == Some(&'>') {
+          chars.next();
+          if chars.peek() == Some(&'=') {
+            chars.next();
+            tokens.push(Self::Op(ArithOp::ShiftRAssign));
+          } else {
+            tokens.push(Self::Op(ArithOp::ShiftR));
+          }
         } else {
           tokens.push(Self::Op(ArithOp::Gt));
         }
@@ -257,8 +356,11 @@ impl ArithTk {
         if chars.peek() == Some(&'&') {
           chars.next();
           tokens.push(Self::Op(ArithOp::And));
+        } else if chars.peek() == Some(&'=') {
+          chars.next();
+          tokens.push(Self::Op(ArithOp::BitAndAssign));
         } else {
-          return Err(sherr!(ParseErr, "Expected '&&' in arithmetic expression"));
+          tokens.push(Self::Op(ArithOp::BitAnd));
         }
         last_was_operand = false;
       }
@@ -268,14 +370,46 @@ impl ArithTk {
         if chars.peek() == Some(&'|') {
           chars.next();
           tokens.push(Self::Op(ArithOp::Or));
+        } else if chars.peek() == Some(&'=') {
+          chars.next();
+          tokens.push(Self::Op(ArithOp::BitOrAssign));
         } else {
-          return Err(sherr!(ParseErr, "Expected '||' in arithmetic expression"));
+          tokens.push(Self::Op(ArithOp::BitOr));
         }
         last_was_operand = false;
       }
 
+      '^' => {
+        chars.next();
+        if chars.peek() == Some(&'=') {
+          chars.next();
+          tokens.push(Self::Op(ArithOp::BitXorAssign));
+        } else {
+          tokens.push(Self::Op(ArithOp::BitXor));
+        }
+        last_was_operand = false;
+      }
+
+      '~' => {
+        chars.next();
+        tokens.push(Self::BitNot);
+        // last_was_operand stays false, BitNot is unary prefix
+      }
+
       ',' => {
         tokens.push(Self::Comma);
+        chars.next();
+        last_was_operand = false;
+      }
+
+      '?' => {
+        tokens.push(Self::Question);
+        chars.next();
+        last_was_operand = false;
+      }
+
+      ':' => {
+        tokens.push(Self::Colon);
         chars.next();
         last_was_operand = false;
       }
@@ -328,21 +462,34 @@ impl ArithTk {
     fn precedence(tk: &ArithTk) -> usize {
       match tk {
         ArithTk::Comma => 0,
+        // Pending markers participate in flushing at their op's precedence.
+        ArithTk::PendingTernaryElse(_) => 1,
+        ArithTk::PendingOr(_) => 2,
+        ArithTk::PendingAnd(_) => 3,
         ArithTk::Op(op) => match op {
           ArithOp::Assign
           | ArithOp::PlusAssign
           | ArithOp::MinusAssign
           | ArithOp::MulAssign
           | ArithOp::DivAssign
-          | ArithOp::ModAssign => 1,
+          | ArithOp::ModAssign
+          | ArithOp::BitAndAssign
+          | ArithOp::BitOrAssign
+          | ArithOp::BitXorAssign
+          | ArithOp::ShiftLAssign
+          | ArithOp::ShiftRAssign => 1,
           ArithOp::Or => 2,
           ArithOp::And => 3,
-          ArithOp::Eq | ArithOp::Ne => 4,
-          ArithOp::Lt | ArithOp::Gt | ArithOp::Le | ArithOp::Ge => 5,
-          ArithOp::Add | ArithOp::Sub => 6,
-          ArithOp::Mul | ArithOp::Div | ArithOp::Mod => 7,
+          ArithOp::BitOr => 4,
+          ArithOp::BitXor => 5,
+          ArithOp::BitAnd => 6,
+          ArithOp::Eq | ArithOp::Ne => 7,
+          ArithOp::Lt | ArithOp::Gt | ArithOp::Le | ArithOp::Ge => 8,
+          ArithOp::ShiftL | ArithOp::ShiftR => 9,
+          ArithOp::Add | ArithOp::Sub => 10,
+          ArithOp::Mul | ArithOp::Div | ArithOp::Mod => 11,
         },
-        ArithTk::Not | ArithTk::Neg => 8,
+        ArithTk::Not | ArithTk::Neg | ArithTk::UPlus | ArithTk::BitNot => 12,
         _ => 0,
       }
     }
@@ -352,6 +499,9 @@ impl ArithTk {
         tk,
         ArithTk::Not
           | ArithTk::Neg
+          | ArithTk::UPlus
+          | ArithTk::BitNot
+          | ArithTk::PendingTernaryElse(_)
           | ArithTk::Op(
             ArithOp::Assign
               | ArithOp::PlusAssign
@@ -359,20 +509,63 @@ impl ArithTk {
               | ArithOp::MulAssign
               | ArithOp::DivAssign
               | ArithOp::ModAssign
+              | ArithOp::BitAndAssign
+              | ArithOp::BitOrAssign
+              | ArithOp::BitXorAssign
+              | ArithOp::ShiftLAssign
+              | ArithOp::ShiftRAssign
           )
       )
     }
 
-    fn flush_ops(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>, until_paren: bool) {
+    // Pop one op off the ops stack, translating control-flow markers into
+    // their final RPN form (and patching the corresponding jump placeholders).
+    fn pop_to_output(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>) -> ShResult<()> {
+      match ops.pop().unwrap() {
+        ArithTk::PendingAnd(jump_idx) => {
+          // After RHS of && is built. Patch JIFZ_PEEK to land at the Nez we
+          // emit now, so the short-circuit jump produces 0 directly.
+          let target = output.len();
+          output.push(ArithTk::Nez);
+          output[jump_idx] = ArithTk::JumpIfZeroPeek(target);
+        }
+        ArithTk::PendingOr(jump_idx) => {
+          let target = output.len();
+          output.push(ArithTk::Nez);
+          output[jump_idx] = ArithTk::JumpIfNonZeroPeek(target);
+        }
+        ArithTk::PendingTernaryElse(jump_idx) => {
+          // After else-arm. Patch the JMP that skips past the else.
+          let target = output.len();
+          output[jump_idx] = ArithTk::Jump(target);
+        }
+        ArithTk::PendingTernaryThen(_) => {
+          return Err(sherr!(ParseErr, "'?' without matching ':' in arithmetic expression"));
+        }
+        ArithTk::Question => {
+          return Err(sherr!(ParseErr, "'?' without matching ':' in arithmetic expression"));
+        }
+        other => output.push(other),
+      }
+      Ok(())
+    }
+
+    // True if `top` is a barrier that flushing must stop at.
+    fn is_barrier(top: &ArithTk) -> bool {
+      matches!(top, ArithTk::LParen | ArithTk::Question)
+    }
+
+    fn flush_ops(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>, until_paren: bool) -> ShResult<()> {
       while let Some(top) = ops.last() {
         if matches!(top, ArithTk::LParen) {
           break;
         }
-        output.push(ops.pop().unwrap());
+        pop_to_output(ops, output)?;
       }
       if until_paren {
         ops.pop(); // remove the LParen
       }
+      Ok(())
     }
 
     match_loop!(tokens.next() => token, {
@@ -382,17 +575,16 @@ impl ArithTk {
         // Check for postfix inc/dec
         if tokens.peek().is_some_and(|tk| matches!(tk, ArithTk::Inc | ArithTk::Dec)) {
           let op = tokens.next().unwrap();
-          let val = read_var_as_f64(var)?;
-          let delta = if matches!(op, ArithTk::Inc) { 1.0 } else { -1.0 };
+          let val = read_var_as_i64(var)?;
+          let delta: i64 = if matches!(op, ArithTk::Inc) { 1 } else { -1 };
           write_vars(|v| v.set_var(var, VarKind::Str((val + delta).to_string()), VarFlags::NONE)).unwrap();
           output.push(ArithTk::Num(val)); // push old value (postfix)
         } else {
-          output.push(token); // keep as Var - may be assignment target
+          output.push(token); // keep as Var, may be assignment target
         }
       }
 
       op @ (ArithTk::Inc | ArithTk::Dec) => {
-        // Prefix inc/dec - must be followed by a Var
         let Some(ArithTk::Var(_)) = tokens.peek() else {
           return Err(sherr!(
             ParseErr,
@@ -401,56 +593,137 @@ impl ArithTk {
           ));
         };
         let Some(ArithTk::Var(var)) = tokens.next() else { unreachable!() };
-        let val = read_var_as_f64(&var)?;
-        let delta = if matches!(op, ArithTk::Inc) { 1.0 } else { -1.0 };
+        let val = read_var_as_i64(&var)?;
+        let delta: i64 = if matches!(op, ArithTk::Inc) { 1 } else { -1 };
         let new_val = val + delta;
         write_vars(|v| v.set_var(&var, VarKind::Str(new_val.to_string()), VarFlags::NONE)).unwrap();
         output.push(ArithTk::Num(new_val)); // push new value (prefix)
       }
 
-      ArithTk::Not | ArithTk::Neg => {
-        // Unary right-associative - push to ops stack
+      ArithTk::Not | ArithTk::Neg | ArithTk::UPlus | ArithTk::BitNot => {
+        // Unary right-associative
+        // push to ops stack
         ops.push(token);
       }
 
       ArithTk::Comma => {
-        // Lowest-precedence binary op - push to ops stack so both operands
-        // are fully evaluated before Comma is applied
+        // Lowest-precedence binary op
+        // push to ops stack so both operands
+        // are fully evaluated before Comma is applied. Question is a barrier
+        // (commas inside the then-arm of a ternary stay there).
         while let Some(top) = ops.last() {
-          if matches!(top, ArithTk::LParen) { break; }
-          output.push(ops.pop().unwrap());
+          if is_barrier(top) { break; }
+          pop_to_output(&mut ops, &mut output)?;
         }
         ops.push(ArithTk::Comma);
       }
 
-      ArithTk::Op(_) => {
-        let right_assoc = is_right_assoc(&token);
-        let cur_prec = precedence(&token);
+      ArithTk::Op(ref op) => {
+        // Intercept && and || for short-circuit emission.
+        if matches!(op, ArithOp::And | ArithOp::Or) {
+          // Flush higher-precedence ops first (LHS finished).
+          let cur_prec = if matches!(op, ArithOp::And) { 3 } else { 2 };
+          while let Some(top) = ops.last() {
+            if is_barrier(top) { break; }
+            let top_prec = precedence(top);
+            if top_prec >= cur_prec {
+              pop_to_output(&mut ops, &mut output)?;
+            } else {
+              break;
+            }
+          }
+          // Reserve placeholder jump and push pending marker.
+          let jump_idx = output.len();
+          if matches!(op, ArithOp::And) {
+            output.push(ArithTk::JumpIfZeroPeek(0));
+            output.push(ArithTk::Pop);
+            ops.push(ArithTk::PendingAnd(jump_idx));
+          } else {
+            output.push(ArithTk::JumpIfNonZeroPeek(0));
+            output.push(ArithTk::Pop);
+            ops.push(ArithTk::PendingOr(jump_idx));
+          }
+        } else {
+          let right_assoc = is_right_assoc(&token);
+          let cur_prec = precedence(&token);
+          while let Some(top) = ops.last() {
+            if is_barrier(top) { break; }
+            let top_prec = precedence(top);
+            if top_prec > cur_prec || (top_prec == cur_prec && !right_assoc) {
+              pop_to_output(&mut ops, &mut output)?;
+            } else {
+              break;
+            }
+          }
+          ops.push(token);
+        }
+      }
+
+      ArithTk::Question => {
+        // Cond is fully built. Flush higher-prec ops, then emit a placeholder
+        // JIFZ that will jump to the else-arm once we know its position.
+        let cur_prec = 1;
         while let Some(top) = ops.last() {
-          if matches!(top, ArithTk::LParen) { break; }
+          if is_barrier(top) { break; }
           let top_prec = precedence(top);
-          if top_prec > cur_prec || (top_prec == cur_prec && !right_assoc) {
-            output.push(ops.pop().unwrap());
+          if top_prec > cur_prec {
+            pop_to_output(&mut ops, &mut output)?;
           } else {
             break;
           }
         }
-        ops.push(token);
+        let jump_idx = output.len();
+        output.push(ArithTk::JumpIfZero(0));
+        ops.push(ArithTk::PendingTernaryThen(jump_idx));
+      }
+
+      ArithTk::Colon => {
+        // Flush ops down to the matching PendingTernaryThen.
+        while let Some(top) = ops.last() {
+          if matches!(top, ArithTk::PendingTernaryThen(_)) { break; }
+          if matches!(top, ArithTk::LParen) {
+            return Err(sherr!(ParseErr, "Unexpected ':' before matching '?' in arithmetic"));
+          }
+          pop_to_output(&mut ops, &mut output)?;
+        }
+        let Some(ArithTk::PendingTernaryThen(jifz_idx)) = ops.pop() else {
+          return Err(sherr!(ParseErr, "':' without matching '?' in arithmetic expression"));
+        };
+        // Emit a placeholder JMP (then→end), then patch the JIFZ to point at
+        // the start of the else-arm (right after this JMP).
+        let jmp_idx = output.len();
+        output.push(ArithTk::Jump(0));
+        output[jifz_idx] = ArithTk::JumpIfZero(output.len());
+        ops.push(ArithTk::PendingTernaryElse(jmp_idx));
       }
 
       ArithTk::LParen => ops.push(token),
 
-      ArithTk::RParen => flush_ops(&mut ops, &mut output, true),
+      ArithTk::RParen => flush_ops(&mut ops, &mut output, true)?,
+
+      // Control-flow opcodes are only emitted by to_rpn, never lexed.
+      ArithTk::JumpIfZero(_)
+      | ArithTk::JumpIfZeroPeek(_)
+      | ArithTk::JumpIfNonZeroPeek(_)
+      | ArithTk::Jump(_)
+      | ArithTk::Pop
+      | ArithTk::Nez
+      | ArithTk::PendingAnd(_)
+      | ArithTk::PendingOr(_)
+      | ArithTk::PendingTernaryThen(_)
+      | ArithTk::PendingTernaryElse(_) => {
+        unreachable!("control-flow opcodes are never produced by the tokenizer")
+      }
     });
 
-    while let Some(op) = ops.pop() {
-      output.push(op);
+    while !ops.is_empty() {
+      pop_to_output(&mut ops, &mut output)?;
     }
 
     Ok(output)
   }
 
-  pub fn eval_rpn(tokens: Vec<ArithTk>) -> ShResult<f64> {
+  pub fn eval_rpn(tokens: Vec<ArithTk>) -> ShResult<i64> {
     let mut stack: Vec<StackVal> = Vec::new();
 
     macro_rules! pop_num {
@@ -474,20 +747,56 @@ impl ArithTk {
       };
     }
 
-    for token in tokens {
-      match token {
+    let mut i = 0;
+    while i < tokens.len() {
+      match tokens[i].clone() {
         ArithTk::Num(n) => stack.push(StackVal::Num(n)),
 
         ArithTk::Var(name) => stack.push(StackVal::Var(name)),
 
+        // Control flow
+        // set i directly and continue (skip auto-increment).
+        ArithTk::Jump(target) => { i = target; continue; }
+        ArithTk::JumpIfZero(target) => {
+          let val = pop_num!();
+          if val == 0 { i = target; continue; }
+        }
+        ArithTk::JumpIfZeroPeek(target) => {
+          let val = stack.last()
+            .ok_or_else(|| sherr!(ParseErr, "Empty stack at conditional jump"))?
+            .to_num()?;
+          if val == 0 { i = target; continue; }
+        }
+        ArithTk::JumpIfNonZeroPeek(target) => {
+          let val = stack.last()
+            .ok_or_else(|| sherr!(ParseErr, "Empty stack at conditional jump"))?
+            .to_num()?;
+          if val != 0 { i = target; continue; }
+        }
+        ArithTk::Pop => { stack.pop(); }
+        ArithTk::Nez => {
+          let val = pop_num!();
+          stack.push(StackVal::Num(if val != 0 { 1 } else { 0 }));
+        }
+
         ArithTk::Not => {
           let val = pop_num!();
-          stack.push(StackVal::Num(if val == 0.0 { 1.0 } else { 0.0 }));
+          stack.push(StackVal::Num(if val == 0 { 1 } else { 0 }));
         }
 
         ArithTk::Neg => {
           let val = pop_num!();
           stack.push(StackVal::Num(-val));
+        }
+
+        ArithTk::UPlus => {
+          let val = pop_num!();
+          stack.push(StackVal::Num(val));
+        }
+
+        ArithTk::BitNot => {
+          let val = pop_num!();
+          stack.push(StackVal::Num(!val));
         }
 
         ArithTk::Comma => {
@@ -503,7 +812,8 @@ impl ArithTk {
 
         ArithTk::Op(op) => {
           match op {
-            // Assignment ops - LHS must be a Var
+            // Assignment ops
+            // LHS must be a Var
             ArithOp::Assign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
@@ -514,7 +824,7 @@ impl ArithTk {
             ArithOp::PlusAssign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
-              let new_val = read_var_as_f64(&lhs)? + rhs;
+              let new_val = read_var_as_i64(&lhs)? + rhs;
               write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
                 .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -522,7 +832,7 @@ impl ArithTk {
             ArithOp::MinusAssign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
-              let new_val = read_var_as_f64(&lhs)? - rhs;
+              let new_val = read_var_as_i64(&lhs)? - rhs;
               write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
                 .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -530,23 +840,29 @@ impl ArithTk {
             ArithOp::MulAssign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
-              let new_val = read_var_as_f64(&lhs)? * rhs;
+              let new_val = read_var_as_i64(&lhs)? * rhs;
               write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
                 .unwrap();
               stack.push(StackVal::Num(new_val));
             }
             ArithOp::DivAssign => {
               let rhs = pop_num!();
+              if rhs == 0 {
+                return Err(sherr!(InternalErr, "Division by zero"));
+              }
               let lhs = pop_var!();
-              let new_val = read_var_as_f64(&lhs)? / rhs;
+              let new_val = read_var_as_i64(&lhs)? / rhs;
               write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
                 .unwrap();
               stack.push(StackVal::Num(new_val));
             }
             ArithOp::ModAssign => {
               let rhs = pop_num!();
+              if rhs == 0 {
+                return Err(sherr!(InternalErr, "Modulo by zero"));
+              }
               let lhs = pop_var!();
-              let new_val = read_var_as_f64(&lhs)? % rhs;
+              let new_val = read_var_as_i64(&lhs)? % rhs;
               write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
                 .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -571,83 +887,150 @@ impl ArithTk {
             ArithOp::Div => {
               let rhs = pop_num!();
               let lhs = pop_num!();
+              if rhs == 0 {
+                return Err(sherr!(InternalErr, "Division by zero"));
+              }
               stack.push(StackVal::Num(lhs / rhs));
             }
             ArithOp::Mod => {
               let rhs = pop_num!();
               let lhs = pop_num!();
+              if rhs == 0 {
+                return Err(sherr!(InternalErr, "Modulo by zero"));
+              }
               stack.push(StackVal::Num(lhs % rhs));
             }
 
-            // Comparison (result is 1.0 or 0.0)
+            // Comparison (result is 1 or 0)
             ArithOp::Lt => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs < rhs { 1.0 } else { 0.0 }));
+              stack.push(StackVal::Num(if lhs < rhs { 1 } else { 0 }));
             }
             ArithOp::Gt => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs > rhs { 1.0 } else { 0.0 }));
+              stack.push(StackVal::Num(if lhs > rhs { 1 } else { 0 }));
             }
             ArithOp::Le => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs <= rhs { 1.0 } else { 0.0 }));
+              stack.push(StackVal::Num(if lhs <= rhs { 1 } else { 0 }));
             }
             ArithOp::Ge => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs >= rhs { 1.0 } else { 0.0 }));
+              stack.push(StackVal::Num(if lhs >= rhs { 1 } else { 0 }));
             }
             ArithOp::Eq => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if (lhs - rhs).abs() < f64::EPSILON {
-                1.0
-              } else {
-                0.0
-              }));
+              stack.push(StackVal::Num(if lhs == rhs { 1 } else { 0 }));
             }
             ArithOp::Ne => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if (lhs - rhs).abs() >= f64::EPSILON {
-                1.0
-              } else {
-                0.0
-              }));
+              stack.push(StackVal::Num(if lhs != rhs { 1 } else { 0 }));
             }
 
-            // Logical (short-circuit semantics not possible in RPN, but side effects already done)
-            ArithOp::And => {
-              let rhs = pop_num!();
-              let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs != 0.0 && rhs != 0.0 {
-                1.0
-              } else {
-                0.0
-              }));
+            // && and || are decomposed into JIFZ_PEEK/JIFNZ_PEEK + Pop + Nez at
+            // to_rpn time (see the ArithTk::Op handler). They never reach eval.
+            ArithOp::And | ArithOp::Or => {
+              return Err(sherr!(
+                ParseErr,
+                "Internal: && / || should have been decomposed before eval"
+              ));
             }
-            ArithOp::Or => {
+
+            // Bitwise
+            ArithOp::BitAnd => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs != 0.0 || rhs != 0.0 {
-                1.0
-              } else {
-                0.0
-              }));
+              stack.push(StackVal::Num(lhs & rhs));
+            }
+            ArithOp::BitOr => {
+              let rhs = pop_num!();
+              let lhs = pop_num!();
+              stack.push(StackVal::Num(lhs | rhs));
+            }
+            ArithOp::BitXor => {
+              let rhs = pop_num!();
+              let lhs = pop_num!();
+              stack.push(StackVal::Num(lhs ^ rhs));
+            }
+            ArithOp::ShiftL => {
+              let rhs = pop_num!();
+              let lhs = pop_num!();
+              stack.push(StackVal::Num(lhs.wrapping_shl(rhs as u32)));
+            }
+            ArithOp::ShiftR => {
+              let rhs = pop_num!();
+              let lhs = pop_num!();
+              stack.push(StackVal::Num(lhs.wrapping_shr(rhs as u32)));
+            }
+
+            // Bitwise/shift compound assignment
+            ArithOp::BitAndAssign => {
+              let rhs = pop_num!();
+              let lhs = pop_var!();
+              let new_val = read_var_as_i64(&lhs)? & rhs;
+              write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
+                .unwrap();
+              stack.push(StackVal::Num(new_val));
+            }
+            ArithOp::BitOrAssign => {
+              let rhs = pop_num!();
+              let lhs = pop_var!();
+              let new_val = read_var_as_i64(&lhs)? | rhs;
+              write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
+                .unwrap();
+              stack.push(StackVal::Num(new_val));
+            }
+            ArithOp::BitXorAssign => {
+              let rhs = pop_num!();
+              let lhs = pop_var!();
+              let new_val = read_var_as_i64(&lhs)? ^ rhs;
+              write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
+                .unwrap();
+              stack.push(StackVal::Num(new_val));
+            }
+            ArithOp::ShiftLAssign => {
+              let rhs = pop_num!();
+              let lhs = pop_var!();
+              let new_val = read_var_as_i64(&lhs)?.wrapping_shl(rhs as u32);
+              write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
+                .unwrap();
+              stack.push(StackVal::Num(new_val));
+            }
+            ArithOp::ShiftRAssign => {
+              let rhs = pop_num!();
+              let lhs = pop_var!();
+              let new_val = read_var_as_i64(&lhs)?.wrapping_shr(rhs as u32);
+              write_vars(|v| v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::NONE))
+                .unwrap();
+              stack.push(StackVal::Num(new_val));
             }
           }
         }
 
-        ArithTk::Inc | ArithTk::Dec | ArithTk::LParen | ArithTk::RParen => {
+        ArithTk::Inc
+        | ArithTk::Dec
+        | ArithTk::LParen
+        | ArithTk::RParen
+        | ArithTk::Question
+        | ArithTk::Colon
+        | ArithTk::PendingAnd(_)
+        | ArithTk::PendingOr(_)
+        | ArithTk::PendingTernaryThen(_)
+        | ArithTk::PendingTernaryElse(_) => {
           return Err(sherr!(
             ParseErr,
-            "Unexpected token during arithmetic evaluation: '{token:?}'"
+            "Unexpected token during arithmetic evaluation: '{:?}'",
+            tokens[i],
           ));
         }
       }
+      i += 1;
     }
 
     if stack.len() != 1 {
@@ -693,7 +1076,7 @@ pub fn expand_arithmetic_wrapped(raw: &str) -> ShResult<String> {
 mod tests {
   use super::*;
   use crate::state::{VarFlags, VarKind, write_vars};
-  use crate::testutil::TestGuard;
+  use crate::tests::testutil::TestGuard;
 
   fn arith(s: &str) -> f64 {
     // Tests pass raw expressions - no outer ((...)) wrapper stripping

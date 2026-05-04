@@ -14,6 +14,57 @@ pub(super) fn strip_escape_markers(s: &str) -> String {
   s.replace(markers::ESCAPE, "")
 }
 
+/// Convert internal quote/escape markers into glob-syntax for `glob::Pattern`.
+///
+/// Glob metacharacters that should be treated as literal (because they were
+/// quoted or backslash-escaped in the source) are emitted as bracket
+/// expressions — `[*]`, `[?]`, `[[]` — since the `glob` crate doesn't honor
+/// `\x` escapes. Non-meta characters that were quoted/escaped are emitted
+/// bare (no escape needed). Unquoted glob metas pass through as-is, keeping
+/// their wildcard meaning.
+pub(super) fn markers_to_glob_escapes(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut chars = s.chars();
+  while let Some(c) = chars.next() {
+    match c {
+      markers::ESCAPE => {
+        if let Some(next) = chars.next() {
+          push_glob_literal(&mut out, next);
+        }
+      }
+      markers::DUB_QUOTE | markers::SNG_QUOTE => {
+        let closer = c;
+        while let Some(inner) = chars.next() {
+          if inner == closer {
+            break;
+          }
+          if inner == markers::ESCAPE {
+            if let Some(next) = chars.next() {
+              push_glob_literal(&mut out, next);
+            }
+            continue;
+          }
+          push_glob_literal(&mut out, inner);
+        }
+      }
+      _ => out.push(c),
+    }
+  }
+  out
+}
+
+/// Push `c` to `out` as a literal glob character, using a bracket expression
+/// to escape glob metas since `glob::Pattern` doesn't recognize `\x` escapes.
+fn push_glob_literal(out: &mut String, c: char) {
+  if matches!(c, '*' | '?' | '[') {
+    out.push('[');
+    out.push(c);
+    out.push(']');
+  } else {
+    out.push(c);
+  }
+}
+
 const SPECIAL_CHARS: &str = "#$^*()=|{}[]`<>?~;& '\"";
 
 /// Processes strings into intermediate representations that are more readable

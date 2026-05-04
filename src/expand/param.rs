@@ -848,6 +848,48 @@ mod tests {
     assert_eq!(out, "hello world\n");
   }
 
+  #[test]
+  fn param_exp_quoted_glob_meta_is_literal() {
+    let guard = TestGuard::new();
+    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+
+    // "*" makes the asterisk literal — strips the literal "*r" suffix.
+    test_input("echo ${foo%\"*\"r}").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out, "ba\n");
+  }
+
+  #[test]
+  fn param_exp_unquoted_glob_meta_is_wildcard() {
+    let guard = TestGuard::new();
+    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+
+    // unquoted *r is a glob — shortest match is just "r".
+    test_input("echo ${foo%*r}").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out, "ba*\n");
+  }
+
+  #[test]
+  fn param_exp_backslash_glob_meta_is_literal() {
+    let guard = TestGuard::new();
+    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+
+    test_input("echo ${foo%\\*r}").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out, "ba\n");
+  }
+
+  #[test]
+  fn param_exp_single_quoted_glob_meta_is_literal() {
+    let guard = TestGuard::new();
+    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+
+    test_input("echo ${foo%'*'r}").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out, "ba\n");
+  }
+
   // ===================== Exit status side-channel =====================
   //
   // shed extends POSIX: param expansions that "fire" (modify the value) set
