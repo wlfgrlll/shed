@@ -1,9 +1,10 @@
 use std::{collections::HashMap, fmt::Display};
 
 use bitflags::bitflags;
-use nix::{libc::STDOUT_FILENO, unistd::write};
+use nix::unistd::write;
 use serde_json::{Map, Value};
 
+use crate::procio::stdout_fileno;
 use crate::sherr;
 use crate::util::strops::{split_tk, split_tk_at};
 use crate::{
@@ -13,7 +14,6 @@ use crate::{
     NdRule, Node,
     lex::{self, LexFlags, LexStream},
   },
-  procio::borrow_fd,
   state::{self, read_vars, write_vars},
   util::error::ShResult,
 };
@@ -403,7 +403,7 @@ pub fn map(node: Node) -> ShResult<()> {
         }
       };
 
-      let stdout = borrow_fd(STDOUT_FILENO);
+      let stdout = stdout_fileno();
       write(stdout, output.as_bytes())?;
       write(stdout, b"\n")?;
     }

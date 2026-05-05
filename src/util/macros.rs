@@ -370,7 +370,7 @@ macro_rules! two_way_display {
 macro_rules! outln {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    writeln!($crate::util::FdWriter(nix::libc::STDOUT_FILENO), $($arg)*)
+    writeln!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*)
   }};
 }
 
@@ -378,7 +378,7 @@ macro_rules! outln {
 macro_rules! errln {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    writeln!($crate::util::FdWriter(nix::libc::STDERR_FILENO), $($arg)*)
+    writeln!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*)
   }};
 }
 
@@ -386,7 +386,7 @@ macro_rules! errln {
 macro_rules! out {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    write!($crate::util::FdWriter(nix::libc::STDOUT_FILENO), $($arg)*)
+    write!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*)
   }};
 }
 
@@ -395,7 +395,7 @@ macro_rules! out {
 macro_rules! err {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    write!($crate::util::FdWriter(nix::libc::STDERR_FILENO), $($arg)*)
+    write!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*)
   }};
 }
 

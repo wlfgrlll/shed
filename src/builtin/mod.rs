@@ -321,7 +321,8 @@ pub trait Builtin: Sync {
     job.push_child(child);
 
     // Handle exec specially - persist redirections before dispatch
-    if cmd_raw.as_str() == "exec" {
+    if cmd_raw.as_str() == "exec"
+    && let Some(guard) = guard {
       guard.persist();
     }
 

@@ -9,16 +9,10 @@ use nix::{
 };
 
 use crate::{
-  expand::expand_keymap,
-  getopt::{Opt, OptSpec},
-  parse::lex::Span,
-  procio::borrow_fd,
-  sherr, signal,
-  state::{self, VarFlags, VarKind, with_term, write_vars},
-  util::{
+  expand::expand_keymap, getopt::{Opt, OptSpec}, parse::lex::Span, procio::stdin_fileno, sherr, signal, state::{self, VarFlags, VarKind, with_term, write_vars}, util::{
     error::{ShErrKind, ShResult, ShResultExt},
     with_status, write_out,
-  },
+  }
 };
 
 bitflags! {
@@ -107,7 +101,7 @@ fn read_bytes(
 ) -> ShResult<String> {
   let mut buf = vec![];
   let mut escaped = false;
-  let poll_fd = PollFd::new(borrow_fd(STDIN_FILENO), PollFlags::POLLIN);
+  let poll_fd = PollFd::new(stdin_fileno(), PollFlags::POLLIN);
   let timeout = timeout
     .map(PollTimeout::try_from)
     .and_then(Result::ok)

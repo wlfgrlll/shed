@@ -3,10 +3,10 @@ use super::*;
 use std::{
   collections::{HashMap, HashSet, VecDeque},
   fmt::Write,
-  os::unix::{
+  os::{fd::AsFd, unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
-  },
+  }},
   rc::Rc,
   str::FromStr,
   time::{Duration, SystemTime},
@@ -18,7 +18,6 @@ use crate::{
   jobs::Job,
   match_loop,
   prelude::*,
-  procio::borrow_fd,
   readline::{
     LineData,
     complete::{Candidate, CompSpec},
@@ -381,8 +380,17 @@ impl ShedSocket {
   pub fn listener(&self) -> &UnixListener {
     &self.listener
   }
-  pub fn as_raw_fd(&self) -> RawFd {
+}
+
+impl AsRawFd for ShedSocket {
+  fn as_raw_fd(&self) -> RawFd {
     self.listener.as_raw_fd()
+  }
+}
+
+impl AsFd for ShedSocket {
+  fn as_fd(&self) -> BorrowedFd<'_> {
+    self.listener.as_fd()
   }
 }
 
@@ -1266,7 +1274,7 @@ impl MetaTab {
     self
       .socket
       .as_ref()
-      .map(|sock| PollFd::new(borrow_fd(sock.as_raw_fd()), nix::poll::PollFlags::POLLIN))
+      .map(|sock| PollFd::new(sock.as_fd(), nix::poll::PollFlags::POLLIN))
   }
   pub fn read_socket(&mut self) -> ShResult<Vec<(UnixStream, SocketRequest)>> {
     let mut requests = vec![];

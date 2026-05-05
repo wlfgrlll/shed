@@ -11,7 +11,7 @@ use ariadne::Span as AriadneSpan;
 use crate::parse::execute::exec_nonint;
 use crate::parse::lex::{Span, Tk, TkRule};
 use crate::parse::Node;
-use crate::procio::borrow_fd;
+use crate::procio::{stderr_fileno, stdout_fileno};
 use crate::state::AutoCmd;
 use crate::util::error::ShResult;
 use crate::{prelude::*, state};
@@ -155,11 +155,11 @@ impl NodeVecUtils<Node> for Vec<Node> {
   }
 }
 
-pub struct FdWriter(pub RawFd);
+pub struct FdWriter<'a>(pub BorrowedFd<'a>);
 
-impl std::io::Write for FdWriter {
+impl<'a> std::io::Write for FdWriter<'a> {
   fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    nix::unistd::write(borrow_fd(self.0), buf)
+    nix::unistd::write(self.0, buf)
       .map_err(|e| std::io::Error::from_raw_os_error(e as i32))
   }
   fn flush(&mut self) -> io::Result<()> {
@@ -176,15 +176,15 @@ pub fn write_ln_err(data: impl AsRef<[u8]>) -> ShResult<usize> {
 }
 
 pub fn write_out(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  write_fd(STDOUT_FILENO, data)
+  write_fd(stdout_fileno(), data)
 }
 
 pub fn write_err(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  write_fd(STDERR_FILENO, data)
+  write_fd(stderr_fileno(), data)
 }
 
-pub fn write_fd(fd: RawFd, data: impl AsRef<[u8]>) -> ShResult<usize> {
-  Ok(write(borrow_fd(fd), data.as_ref())?)
+pub fn write_fd(fd: BorrowedFd, data: impl AsRef<[u8]>) -> ShResult<usize> {
+  Ok(write(fd, data.as_ref())?)
 }
 
 /// Sets status code and always returns Ok(())

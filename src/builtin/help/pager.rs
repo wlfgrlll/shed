@@ -10,12 +10,7 @@ use crate::{
   builtin::help::{
     StyledHelp,
     markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
-  },
-  procio::borrow_fd,
-  readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width},
-  state::with_term,
-  util::error::ShResult,
-  write_term,
+  }, procio::stdout_fileno, readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width}, state::with_term, util::error::ShResult, write_term
 };
 
 pub enum PagerEvent {
@@ -79,8 +74,8 @@ impl HelpPager {
     if !isatty(STDOUT_FILENO).unwrap_or(false) {
       // If we're not in a terminal, just print the content and exit
       // Someone could be piping the output, like `help | grep foo`
-      write(borrow_fd(STDOUT_FILENO), content.as_bytes()).ok();
-      write(borrow_fd(STDOUT_FILENO), b"\n").ok();
+      write(stdout_fileno(), content.as_bytes()).ok();
+      write(stdout_fileno(), b"\n").ok();
       return None;
     }
     let content = StyledHelp::new(&content);

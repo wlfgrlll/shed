@@ -1,7 +1,7 @@
 mod markup;
 mod pager;
 
-use std::{env, path::Path};
+use std::{env, os::fd::{AsRawFd, BorrowedFd}, path::Path};
 
 use crate::{
   builtin::help::{
@@ -9,7 +9,6 @@ use crate::{
     pager::{HelpPager, PagerEvent},
   },
   parse::lex::Span,
-  procio::borrow_fd,
   readline::complete::ScoredCandidate,
   sherr,
   state::{with_term, write_meta},
@@ -194,10 +193,10 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
   let mut pager = 0usize; // index
 
   // now we use the same input pattern as in main.rs
-  let Some(tty) = with_term(|t| unsafe { t.tty() }) else {
+  let Some(tty) = with_term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
     return Ok(()); // no tty, just return
   };
-  let tty_fd = PollFd::new(borrow_fd(tty), PollFlags::POLLIN);
+  let tty_fd = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty) }, PollFlags::POLLIN);
 
   // restores terminal state on drop
   let _tui_guard = with_term(|t| t.prepare_for_pager());

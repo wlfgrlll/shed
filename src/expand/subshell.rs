@@ -1,13 +1,13 @@
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
 use crate::prelude::*;
-use crate::procio::{Redir, RedirGuard, RedirType, read_fd_to_string};
+use crate::procio::{Redir, RedirGuard, RedirType, pipes_high, read_fd_to_string};
 use crate::sherr;
 use crate::state::{self, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
-  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let (rpipe, wpipe) = pipes_high()?;
   let rpipe_raw = rpipe.as_raw_fd();
   let wpipe_raw = wpipe.as_raw_fd();
 
@@ -59,7 +59,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
   if raw.starts_with('(') && raw.ends_with(')') {
     return expand_arithmetic_wrapped(raw);
   }
-  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let (rpipe, wpipe) = pipes_high()?;
   let mut redir = Redir::new(1, wpipe);
 
   match unsafe { fork()? } {

@@ -7,15 +7,10 @@ use scopeguard::defer;
 use yansi::Color;
 
 use crate::{
-  prelude::*,
-  procio::borrow_fd,
-  sherr,
-  signal::{disable_reaping, enable_reaping},
-  state::{
+  prelude::*, procio::stderr_fileno, sherr, signal::{disable_reaping, enable_reaping}, state::{
     self, AutoCmdKind, CmdTimer, read_logic, set_status, with_term, with_vars, write_jobs,
     write_meta,
-  },
-  util::{AutoCmdVecUtils, error::ShResult},
+  }, util::{AutoCmdVecUtils, error::ShResult}
 };
 
 pub const SIG_EXIT_OFFSET: i32 = 128;
@@ -548,7 +543,7 @@ fn report_timer(timer: &CmdTimer) -> ShResult<()> {
   if autocmds.is_empty() {
     let fmt_str = state::get_time_fmt();
     let report = timer.format_report(&fmt_str)?;
-    let stderr = borrow_fd(STDERR_FILENO);
+    let stderr = stderr_fileno();
     write(stderr, format!("{report}\n").as_bytes()).ok();
   } else {
     let vars = [

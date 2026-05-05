@@ -1,12 +1,12 @@
 use std::{fmt::Display, str::FromStr};
 
-use nix::{libc::STDERR_FILENO, unistd::write};
+use nix::unistd::write;
 
 use crate::expand::expand_keymap;
+use crate::procio::stderr_fileno;
 use crate::util::ui::ansi_from_description;
 use crate::{
   parse::lex::Span,
-  procio::borrow_fd,
   state::{read_shopts, read_vars},
   util::error::{ShErr, ShResult},
 };
@@ -19,7 +19,7 @@ pub fn xtrace_print(argv: &[(String, Span)]) {
       .map(|(s, _)| s.to_string())
       .collect::<Vec<String>>();
 
-    let stderr = borrow_fd(STDERR_FILENO);
+    let stderr = stderr_fileno();
     let depth = read_vars(|v| v.depth());
     let prefix = "+".repeat((depth as usize) + 1);
     let output = format!("{prefix} {}", words.join(" "));

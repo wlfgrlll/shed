@@ -3,12 +3,7 @@ use super::*;
 use scopeguard::defer;
 
 use crate::{
-  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg},
-  prelude::*,
-  procio::borrow_fd,
-  signal::{disable_reaping, enable_reaping},
-  state,
-  util::error::ShResult,
+  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg}, prelude::*, procio::stdout_fileno, signal::{disable_reaping, enable_reaping}, state, util::error::ShResult
 };
 
 #[derive(Clone, Default, Debug)]
@@ -257,7 +252,7 @@ impl JobTab {
       }
       // Print the job in the selected format
       write(
-        borrow_fd(1),
+        stdout_fileno(),
         format!("{}\n", job.display(&self.order, flags)).as_bytes(),
       )?;
       if job

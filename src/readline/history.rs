@@ -10,14 +10,11 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::{
-  readline::{
+  procio::{MIN_INTERNAL_FD, do_something_that_opens_fds_that_we_cant_access_hack}, readline::{
     complete::{Candidate, FuzzySelector},
     editcmd::Direction,
     linebuf::{Hint, LineBuf, Lines},
-  },
-  sherr,
-  state::{self, read_shopts},
-  util::error::ShResult,
+  }, sherr, state::{self, read_shopts}, util::error::ShResult
 };
 
 #[derive(Debug, Clone)]
@@ -260,17 +257,19 @@ impl History {
     let table = self.table.clone();
 
     std::thread::spawn(move || {
-      let Some(conn) = state::open_db_conn().ok() else {
-        return;
-      };
-      conn.execute_batch("PRAGMA journal_mode=WAL").ok();
-      let micros = runtime.map(|r| r.as_micros() as i64).unwrap_or(0);
-      conn
-        .execute(
-          &format!("UPDATE {table} SET runtime = ?1, status = ?2 WHERE token = ?3"),
-          rusqlite::params![micros, status, token.to_string()],
-        )
-        .ok();
+      do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
+        let Some(conn) = state::open_db_conn().ok() else {
+          return;
+        };
+        conn.execute_batch("PRAGMA journal_mode=WAL").ok();
+        let micros = runtime.map(|r| r.as_micros() as i64).unwrap_or(0);
+        conn
+          .execute(
+            &format!("UPDATE {table} SET runtime = ?1, status = ?2 WHERE token = ?3"),
+            rusqlite::params![micros, status, token.to_string()],
+          )
+          .ok();
+      })
     });
 
     Ok(())
@@ -715,18 +714,20 @@ impl History {
     let table = self.table.clone();
 
     std::thread::spawn(move || {
-      let Some(conn) = state::open_db_conn().ok() else {
-        return;
-      };
-      conn.execute_batch("PRAGMA journal_mode=WAL").ok();
-      let entries = query_masked(None, &conn, &table);
-      if HIST_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation
-        && let Ok(mut cache) = HIST_ENTRIES.write()
-      {
-        let entry_table = cache.entry(table.clone()).or_insert_with(Vec::new);
-        // only hold the lock for as long as it takes to swap in the new cache
-        *entry_table = entries;
-      }
+      do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
+        let Some(conn) = state::open_db_conn().ok() else {
+          return;
+        };
+        conn.execute_batch("PRAGMA journal_mode=WAL").ok();
+        let entries = query_masked(None, &conn, &table);
+        if HIST_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation
+          && let Ok(mut cache) = HIST_ENTRIES.write()
+        {
+          let entry_table = cache.entry(table.clone()).or_insert_with(Vec::new);
+          // only hold the lock for as long as it takes to swap in the new cache
+          *entry_table = entries;
+        }
+      })
     });
   }
 

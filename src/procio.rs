@@ -7,18 +7,43 @@ use crate::{
   }, prelude::*, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
 };
 
-// Credit to fish-shell for many of the implementation ideas present in this
-// module https://fishshell.com/
-
 /// Minimum fd number for shell-internal file descriptors.
 /// User-visible fds (0-9) are kept clear so `exec 3>&-` etc. work as expected.
-const MIN_INTERNAL_FD: RawFd = 10;
+pub const MIN_INTERNAL_FD: RawFd = 10;
 
 /// Like `dup()`, but places the new fd at `MIN_INTERNAL_FD` or above so it
 /// doesn't collide with user-managed fds.
-fn dup_high(fd: RawFd) -> nix::Result<OwnedFd> {
-  let fd = fcntl(fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
+fn dup_high(fd: BorrowedFd) -> nix::Result<OwnedFd> {
+  let fd = fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
   unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
+}
+
+fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
+  let new_fd = dup_high(fd.as_fd())?;
+  Ok(new_fd)
+} // fd is closed here
+
+/// SQLite opens files on its own and we cant call move_high on them.
+///
+/// Later on we will probably have to do something like using a custom VFS
+/// to limit the fd numbers it can use, but for now this will do. I guess.
+pub fn do_something_that_opens_fds_that_we_cant_access_hack<F,T>(min_fd: RawFd, something: F) -> T
+where F: FnOnce() -> T {
+  // these drop at the end of the function
+  let _dummies = (3..min_fd).filter_map(|_| {
+    // painful to write
+    open("/dev/null", OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
+      .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
+      .ok()
+  }).collect::<Vec<_>>();
+
+  // now if this opens fds, they will be at least the value of min_fd
+  something()
+}
+
+pub fn pipes_high() -> nix::Result<(OwnedFd,OwnedFd)> {
+  let (r,w) = nix::unistd::pipe()?;
+  Ok((move_high(r)?, move_high(w)?))
 }
 
 /// Basically just a fancy deferred dup2() call.
@@ -419,13 +444,16 @@ impl RedirSet {
     }
     Ok(())
   }
-  pub fn apply(self) -> ShResult<RedirGuard> {
+  pub fn apply(self) -> ShResult<Option<RedirGuard>> {
+    if self.0.is_empty() {
+      return Ok(None)
+    }
     let guard = RedirGuard::new()?;
     for spec in self.0 {
       let mut redir = spec.into_redir()?;
       redir.apply()?;
     }
-    Ok(guard)
+    Ok(Some(guard))
   }
   pub fn split_by_channel(self) -> (RedirSet, RedirSet) {
     let mut in_redirs = vec![];
@@ -488,9 +516,9 @@ pub struct IoGroup {
 
 impl IoGroup {
   pub fn capture_state() -> ShResult<Self> {
-    let stdin = dup_high(0)?;
-    let stdout = dup_high(1)?;
-    let stderr = dup_high(2)?;
+    let stdin = dup_high(stdin_fileno())?;
+    let stdout = dup_high(stdout_fileno())?;
+    let stderr = dup_high(stderr_fileno())?;
     Ok(Self { stdin, stdout, stderr })
   }
   pub fn restore(&self) -> ShResult<()> {
@@ -529,7 +557,7 @@ impl Iterator for PipeGenerator {
 
     let rpipe = self.last_rpipe.take(); // None if this is the first command
     let wpipe = needs_write.then(|| {
-      let (r, w) = nix::unistd::pipe().ok()?;
+      let (r, w) = pipes_high().ok()?;
       let read = Redir::new(0, r);
       let write = Redir::new(1, w);
       self.last_rpipe = Some(read);
@@ -557,14 +585,16 @@ pub fn split_by_channel(specs: Vec<RedirSpec>) -> (Vec<RedirSpec>, Vec<RedirSpec
   (in_redirs, out_redirs)
 }
 
-/// Borrow a raw file descriptor, for use with std/nix file descriptor operations that expect OwnedFd/BorrowedFd.
-///
-/// Safety note: only use this with FDs that can be assumed to be open, like 0, 1, and 2.
-/// Do not use this with FDs that might be closed
-///
-/// FDs that have a lifetime should always be wrapped in an OwnedFd or similar.
-pub fn borrow_fd<'f>(fd: i32) -> BorrowedFd<'f> {
-  unsafe { BorrowedFd::borrow_raw(fd) }
+pub fn stdin_fileno() -> BorrowedFd<'static> {
+  unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) }
+}
+
+pub fn stdout_fileno() -> BorrowedFd<'static> {
+  unsafe { BorrowedFd::borrow_raw(STDOUT_FILENO) }
+}
+
+pub fn stderr_fileno() -> BorrowedFd<'static> {
+  unsafe { BorrowedFd::borrow_raw(STDERR_FILENO) }
 }
 
 pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
@@ -576,12 +606,12 @@ pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
 }
 
 pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
-  let (rpipe, wpipe) = nix::unistd::pipe()?;
+  let (rpipe, wpipe) = pipes_high()?;
   let child_stdout = Redir::new(1, wpipe);
   let mut child_stdin = None;
 
   let (mut stdin_pipe, stdin_write_fd) = if stdin.is_some() {
-    let (r, w) = nix::unistd::pipe()?;
+    let (r, w) = pipes_high()?;
     let write_fd = w.as_raw_fd();
     child_stdin = Some(Redir::new(0, r));
     (Some(w), Some(write_fd))

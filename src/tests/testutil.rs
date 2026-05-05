@@ -1,7 +1,7 @@
 use std::{
   collections::HashMap,
   env,
-  os::fd::{AsRawFd, BorrowedFd, OwnedFd},
+  os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
   path::PathBuf,
   sync::{Arc, Mutex},
   thread::JoinHandle,
@@ -57,7 +57,7 @@ macro_rules! assert_status_ne {
 use crate::{
   expand::expand_aliases,
   parse::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
-  procio::{RedirGuard, RedirSet, RedirSpec, RedirType, borrow_fd},
+  procio::{RedirGuard, RedirSet, RedirSpec, RedirType},
   readline::register::{restore_registers, save_registers},
   state::{self, MetaTab, with_term},
   util::error::ShResult,
@@ -129,7 +129,10 @@ impl TestGuard {
       RedirSpec::dup(pty_slave.as_raw_fd(),  2, RedirType::Output),
     ].into();
 
-    let _redir_guard = redirs.apply().unwrap();
+    let _redir_guard = redirs.apply()
+      .ok()
+      .flatten()
+      .unwrap();
 
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();
@@ -152,7 +155,7 @@ impl TestGuard {
   }
 
   pub fn pty_slave(&self) -> BorrowedFd<'_> {
-    borrow_fd(self.pty_slave.as_raw_fd())
+    self.pty_slave.as_fd()
   }
 
   pub fn add_cleanup(&mut self, f: impl FnOnce() + 'static) {
@@ -161,8 +164,8 @@ impl TestGuard {
 
   pub fn feed_stdin(&mut self, data: &[u8]) {
     if let Some(fd) = self.stdin_write_pipe.take() {
-      let raw = fd.as_raw_fd();
-      nix::unistd::write(borrow_fd(raw), data).unwrap();
+      let borrowed = fd.as_fd();
+      nix::unistd::write(borrowed, data).unwrap();
       // drops, closes
     }
   }

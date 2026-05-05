@@ -3,7 +3,7 @@ use std::{
   env,
   fmt::{Debug, Display},
   io::Write,
-  os::fd::RawFd,
+  os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
   sync::LazyLock,
   time::Instant,
 };
@@ -28,19 +28,12 @@ use nix::{
 use vte::Perform;
 
 use crate::{
-  procio::borrow_fd,
-  readline::{
+  procio::MIN_INTERNAL_FD, readline::{
     keys::{KeyCode, KeyEvent, ModKeys},
     linebuf::Pos,
     term::get_win_size,
-  },
-  sherr,
-  state::{read_shopts, with_term},
-  util::error::{ShErr, ShErrKind, ShResult},
+  }, sherr, state::{read_shopts, with_term}, util::error::{ShErr, ShErrKind, ShResult}
 };
-
-/// Minimum fd number for shell-internal file descriptors.
-pub const MIN_INTERNAL_FD: RawFd = 10;
 
 static TTY_FILENO: LazyLock<Option<RawFd>> = LazyLock::new(|| {
   let fd = open("/dev/tty", OFlag::O_RDWR, Mode::empty()).ok()?;
@@ -622,9 +615,9 @@ bitflags! {
 }
 
 /// An abstraction over the terminal that manages terminal attributes, and I/O.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Terminal {
-  tty: Option<RawFd>,
+  tty: Option<OwnedFd>,
   reader: PollReader,
   input_buf: String,
 
@@ -649,6 +642,30 @@ pub struct Terminal {
   /// instead of sending escape sequences and waiting for replies. Used by
   /// tests where the PTY peer doesn't synthesize responses.
   test_mode: bool,
+}
+
+impl Clone for Terminal {
+  fn clone(&self) -> Self {
+    Self {
+      tty: None, // Don't clone the TTY fd - the clone should only be used for state inspection, not I/O
+      reader: self.reader.clone(),
+      input_buf: self.input_buf.clone(),
+      bracketed_paste: self.bracketed_paste,
+      kitty_kbd_proto: self.kitty_kbd_proto,
+      raw_mode: self.raw_mode,
+      alt_buffer: self.alt_buffer,
+      cursor_style: self.cursor_style,
+      cursor_visible: self.cursor_visible,
+      mouse_enabled: self.mouse_enabled,
+      interactive: self.interactive,
+      termios_stack: self.termios_stack.clone(),
+      term_caps: self.term_caps,
+      t_cols: self.t_cols,
+      t_rows: self.t_rows,
+      last_bell: self.last_bell,
+      test_mode: self.test_mode,
+    }
+  }
 }
 
 impl Terminal {
@@ -689,6 +706,7 @@ impl Terminal {
   pub fn new() -> Self {
     let tty = TTY_FILENO.and_then(|fd| isatty(fd).unwrap_or(false).then_some(fd));
     let (cols, rows) = tty.map(get_win_size).unwrap_or((80, 24));
+    let tty = tty.map(|fd| unsafe { OwnedFd::from_raw_fd(fd) });
     Self {
       tty,
       reader: PollReader::new(),
@@ -711,26 +729,23 @@ impl Terminal {
   }
 
   /// Access the underlying tty file descriptor.
-  ///
-  /// # Safety
-  /// The fd is basically guaranteed to be open for the full lifetime of the program,
-  /// unless the user does some pathological nonsense like duping another fd to it and then closing it, or something like that.
-  /// Even so, accessing it directly is still a smell.
-  /// The entire point of the Terminal abstraction is to avoid having to interact with the tty fd directly.
-  /// If you find yourself calling this, it may be better to just implement the needed functionality as a method on Terminal instead.
-  /// The reason it's 'unsafe' is because you are responsible for whatever footgun you create with this.
-  ///
-  /// This function checks the fd for validity before returning it.
-  pub unsafe fn tty(&self) -> Option<RawFd> {
-    let tty = self.tty?;
-    let isatty = isatty(tty).unwrap_or(false);
-    let get_fd = fcntl(tty, FcntlArg::F_GETFD).is_ok();
+  pub fn tty(&self) -> Option<BorrowedFd<'_>> {
+    let tty = self.tty.as_ref()?;
+    let isatty = isatty(tty.as_raw_fd()).unwrap_or(false);
+    let get_fd = fcntl(tty.as_raw_fd(), FcntlArg::F_GETFD).is_ok();
 
-    (isatty && get_fd).then_some(tty)
+    (isatty && get_fd).then_some(tty.as_fd())
+  }
+
+  /// Helper for mapping the tty fd to a raw fd
+  ///
+  /// Not part of the public interface for a reason.
+  fn tty_raw(&self) -> Option<RawFd> {
+    self.tty().map(|tty| tty.as_raw_fd())
   }
 
   pub fn isatty(&self) -> bool {
-    self.tty.is_some_and(|tty| isatty(tty).unwrap_or(false))
+    self.tty.as_ref().is_some_and(|tty| isatty(tty.as_raw_fd()).unwrap_or(false))
   }
 
   pub fn interactive(&self) -> bool {
@@ -767,7 +782,7 @@ impl Terminal {
     if self.test_mode {
       return Ok(());
     }
-    let Some(tty) = self.tty else { return Ok(()) };
+    let Some(tty) = self.tty_raw() else { return Ok(()) };
     let mut caps = TermCap::empty();
 
     let queries = [("Su", TermCap::SYNC_OUTPUT), ("RGB", TermCap::TRUECOLOR)];
@@ -790,7 +805,7 @@ impl Terminal {
 
       let timeout = PollTimeout::try_from(deadline as i32).unwrap();
       if self.poll(timeout)? > 0 {
-        self.reader.read(tty)?;
+        self.reader.read(tty.as_raw_fd())?;
         while let Some(event) = self.reader.read_event()? {
           if let TermEvent::Capabilities { name, value: _ } = event {
             for (cap, flag) in &queries {
@@ -895,15 +910,15 @@ impl Terminal {
   }
 
   pub fn update_t_dims(&mut self) {
-    let Some(tty) = self.tty else { return };
-    let (cols, rows) = get_win_size(tty);
+    let Some(tty) = self.tty() else { return };
+    let (cols, rows) = get_win_size(tty.as_raw_fd());
     self.t_cols = cols as usize;
     self.t_rows = rows as usize;
   }
 
   pub fn poll(&mut self, timeout: PollTimeout) -> ShResult<i32> {
-    let Some(tty) = self.tty else { return Ok(0) };
-    let poll_fd = PollFd::new(borrow_fd(tty), PollFlags::POLLIN);
+    let Some(tty) = self.tty() else { return Ok(0) };
+    let poll_fd = PollFd::new(tty, PollFlags::POLLIN);
     Ok(poll(&mut [poll_fd], timeout)?)
   }
 
@@ -911,7 +926,7 @@ impl Terminal {
     if self.test_mode {
       return Ok(None);
     }
-    let Some(tty) = self.tty else { return Ok(None) };
+    let Some(tty) = self.tty_raw() else { return Ok(None) };
 
     self.write_direct(Self::CAP_QUERY)?;
 
@@ -935,7 +950,7 @@ impl Terminal {
     if self.test_mode {
       return Ok(None);
     }
-    let Some(tty) = self.tty else { return Ok(None) };
+    let Some(tty) = self.tty_raw() else { return Ok(None) };
 
     // ask the terminal where our cursor is
     self.write_direct(Self::CURSOR_QUERY)?;
@@ -945,7 +960,7 @@ impl Terminal {
       return Ok(None);
     }
 
-    self.reader.read(tty)?;
+    self.reader.read(tty.as_raw_fd())?;
 
     while let Some(event) = self.reader.read_event()? {
       let TermEvent::CursorPos(row, col) = event else {
@@ -1059,12 +1074,12 @@ impl Terminal {
   }
 
   pub fn controller(&self) -> Option<Pid> {
-    let tty = self.tty?;
-    nix::unistd::tcgetpgrp(borrow_fd(tty)).ok()
+    let tty = self.tty()?;
+    nix::unistd::tcgetpgrp(tty).ok()
   }
 
   pub fn attach(&mut self, pgid: Pid) -> ShResult<()> {
-    let Some(tty) = self.tty else {
+    let Some(tty) = self.tty() else {
       return Ok(());
     };
     // If we aren't attached to a terminal, the pgid already controls it, or the
@@ -1088,7 +1103,7 @@ impl Terminal {
 
     pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&new_mask), Some(&mut mask_bkup))?;
 
-    let result = tcsetpgrp(borrow_fd(tty), pgid);
+    let result = tcsetpgrp(tty, pgid);
 
     pthread_sigmask(
       SigmaskHow::SIG_SETMASK,
@@ -1098,20 +1113,20 @@ impl Terminal {
 
     if let Err(e) = result {
       log::error!("Failed to set terminal process group: {e}");
-      tcsetpgrp(borrow_fd(tty), getpgrp())?;
+      tcsetpgrp(tty, getpgrp())?;
     }
 
     Ok(())
   }
 
   pub fn fd_is_tty(&self, other: RawFd) -> bool {
-    let Some(tty) = self.tty else { return false };
-    other == tty
+    let Some(tty) = self.tty() else { return false };
+    other == tty.as_raw_fd()
   }
 
   pub fn read(&mut self) -> ShResult<usize> {
-    let Some(tty) = self.tty else { return Ok(0) };
-    self.reader.read(tty)
+    let Some(tty) = self.tty() else { return Ok(0) };
+    self.reader.read(tty.as_raw_fd())
   }
 
   pub fn drain_keys(&mut self) -> ShResult<Vec<KeyEvent>> {
@@ -1173,8 +1188,8 @@ impl Terminal {
   }
 
   fn push_termios(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty else { return Ok(()) };
-    let current = tcgetattr(borrow_fd(tty))
+    let Some(tty) = self.tty() else { return Ok(()) };
+    let current = tcgetattr(tty)
       .map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
     self.termios_stack.push(current);
@@ -1182,24 +1197,25 @@ impl Terminal {
   }
 
   fn pop_termios(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty else { return Ok(()) };
+    let Some(tty) = self.tty_raw() else { return Ok(()) };
     if let Some(termios) = self.termios_stack.pop() {
-      tcsetattr(borrow_fd(tty), termios::SetArg::TCSANOW, &termios)
+      tcsetattr(unsafe { BorrowedFd::borrow_raw(tty) }, termios::SetArg::TCSANOW, &termios)
         .map_err(|e| sherr!(InternalErr, "Failed to restore terminal attributes: {e}"))?;
     }
     Ok(())
   }
 
   pub fn edit_termios<F: FnOnce(&mut Termios)>(&mut self, f: F) -> ShResult<()> {
-    let Some(tty) = self.tty else { return Ok(()) };
+    let Some(tty) = self.tty_raw() else { return Ok(()) };
+    let tty = unsafe { BorrowedFd::borrow_raw(tty) };
     self.push_termios()?;
 
-    let mut raw = tcgetattr(borrow_fd(tty))
+    let mut raw = tcgetattr(tty)
       .map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
     f(&mut raw);
 
-    tcsetattr(borrow_fd(tty), termios::SetArg::TCSANOW, &raw)
+    tcsetattr(tty, termios::SetArg::TCSANOW, &raw)
       .map_err(|e| sherr!(InternalErr, "Failed to set terminal attributes: {e}"))?;
 
     Ok(())
@@ -1209,12 +1225,12 @@ impl Terminal {
     self.raw_mode
   }
   pub fn write_direct(&mut self, buf: &str) -> ShResult<()> {
-    let Some(tty) = self.tty else {
+    let Some(tty) = self.tty() else {
       return Ok(());
     };
     let mut buf = buf.as_bytes();
     while !buf.is_empty() {
-      match write(borrow_fd(tty), buf) {
+      match write(tty, buf) {
         Ok(n) => buf = &buf[n..],
         Err(Errno::EINTR) => continue,
         Err(_) => return Err(std::io::Error::last_os_error().into()),
@@ -1282,7 +1298,10 @@ impl Terminal {
 
   #[cfg(test)]
   pub fn set_fd_for_testing(&mut self, fd: Option<RawFd>) {
-    self.tty = fd;
+    self.tty = fd.map(|fd| {
+      let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+      borrowed.try_clone_to_owned().expect("failed to dup test tty fd")
+    });
     self.test_mode = fd.is_some();
   }
 }
@@ -1318,13 +1337,13 @@ impl std::io::Write for Terminal {
     Ok(buf.len())
   }
   fn flush(&mut self) -> std::io::Result<()> {
-    let Some(tty) = self.tty else {
+    let Some(tty) = self.tty() else {
       self.input_buf.clear();
       return Ok(());
     };
     let mut buf = self.input_buf.as_bytes();
     while !buf.is_empty() {
-      match write(borrow_fd(tty), buf) {
+      match write(tty, buf) {
         Ok(n) => buf = &buf[n..],
         Err(Errno::EINTR) => continue,
         Err(_) => {

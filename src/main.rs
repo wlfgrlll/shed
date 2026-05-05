@@ -35,7 +35,7 @@ use crate::builtin::source_builtin_completions;
 use crate::builtin::trap::TrapTarget;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
 use crate::prelude::*;
-use crate::procio::{RedirType, borrow_fd};
+use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stderr_fileno};
 use crate::readline::editmode::ModeReport;
 use crate::readline::linebuf::{Hint, Lines, Pos};
 use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
@@ -80,6 +80,9 @@ struct ShedArgs {
 
   #[arg(long, short)]
   welcome: bool,
+
+  #[arg(long)]
+  no_rc: bool,
 }
 
 /// We need to make sure that even if we panic, our child processes get sighup
@@ -170,11 +173,13 @@ fn main() -> ExitCode {
     write_vars(|v| v.set_var("SHLVL", VarKind::Str("1".into()), VarFlags::EXPORT)).ok();
   }
 
-  if let Err(e) = source_env() {
+  if !args.no_rc && let Err(e) = source_env() {
     e.print_error();
   }
 
-  state::init_db_conn();
+  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
+    state::init_db_conn()
+  });
 
   if let Err(e) = if let Some(cmd) = args.command {
     exec_dash_c(cmd, args.script_args)
@@ -210,7 +215,7 @@ fn main() -> ExitCode {
 
   let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
   if code == 0 && isatty(STDIN_FILENO).unwrap_or_default() {
-    write(borrow_fd(STDERR_FILENO), b"\nexit\n").ok();
+    write(stderr_fileno(), b"\nexit\n").ok();
   }
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
@@ -369,7 +374,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     outln!("\n{msg}")?;
   }
 
-  if args.login_shell {
+  if args.login_shell && !args.no_rc {
     source_login().ok();
   }
 
@@ -381,7 +386,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     }
   }
 
-  if let Err(e) = source_rc() {
+  if !args.no_rc && let Err(e) = source_rc() {
     e.print_error();
   }
 
@@ -420,14 +425,16 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
   let mut socket_mode = ShedSocket::mode();
 
   let mut poll_fds: SmallVec<[PollFd; 2]> = SmallVec::new();
-  let Some(tty_fd) = with_term(|t| unsafe { t.tty() }) else {
+  let Some(tty_fd) = with_term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
     errln!("Failed to access terminal file descriptor")?;
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "terminal access failed",));
   };
-  let tty_poll = PollFd::new(borrow_fd(tty_fd), PollFlags::POLLIN);
+
+  let tty_poll = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty_fd) }, PollFlags::POLLIN);
+
   let socket_fd = write_meta(|m| m.get_socket().map(|s| s.as_raw_fd()));
-  let socket_poll = socket_fd.map(|fd| PollFd::new(borrow_fd(fd), PollFlags::POLLIN));
+  let socket_poll = socket_fd.map(|fd| PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN));
 
   // Main poll loop
   loop {

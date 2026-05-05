@@ -1,18 +1,13 @@
 use std::{env, path::PathBuf};
 
 use ariadne::Fmt;
-use nix::{libc::STDOUT_FILENO, unistd::write};
+use nix::unistd::write;
 
 use crate::{
-  getopt::{Opt, OptSpec},
-  parse::lex::Span,
-  procio::borrow_fd,
-  sherr,
-  state::{change_dir, read_meta, write_meta},
-  util::{
+  getopt::{Opt, OptSpec}, parse::lex::Span, procio::stdout_fileno, sherr, state::{change_dir, read_meta, write_meta}, util::{
     error::{ShResult, ShResultExt, next_color},
     with_status, write_out,
-  },
+  }
 };
 
 fn is_index_arg(arg: &str) -> bool {
@@ -317,7 +312,7 @@ fn print_dirs() -> ShResult<()> {
     .collect::<Vec<_>>()
     .join(" ");
 
-  let stdout = borrow_fd(STDOUT_FILENO);
+  let stdout = stdout_fileno();
   write(stdout, all_dirs.as_bytes())?;
   write(stdout, b"\n")?;
 
