@@ -7,12 +7,7 @@ use crate::{
   builtin::help::{
     markup::StyledHelp,
     pager::{HelpPager, PagerEvent},
-  },
-  parse::lex::Span,
-  readline::complete::ScoredCandidate,
-  sherr,
-  state::{with_term, write_meta},
-  util::error::ShResult,
+  }, getopt::{Opt, OptSpec}, outln, parse::lex::Span, readline::complete::ScoredCandidate, sherr, state::{with_term, write_meta}, util::{error::ShResult, with_status}
 };
 
 use markup::TAG_SEQ;
@@ -72,11 +67,18 @@ include_help_pages! {
 
 pub(super) struct Help;
 impl super::Builtin for Help {
+  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+    vec![
+      OptSpec::flag("list-tags"),
+      OptSpec::flag('l')
+    ]
+  }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let _guard = scopeguard::guard((), |_| {
       write_meta(|m| m.disable_welcome_message()).unwrap();
     });
     let mut argv = args.argv.into_iter().peekable();
+    let list_tags = args.opts.contains(&Opt::Long("list-tags".into())) || args.opts.contains(&Opt::Short('l'));
 
     // Join all of the word-split arguments into a single string
     // Preserve the span too
@@ -86,14 +88,50 @@ impl super::Builtin for Help {
       super::join_raw_arg_iter(argv)
     };
 
-    match get_help_content(&topic) {
-      Some((line, content, filename)) => open_help(&content, line, filename),
-      None => Err(sherr!(
-        NotFound @ span,
-        "No relevant help page found for this topic",
-      )),
+    if list_tags {
+      let tags = get_all_tags()?;
+      for tag in tags {
+        let candidate = tag.tag.candidate;
+        outln!("{candidate}")?;
+      }
+      with_status(0)
+    } else {
+      match get_help_content(&topic) {
+        Some((line, content, filename)) => open_help(&content, line, filename),
+        None => Err(sherr!(
+            NotFound @ span,
+            "No relevant help page found for this topic",
+        )),
+      }
     }
   }
+}
+
+pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
+  let mut tags = vec![];
+  let hpath = env::var("SHED_HPATH").unwrap_or_default();
+  for path in hpath.split(':') {
+    let path = Path::new(path);
+    if let Ok(entries) = path.read_dir() {
+      for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if !path.is_file() {
+          continue;
+        }
+
+        let mut new_tags = read_tags_from_file(&path)?;
+        tags.append(&mut new_tags);
+      }
+    }
+  }
+
+  for (page, content) in HELP_PAGES {
+    let mut new_tags = read_tags(content, page)?;
+    tags.append(&mut new_tags);
+  }
+
+  Ok(tags)
 }
 
 pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> {

@@ -166,8 +166,15 @@ fn unescape_help(raw: &str) -> String {
       result.push(ch);
     }
     '*' => {
-      result.push(markers::TAG);
-      find_closer('*', &mut result, &mut chars);
+      let lookahead: String = chars.clone()
+        .take_while(|c| !c.is_whitespace() && *c != '\n')
+        .collect();
+      if lookahead.contains('*') {
+        result.push(markers::TAG);
+        find_closer('*', &mut result, &mut chars);
+      } else {
+        result.push(ch);
+      }
     }
     '|' => {
       result.push(markers::REFERENCE);
