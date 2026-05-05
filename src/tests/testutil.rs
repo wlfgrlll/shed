@@ -3,7 +3,7 @@ use std::{
   env,
   os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
   path::PathBuf,
-  sync::{Arc, Mutex},
+  sync::{Arc, Condvar, Mutex},
   thread::JoinHandle,
 };
 
@@ -88,7 +88,7 @@ pub struct TestGuard {
   _pty_master: OwnedFd,
   pty_slave: OwnedFd,
   stdin_write_pipe: Option<OwnedFd>,
-  output: Arc<Mutex<Vec<u8>>>,
+  output: Arc<(Mutex<Vec<u8>>, Condvar)>,
   _read_handle: JoinHandle<()>,
 
   cleanups: Vec<Box<dyn FnOnce()>>,
@@ -108,14 +108,18 @@ impl TestGuard {
     // will cause the test to hang if we try to do everything on one thread.
     // if we attempt to do this synchronously, we have to do both the reading and the writing.
     // we can't read if we're blocked on writing to a full pty buffer.
-    let output = Arc::new(Mutex::new(vec![]));
+    let output = Arc::new((Mutex::new(vec![]), Condvar::new()));
     let output_clone = Arc::clone(&output);
     let _read_handle = std::thread::spawn(move || {
       let mut buf = [0u8; 4096];
       loop {
         match read(master_raw, &mut buf) {
           Ok(0) => break,
-          Ok(n) => output_clone.lock().unwrap().extend_from_slice(&buf[..n]),
+          Ok(n) => {
+            let (mu, cv) = &*output_clone;
+            mu.lock().unwrap().extend_from_slice(&buf[..n]);
+            cv.notify_all();
+          },
           Err(_) => break,
         }
       }
@@ -171,24 +175,27 @@ impl TestGuard {
   }
 
   pub fn read_output(&self) -> String {
-    loop {
-      // wait a little bit for read thread to do its read
-      std::thread::sleep(std::time::Duration::from_millis(5));
-      let buf = self.output.lock().unwrap();
-      // check current length of output buffer
-      let snapshot_len = buf.len();
-      drop(buf);
-      // wait a little bit more
-      std::thread::sleep(std::time::Duration::from_millis(5));
-      let mut buf = self.output.lock().unwrap();
-      if buf.len() == snapshot_len {
-        // no new output came in during the second sleep, assume we're done
-        let result = String::from_utf8_lossy(&buf).to_string();
-        buf.clear();
-        return result;
-      }
-      // more data came in, loop again
+    let (mu, cv) = &*self.output;
+    let mut buf = mu.lock().unwrap();
+
+    while buf.is_empty() {
+      let r = cv.wait_timeout(buf, std::time::Duration::from_millis(100)).unwrap();
+      buf = r.0;
+      if r.1.timed_out() { break }
     }
+
+    loop {
+      let len_before = buf.len();
+      let r = cv.wait_timeout(buf, std::time::Duration::from_millis(2)).unwrap();
+      buf = r.0;
+      if r.1.timed_out() && buf.len() == len_before {
+        break
+      }
+    }
+
+    let res = String::from_utf8_lossy(&buf).to_string();
+    buf.clear();
+    res
   }
 }
 
