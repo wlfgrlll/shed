@@ -1,13 +1,13 @@
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
 use crate::prelude::*;
-use crate::procio::{Redir, RedirGuard, RedirSet, RedirSpec, RedirType, pipes_high, read_fd_to_string};
+use crate::procio::{RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string};
 use crate::sherr;
 use crate::state::{self, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
-  let (rpipe, wpipe) = pipes_high()?;
+  let (rpipe, wpipe) = pipes_high_no_cloexec()?;
   let rpipe_raw = rpipe.as_raw_fd();
   let wpipe_raw = wpipe.as_raw_fd();
 

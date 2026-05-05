@@ -18,11 +18,21 @@ fn dup_high(fd: BorrowedFd) -> nix::Result<OwnedFd> {
   unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
+fn dup_high_no_cloexec(fd: BorrowedFd) -> nix::Result<OwnedFd> {
+  let fd = fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD(MIN_INTERNAL_FD))?;
+  Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
 /// Like `dup_high()` but takes and closes an existing OwnedFd.
 fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
   let new_fd = dup_high(fd.as_fd())?;
   Ok(new_fd)
 } // fd is closed here
+
+fn move_high_no_cloexec(fd: OwnedFd) -> nix::Result<OwnedFd> {
+  let new_fd = dup_high_no_cloexec(fd.as_fd())?;
+  Ok(new_fd)
+}
 
 /// SQLite opens long-lived file descriptors on its own and we cant call move_high on them.
 ///
@@ -48,6 +58,11 @@ where F: FnOnce() -> T {
 pub fn pipes_high() -> nix::Result<(OwnedFd,OwnedFd)> {
   let (r,w) = nix::unistd::pipe()?;
   Ok((move_high(r)?, move_high(w)?))
+}
+
+pub fn pipes_high_no_cloexec() -> nix::Result<(OwnedFd,OwnedFd)> {
+  let (r,w) = nix::unistd::pipe()?;
+  Ok((move_high_no_cloexec(r)?, move_high_no_cloexec(w)?))
 }
 
 /// Basically just a fancy deferred dup2() call.
