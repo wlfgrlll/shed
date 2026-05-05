@@ -7,7 +7,7 @@ use bitflags::bitflags;
 use crate::{
   expand::{unescape_str, var::expand_raw_inner},
   match_loop,
-  parse::lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
+  parse::{execute::{in_cd_path, is_in_path}, lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule}},
   readline::{linebuf::Delim, markers::strip_markers},
   state::{self, ShellParam, read_meta, read_shopts},
   util::strops::QuoteState,
@@ -26,20 +26,29 @@ pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
   out
 }
 
-/// Checks if a command name is valid (exists in PATH, is a function, or is an
-/// alias)
+/// Checks if a command name is valid
 ///
 /// Searches:
-/// 1. Current directory if command is a path
-/// 2. All directories in PATH environment variable
-/// 3. Shell functions and aliases in the current shell state
-fn is_valid(command: &str) -> bool {
-  let cmd_path = Path::new(&command);
-
-  if cmd_path.is_dir() && read_shopts(|o| o.core.autocd) {
+/// 1. Checks if we have autocd enabled and it is autocd'able
+/// 2. Current directory if command is a path
+/// 3. All directories in PATH environment variable
+/// 4. Shell functions and aliases in the current shell state
+fn is_valid(command: Tk) -> bool {
+  if read_shopts(|s| s.core.autocd)
+    && in_cd_path(command.clone())
+    && !is_in_path(command.clone())
+  {
     // this is a directory and autocd is enabled
     return true;
   }
+
+  let Ok(expanded) = command.expand() else {
+    return false
+  };
+  let Some(name) = expanded.get_first_word() else {
+    return false;
+  };
+  let cmd_path = Path::new(&name);
 
   if cmd_path.is_absolute() {
     // the user has given us an absolute path
@@ -49,7 +58,7 @@ fn is_valid(command: &str) -> bool {
     // this is a file that is executable by someone
     meta.permissions().mode() & 0o111 != 0
   } else {
-    read_meta(|m| m.cache_contains(command))
+    read_meta(|m| m.cache_contains(&name))
   }
 }
 
@@ -431,7 +440,7 @@ impl CtxTk {
         span,
       )];
     } else if flags.intersects(TkFlags::BUILTIN | TkFlags::IS_CMD) {
-      if is_valid(value.as_str()) {
+      if is_valid(value.clone()) {
         CtxTkRule::ValidCommand
       } else {
         CtxTkRule::InvalidCommand

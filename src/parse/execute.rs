@@ -32,14 +32,20 @@ use crate::{
   },
 };
 
-fn in_cd_path(name: &str) -> bool {
-  if Path::new(name).is_dir() {
+pub fn in_cd_path(name: Tk) -> bool {
+  let Ok(expanded) = name.expand() else {
+    return false
+  };
+  let Some(name) = expanded.get_first_word() else {
+    return false;
+  };
+  if Path::new(&name).is_dir() {
     return true;
   }
   let cd_path = read_vars(|v| v.get_var("CDPATH"));
   let entries = cd_path.split(':');
   for entry in entries {
-    let full_path = Path::new(entry).join(name);
+    let full_path = Path::new(entry).join(&name);
     if full_path.is_dir() {
       return true;
     }
@@ -47,9 +53,15 @@ fn in_cd_path(name: &str) -> bool {
   false
 }
 
-pub fn is_in_path(name: &str) -> bool {
+pub fn is_in_path(name: Tk) -> bool {
+  let Ok(expanded) = name.expand() else {
+    return false
+  };
+  let Some(name) = expanded.get_first_word() else {
+    return false;
+  };
   if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
-    let path = Path::new(name);
+    let path = Path::new(&name);
     if path.exists() && path.is_file() && !path.is_dir() {
       let meta = match path.metadata() {
         Ok(m) => m,
@@ -66,7 +78,7 @@ pub fn is_in_path(name: &str) -> bool {
     };
     let paths = path.split(':');
     for path in paths {
-      let full_path = Path::new(path).join(name);
+      let full_path = Path::new(path).join(&name);
       if full_path.exists() && full_path.is_file() && !full_path.is_dir() {
         let meta = match full_path.metadata() {
           Ok(m) => m,
@@ -375,8 +387,8 @@ impl Dispatcher {
     } else if is_arith(cmd_tk) {
       self.exec_arith(node)
     } else if read_shopts(|s| s.core.autocd)
-      && in_cd_path(cmd.span.as_str())
-      && !is_in_path(cmd.span.as_str())
+      && in_cd_path(cmd.clone())
+      && !is_in_path(cmd.clone())
     {
       let dir = cmd.span.as_str().to_string();
       exec_input(
