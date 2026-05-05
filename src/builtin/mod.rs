@@ -196,13 +196,8 @@ register_builtins! {
 macro_rules! compgen {
   ($name:literal, $flag:expr) => {
     concat!(
-      "_",
-      $name,
-      "_comp() { compadd $(compgen ",
-      $flag,
-      r#" -- "$2"); }; complete -F _"#,
-      $name,
-      "_comp ",
+      "_",$name,"_comp() { compadd $(compgen ",$flag,r#" -- "$2"); }; complete -F _"#,
+      $name,"_comp ",
       $name
     )
   };
@@ -232,6 +227,13 @@ register_completions! {
   "wait"     => compgen!("wait",     "-j"),
   "source"   => compgen!("source",   "-f"),
   "."        => compgen!(".",        "-f"),
+  "read"     => compgen!("read",     "-v"),
+  "readkey"  => compgen!("readkey",  "-v"),
+  "pop"      => compgen!("pop",      "-v"),
+  "fpop"     => compgen!("fpop",     "-v"),
+  "push"     => compgen!("push",     "-v"),
+  "fpush"    => compgen!("fpush",    "-v"),
+  "rotate"   => compgen!("rotate",   "-v"),
   "kill"     => embed!("completions/kill_comp.shed"),
   "trap"     => embed!("completions/trap_comp.shed"),
   "set"      => embed!("completions/set_comp.shed"),
