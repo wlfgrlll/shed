@@ -193,6 +193,9 @@ register_builtins! {
   "wait"     => jobctl::Wait,
 }
 
+/// Autogenerate a completion spec for the given command using a compgen flag
+///
+/// Useful for simple builtins
 macro_rules! compgen {
   ($name:literal, $flag:expr) => {
     concat!(
@@ -237,6 +240,7 @@ register_completions! {
   "push"     => compgen!("push",     "-v"),
   "fpush"    => compgen!("fpush",    "-v"),
   "rotate"   => compgen!("rotate",   "-v"),
+  "builtin"  => compgen!("builtin",  "-b"),
   "kill"     => embed!("completions/kill_comp.shed"),
   "trap"     => embed!("completions/trap_comp.shed"),
   "set"      => embed!("completions/set_comp.shed"),
@@ -244,6 +248,7 @@ register_completions! {
   "cd"       => embed!("completions/cd_comp.shed"),
   "shopt"    => embed!("completions/shopt_comp.shed"),
   "compadd"  => embed!("completions/compadd_comp.shed"),
+  "help"     => embed!("completions/help_comp.shed"),
 }
 
 /// Lookup a name in the builtin table via binary search
