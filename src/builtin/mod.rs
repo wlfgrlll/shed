@@ -203,6 +203,9 @@ macro_rules! compgen {
   };
 }
 
+/// Embed a completion script directly in the binary.
+///
+/// The script has to define a completion function *and* call complete -F {func} {name}
 macro_rules! embed {
   ($path:literal) => {
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))

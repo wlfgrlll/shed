@@ -15,16 +15,17 @@ use crate::{
 bitflags! {
   #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct CompFlags: u32 {
-    const FILES   = 0b0000000001;
-    const DIRS    = 0b0000000010;
-    const CMDS    = 0b0000000100;
-    const USERS   = 0b0000001000;
-    const VARS    = 0b0000010000;
-    const JOBS    = 0b0000100000;
-    const ALIAS   = 0b0001000000;
-    const SIGNALS = 0b0010000000;
-    const PRINT   = 0b0100000000;
-    const REMOVE  = 0b1000000000;
+    const FILES    = 1 << 0;
+    const DIRS     = 1 << 1;
+    const CMDS     = 1 << 2;
+    const USERS    = 1 << 3;
+    const VARS     = 1 << 4;
+    const JOBS     = 1 << 5;
+    const ALIAS    = 1 << 6;
+    const SIGNALS  = 1 << 7;
+    const PRINT    = 1 << 8;
+    const REMOVE   = 1 << 9;
+    const BUILTINS = 1 << 10;
   }
   #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct CompOptFlags: u32 {
@@ -56,6 +57,7 @@ impl super::Builtin for Complete {
       OptSpec::flag('u'),
       OptSpec::flag('v'),
       OptSpec::flag('a'),
+      OptSpec::flag('b'),
       OptSpec::flag('S'),
       OptSpec::single_arg('o'),
       OptSpec::single_arg('F'),
@@ -130,6 +132,7 @@ impl super::Builtin for CompGen {
       OptSpec::flag('v'),
       OptSpec::flag('a'),
       OptSpec::flag('S'),
+      OptSpec::flag('b'),
       OptSpec::single_arg('o'),
       OptSpec::single_arg('F'),
       OptSpec::single_arg('W'),
@@ -332,6 +335,7 @@ pub fn get_comp_opts(opts: Vec<Opt>) -> ShResult<CompOpts> {
       Opt::Short('f') => comp_opts.flags |= CompFlags::FILES,
       Opt::Short('d') => comp_opts.flags |= CompFlags::DIRS,
       Opt::Short('c') => comp_opts.flags |= CompFlags::CMDS,
+      Opt::Short('b') => comp_opts.flags |= CompFlags::BUILTINS,
       Opt::Short('u') => comp_opts.flags |= CompFlags::USERS,
       Opt::Short('v') => comp_opts.flags |= CompFlags::VARS,
       _ => unreachable!(),

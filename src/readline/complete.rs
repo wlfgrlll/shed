@@ -9,7 +9,7 @@ use std::{
 use nix::sys::signal::Signal;
 
 use crate::{
-  builtin::complete::{CompFlags, CompOptFlags, CompOpts},
+  builtin::{BUILTIN_NAMES, complete::{CompFlags, CompOptFlags, CompOpts}},
   expand::{
     escape::{as_var_val_display, escape_str_bounded},
     unescape_str,
@@ -390,6 +390,12 @@ impl From<&str> for Candidate {
   }
 }
 
+impl From<&&str> for Candidate {
+  fn from(value: &&str) -> Self {
+    Self::from(*value)
+  }
+}
+
 impl From<(usize, String)> for Candidate {
   fn from(value: (usize, String)) -> Self {
     Self {
@@ -588,6 +594,13 @@ pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
   })
 }
 
+fn complete_builtins(start: &str) -> Vec<Candidate> {
+  BUILTIN_NAMES.iter()
+    .map(Candidate::from)
+    .filter(|b| b.is_match(start))
+    .collect()
+}
+
 fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
   let mut candidates: Vec<Candidate> = read_meta(|m| {
     m.cached_utils()
@@ -717,6 +730,8 @@ pub struct BashCompSpec {
   pub dirs: bool,
   /// -c: complete command names
   pub commands: bool,
+  /// -b: complete builtin names
+  pub builtins: bool,
   /// -u: complete user names
   pub users: bool,
   /// -v: complete variable names
@@ -781,6 +796,10 @@ impl BashCompSpec {
     self.aliases = enable;
     self
   }
+  pub fn builtins(mut self, enable: bool) -> Self {
+    self.builtins = enable;
+    self
+  }
   pub fn from_comp_opts(opts: CompOpts) -> Self {
     let CompOpts {
       func,
@@ -799,6 +818,7 @@ impl BashCompSpec {
       vars: flags.contains(CompFlags::VARS),
       jobs: flags.contains(CompFlags::JOBS),
       aliases: flags.contains(CompFlags::ALIAS),
+      builtins: flags.contains(CompFlags::BUILTINS),
       flags: opt_flags,
       signals: flags.contains(CompFlags::SIGNALS),
       source: String::new(),
@@ -924,6 +944,9 @@ impl CompSpec for BashCompSpec {
     }
     if self.signals {
       candidates.extend(complete_signals(&stripped));
+    }
+    if self.builtins {
+      candidates.extend(complete_builtins(&stripped));
     }
     if let Some(words) = &self.wordlist {
       candidates.extend(
