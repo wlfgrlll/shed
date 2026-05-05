@@ -4391,7 +4391,8 @@ impl LineBuf {
       | Verb::HistoryDown
       | Verb::HistoryUp
       | Verb::DeleteOrEof
-      | Verb::ClearScreen => unreachable!("{verb:?} should be handled in readline/mod.rs"),
+      | Verb::AcceptHint
+      | Verb::ClearScreen => log::warn!("{verb:?} should be handled in readline/mod.rs"),
     }
 
     Ok(())

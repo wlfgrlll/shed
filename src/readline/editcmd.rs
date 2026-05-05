@@ -104,6 +104,12 @@ impl EditCmd {
       ..self.clone()
     }
   }
+  pub fn verb_is(&self, verb: Verb) -> bool {
+    self.verb().is_some_and(|v| v.1 == verb)
+  }
+  pub fn motion_is(&self, motion: Motion) -> bool {
+    self.motion().is_some_and(|m| m.1 == motion)
+  }
   pub fn new_with_motion(&self, motion: Option<MotionCmd>) -> Self {
     Self {
       motion,
@@ -313,6 +319,7 @@ pub enum Verb {
   HistoryUp,
   HistoryDown,
   ClearScreen,
+  AcceptHint,
 
   // emacs stuff
   Kill,

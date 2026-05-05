@@ -1117,7 +1117,7 @@ impl ShedLine {
       // user pressed Ctrl+D in emacs mode
       // we've gotta resolve this into either Delete or EndOfFile here
       if self.focused_editor().is_empty() {
-        cmd.verb_mut().unwrap().1 = Verb::EndOfFile;
+        return Ok(Some(LineCmd::EndOfFile));
       } else {
         cmd.verb_mut().unwrap().1 = Verb::Delete;
       }
@@ -1126,12 +1126,16 @@ impl ShedLine {
       return Ok(Some(LineCmd::ClearScreen));
     }
 
-    if cmd.verb().is_some_and(|v| v.1 == Verb::EndOfFile)
-      && self.focused_editor().joined().is_empty()
+    if cmd.verb_is(Verb::EndOfFile)
+      && self.focused_editor().is_empty()
     {
       return Ok(Some(LineCmd::EndOfFile));
-    } else if cmd.verb().is_some_and(|v| v.1 == Verb::Quit) {
+
+    } else if cmd.verb_is(Verb::Quit) {
       return Ok(Some(LineCmd::Quit));
+
+    } else if cmd.verb_is(Verb::AcceptHint) {
+      return Ok(Some(LineCmd::AppendHint));
     }
 
     Ok(Some(LineCmd::Execute(cmd)))
@@ -1146,7 +1150,7 @@ impl ShedLine {
       .verb()
       .is_some_and(|v| v.1.is_edit() && v.1 != Verb::Change);
 
-    let is_ctrl_d_motion = cmd.motion().is_some_and(|m| m.1 == Motion::HalfScreenDown);
+    let is_ctrl_d_motion = cmd.motion_is(Motion::HalfScreenDown);
 
     let is_ex_cmd = cmd.flags.contains(CmdFlags::IS_EX_CMD);
     if is_ex_cmd {

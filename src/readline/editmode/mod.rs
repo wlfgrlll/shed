@@ -175,12 +175,13 @@ pub fn common_cmds(key: E) -> Option<EditCmd> {
     key!(Ctrl + 'p') => pending_cmd.set_verb(verb!(Verb::HistoryUp)),
     key!(Ctrl + 'n') => pending_cmd.set_verb(verb!(Verb::HistoryDown)),
     key!(Ctrl + 'l') => pending_cmd.set_verb(verb!(Verb::ClearScreen)),
+    key!(Ctrl + 's') => pending_cmd.set_verb(verb!(Verb::AcceptHint)),
+    key!(Right) => pending_cmd.set_motion(motion!(Motion::ForwardChar)),
     key!(Ctrl + Left) => pending_cmd.set_motion(motion!(Motion::WordMotion(
       To::Start,
       Word::Normal,
       Direction::Backward
     ))),
-    key!(Right) => pending_cmd.set_motion(motion!(Motion::ForwardChar)),
     key!(Ctrl + Right) => pending_cmd.set_motion(motion!(Motion::WordMotion(
       To::Start,
       Word::Normal,
