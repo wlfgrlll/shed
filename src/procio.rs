@@ -1,4 +1,4 @@
-use std::{ fmt::Debug, os::fd::AsFd, str::FromStr };
+use std::{ collections::{BTreeMap, BTreeSet}, fmt::Debug, os::fd::AsFd, str::FromStr };
 
 use crate::{
   expand::Expander, match_loop, parse::{
@@ -18,18 +18,22 @@ fn dup_high(fd: BorrowedFd) -> nix::Result<OwnedFd> {
   unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
+/// Like `dup_high()` but takes and closes an existing OwnedFd.
 fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
   let new_fd = dup_high(fd.as_fd())?;
   Ok(new_fd)
 } // fd is closed here
 
-/// SQLite opens files on its own and we cant call move_high on them.
+/// SQLite opens long-lived file descriptors on its own and we cant call move_high on them.
 ///
-/// Later on we will probably have to do something like using a custom VFS
+/// These files usually end up polluting the user-space 3-10 range which we work so hard to keep clear
+/// so that users can open resources on those file descriptors without any weirdness happening.
+///
+/// Later on we will probably have to do something like using a custom sqlite VFS
 /// to limit the fd numbers it can use, but for now this will do. I guess.
 pub fn do_something_that_opens_fds_that_we_cant_access_hack<F,T>(min_fd: RawFd, something: F) -> T
 where F: FnOnce() -> T {
-  // these drop at the end of the function
+  // these close at the end of the function
   let _dummies = (3..min_fd).filter_map(|_| {
     // painful to write
     open("/dev/null", OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
@@ -378,6 +382,14 @@ impl RedirSpec {
   pub fn buffer(fd: RawFd, buf: String) -> ShResult<Self> {
     Ok(Self::Buffer { fd, buf })
   }
+  pub fn target_fd(&self) -> RawFd {
+    match self {
+      RedirSpec::File { fd, .. } => *fd,
+      RedirSpec::Dup { to, .. } => *to,
+      RedirSpec::Close { fd } => *fd,
+      RedirSpec::Buffer { fd, .. } => *fd,
+    }
+  }
   pub fn mode(&self) -> RedirType {
     match self {
       RedirSpec::File { mode, .. } => *mode,
@@ -448,7 +460,12 @@ impl RedirSet {
     if self.0.is_empty() {
       return Ok(None)
     }
-    let guard = RedirGuard::new()?;
+    let targets: BTreeSet<RawFd> = self.0
+      .iter()
+      .map(|spec| spec.target_fd())
+      .collect();
+
+    let guard = RedirGuard::new(&targets)?;
     for spec in self.0 {
       let mut redir = spec.into_redir()?;
       redir.apply()?;
@@ -487,9 +504,13 @@ pub struct RedirGuard {
 }
 
 impl RedirGuard {
-  pub fn new() -> ShResult<Self> {
-    let saved = Some(IoGroup::capture_state()?);
+  pub fn new(targets: &BTreeSet<RawFd>) -> ShResult<Self> {
+    let saved = Some(IoGroup::capture_targets(targets)?);
     Ok(Self { saved })
+  }
+  pub fn stdio() -> ShResult<Self> {
+    let stdio_fds = [0, 1, 2].iter().copied().collect();
+    Self::new(&stdio_fds)
   }
   pub fn persist(mut self) {
     use std::mem::{take, drop};
@@ -508,23 +529,30 @@ impl Drop for RedirGuard {
 /// A struct wrapping three fildescs representing `stdin`, `stdout`, and
 /// `stderr` respectively
 #[derive(Debug)]
-pub struct IoGroup {
-  stdin: OwnedFd,
-  stdout: OwnedFd,
-  stderr: OwnedFd,
-}
+pub struct IoGroup(BTreeMap<RawFd, Option<OwnedFd>>);
 
 impl IoGroup {
-  pub fn capture_state() -> ShResult<Self> {
-    let stdin = dup_high(stdin_fileno())?;
-    let stdout = dup_high(stdout_fileno())?;
-    let stderr = dup_high(stderr_fileno())?;
-    Ok(Self { stdin, stdout, stderr })
+  pub fn capture_targets(targets: &BTreeSet<RawFd>) -> ShResult<Self> {
+    let mut saved = BTreeMap::new();
+
+    for &fd in targets {
+      let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+      match dup_high(borrowed) {
+        Ok(owned) => saved.insert(fd, Some(owned)),
+        Err(Errno::EBADF) => saved.insert(fd, None), // fd is not open
+        Err(e) => return Err(e.into())
+      };
+    }
+
+    Ok(Self(saved))
   }
   pub fn restore(&self) -> ShResult<()> {
-    nix::unistd::dup2(self.stdin.as_raw_fd(), 0)?;
-    nix::unistd::dup2(self.stdout.as_raw_fd(), 1)?;
-    nix::unistd::dup2(self.stderr.as_raw_fd(), 2)?;
+    for (&fd, saved) in &self.0 {
+      match saved {
+        Some(owned) => { nix::unistd::dup2(owned.as_raw_fd(), fd)?; },
+        None => { nix::unistd::close(fd).ok(); },
+      }
+    }
     Ok(())
   }
 }

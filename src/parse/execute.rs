@@ -960,7 +960,7 @@ impl Dispatcher {
       let Some((r,w)) = pipes.next() else {
         break
       };
-      let _guard = RedirGuard::new();
+      let _guard = RedirGuard::stdio();
 
       if i == 0 {
         std::mem::take(&mut in_rdrs).apply_persistent().ok();

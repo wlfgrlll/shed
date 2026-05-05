@@ -1,7 +1,7 @@
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
 use crate::prelude::*;
-use crate::procio::{Redir, RedirGuard, RedirType, pipes_high, read_fd_to_string};
+use crate::procio::{Redir, RedirGuard, RedirSet, RedirSpec, RedirType, pipes_high, read_fd_to_string};
 use crate::sherr;
 use crate::state::{self, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
@@ -36,9 +36,8 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
     ForkResult::Child => {
       drop(register_fd);
 
-      let _guard = RedirGuard::new();
-      let mut redir = Redir::new(target_fd, proc_fd);
-      redir.apply()?;
+      let redir: RedirSet = RedirSpec::dup(proc_fd.as_raw_fd(), target_fd, RedirType::Output).into();
+      let _guard = redir.apply()?;
 
       if let Err(e) = exec_nonint(raw.to_string(), Some("process_sub".into())) {
         e.print_error();
@@ -60,12 +59,11 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
     return expand_arithmetic_wrapped(raw);
   }
   let (rpipe, wpipe) = pipes_high()?;
-  let mut redir = Redir::new(1, wpipe);
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      let _guard = RedirGuard::new();
-      redir.apply()?;
+      let redir: RedirSet = RedirSpec::dup(wpipe.as_raw_fd(), 1, RedirType::Output).into();
+      let _guard = redir.apply()?;
 
       if let Err(e) = exec_nonint(raw.to_string(), Some("command_sub".into())) {
         if let ShErrKind::CleanExit(code) = e.kind() {
@@ -78,7 +76,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
       unsafe { libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
-      std::mem::drop(redir); // Closes the write pipe
+      drop(wpipe);
 
       // Read output first (before waiting) to avoid deadlock if
       // child fills pipe buffer
