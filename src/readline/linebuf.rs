@@ -3624,24 +3624,33 @@ impl LineBuf {
         let Some(content) = register.read_from_register() else {
           return Ok(());
         };
+        let mut effective_anchor = anchor.clone();
+        let mut selection_start: Option<Pos> = None;
+
         if let Some(motion) = self.select_range() {
-          // we have a selected range to replace.
-          // no need to overcomplicate it, the Verb::Delete handler
-          // knows exactly how to do this.
+          if let Motion::CharRange(s, e) = &motion {
+            let (start, _) = ordered(*s, *e);
+            selection_start = Some(start);
+          }
           let rec_cmd = cmd
             .new_with_verb(Some(verb!(Verb::Delete)))
             .new_with_motion(Some(motion!(motion)));
 
           self.exec_verb(&rec_cmd)?;
+          effective_anchor = Anchor::Before;
         }
         match content {
           RegisterContent::Span(lines) => {
             let move_cursor = lines.len() == 1 && lines[0].len() > 1;
             let content_len: usize = lines.iter().map(|l| l.len()).sum();
-            let row = self.row();
-            let col = match anchor {
-              Anchor::After => (self.col() + 1).min(self.cur_line().len()),
-              Anchor::Before => self.col(),
+            let row = selection_start.map(|p| p.row).unwrap_or_else(|| self.row());
+            let col = if let Some(start) = selection_start {
+              start.col.min(self.lines.get(row).map(|l| l.len()).unwrap_or(0))
+            } else {
+              match effective_anchor {
+                Anchor::After => (self.col() + 1).min(self.cur_line().len()),
+                Anchor::Before => self.col(),
+              }
             };
             let pos = Pos {
               row: self.row(),
@@ -3653,12 +3662,17 @@ impl LineBuf {
 
             let end_len = self.lines[row].len();
             let mut delta = end_len.saturating_sub(start_len);
-            if let Anchor::Before = anchor {
+            if let Anchor::Before = effective_anchor {
               delta = delta.saturating_sub(1);
             }
-            if move_cursor {
+            if selection_start.is_some() {
+              self.cursor.pos = Pos {
+                row,
+                col: col + content_len.saturating_sub(1),
+              };
+            } else if move_cursor {
               self.cursor.pos = self.offset_cursor(0, delta as isize);
-            } else if content_len > 1 || *anchor == Anchor::After {
+            } else if content_len > 1 || effective_anchor == Anchor::After {
               self.cursor.pos = self.offset_cursor(0, 1);
             }
           }
