@@ -249,6 +249,7 @@ register_completions! {
   "shopt"    => embed!("completions/shopt_comp.shed"),
   "compadd"  => embed!("completions/compadd_comp.shed"),
   "help"     => embed!("completions/help_comp.shed"),
+  "hist"     => embed!("completions/hist_comp.shed"),
 }
 
 /// Lookup a name in the builtin table via binary search
