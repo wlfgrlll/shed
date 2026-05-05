@@ -337,6 +337,28 @@ fn vi_auto_indent_funcdef() {
   assert_eq!(vi.editor.joined(), "func_def() {\n\t\n}");
 }
 
+#[test]
+fn vi_func_def_is_finished() {
+  let (mut vi, _g) = test_vi("");
+
+  let bytes = b"func_def() {\r}\r";
+  with_term(|t| t.feed_bytes(bytes));
+  let keys = with_term(|t| t.drain_keys()).unwrap();
+  vi.process_input(keys).unwrap();
+  assert_eq!(vi.editor.joined(), "");
+}
+
+#[test]
+fn case_stmt_is_finished() {
+  let (mut vi, _g) = test_vi("");
+
+  let bytes = b"case foo in\rfoo)\rcase bar in\rbar)\recho foo\r;;\resac\r;;\resac\r";
+  with_term(|t| t.feed_bytes(bytes));
+  let keys = with_term(|t| t.drain_keys()).unwrap();
+  vi.process_input(keys).unwrap();
+  assert_eq!(vi.editor.joined(), "");
+}
+
 fn hist_expansion_test(commands: &[&str], input: &str, expected: &str) {
   let _g = TestGuard::new();
   let prompt = Prompt::default();

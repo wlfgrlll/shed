@@ -707,13 +707,23 @@ impl IndentCtx {
     boundaries.push(input.len());
 
     let mut depths: Vec<usize> = Vec::with_capacity(boundaries.len());
+    let last_idx = boundaries.len() - 1;
     let mut failed = false;
-    for &b in &boundaries {
+    for (i, &b) in boundaries.iter().enumerate() {
+      // Intermediate prefixes use LEX_UNFINISHED so block_depth tracks
+      // through still-open structures. The final prefix parses strictly
+      // so unterminated quotes / subshells / etc. flip `failed`.
+      let lex_flags = if i == last_idx {
+        LexFlags::LEX_UNFINISHED_STRUCTURES
+      } else {
+        LexFlags::LEX_UNFINISHED
+      };
       let mut src = ParsedSrc::new(input[..b].into())
-        .with_lex_flags(LexFlags::LEX_UNFINISHED)
+        .with_lex_flags(lex_flags)
         .with_parse_flags(ParseFlags::ERR_RETURN);
-      if src.parse_src().is_err() {
-        failed = true;
+      let parse_failed = src.parse_src().is_err();
+      if i == last_idx {
+        failed = parse_failed;
       }
       depths.push(src.block_depth);
     }

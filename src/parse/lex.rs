@@ -362,20 +362,23 @@ bitflags! {
   #[derive(Debug, Clone, Copy)]
   pub struct LexFlags: u32 {
     /// The lexer is operating in interactive mode
-    const INTERACTIVE    = 0b0000000001;
+    const INTERACTIVE    = 1 << 0;
     /// Allow unfinished input
-    const LEX_UNFINISHED = 0b0000000010;
+    const LEX_UNFINISHED_STRUCTURES = 1 << 1;
+    const LEX_UNFINISHED_QUOTES   = 1 << 2;
     /// The next string-type token is a command name
-    const NEXT_IS_CMD    = 0b0000000100;
+    const NEXT_IS_CMD    = 1 << 3;
     /// Only lex strings; used in expansions
-    const RAW            = 0b0000010000;
+    const RAW            = 1 << 4;
     /// The lexer has not produced any tokens yet
-    const FRESH          = 0b0000100000;
+    const FRESH          = 1 << 5;
     /// The lexer has no more tokens to produce
-    const STALE          = 0b0001000000;
-    const EXPECTING_IN   = 0b0010000000;
-    const NEXT_IS_REDIR  = 0b0100000000;
-    const NEXT_IS_FUNC   = 0b1000000000;
+    const STALE          = 1 << 6;
+    const EXPECTING_IN   = 1 << 7;
+    const NEXT_IS_REDIR  = 1 << 8;
+    const NEXT_IS_FUNC   = 1 << 9;
+
+    const LEX_UNFINISHED = Self::LEX_UNFINISHED_STRUCTURES.bits() | Self::LEX_UNFINISHED_QUOTES.bits();
   }
 }
 
@@ -852,7 +855,7 @@ impl LexStream {
       return Ok(Some(tk));
     }
 
-    if self.flags.contains(LexFlags::LEX_UNFINISHED) {
+    if self.flags.contains(LexFlags::LEX_UNFINISHED_QUOTES) {
       let start_delim = Box::new(self.get_span(span_start..cursor_after_delim));
       let rule = TkRule::HereDoc {
         start_delim,
@@ -930,7 +933,7 @@ impl LexStream {
             pos += 2;
             chars.next();
             let paren_pos = pos;
-            if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+            if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
               return Err(lex_err!(
                 self,
                 pos,
@@ -951,7 +954,7 @@ impl LexStream {
         pos += 2;
         chars.next();
         let paren_pos = pos;
-        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
@@ -963,7 +966,7 @@ impl LexStream {
       '$' if chars.peek() == Some(&'{') => {
         pos += 2;
         chars.next();
-        if !scan_braces(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if !scan_braces(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
@@ -981,7 +984,7 @@ impl LexStream {
         pos += 2;
         chars.next();
         let paren_pos = pos;
-        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
@@ -994,7 +997,7 @@ impl LexStream {
         pos += 2;
         chars.next();
         let paren_pos = pos;
-        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
@@ -1028,7 +1031,7 @@ impl LexStream {
 
           return Ok(tk);
         }
-        if !scan_parens(&mut chars, &mut pos, paren_count) && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if !scan_parens(&mut chars, &mut pos, paren_count) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
@@ -1113,7 +1116,7 @@ impl LexStream {
       _ => pos += ch.len_utf8(),
     });
     let mut new_tk = self.get_token(self.cursor..pos, TkRule::Str);
-    if self.quote_state.in_quote() && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+    if self.quote_state.in_quote() && !self.flags.contains(LexFlags::LEX_UNFINISHED_QUOTES) {
       self.update_cursor(pos);
       return Err(sherr!(
         ParseErr @ new_tk.span,
@@ -1236,7 +1239,7 @@ impl Iterator for LexStream {
         return None;
       } else {
         // Return the EOI token
-        if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+        if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           let start = self.brc_grp_start.unwrap_or(self.cursor.saturating_sub(1));
           self.flags |= LexFlags::STALE;
           return Err(sherr!(
@@ -1276,7 +1279,7 @@ impl Iterator for LexStream {
     }
 
     if self.cursor == self.source.len() {
-      if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED) {
+      if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
         let start = self.brc_grp_start.unwrap_or(self.cursor.saturating_sub(1));
         self.flags |= LexFlags::STALE;
         return Err(sherr!(

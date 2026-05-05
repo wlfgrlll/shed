@@ -7,6 +7,12 @@ use crate::{
   }, prelude::*, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
 };
 
+/*
+ * This module contains our IO redirection primitives.
+ * Everything we use is basically just a thin wrapper around the std Fd types,
+ * or nix system call wrappers.
+ */
+
 /// Minimum fd number for shell-internal file descriptors.
 /// User-visible fds (0-9) are kept clear so `exec 3>&-` etc. work as expected.
 pub const MIN_INTERNAL_FD: RawFd = 10;
@@ -55,6 +61,7 @@ where F: FnOnce() -> T {
   something()
 }
 
+/// Creates pipes outside of the userspace range of FDs
 pub fn pipes_high() -> nix::Result<(OwnedFd,OwnedFd)> {
   let (r,w) = nix::unistd::pipe()?;
   Ok((move_high(r)?, move_high(w)?))
@@ -110,6 +117,9 @@ impl Redir {
   }
 }
 
+/// Step one of our redirection building pipeline.
+///
+/// The parser uses these to create RedirSpecs.
 #[derive(Default, Debug)]
 pub struct RedirBldr {
   pub fd: Option<RawFd>,

@@ -9,6 +9,7 @@ use yansi::Paint;
 
 use crate::procio::{RedirGuard, stderr_fileno, stdout_fileno};
 use crate::sherr;
+use crate::util::FdWriter;
 use crate::{
   parse::lex::{Span, SpanSource},
   prelude::*,
@@ -426,20 +427,20 @@ impl ShErr {
     }
     source_map
   }
-  fn print_error_internal(&self, fd: BorrowedFd) {
+  fn default_write(&self, fd: &mut impl Write) {
+    writeln!(fd, "\n{}", self.kind).ok();
+    for note in &self.notes {
+      writeln!(fd, "note: {note}").ok();
+    }
+  }
+  fn print_error_internal(&self, fd: &mut impl Write) {
     if *self.kind() == ShErrKind::Interrupt {
       // Don't print anything for Interrupt
       // This only occurs when the user breaks out of something with ctrl + c
       return;
     }
-    let default = || {
-      write(fd, format!("\n{}\n", self.kind).as_bytes()).ok();
-      for note in &self.notes {
-        write(fd, format!("note: {note}\n").as_bytes()).ok();
-      }
-    };
     let Some(report) = self.build_report() else {
-      return default();
+      return self.default_write(fd);
     };
 
     let sources = self.collect_sources();
@@ -449,26 +450,25 @@ impl ShErr {
         .cloned()
         .ok_or_else(|| format!("Failed to fetch source '{}'", src.name()))
     });
-    write(fd, b"\n").ok();
-    if report.eprint(cache).is_err() {
-      default();
+    writeln!(fd).ok();
+    if report.write(cache, &mut *fd).is_err() {
+      self.default_write(fd);
     }
   }
   pub fn print_error(&self) {
-    self.print_error_internal(stderr_fileno());
+    self.print_error_internal(&mut FdWriter(stderr_fileno()));
   }
   pub fn print_error_stdout(&self) {
-    self.print_error_internal(stdout_fileno());
+    self.print_error_internal(&mut FdWriter(stdout_fileno()));
   }
 }
 
 impl Display for ShErr {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if self.notes.is_empty() {
-      write!(f, "{}", self.kind)
-    } else {
-      write!(f, "{} - {}", self.kind, self.notes.first().unwrap())
-    }
+    let mut buf = vec![];
+    self.print_error_internal(&mut buf);
+    let buf = String::from_utf8_lossy(&buf);
+    write!(f, "{buf}")
   }
 }
 
