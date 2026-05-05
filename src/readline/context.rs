@@ -42,7 +42,7 @@ fn is_valid(command: Tk) -> bool {
     return true;
   }
 
-  let Ok(expanded) = command.expand() else {
+  let Ok(expanded) = command.expand_no_cmd_subs() else {
     return false
   };
   let Some(name) = expanded.get_first_word() else {

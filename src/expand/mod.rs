@@ -17,6 +17,7 @@ pub use subshell::{expand_cmd_sub, expand_proc_sub};
 pub use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
 pub use var::{expand_glob, expand_raw, expand_var};
 
+use crate::expand::var::expand_raw_inner;
 use crate::{match_loop, state};
 use crate::parse::lex::{Tk, TkFlags, TkRule};
 use crate::prelude::*;
@@ -33,6 +34,13 @@ impl Tk {
     let span = self.span.clone();
     let exp = Expander::new(self)?.expand().promote_err(span.clone())?;
     let class = TkRule::Expanded { exp };
+    Ok(Self { class, span, flags })
+  }
+  pub fn expand_no_cmd_subs(self) -> ShResult<Self> {
+    let flags = self.flags;
+    let span = self.span.clone();
+    let exp = Expander::new(self)?.expand_no_cmd_subs().promote_err(span.clone())?;
+    let class = TkRule::Expanded { exp: vec![exp] };
     Ok(Self { class, span, flags })
   }
   pub fn expand_no_glob(self) -> ShResult<Self> {
@@ -71,6 +79,7 @@ pub struct Expander {
   flags: TkFlags,
   noglob: bool,
   nosplit: bool,
+  expand_cmd_subs: bool,
   raw: String,
 }
 
@@ -90,6 +99,7 @@ impl Expander {
       raw: unescaped,
       noglob: false,
       nosplit: false,
+      expand_cmd_subs: true,
       flags,
     })
   }
@@ -148,6 +158,10 @@ impl Expander {
 
     Ok(glob_words)
   }
+  pub fn expand_no_cmd_subs(&mut self) -> ShResult<String> {
+    self.expand_cmd_subs = false;
+    self.expand_inner()
+  }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
     Ok(strip_markers(&raw))
@@ -158,7 +172,7 @@ impl Expander {
   }
   pub fn expand_inner(&mut self) -> ShResult<String> {
     let mut chars = self.raw.chars().peekable();
-    self.raw = expand_raw(&mut chars)?;
+    self.raw = expand_raw_inner(&mut chars, self.expand_cmd_subs)?;
 
 
     Ok(self.raw.clone())
@@ -275,6 +289,7 @@ mod tests {
     let _guard = TestGuard::new();
 
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw: "hello world\tfoo".to_string(),
       noglob: false,
       nosplit: false,
@@ -292,6 +307,7 @@ mod tests {
     }
 
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw: "a:b:c".to_string(),
       noglob: false,
       nosplit: false,
@@ -309,6 +325,7 @@ mod tests {
     }
 
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw: "hello world".to_string(),
       noglob: false,
       nosplit: false,
@@ -324,6 +341,7 @@ mod tests {
 
     let raw = format!("{}hello world{}", markers::DUB_QUOTE, markers::DUB_QUOTE);
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw,
       noglob: false,
       nosplit: false,
@@ -341,6 +359,7 @@ mod tests {
 
     let raw = format!("hello{}world", unescape_str("\\ "));
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw,
       noglob: true,
       nosplit: false,
@@ -356,6 +375,7 @@ mod tests {
 
     let raw = format!("hello{}world", unescape_str("\\\t"));
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw,
       noglob: true,
       nosplit: false,
@@ -374,6 +394,7 @@ mod tests {
 
     let raw = format!("a{}b:c", unescape_str("\\:"));
     let mut exp = Expander {
+      expand_cmd_subs: true,
       raw,
       noglob: true,
       nosplit: false,
