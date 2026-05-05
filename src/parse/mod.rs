@@ -152,14 +152,14 @@ impl ParsedSrc {
   pub fn parse_src(&mut self) -> Result<(), Vec<ShErr>> {
     let mut tokens = vec![];
     let mut errors = vec![];
-    for lex_result in LexStream::new(self.src.clone(), self.lex_flags)
-      .with_name(self.name.clone())
-      .filter(|tk| {
-        !tk
-          .as_ref()
-          .is_ok_and(|tk| matches!(tk.class, TkRule::Comment))
-      })
-    {
+    let mut stream = LexStream::new(self.src.clone(), self.lex_flags)
+      .with_name(self.name.clone());
+
+    while let Some(lex_result) = stream.next() {
+      // inline what the previous .filter() did
+      if lex_result.as_ref().is_ok_and(|tk| matches!(tk.class, TkRule::Comment)) {
+        continue;
+      }
       match lex_result {
         Ok(token) => tokens.push(token),
         Err(error) => {
@@ -172,9 +172,14 @@ impl ParsedSrc {
       }
     }
 
+    let in_array = stream.in_array();
+
     let mut nodes = vec![];
-    let parser =
-      ParseStream::with_context(tokens, self.context.clone()).with_flags(self.parse_flags);
+    let parser = ParseStream::with_context(
+      tokens,
+      self.context.clone(),
+    ).with_flags(self.parse_flags);
+
     for parse_result in parser {
       match parse_result {
         Ok(node) => {
@@ -184,12 +189,17 @@ impl ParsedSrc {
         Err((depth, error)) => {
           self.block_depth = depth;
           if self.parse_flags.contains(ParseFlags::ERR_RETURN) {
+            if in_array { self.block_depth += 1; }
             return Err(vec![error]);
           } else {
             errors.push(error);
           }
         }
       }
+    }
+
+    if in_array {
+      self.block_depth += 1;
     }
 
     if !errors.is_empty() {

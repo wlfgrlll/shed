@@ -28,7 +28,7 @@ pub const OPENERS: [&str; 6] = ["if", "while", "until", "for", "select", "case"]
 
 pub const MIDDLES: [&str; 2] = ["elif", "else"];
 
-pub const CLOSERS: [&str; 5] = ["fi", "done", "esac", "}", ";;"];
+pub const CLOSERS: [&str; 6] = ["fi", "done", "esac", "}", ")", ";;"];
 
 pub fn not_marker(tk: &ShResult<Tk>) -> bool {
   tk.is_err()
@@ -291,7 +291,7 @@ impl Tk {
 
   pub fn is_opener(&self) -> bool {
     OPENERS.contains(&self.as_str())
-      || matches!(self.class, TkRule::BraceGrpStart)
+      || matches!(self.class, TkRule::BraceGrpStart | TkRule::SubshStart)
       || matches!(self.class, TkRule::CasePattern)
   }
   pub fn is_middle(&self) -> bool {
@@ -300,6 +300,7 @@ impl Tk {
 
   pub fn is_closer(&self) -> bool {
     CLOSERS.contains(&self.as_str())
+      || matches!(self.class, TkRule::BraceGrpEnd | TkRule::SubshEnd)
   }
 
   pub fn filter_meta(&self) -> bool {
@@ -422,6 +423,7 @@ pub struct LexStream {
   pos: Pos,
   pub name: Rc<str>,
   quote_state: QuoteState,
+  in_array: bool,
   brc_grp_depth: usize,
   brc_grp_start: Option<usize>,
   subsh_depth: usize,
@@ -442,6 +444,7 @@ impl LexStream {
       pos_offset: 0,
       pos: Pos::new(0, 0),
       quote_state: QuoteState::default(),
+      in_array: false,
       brc_grp_depth: 0,
       brc_grp_start: None,
       subsh_depth: 0,
@@ -484,6 +487,9 @@ impl LexStream {
   }
   pub fn in_subsh(&self) -> bool {
     self.subsh_depth > 0
+  }
+  pub fn in_array(&self) -> bool {
+    self.in_array
   }
   pub fn update_pos(&mut self) {
     if self.cursor < self.pos_offset {
@@ -980,20 +986,7 @@ impl LexStream {
         self.quote_state.toggle_double();
       }
       _ if self.quote_state.in_double() => pos += ch.len_utf8(),
-      '<' if chars.peek() == Some(&'(') => {
-        pos += 2;
-        chars.next();
-        let paren_pos = pos;
-        if !scan_parens(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
-          return Err(lex_err!(
-            self,
-            pos,
-            paren_pos..paren_pos + 1,
-            "Unclosed subshell",
-          ));
-        }
-      }
-      '>' if chars.peek() == Some(&'(') => {
+      '<' | '>' if chars.peek() == Some(&'(') => {
         pos += 2;
         chars.next();
         let paren_pos = pos;
@@ -1077,6 +1070,8 @@ impl LexStream {
         chars.next();
         pos += 1; // '('
                   // looks like an array
+        let mut found_end = false;
+        self.in_array = true;
         match_loop!(chars.next() => arr_ch, {
           '\\' => {
             pos += 1;
@@ -1092,11 +1087,24 @@ impl LexStream {
             depth -= 1;
             pos += 1;
             if depth == 0 {
+              found_end = true;
               break;
             }
           }
           _ => pos += arr_ch.len_utf8(),
         });
+
+        if !found_end && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
+          return Err(lex_err!(
+            self,
+            pos,
+            pos..pos + 1,
+            "Unclosed array assignment",
+          ));
+        }
+        if found_end {
+          self.in_array = false;
+        }
       }
       ')' => {
         if !self.in_subsh() {
@@ -1245,6 +1253,15 @@ impl Iterator for LexStream {
           return Err(sherr!(
             ParseErr @ self.get_span(start..self.cursor),
             "Unclosed brace group",
+          ))
+          .into();
+        }
+        if self.in_subsh() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
+          let start = self.subsh_start.unwrap_or(self.cursor.saturating_sub(1));
+          self.flags |= LexFlags::STALE;
+          return Err(sherr!(
+            ParseErr @ self.get_span(start..self.cursor),
+            "Unclosed subshell",
           ))
           .into();
         }
