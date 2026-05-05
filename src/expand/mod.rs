@@ -131,9 +131,6 @@ impl Expander {
     let mut glob_words = Vec::with_capacity(words.len());
 
     for word in words {
-      let has_trailing_slash = word.ends_with('/');
-      let has_leading_dot_slash = word.starts_with("./");
-
       let expansions = expand_glob(&word).unwrap_or_else(|_| vec![word.clone()]);
 
       if expansions.is_empty() {
@@ -143,15 +140,8 @@ impl Expander {
         continue;
       }
 
-      for mut exp in expansions {
-        if has_trailing_slash && !exp.ends_with('/') {
-          exp.push('/');
-        }
-        if has_leading_dot_slash && !exp.starts_with("./") {
-          exp.insert_str(0, "./");
-        }
-        // Glob matches are real filenames already; only the literal-fallback
-        // path above carries ESCAPE markers, but strip universally for safety.
+      for exp in expansions {
+        let exp = crate::expand::var::restore_glob_prefix(&word, exp);
         glob_words.push(escape::strip_escape_markers(&exp));
       }
     }

@@ -208,6 +208,19 @@ pub fn escape_glob(raw: &str, use_markers: bool) -> String {
   out
 }
 
+pub fn restore_glob_prefix(pattern: &str, mut result: String) -> String {
+  if pattern.starts_with("./")
+    && !result.starts_with("./")
+    && !result.starts_with('/')
+  {
+    result.insert_str(0, "./");
+  }
+  if pattern.ends_with('/') && !result.ends_with('/') {
+    result.push('/');
+  }
+  result
+}
+
 pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
   let mut words = vec![];
 
