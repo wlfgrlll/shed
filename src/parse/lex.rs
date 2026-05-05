@@ -901,6 +901,16 @@ impl LexStream {
         pos += 1;
         if let Some(ch) = chars.next() {
           pos += ch.len_utf8();
+          if ch == '\n' || ch == '\r' {
+            while let Some(&c) = chars.peek() {
+              if matches!(c, ' ' | '\t') {
+                chars.next();
+                pos += 1;
+              } else {
+                break;
+              }
+            }
+          }
         }
       }
       '\'' => {
@@ -1255,7 +1265,8 @@ impl Iterator for LexStream {
 
     loop {
       let pos = self.cursor;
-      if self.slice(pos..pos + 2) == Some("\\\n") {
+      if self.slice(pos..pos + 2) == Some("\\\n")
+      || self.slice(pos..pos + 3) == Some("\\\r\n") {
         self.inc_cursor(2);
       } else if pos < self.source.len() && is_field_sep(get_char(&self.source, pos).unwrap()) {
         self.inc_cursor(1);
@@ -1455,6 +1466,16 @@ pub fn case_pat_lookahead(mut chars: Peekable<Chars>) -> Option<usize> {
       '\\' => {
         if let Some(esc) = chars.next() {
           pos += esc.len_utf8();
+          if esc == '\n' || esc == '\r' {
+            while let Some(&c) = chars.peek() {
+              if matches!(c, ' ' | '\t') {
+                chars.next();
+                pos += 1;
+              } else {
+                break;
+              }
+            }
+          }
         }
       }
       '$' if qt_state.outside() && chars.peek() == Some(&'\'') => {

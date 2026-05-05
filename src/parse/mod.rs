@@ -1342,11 +1342,7 @@ impl ParseStream {
         }
       }
 
-      let arm_body = if arm_commands.is_empty() {
-        continue
-      } else {
-        node!(self, arm_tks, NdRule::List { commands: arm_commands })
-      };
+      let arm_body = node!(self, arm_tks, NdRule::List { commands: arm_commands });
 
       let case_node = CaseNode {
         pattern: case_pat_tk,
