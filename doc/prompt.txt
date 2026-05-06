@@ -310,11 +310,6 @@ right-aligned prompt).
       Color for glob characters (`*`, `?`, `[...]`).
       Default: `bright cyan`.
 
-  `highlight.selection`                        *opt-hl-selection*
-
-      Color for the visual mode selection.
-      Default: `black on white`.
-
 ==============================================================================
 8. Special Variables                           *prompt-variables*
 

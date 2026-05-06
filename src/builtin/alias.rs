@@ -15,7 +15,7 @@ impl super::Builtin for Alias {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       let output = read_logic(|l| display_as_vars(l.aliases().iter()));
-      outln!("{output}")?;
+      outln!("{output}");
 
       return with_status(0);
     }
@@ -32,7 +32,7 @@ impl super::Builtin for Alias {
       if let Some(value) = value {
         write_logic(|l| l.insert_alias(&name, &value, span.clone()));
       } else if let Some(alias) = read_logic(|l| l.get_alias(&name)) {
-        outln!("{}", display_as_var(name, alias.body))?;
+        outln!("{}", display_as_var(name, alias.body));
       } else {
         return Err(sherr!(
           SyntaxErr @ span,
@@ -50,7 +50,7 @@ impl super::Builtin for Unalias {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       let output = read_logic(|l| display_as_vars(l.aliases().iter()));
-      outln!("{output}")?;
+      outln!("{output}");
 
       return with_status(0);
     }

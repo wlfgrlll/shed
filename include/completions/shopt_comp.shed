@@ -26,7 +26,6 @@ _shopt_comp() {
 			argument_file
 			comment
 			glob
-			selection
 		)
 		local highlight_desc=(
 			"Enables/disables syntax highlighting. Current value: '$(shopt highlight.enable)'"
@@ -39,7 +38,6 @@ _shopt_comp() {
 			"The style of valid path names. Current value: '$(shopt highlight.argument_file)'"
 			"The style of comments. Current value: '$(shopt highlight.comment)'"
 			"The style of glob characters. Current value: '$(shopt highlight.glob)'"
-			"The style of visual selections. Current value: '$(shopt highlight.selection)'"
 		)
 		local core=(
 			dotglob

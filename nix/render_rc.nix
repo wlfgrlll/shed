@@ -129,7 +129,6 @@ lib.concatLines [
         ''shopt highlight.operator="${cfg.shopts.highlight.operator}"''
         ''shopt highlight.comment="${cfg.shopts.highlight.comment}"''
         ''shopt highlight.glob="${cfg.shopts.highlight.glob}"''
-        ''shopt highlight.selection="${cfg.shopts.highlight.selection}"''
         functionLines
         completeLines
         keymapLines

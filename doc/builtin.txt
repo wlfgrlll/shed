@@ -1387,7 +1387,6 @@ SHOPT                                            *builtin-shopt* *shopt*
     `operator`                pipes, redirects, && || (default: `bold`)
     `comment`                 comments (default: `italic bright black`)
     `glob`                    glob characters (default: `bright cyan`)
-    `selection`               visual mode selection (default: `black on white`)
 
   Examples:
 

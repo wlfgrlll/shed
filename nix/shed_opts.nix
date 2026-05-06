@@ -442,11 +442,6 @@
                 default = "bright cyan";
                 description = "Style for glob characters like *, ?, and [...]";
               };
-              selection = lib.mkOption {
-                type = lib.types.str;
-                default = "black on white";
-                description = "Style for the visual mode selection";
-              };
             };
           };
           default = {};

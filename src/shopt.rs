@@ -508,10 +508,6 @@ shopt_group! {
     /// The color used for highlighting glob characters
     #[validate(validate_color)]
     glob: String = "bright cyan".into(),
-
-    /// The color used for highlighting the current selection
-    #[validate(validate_color)]
-    selection: String = "black on white".into(),
   }
 }
 

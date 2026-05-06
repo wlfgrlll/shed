@@ -128,7 +128,6 @@ shopt highlight.string="yellow"
 shopt highlight.variable="#89b4fa"
 shopt highlight.comment="italic bright black"
 shopt highlight.operator="bold magenta"
-shopt highlight.selection="black on white"
 ```
 
 Style descriptions support named colors, `bright` variants, modifiers (`bold`, `italic`, `underline`, `dim`, `strikethrough`), hex colors (`#rrggbb`), and backgrounds with `on`. Raw ANSI escapes are also accepted.

@@ -21,7 +21,6 @@ pub struct Palette {
   operator: PaletteEntry,
   comment: PaletteEntry,
   glob: PaletteEntry,
-  selection: PaletteEntry,
 }
 
 impl Palette {
@@ -43,7 +42,6 @@ impl Palette {
         operator,
         comment,
         glob,
-        selection,
       } = &o.highlight;
       Self {
         string: get_color(string),
@@ -57,7 +55,6 @@ impl Palette {
         operator: get_color(operator),
         comment: get_color(comment),
         glob: get_color(glob),
-        selection: get_color(selection),
       }
     })
   }
@@ -77,7 +74,6 @@ impl Palette {
       operator: entry,
       comment: entry,
       glob: entry,
-      selection: entry,
     }
   }
 
@@ -305,7 +301,6 @@ mod tests {
       operator: PaletteEntry::new().bold(),
       comment: PaletteEntry::new().bright_black().italic(),
       glob: PaletteEntry::new().bright_cyan(),
-      selection: PaletteEntry::new().black().on_white(),
     }
   }
 
