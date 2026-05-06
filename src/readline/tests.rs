@@ -250,6 +250,7 @@ vi_test! {
   vi_ex_normal_range       : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
   vi_ex_repeat_global      : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
   vi_visual_dot_repeat     : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
+  vi_visual_replace        : "echo ./barbiz/baz buzz"       => "wvEdwvep"            => "echo  ./barbiz/baz", 17;
 }
 
 // ===================== Vi Tests =====================

@@ -1333,7 +1333,8 @@ impl LineBuf {
     let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
 
     pre_cmd.exec();
-    let res = if let Some(stdin) = stdin {
+    let output = if let Some(stdin) = stdin {
+      log::debug!("Executing shell command with stdin: '{}'", stdin);
       Some(procio::capture_command(cmd, Some(stdin))?)
     } else {
       let _guard = with_term(|t| t.cooked_mode_guard());
@@ -1341,8 +1342,6 @@ impl LineBuf {
       None
     };
     post_cmd.exec();
-
-    let output = res;
 
     let mut new_anchor = None;
 
@@ -3863,7 +3862,12 @@ impl LineBuf {
           self.verb_shell_cmd(sh_cmd, None)?;
           return Ok(());
         };
-        let (s, e) = ordered(start, end);
+        let (s, mut e) = ordered(start, end);
+        if !inclusive {
+          e = e.saturating_sub(1);
+        }
+        // Clamp to last valid row in case the motion over-reached.
+        e = e.min(self.lines.len().saturating_sub(1));
         let lines = self.lines.drain(s..=e).collect::<Vec<_>>();
         if self.lines.is_empty() {
           self.lines.push(Line::default());

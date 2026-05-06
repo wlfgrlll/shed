@@ -660,23 +660,27 @@ pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
 
 pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
   let (rpipe, wpipe) = pipes_high()?;
-  let child_stdout = Redir::new(1, wpipe);
-  let mut child_stdin = None;
-
-  let (mut stdin_pipe, stdin_write_fd) = if stdin.is_some() {
-    let (r, w) = pipes_high()?;
-    let write_fd = w.as_raw_fd();
-    child_stdin = Some(Redir::new(0, r));
-    (Some(w), Some(write_fd))
+  let stdin_pipes = if stdin.is_some() {
+    Some(pipes_high()?)
   } else {
-    (None, None)
+    None
   };
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      if let Some(fd) = stdin_write_fd {
-        close(fd).ok(); // close child's copy of stdin write end
-      }
+      let mut specs = vec![RedirSpec::dup(wpipe.as_raw_fd(), 1, RedirType::Output)];
+      // Hold the read end alive long enough for redirs.apply() to dup2
+      // it onto fd 0; explicitly drop the write end so the pipe's
+      // writer-count drops to zero once the parent closes its own copy
+      // (otherwise the child's read on fd 0 never sees EOF).
+      let _stdin_r_keep_alive = stdin_pipes.map(|(r, w)| {
+        specs.push(RedirSpec::dup(r.as_raw_fd(), 0, RedirType::Input));
+        drop(w);
+        r
+      });
+      let redirs: RedirSet = specs.into();
+      let _guard = redirs.apply()?;
+
       if let Err(e) = exec_nonint(cmd.to_string(), Some("command_sub".into())) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
@@ -688,11 +692,16 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
       unsafe { libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
-      std::mem::drop(child_stdin); // closes parent's copy of child fds
-      std::mem::drop(child_stdout); // closes parent's copy of child fds
+      drop(wpipe);
+      // Drop the parent's read end of the stdin pipe (only the child reads
+      // from it); keep the write end to feed `stdin` into the child.
+      let stdin_write = stdin_pipes.map(|(r, w)| {
+        drop(r);
+        w
+      });
 
-      if let Some(pipe) = stdin_pipe.take() {
-        write(pipe, stdin.unwrap().as_bytes())?;
+      if let Some(pipe) = stdin_write {
+        write(pipe.as_fd(), stdin.unwrap().as_bytes())?;
       }
 
       let captured = read_fd_to_string(rpipe)?
