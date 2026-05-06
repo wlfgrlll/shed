@@ -19,7 +19,7 @@ impl super::Builtin for Shopt {
     if args.argv.is_empty() {
       let output = write_shopts(|s| s.display_opts())?;
 
-      outln!("{output}")?;
+      outln!("{output}");
 
       return with_status(0);
     }
@@ -31,10 +31,10 @@ impl super::Builtin for Shopt {
 
       // kind of a hack but idc
       if print_help || output.lines().count() > 2 {
-        outln!("{output}")?;
+        outln!("{output}");
       } else {
         let second_line = output.lines().nth(1).unwrap_or("");
-        outln!("{second_line}")?;
+        outln!("{second_line}");
       }
     }
 

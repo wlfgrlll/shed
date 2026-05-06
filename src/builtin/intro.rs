@@ -29,14 +29,14 @@ impl super::Builtin for Type {
             let (line, col) = alias.source.line_and_col();
             let name = alias.source.source().name();
             if short {
-              outln!("alias")?
+              outln!("alias");
             } else {
               outln!(
                 "{arg} is an alias for '{alias_body}' defined at {name}:{ln}:{co}",
                 ln = line + 1,
                 co = col + 1,
                 alias_body = alias.body,
-              )?
+              );
             }
           }
           state::UtilKind::Function => {
@@ -44,51 +44,51 @@ impl super::Builtin for Type {
             let (line, col) = func.source.line_and_col();
             let name = func.source.source().name();
             if short {
-              outln!("function")?
+              outln!("function");
             } else {
               outln!(
                 "{arg} is a function defined at {name}:{ln}:{co}",
                 ln = line + 1,
                 co = col + 1,
                 name = name,
-              )?
+              );
             }
           }
           state::UtilKind::Builtin => {
             if short {
-              outln!("builtin")?
+              outln!("builtin");
             } else {
-              outln!("{arg} is a shell builtin")?
+              outln!("{arg} is a shell builtin");
             }
           }
           state::UtilKind::Command(path_buf) | state::UtilKind::File(path_buf) => {
             if short {
-              outln!("external")?
+              outln!("external");
             } else {
-              outln!("{arg} is {}", path_buf.display())?
+              outln!("{arg} is {}", path_buf.display());
             }
           }
         };
       } else if KEYWORDS.contains(&arg.as_str()) {
         if short {
-          outln!("keyword")?
+          outln!("keyword");
         } else {
-          outln!("{arg} is a shell keyword")?;
+          outln!("{arg} is a shell keyword");
         }
       } else if let Some(var) = read_vars(|v| v.try_get_var_meta(arg.as_str())) {
         if short {
           match var.kind() {
-            state::VarKind::Str(_) => outln!("string")?,
-            state::VarKind::Int(_) => outln!("integer")?,
-            state::VarKind::Arr(_) => outln!("array")?,
-            state::VarKind::AssocArr(_) => outln!("assoc_array")?,
+            state::VarKind::Str(_) => outln!("string"),
+            state::VarKind::Int(_) => outln!("integer"),
+            state::VarKind::Arr(_) => outln!("array"),
+            state::VarKind::AssocArr(_) => outln!("assoc_array"),
           }
         } else {
           match var.kind() {
-            state::VarKind::Str(_) => outln!("{arg} is a string variable")?,
-            state::VarKind::Int(_) => outln!("{arg} is an integer variable")?,
-            state::VarKind::Arr(_) => outln!("{arg} is an array variable")?,
-            state::VarKind::AssocArr(_) => outln!("{arg} is an associative array")?,
+            state::VarKind::Str(_) => outln!("{arg} is a string variable"),
+            state::VarKind::Int(_) => outln!("{arg} is an integer variable"),
+            state::VarKind::Arr(_) => outln!("{arg} is an array variable"),
+            state::VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
           }
         }
       } else {

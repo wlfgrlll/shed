@@ -1,19 +1,18 @@
 use ariadne::{Color, Fmt};
 use ariadne::{Report, ReportKind};
+use nix::errno::Errno;
 use rand::TryRng;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::fmt::Display;
+use std::fmt::{self, Display};
+use std::io::Write;
 use std::rc::Rc;
 use yansi::Paint;
 
 use crate::procio::{RedirGuard, stderr_fileno, stdout_fileno};
 use crate::sherr;
 use crate::util::FdWriter;
-use crate::{
-  parse::lex::{Span, SpanSource},
-  prelude::*,
-};
+use crate::parse::lex::{Span, SpanSource};
 
 pub type ShResult<T> = Result<T, ShErr>;
 
@@ -507,7 +506,7 @@ impl From<Errno> for ShErr {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ShErrKind {
-  IoErr(io::ErrorKind),
+  IoErr(std::io::ErrorKind),
   InvalidOpt,
   SyntaxErr,
   ParseErr,

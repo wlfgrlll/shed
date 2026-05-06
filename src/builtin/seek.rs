@@ -61,7 +61,7 @@ impl super::Builtin for Seek {
     let new_off =
       lseek(fd as i32, offset, whence).map_err(|e| sherr!(ExecFail @ span, "lseek failed: {e}"))?;
 
-    outln!("{new_off}")?;
+    outln!("{new_off}");
 
     with_status(0)
   }

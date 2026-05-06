@@ -1,39 +1,26 @@
 use super::*;
 
 use std::{
-  collections::{HashMap, HashSet, VecDeque},
-  fmt::Write,
-  os::{fd::AsFd, unix::{
+  collections::{HashMap, HashSet, VecDeque}, fmt::Write, os::{fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd}, unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
-  }},
-  rc::Rc,
-  str::FromStr,
-  time::{Duration, SystemTime},
+  }}, path::{Path, PathBuf}, rc::Rc, str::FromStr, time::{Duration, Instant, SystemTime}
 };
 
 use crate::{
-  builtin::BUILTIN_NAMES,
-  expand::{expand_keymap, glob_to_regex},
-  jobs::Job,
-  match_loop,
-  prelude::*,
-  readline::{
+  builtin::BUILTIN_NAMES, expand::{expand_keymap, glob_to_regex}, jobs::Job, match_loop, procio::MIN_INTERNAL_FD, readline::{
     LineData,
     complete::{Candidate, CompSpec},
     keys::KeyEvent,
-  },
-  sherr,
-  util::error::{ShErr, ShResult},
+  }, sherr, util::error::{ShErr, ShResult}, writefd
 };
 use itertools::{Itertools, izip};
 use nix::{
-  poll::{PollFd, PollTimeout},
-  sys::{
+  errno::Errno, fcntl::{FcntlArg, fcntl}, poll::{PollFd, PollTimeout}, sys::{
     resource::{Usage, UsageWho, getrusage},
-    stat::{FchmodatFlags, fchmodat},
-    time::TimeVal,
-  },
+    stat::{FchmodatFlags, Mode, fchmodat},
+    time::TimeVal, wait::WaitStatus as WtStat,
+  }, unistd::{Pid, close, read, write}
 };
 use regex::Regex;
 
@@ -321,7 +308,7 @@ pub struct ShedSocket {
 
 impl ShedSocket {
   pub fn dir() -> String {
-    env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
+    std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
   }
   pub fn path() -> String {
     let pid = Pid::this();
@@ -357,7 +344,7 @@ impl ShedSocket {
     )?;
 
     let raw_fd = listener.into_raw_fd();
-    let high_fd = fcntl(raw_fd, FcntlArg::F_DUPFD_CLOEXEC(10))?;
+    let high_fd = fcntl(raw_fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
     close(raw_fd)?;
 
     let listener = unsafe { UnixListener::from_raw_fd(high_fd) };
@@ -1216,7 +1203,7 @@ impl MetaTab {
     std::mem::take(&mut self.last_was_func_def)
   }
   pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
-    let path = env::var("PATH").unwrap_or_default();
+    let path = std::env::var("PATH").unwrap_or_default();
     let paths = path.split(":").map(PathBuf::from);
     let mut seen = HashSet::new();
     let mut cmds = vec![];
@@ -1242,7 +1229,7 @@ impl MetaTab {
     cmds
   }
   pub fn get_exec_files_in_cwd() -> Vec<Rc<Utility>> {
-    let cwd = env::var("PWD").unwrap_or_default();
+    let cwd = std::env::var("PWD").unwrap_or_default();
     let mut files = vec![];
     if let Ok(entries) = Path::new(&cwd).read_dir() {
       for entry in entries.flatten() {
@@ -1306,11 +1293,7 @@ impl MetaTab {
         }
         Err(Errno::EINTR) => continue,
         Err(e) => {
-          write(
-            conn,
-            format!("error>> failed to parse request: {e}\n").as_bytes(),
-          )
-          .ok();
+          writefd!(conn, "error>> failed to parse request: {e}\n").ok();
           break;
         }
       }
@@ -1372,7 +1355,7 @@ impl MetaTab {
         };
         buf.push_str(&format!("job>>child>>{pid} {stat_str} {cmd}\n"));
       }
-      write(sub, buf.as_bytes())?;
+      writefd!(sub, "{buf}")?;
       Ok(())
     });
     Ok(())
@@ -1447,7 +1430,7 @@ impl MetaTab {
     self.util_cache.clear();
   }
   pub fn rehash_path(&mut self) {
-    let path = env::var("PATH").unwrap_or_default();
+    let path = std::env::var("PATH").unwrap_or_default();
     self.clear_cached_cmds();
     self.old_path = Some(path.clone());
     let cmds_in_path = Self::get_cmds_in_path();
@@ -1456,7 +1439,7 @@ impl MetaTab {
     }
   }
   pub fn rehash_cwd(&mut self) {
-    let cwd = env::var("PWD").unwrap_or_default();
+    let cwd = std::env::var("PWD").unwrap_or_default();
     self.clear_cached_files();
     self.old_pwd = Some(cwd.clone());
     let exec_files_in_cwd = Self::get_exec_files_in_cwd();
@@ -1496,8 +1479,8 @@ impl MetaTab {
     self.rehash_internals();
   }
   pub fn try_rehash_utils(&mut self) {
-    let path = env::var("PATH").unwrap_or_default();
-    let cwd = env::var("PWD").unwrap_or_default();
+    let path = std::env::var("PATH").unwrap_or_default();
+    let cwd = std::env::var("PWD").unwrap_or_default();
     if self.old_path.as_ref().is_none_or(|old| *old != path) {
       self.rehash_path();
     }

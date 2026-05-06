@@ -1,12 +1,7 @@
 use chrono::{DateTime, Local};
 
 use crate::{
-  builtin::join_raw_args,
-  getopt::{Opt, OptSpec},
-  sherr,
-  state::read_meta,
-  status_msg, system_msg,
-  util::{error::ShResult, with_status, write_ln_out},
+  builtin::join_raw_args, getopt::{Opt, OptSpec}, outln, sherr, state::read_meta, status_msg, system_msg, util::{error::ShResult, with_status}
 };
 
 pub(super) struct Msg;
@@ -48,7 +43,7 @@ impl super::Builtin for Msg {
           let formatted = time.format("[%H:%M:%S]").to_string();
           let msg = msg.trim().replace('\n', "\n\t\t"); // aligns multiline messages
 
-          write_ln_out(format!("{formatted}\t{msg}"))?;
+          outln!("{formatted}\t{msg}");
         }
 
         Ok(())

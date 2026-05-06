@@ -5,13 +5,11 @@ use nix::sys::{
 };
 
 use crate::{
-  getopt::{Opt, OptSpec},
-  parse::lex::Span,
-  util::error::{ShResult, next_color},
+  getopt::{Opt, OptSpec}, outln, parse::lex::Span, util::error::{ShResult, next_color}
 };
 use crate::{
   sherr,
-  util::{with_status, write_ln_out},
+  util::with_status,
 };
 
 pub(super) struct ULimit;
@@ -294,9 +292,10 @@ impl super::Builtin for UMask {
         umask(Mode::from_bits_truncate(old_bits));
       }
     } else if symbolic {
-      write_ln_out(format_symbolic(old_bits))?;
+      let symbolic = format_symbolic(old_bits);
+      outln!("{symbolic}");
     } else {
-      write_ln_out(format!("{:04o}", old_bits))?;
+      outln!("{old_bits:04o}");
     }
 
     with_status(0)

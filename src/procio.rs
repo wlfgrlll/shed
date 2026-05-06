@@ -1,10 +1,12 @@
-use std::{ collections::{BTreeMap, BTreeSet}, fmt::Debug, os::fd::AsFd, str::FromStr };
+use std::{ collections::{BTreeMap, BTreeSet}, fmt::Debug, fs::{File, OpenOptions}, os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd}, path::Path, str::FromStr };
+
+use nix::{errno::Errno, fcntl::{FcntlArg, OFlag, fcntl, open}, libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO}, sys::{stat::Mode, wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid}}, unistd::{ForkResult, fork, write}};
 
 use crate::{
   expand::Expander, match_loop, parse::{
     execute::exec_nonint,
     lex::{Span, Tk, TkFlags},
-  }, prelude::*, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
+  }, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
 };
 
 /*
@@ -686,10 +688,10 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
           std::process::exit(*code);
         }
         e.print_error();
-        unsafe { libc::_exit(1) };
+        unsafe { nix::libc::_exit(1) };
       }
       let status = state::get_status();
-      unsafe { libc::_exit(status) };
+      unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
       drop(wpipe);

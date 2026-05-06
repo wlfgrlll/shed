@@ -364,13 +364,15 @@ macro_rules! two_way_display {
  * It is basically a re-implementation of println! and eprintln! and the others.
  * I may just be superstitious, but writing bytes directly to the file descriptor
  * feels better than calling println!() and praying, when we are constantly performing I/O redirection.
+ *
+ * Anyway we are ignoring io errors on these. If that becomes a problem later, we can change it
  */
 
 #[macro_export]
 macro_rules! outln {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    writeln!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*)
+    writeln!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*).ok();
   }};
 }
 
@@ -378,7 +380,7 @@ macro_rules! outln {
 macro_rules! errln {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    writeln!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*)
+    writeln!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*).ok();
   }};
 }
 
@@ -386,7 +388,7 @@ macro_rules! errln {
 macro_rules! out {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    write!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*)
+    write!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*).ok();
   }};
 }
 
@@ -395,8 +397,18 @@ macro_rules! out {
 macro_rules! err {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    write!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*)
+    write!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*).ok();
   }};
+}
+
+
+// not ignoring io errors on this one since it takes an arbitrary fd
+#[macro_export]
+macro_rules! writefd {
+    ($fd:expr, $($arg:tt)*) => {{
+      use std::io::Write;
+      write!($crate::util::FdWriter($fd.as_fd()), $($arg)*)
+    }};
 }
 
 /// Post a status message to the shell's status line.

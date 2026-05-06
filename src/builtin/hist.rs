@@ -8,16 +8,13 @@ use chrono::Utc;
 use chrono_english::{Dialect, Interval, parse_date_string};
 
 use crate::{
-  getopt::{Opt, OptSpec},
-  readline::{
+  errln, getopt::{Opt, OptSpec}, outln, readline::{
     histimport,
     history::{HistEntry, History},
-  },
-  sherr, state::{self, write_meta},
-  util::{
+  }, sherr, state::{self, write_meta}, util::{
     error::{ShResult, ShResultExt},
-    with_status, write_ln_err, write_ln_out,
-  },
+    with_status,
+  }
 };
 
 /// Helper macro to reduce repetition when adding conditions to the query. It handles the '--not' logic and parameter binding.
@@ -488,9 +485,7 @@ impl super::Builtin for Hist {
 
     if query.restore {
       let num_restored = hist.restore_backup()?;
-      write_ln_err(format!(
-        "hist: restored {num_restored} entries from backup."
-      ))?;
+      errln!("hist: restored {num_restored} entries from backup.");
 
       return with_status(0);
     }
@@ -513,8 +508,8 @@ impl super::Builtin for Hist {
         Ok(())
       })?;
 
-      write_ln_out(entries_fmt)?;
-      write_ln_err(format!("hist: imported {count} entries."))?;
+      outln!("{entries_fmt}");
+      errln!("hist: imported {count} entries.");
 
       hist.sort_by_timestamp()?;
       return with_status(0);
@@ -523,11 +518,11 @@ impl super::Builtin for Hist {
     let entries = query.execute(&hist).promote_err(span.clone())?;
     let entries_fmt = query.format_entries(&entries);
 
-    write_ln_out(entries_fmt)?;
+    outln!("{entries_fmt}");
 
     if query.delete {
       let num_deleted = entries.len();
-      write_ln_err(format!("hist: deleted {num_deleted} entries."))?;
+      errln!("hist: deleted {num_deleted} entries.");
     }
 
     with_status(0)

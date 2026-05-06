@@ -4,15 +4,13 @@ use std::{
 };
 
 use nix::{
-  sys::signal::{SaFlags, SigAction, sigaction},
-  unistd::getpid,
+  libc, sys::{signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, kill, sigaction}, wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid}}, unistd::{Pid, getpgid, getpid, setpgid}
 };
 
 use crate::{
   builtin::trap::TrapTarget,
   jobs::{Job, JobCmdFlags, JobID, take_term},
   parse::execute::exec_nonint,
-  prelude::*,
   sherr,
   state::{
     AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs, write_meta,

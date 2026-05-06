@@ -340,7 +340,7 @@ impl super::Builtin for StashBuiltin {
 
     if stash_opts.list || is_empty {
       let output = stash.list(stash_opts.only_named, stash_opts.only_stack);
-      outln!("{output}")?;
+      outln!("{output}");
     }
 
     Ok(())

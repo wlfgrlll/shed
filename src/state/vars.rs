@@ -2,18 +2,18 @@ use super::*;
 
 use std::{
   collections::{HashMap, VecDeque},
+  path::PathBuf,
   fmt::{self, Display},
   ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign},
   str::FromStr,
 };
 
-use nix::unistd::{User, gethostname, getppid};
+use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use crate::{
   builtin::map::MapNode,
   expand::{as_var_val_display, expand_arithmetic, expand_raw},
   parse::lex::{LexFlags, LexStream, Tk},
-  prelude::*,
   readline::{complete::Candidate, markers},
   sherr,
   util::{
@@ -560,13 +560,13 @@ impl VarTab {
   }
   fn init_env() -> Vec<(String, Var)> {
     let mut vars = vec![];
-    for (key, val) in env::vars() {
+    for (key, val) in std::env::vars() {
       if !vars.iter().any(|(k, _)| k == &key) {
         vars.push((key, Var::env_var(&val)));
       }
     }
     let mut set_var = |var: &str, val: &str| {
-      unsafe { env::set_var(var, val) };
+      unsafe { std::env::set_var(var, val) };
       vars.push((var.to_string(), Var::env_var(val)))
     };
 
@@ -630,7 +630,7 @@ impl VarTab {
     vars
   }
   pub fn init_sh_argv(&mut self) {
-    for arg in env::args() {
+    for arg in std::env::args() {
       self.bpush_arg(arg);
     }
   }
@@ -638,9 +638,9 @@ impl VarTab {
     for var_name in self.vars.keys() {
       let var = self.vars.get(var_name).unwrap();
       if var.flags.contains(VarFlags::EXPORT) {
-        unsafe { env::set_var(var_name, var.to_string()) };
+        unsafe { std::env::set_var(var_name, var.to_string()) };
       } else {
-        unsafe { env::set_var(var_name, "") };
+        unsafe { std::env::set_var(var_name, "") };
       }
     }
   }
@@ -735,7 +735,7 @@ impl VarTab {
   pub fn export_var(&mut self, var_name: &str) {
     if let Some(var) = self.vars.get_mut(var_name) {
       var.mark_for_export();
-      unsafe { env::set_var(var_name, var.to_string()) };
+      unsafe { std::env::set_var(var_name, var.to_string()) };
     }
   }
   pub fn get_var(&self, var: &str) -> String {
@@ -771,7 +771,7 @@ impl VarTab {
       ));
     }
     self.vars.remove(var_name);
-    unsafe { env::remove_var(var_name) };
+    unsafe { std::env::remove_var(var_name) };
     Ok(())
   }
   pub fn set_index(&mut self, var_name: &str, idx: ArrIndex, val: String) -> ShResult<()> {
@@ -827,13 +827,13 @@ impl VarTab {
         if flags.contains(VarFlags::EXPORT) && !var.flags.contains(VarFlags::EXPORT) {
           var.mark_for_export();
         }
-        unsafe { env::set_var(var_name, var.kind.to_string()) };
+        unsafe { std::env::set_var(var_name, var.kind.to_string()) };
       }
     } else {
       let mut var = Var::new(val, flags);
       if flags.contains(VarFlags::EXPORT) {
         var.mark_for_export();
-        unsafe { env::set_var(var_name, var.to_string()) };
+        unsafe { std::env::set_var(var_name, var.to_string()) };
       }
       self.vars.insert(var_name.to_string(), var);
     }

@@ -17,9 +17,10 @@ use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
 use crate::state::CursorStyle;
 use crate::util::error::ShResult;
-use crate::{bitflags, match_loop};
+use crate::{match_loop};
 use crate::{key, motion, sherr};
 use crate::{status_msg, verb};
+use bitflags::bitflags;
 
 bitflags! {
   #[derive(Debug,Clone,Copy,PartialEq,Eq)]

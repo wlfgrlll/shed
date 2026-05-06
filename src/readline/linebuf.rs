@@ -1,13 +1,10 @@
 use std::{
-  cmp::Ordering,
-  collections::{HashSet, VecDeque},
-  fmt::Display,
-  ops::{Deref, DerefMut, Index, IndexMut, Range},
-  slice::SliceIndex,
+  cmp::Ordering, collections::{HashSet, VecDeque}, fmt::{self, Display}, fs::OpenOptions, io::Write, ops::{Deref, DerefMut, Index, IndexMut, Range}, slice::SliceIndex
 };
 
 use ariadne::Span as AriadneSpan;
 use itertools::Either;
+use nix::{libc::STDIN_FILENO, unistd::isatty};
 use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -22,7 +19,6 @@ use crate::{
   parse::{
     ParseFlags, ParsedSrc, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
   },
-  prelude::*,
   procio::{self, RedirSet, RedirSpec, capture_command},
   readline::{
     context::{CtxTkRule, get_context_tokens},

@@ -1,4 +1,4 @@
-use std::{fmt::Write, io::Write as IoWrite, sync::atomic::AtomicBool};
+use std::{env, fmt::Write, io::{Read, Seek, Write as IoWrite}, sync::atomic::AtomicBool};
 
 use tempfile::NamedTempFile;
 
@@ -9,7 +9,6 @@ use crate::{
     execute::{Dispatcher, exec_input},
     lex::{Span, Tk},
   },
-  prelude::*,
   readline::{
     history::{HistEntry, History},
     linebuf::ordered,
@@ -19,6 +18,8 @@ use crate::{
   state::{self},
   util::error::{ShResult, ShResultExt},
 };
+
+use bitflags::bitflags;
 
 /// POSIX specifies that an invocation of `fc` that edits and re-executes a command shall not itself be committed to command history
 /// This flag is checked in main and gates history writing.
@@ -272,7 +273,7 @@ fn fc_list(hist: History, opts: FixCmdOpts) -> ShResult<()> {
     buf.push('\n');
   }
 
-  out!("{}", buf)?;
+  out!("{}", buf);
 
   Ok(())
 }

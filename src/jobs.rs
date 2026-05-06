@@ -1,17 +1,18 @@
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 use ariadne::Fmt;
 use itertools::izip;
-use nix::unistd::getpid;
+use nix::{errno::Errno, sys::{signal::{Signal, kill, killpg}, wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid}}, unistd::{Pid, getpgrp, getpid, setpgid, write}};
 use scopeguard::defer;
 use yansi::Color;
 
 use crate::{
-  prelude::*, procio::stderr_fileno, sherr, signal::{disable_reaping, enable_reaping}, state::{
+  procio::stderr_fileno, sherr, signal::{disable_reaping, enable_reaping}, state::{
     self, AutoCmdKind, CmdTimer, read_logic, set_status, with_term, with_vars, write_jobs,
     write_meta,
   }, util::{AutoCmdVecUtils, error::ShResult}
 };
+use bitflags::bitflags;
 
 pub const SIG_EXIT_OFFSET: i32 = 128;
 

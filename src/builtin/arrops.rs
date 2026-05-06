@@ -1,14 +1,10 @@
 use std::collections::VecDeque;
 
 use crate::{
-  builtin::BuiltinArgs,
-  getopt::{Opt, OptSpec},
-  sherr,
-  state::{VarFlags, VarKind, write_vars},
-  util::{
+  builtin::BuiltinArgs, getopt::{Opt, OptSpec}, outln, sherr, state::{VarFlags, VarKind, write_vars}, util::{
     error::{ShResult, ShResultExt},
-    with_status, write_ln_out,
-  },
+    with_status
+  }
 };
 
 trait ArrOp {
@@ -104,7 +100,7 @@ trait ArrOp {
       }
     } else {
       for val in popped {
-        write_ln_out(val)?;
+        outln!("{val}");
       }
     }
 

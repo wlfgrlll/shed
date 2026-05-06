@@ -56,13 +56,13 @@ impl super::Builtin for Trap {
         for l in l.traps() {
           let target = l.0;
           let command = as_var_val_display(l.1);
-          outln!("trap -- {command} {target}")?;
+          outln!("trap -- {command} {target}");
         }
         Ok(())
       })?;
       return with_status(0);
     } else if args.argv.len() == 1 {
-      errln!("usage: trap <COMMAND> [SIGNAL...]")?;
+      errln!("usage: trap <COMMAND> [SIGNAL...]");
       return with_status(1);
     }
 

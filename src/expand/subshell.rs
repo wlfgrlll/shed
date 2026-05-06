@@ -1,10 +1,15 @@
+use std::os::fd::AsRawFd;
+
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
-use crate::prelude::*;
 use crate::procio::{RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string};
 use crate::sherr;
 use crate::state::{self, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
+
+use nix::unistd::{ForkResult, fork};
+use nix::sys::wait::{waitpid, WaitStatus as WtStat, WaitPidFlag as WtFlag};
+use nix::errno::Errno;
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
   let (rpipe, wpipe) = pipes_high_no_cloexec()?;
@@ -41,9 +46,9 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
 
       if let Err(e) = exec_nonint(raw.to_string(), Some("process_sub".into())) {
         e.print_error();
-        exit(1);
+        unsafe { nix::libc::_exit(1) };
       }
-      exit(0);
+      unsafe { nix::libc::_exit(0) };
     }
     ForkResult::Parent {..} => {
       write_meta(|m| m.save_procsub_fd(register_fd));
@@ -70,10 +75,10 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
           std::process::exit(*code);
         }
         e.print_error();
-        unsafe { libc::_exit(1) };
+        unsafe { nix::libc::_exit(1) };
       }
       let status = state::get_status();
-      unsafe { libc::_exit(status) };
+      unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
       drop(wpipe);

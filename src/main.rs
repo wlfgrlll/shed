@@ -4,38 +4,28 @@
   clippy::while_let_on_iterator,
   clippy::result_large_err
 )]
-pub mod builtin;
-pub mod expand;
-pub mod getopt;
-pub mod jobs;
-pub mod parse;
-pub mod prelude;
-pub mod procio;
-pub mod readline;
-pub mod shopt;
-pub mod signal;
-pub mod state;
-pub mod util;
-
-#[cfg(test)]
-pub mod tests;
-
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use nix::errno::Errno;
+use nix::libc::STDIN_FILENO;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::{FchmodatFlags, fchmodat};
-use nix::unistd::read;
+use nix::unistd::{Pid, isatty, read, write};
 use smallvec::SmallVec;
 
 use crate::builtin::keymap::KeyMapMatch;
 use crate::builtin::source_builtin_completions;
 use crate::builtin::trap::TrapTarget;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
-use crate::prelude::*;
-use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stderr_fileno};
+use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack};
 use crate::readline::editmode::ModeReport;
 use crate::readline::linebuf::{Hint, Lines, Pos};
 use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
@@ -52,6 +42,22 @@ use crate::util::AutoCmdVecUtils;
 use crate::util::error::{self, ShErrKind, ShResult};
 use clap::Parser;
 use state::write_vars;
+
+pub mod builtin;
+pub mod expand;
+pub mod getopt;
+pub mod jobs;
+pub mod parse;
+pub mod procio;
+pub mod readline;
+pub mod shopt;
+pub mod signal;
+pub mod state;
+pub mod util;
+
+#[cfg(test)]
+pub mod tests;
+
 
 #[derive(Parser, Debug)]
 #[command(
@@ -99,7 +105,7 @@ fn setup_panic_handler() {
 
     // log panic
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
-      let home = env::var("HOME").unwrap();
+      let home = std::env::var("HOME").unwrap();
       PathBuf::from(format!("{home}/.local/share"))
     });
     let log_dir = data_dir.join("shed").join("log");
@@ -141,7 +147,7 @@ fn main() -> ExitCode {
   setup_panic_handler();
 
   let mut args = ShedArgs::parse();
-  if env::args().next().is_some_and(|a| a.starts_with('-')) {
+  if std::env::args().next().is_some_and(|a| a.starts_with('-')) {
     // first arg is '-shed'
     // meaning we are in a login shell
     args.login_shell = true;
@@ -152,13 +158,13 @@ fn main() -> ExitCode {
       env!("CARGO_PKG_VERSION"),
       std::env::consts::ARCH,
       std::env::consts::OS
-    ).ok();
+    );
     return ExitCode::SUCCESS;
   }
 
   // Increment SHLVL, or set to 1 if not present or invalid.
   // This var represents how many nested shell instances we're in
-  if let Ok(var) = env::var("SHLVL")
+  if let Ok(var) = std::env::var("SHLVL")
     && let Ok(lvl) = var.parse::<u32>()
   {
     write_vars(|v| {
@@ -215,7 +221,7 @@ fn main() -> ExitCode {
 
   let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
   if code == 0 && isatty(STDIN_FILENO).unwrap_or_default() {
-    write(stderr_fileno(), b"\nexit\n").ok();
+    errln!("\nexit");
   }
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
@@ -254,12 +260,12 @@ fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
   let path = path.as_ref();
   let path_raw = path.to_string_lossy().to_string();
   if !path.is_file() {
-    errln!("shed: Failed to open input file: {}", path.display())?;
+    errln!("shed: Failed to open input file: {}", path.display());
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "input file not found",));
   }
-  let Ok(input) = fs::read_to_string(path) else {
-    errln!("shed: Failed to read input file: {}", path.display())?;
+  let Ok(input) = std::fs::read_to_string(path) else {
+    errln!("shed: Failed to read input file: {}", path.display());
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "failed to read input file",));
   };
@@ -371,7 +377,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
   })?;
 
   if let Some(msg) = read_meta(|m| m.welcome_message(args.welcome)) {
-    outln!("\n{msg}")?;
+    outln!("\n{msg}");
   }
 
   if args.login_shell && !args.no_rc {
@@ -392,9 +398,9 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
 
   source_builtin_completions();
 
-  if let Ok(welcome) = env::var("SHELL_WELCOME") {
+  if let Ok(welcome) = std::env::var("SHELL_WELCOME") {
     // support for systemd's run0 message
-    errln!("{welcome}")?;
+    errln!("{welcome}");
   }
 
   Ok(raw_mode)
@@ -409,12 +415,12 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
       // try to fall back to no hist
       match ShedLine::new_no_hist(Prompt::new()) {
         Ok(rl) => {
-          errln!("Failed to load history: {e}")?;
+          errln!("Failed to load history: {e}");
           rl
         }
         Err(e) => {
           // that failed too. we probably arent in a context where readline can work at all.
-          errln!("Failed to initialize readline: {e}")?;
+          errln!("Failed to initialize readline: {e}");
           QUIT_CODE.store(1, Ordering::SeqCst);
           return Err(sherr!(CleanExit(1), "readline initialization failed",));
         }
@@ -426,7 +432,7 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
 
   let mut poll_fds: SmallVec<[PollFd; 2]> = SmallVec::new();
   let Some(tty_fd) = with_term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
-    errln!("Failed to access terminal file descriptor")?;
+    errln!("Failed to access terminal file descriptor");
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "terminal access failed",));
   };
@@ -501,7 +507,7 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
         continue;
       }
       Err(e) => {
-        errln!("poll error: {e}")?;
+        errln!("poll error: {e}");
         break;
       }
       Ok(_) => {}
@@ -838,7 +844,7 @@ fn handle_socket_request(
     }
     SocketRequest::Query(query_header) => match query_header {
       QueryHeader::Cwd => {
-        let cwd = env::current_dir()?.to_string_lossy().to_string();
+        let cwd = std::env::current_dir()?.to_string_lossy().to_string();
         write(&conn, cwd.as_bytes()).ok();
         write(&conn, b"\n").ok();
       }

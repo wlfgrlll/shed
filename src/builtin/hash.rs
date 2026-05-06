@@ -61,7 +61,7 @@ impl super::Builtin for Hash {
         if let state::meta::UtilKind::Command(path) = cmd.kind() {
           let path = as_var_val_display(&path.to_string_lossy());
           let name = cmd.name();
-          outln!("{name}={path}")?;
+          outln!("{name}={path}");
         }
       }
     }

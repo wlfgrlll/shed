@@ -1,13 +1,12 @@
-use std::{collections::VecDeque, fmt::Debug, rc::Rc, str::FromStr};
+use std::{collections::VecDeque, fmt::{self, Debug}, rc::Rc, str::FromStr};
 
 use ariadne::{Fmt, Label, Span as AriadneSpan};
 use bitflags::bitflags;
-use fmt::Display;
+use std::fmt::Display;
 use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
 
 use crate::{
   parse::lex::clean_input,
-  prelude::*,
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
   util::{
@@ -210,7 +209,7 @@ impl ParsedSrc {
     Ok(())
   }
   pub fn extract_nodes(&mut self) -> Vec<Node> {
-    mem::take(self.ast.tree_mut())
+    std::mem::take(self.ast.tree_mut())
   }
 }
 

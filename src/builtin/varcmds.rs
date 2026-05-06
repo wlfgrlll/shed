@@ -1,15 +1,11 @@
+use std::env;
+
 use crate::{
-  expand::as_var_val_display,
-  getopt::Opt,
-  parse::lex::{Span, Tk},
-  prelude::*,
-  sherr,
-  state::{ScopeStack, VarFlags, VarKind, read_vars, write_vars},
-  util::{
+  expand::as_var_val_display, getopt::Opt, outln, parse::lex::{Span, Tk}, sherr, state::{ScopeStack, VarFlags, VarKind, read_vars, write_vars}, util::{
     error::{ShResult, ShResultExt},
     strops::split_at_unescaped,
-    with_status, write_ln_out,
-  },
+    with_status,
+  }
 };
 
 /// Like `prepare_argv` but preserves raw token text for `name=(...)` array
@@ -108,7 +104,8 @@ impl super::Builtin for Readonly {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       // Display the local variables
-      write_ln_out(read_vars(display_readonly))?;
+      let vars = read_vars(display_readonly);
+      outln!("{vars}");
 
       return with_status(0);
     }
@@ -154,7 +151,8 @@ impl super::Builtin for Export {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       // Display the environment variables
-      write_ln_out(display_env_vars())?;
+      let vars = display_env_vars();
+      outln!("{vars}");
       return with_status(0);
     }
 
@@ -183,7 +181,8 @@ impl super::Builtin for Local {
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      write_ln_out(read_vars(display_local))?;
+      let vars = read_vars(display_local);
+      outln!("{vars}");
       return with_status(0);
     }
 

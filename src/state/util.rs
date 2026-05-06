@@ -1,12 +1,10 @@
 use super::*;
 
 use std::{
-  collections::{HashMap, VecDeque},
-  rc::Rc,
-  sync::atomic::Ordering,
+  collections::{HashMap, VecDeque}, fs::OpenOptions, io::{Read, Write}, path::{Path, PathBuf}, rc::Rc, sync::atomic::Ordering
 };
 
-use nix::unistd::{User, getuid};
+use nix::{sys::wait::WaitStatus as WtStat, unistd::{User, getuid}};
 use rusqlite::Connection;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -17,7 +15,6 @@ use crate::{
     execute::exec_nonint,
     lex::{LexFlags, LexStream},
   },
-  prelude::*,
   sherr,
   shopt::ShOpts,
   util::{AutoCmdVecUtils, error::ShResult},
@@ -232,7 +229,7 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
   let pre_cd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreChangeDir));
   let post_cd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostChangeDir));
 
-  let current_dir = env::current_dir()?.display().to_string();
+  let current_dir = std::env::current_dir()?.display().to_string();
   with_vars(
     [
       ("NEW_DIR".into(), dir_raw.as_str()),
@@ -243,9 +240,9 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
     },
   );
 
-  env::set_current_dir(dir)?;
+  std::env::set_current_dir(dir)?;
 
-  let new_dir_resolved = env::current_dir()?.display().to_string();
+  let new_dir_resolved = std::env::current_dir()?.display().to_string();
   write_vars(|v| {
     v.set_var(
       "OLDPWD",
@@ -269,14 +266,14 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
 }
 
 pub fn get_comp_wordbreaks() -> String {
-  env::var("COMP_WORDBREAKS").unwrap_or_else(|_| String::from("\"'><;|=&(:"))
+  std::env::var("COMP_WORDBREAKS").unwrap_or_else(|_| String::from("\"'><;|=&(:"))
 }
 
 /// Get the first char of IFS
 ///
 /// Used mainly for joining strings
 pub fn get_separator() -> String {
-  env::var("IFS")
+  std::env::var("IFS")
     .unwrap_or(String::from(" "))
     .graphemes(true)
     .next()
@@ -288,11 +285,11 @@ pub fn get_separator() -> String {
 ///
 /// Used mainly for splitting strings
 pub fn get_separators() -> String {
-  env::var("IFS").unwrap_or(String::from(" \t\n"))
+  std::env::var("IFS").unwrap_or(String::from(" \t\n"))
 }
 
 pub fn get_time_fmt() -> String {
-  env::var("TIMEFMT").unwrap_or_else(|_| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
+  std::env::var("TIMEFMT").unwrap_or_else(|_| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
 }
 
 pub fn get_status() -> i32 {
@@ -376,13 +373,13 @@ pub fn runtime_files() -> Vec<PathBuf> {
     files.push(home.join(".shedenv"));
   }
 
-  if let Ok(path) = env::var("SHED_RC") {
+  if let Ok(path) = std::env::var("SHED_RC") {
     files.push(PathBuf::from(path));
   }
-  if let Ok(path) = env::var("SHED_PROFILE") {
+  if let Ok(path) = std::env::var("SHED_PROFILE") {
     files.push(PathBuf::from(path));
   }
-  if let Ok(path) = env::var("SHED_ENV") {
+  if let Ok(path) = std::env::var("SHED_ENV") {
     files.push(PathBuf::from(path));
   }
 
@@ -394,7 +391,7 @@ pub fn runtime_files() -> Vec<PathBuf> {
 }
 
 pub fn rc_file_path() -> Option<PathBuf> {
-  if let Ok(path) = env::var("SHED_RC") {
+  if let Ok(path) = std::env::var("SHED_RC") {
     Some(PathBuf::from(path))
   } else {
     get_home().map(|home| home.join(".shedrc"))
@@ -465,7 +462,7 @@ pub fn source_runtime_file(name: &str, env_var_name: Option<&str>) -> ShResult<(
   }
 
   let path = if let Some(name) = env_var_name
-    && let Ok(path) = env::var(name)
+    && let Ok(path) = std::env::var(name)
   {
     PathBuf::from(&path)
   } else if let Some(home) = get_home() {
@@ -553,10 +550,10 @@ pub fn init_db_conn() {
 }
 
 pub fn open_db_conn() -> ShResult<Connection> {
-  let db_path = if let Ok(var) = env::var("SHED_HISTDB") {
+  let db_path = if let Ok(var) = std::env::var("SHED_HISTDB") {
     var
   } else {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     dirs::data_dir()
       .map(|p| p.to_string_lossy().to_string())
       .unwrap_or_else(|| format!("{home}/.local/share/shed/shed_hist.db"))
@@ -571,7 +568,7 @@ pub fn open_db_conn() -> ShResult<Connection> {
 }
 
 pub fn get_home() -> Option<PathBuf> {
-  env::var("HOME")
+  std::env::var("HOME")
     .ok()
     .map(PathBuf::from)
     .or_else(|| User::from_uid(getuid()).ok().flatten().map(|u| u.dir))

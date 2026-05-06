@@ -9,7 +9,6 @@ use crate::expand::param::perform_param_expansion;
 use crate::expand::subshell::{expand_cmd_sub, expand_proc_sub};
 use crate::match_loop;
 use crate::parse::lex::is_hard_sep;
-use crate::prelude::*;
 use crate::readline::markers;
 use crate::sherr;
 use crate::state::{read_shopts, read_vars};
@@ -31,7 +30,7 @@ pub fn expand_raw_inner(
 
       let (home, expanded) = if username.is_empty() {
         // standard '~' expansion
-        (env::var("HOME").unwrap_or_default(), true)
+        (std::env::var("HOME").unwrap_or_default(), true)
       } else if let Ok(result) = User::from_name(&username)
         && let Some(user) = result
       {

@@ -1,9 +1,10 @@
+use std::fmt;
+
 use ariadne::Fmt;
 use fmt::Display;
 
 use crate::{
   parse::lex::{Span, Tk},
-  prelude::*,
   sherr,
   shopt::xtrace_print,
   util::error::{ShResult, next_color},

@@ -4,9 +4,9 @@ use ariadne::Fmt;
 use nix::unistd::write;
 
 use crate::{
-  getopt::{Opt, OptSpec}, parse::lex::Span, procio::stdout_fileno, sherr, state::{change_dir, read_meta, write_meta}, util::{
+  getopt::{Opt, OptSpec}, out, parse::lex::Span, procio::stdout_fileno, sherr, state::{change_dir, read_meta, write_meta}, util::{
     error::{ShResult, ShResultExt, next_color},
-    with_status, write_out,
+    with_status,
   }
 };
 
@@ -280,7 +280,7 @@ impl super::Builtin for Dirs {
       print_dirs()?;
     }
 
-    write_out(output)?;
+    out!("{output}");
 
     with_status(0)
   }

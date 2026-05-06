@@ -4,8 +4,7 @@ use bitflags::bitflags;
 
 use crate::{
   readline::{
-    editmode::SubFlags,
-    linebuf::{Grapheme, Pos, SelectShape},
+    editmode::SubFlags, linebuf::{Grapheme, Pos, SelectShape}
   },
   state::read_vars,
 };

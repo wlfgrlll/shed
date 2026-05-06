@@ -9,13 +9,13 @@ use keys::{KeyCode, KeyEvent, ModKeys};
 use linebuf::LineBuf;
 use nix::poll::PollTimeout;
 use std::collections::VecDeque;
+use std::time::Instant;
 use term::Layout;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::builtin::keymap::{KeyMapFlags, KeyMapMatch};
 use crate::expand::{expand_keymap, expand_prompt};
-use crate::prelude::*;
 use crate::readline::complete::{FuzzyCompleter, FuzzySelector, SelectorResponse};
 use crate::readline::editcmd::Direction;
 use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
@@ -292,7 +292,7 @@ impl Prompt {
     let pre_prompt = read_logic(|l| l.get_autocmds(AutoCmdKind::PrePrompt));
     pre_prompt.exec();
 
-    let Ok(ps1_raw) = env::var("PS1") else {
+    let Ok(ps1_raw) = std::env::var("PS1") else {
       return Self::default();
     };
     // PS1 expansion may involve running commands (e.g., for \h or \W), which can modify shell state
@@ -301,7 +301,7 @@ impl Prompt {
     let Ok(ps1_expanded) = expand_prompt(&ps1_raw) else {
       return Self::default();
     };
-    let psr_raw = env::var("PSR").ok();
+    let psr_raw = std::env::var("PSR").ok();
     let psr_expanded = psr_raw
       .clone()
       .map(|r| expand_prompt(&r))

@@ -5,16 +5,16 @@ pub mod strops;
 pub mod ui;
 
 use std::collections::VecDeque;
+use std::os::fd::BorrowedFd;
 
 use ariadne::Span as AriadneSpan;
 
 use crate::parse::execute::exec_nonint;
 use crate::parse::lex::{Span, Tk, TkRule};
 use crate::parse::Node;
-use crate::procio::{stderr_fileno, stdout_fileno};
 use crate::state::AutoCmd;
 use crate::util::error::ShResult;
-use crate::{prelude::*, state};
+use crate::state;
 pub use strops::*;
 
 pub trait VecDequeExt<T> {
@@ -158,33 +158,13 @@ impl NodeVecUtils<Node> for Vec<Node> {
 pub struct FdWriter<'a>(pub BorrowedFd<'a>);
 
 impl<'a> std::io::Write for FdWriter<'a> {
-  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
     nix::unistd::write(self.0, buf)
       .map_err(|e| std::io::Error::from_raw_os_error(e as i32))
   }
-  fn flush(&mut self) -> io::Result<()> {
+  fn flush(&mut self) -> std::io::Result<()> {
     Ok(())
   }
-}
-
-pub fn write_ln_out(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  Ok(write_out(data)? + write_out(b"\n")?)
-}
-
-pub fn write_ln_err(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  Ok(write_err(data)? + write_err(b"\n")?)
-}
-
-pub fn write_out(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  write_fd(stdout_fileno(), data)
-}
-
-pub fn write_err(data: impl AsRef<[u8]>) -> ShResult<usize> {
-  write_fd(stderr_fileno(), data)
-}
-
-pub fn write_fd(fd: BorrowedFd, data: impl AsRef<[u8]>) -> ShResult<usize> {
-  Ok(write(fd, data.as_ref())?)
 }
 
 /// Sets status code and always returns Ok(())

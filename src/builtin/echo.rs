@@ -1,15 +1,11 @@
 use crate::{
-  builtin::Builtin,
-  expand::expand_prompt,
-  getopt::{Opt, OptSpec},
-  prelude::*,
-  state::read_shopts,
-  util::{
+  builtin::Builtin, expand::expand_prompt, getopt::{Opt, OptSpec}, out, state::read_shopts, util::{
     error::{ShResult, ShResultExt},
     strops::expand_ansi_c,
-    with_status, write_out,
-  },
+    with_status,
+  }
 };
+use bitflags::bitflags;
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,7 +63,7 @@ impl Builtin for Echo {
       joined.push('\n');
     }
 
-    write_out(joined)?;
+    out!("{joined}");
 
     with_status(0)
   }

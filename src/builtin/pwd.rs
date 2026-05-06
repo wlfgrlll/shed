@@ -1,6 +1,7 @@
+use std::env;
+
 use crate::{
-  prelude::*,
-  util::{error::ShResult, with_status, write_ln_out},
+  outln, util::{error::ShResult, with_status}
 };
 
 pub(super) struct Pwd;
@@ -8,7 +9,7 @@ impl super::Builtin for Pwd {
   fn execute(&self, _args: super::BuiltinArgs) -> ShResult<()> {
     let curr_dir = env::current_dir().unwrap().display().to_string();
 
-    write_ln_out(curr_dir)?;
+    outln!("{curr_dir}");
 
     with_status(0)
   }

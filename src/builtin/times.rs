@@ -36,10 +36,10 @@ impl super::Builtin for Times {
 
     outln!(
       "{self_user_minutes}m{self_user_seconds}.{self_user_milliseconds:03} {self_sys_minutes}m{self_sys_seconds}.{self_sys_milliseconds:03}\n"
-    )?;
+    );
     outln!(
       "{child_user_minutes}m{child_user_seconds}.{child_user_milliseconds:03} {child_sys_minutes}m{child_sys_seconds}.{child_sys_milliseconds:03}\n"
-    )?;
+    );
 
     with_status(0)
   }

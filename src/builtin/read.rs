@@ -9,9 +9,9 @@ use nix::{
 };
 
 use crate::{
-  expand::expand_keymap, getopt::{Opt, OptSpec}, parse::lex::Span, procio::stdin_fileno, sherr, signal, state::{self, VarFlags, VarKind, with_term, write_vars}, util::{
+  expand::expand_keymap, getopt::{Opt, OptSpec}, out, parse::lex::Span, procio::stdin_fileno, sherr, signal, state::{self, VarFlags, VarKind, with_term, write_vars}, util::{
     error::{ShErrKind, ShResult, ShResultExt},
-    with_status, write_out,
+    with_status,
   }
 };
 
@@ -69,7 +69,7 @@ impl super::Builtin for Read {
     }
 
     if let Some(p) = prompt {
-      write_out(p)?;
+      out!("{p}");
     }
 
     let _guard = if flags.contains(ReadFlags::NO_ECHO) {
@@ -248,7 +248,7 @@ impl super::Builtin for ReadKey {
     if let Some(var) = var_name {
       write_vars(|v| v.set_var(var, VarKind::Str(vim_seq), VarFlags::NONE))?;
     } else {
-      write_out(vim_seq)?;
+      out!("{vim_seq}");
     }
 
     with_status(0)

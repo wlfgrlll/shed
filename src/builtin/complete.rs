@@ -75,7 +75,7 @@ impl super::Builtin for Complete {
         read_meta(|m| -> ShResult<()> {
           let specs = m.comp_specs().values();
           for spec in specs {
-            outln!("{}", spec.source())?;
+            outln!("{}", spec.source());
           }
           Ok(())
         })?;
@@ -83,7 +83,7 @@ impl super::Builtin for Complete {
         read_meta(|m| -> ShResult<()> {
           for (cmd, _) in &args.argv {
             if let Some(spec) = m.comp_specs().get(cmd) {
-              out!("{}", spec.source())?;
+              out!("{}", spec.source());
             }
           }
           Ok(())
@@ -176,7 +176,7 @@ impl super::Builtin for CompGen {
     let results = comp_spec.complete(&dummy_ctx)?;
 
     for result in &results {
-      outln!("{result}")?;
+      outln!("{result}");
     }
 
     with_status(0)

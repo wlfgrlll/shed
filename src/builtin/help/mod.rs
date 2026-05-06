@@ -92,7 +92,7 @@ impl super::Builtin for Help {
       let tags = get_all_tags()?;
       for tag in tags {
         let candidate = tag.tag.candidate;
-        outln!("{candidate}")?;
+        outln!("{candidate}");
       }
       with_status(0)
     } else {

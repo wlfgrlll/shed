@@ -1,9 +1,7 @@
+use std::{env, path::{Path, PathBuf}};
+
 use crate::{
-  getopt::{Opt, OptSpec},
-  prelude::*,
-  sherr,
-  state::{self, read_vars},
-  util::{error::ShResult, with_status, write_ln_out},
+  getopt::{Opt, OptSpec}, outln, sherr, state::{self, read_vars}, util::{error::ShResult, with_status}
 };
 
 pub(super) struct Cd;
@@ -72,7 +70,7 @@ impl super::Builtin for Cd {
         dir = format!("~{home_dir}");
       }
 
-      write_ln_out(dir)?;
+      outln!("{dir}");
     }
 
     with_status(0)

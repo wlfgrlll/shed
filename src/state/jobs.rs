@@ -1,9 +1,10 @@
 use super::*;
 
+use nix::{sys::{signal::Signal, wait::WaitStatus as WtStat}, unistd::write};
 use scopeguard::defer;
 
 use crate::{
-  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg}, prelude::*, procio::stdout_fileno, signal::{disable_reaping, enable_reaping}, state, util::error::ShResult
+  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg}, procio::stdout_fileno, signal::{disable_reaping, enable_reaping}, state, util::error::ShResult
 };
 
 #[derive(Clone, Default, Debug)]

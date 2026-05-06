@@ -1,4 +1,5 @@
 use ariadne::Fmt;
+use nix::{sys::signal::{Signal, kill, killpg}, unistd::{Pid, getpgrp}};
 
 use crate::{
   builtin::BuiltinArgs,
@@ -6,7 +7,6 @@ use crate::{
   jobs::{JobCmdFlags, JobID, wait_bg},
   out, outln,
   parse::lex::Span,
-  prelude::*,
   sherr,
   signal::parse_signal,
   state::{self, read_jobs, write_jobs},
@@ -121,7 +121,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
     }
     JobBehavior::Background => {
       let job_order = read_jobs(|j| j.order().to_vec());
-      out!("{}", job.display(&job_order, JobCmdFlags::PIDS))?;
+      out!("{}", job.display(&job_order, JobCmdFlags::PIDS));
       write_jobs(|j| j.insert_job(job, true))?;
     }
   }
@@ -279,7 +279,7 @@ fn list_all_signals() -> ShResult<()> {
     })
     .collect::<Vec<_>>()
     .join(&state::get_separator());
-  outln!("{signals}")?;
+  outln!("{signals}");
   Ok(())
 }
 
@@ -314,7 +314,7 @@ fn send_signal(target: &KillTarget, sig: Signal, verbose: bool, blame: &Span) ->
     }
   };
   if verbose {
-    outln!("kill: {desc}")?;
+    outln!("kill: {desc}");
   }
   Ok(())
 }
@@ -354,7 +354,7 @@ impl super::Builtin for Kill {
       // kill -l <signal> - print the name
       let sig = parse_signal(arg).promote_err(span.clone())?;
       let name = sig.to_string();
-      outln!("{}", name.strip_prefix("SIG").unwrap_or(&name))?;
+      outln!("{}", name.strip_prefix("SIG").unwrap_or(&name));
 
       return with_status(0);
     }

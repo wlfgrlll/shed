@@ -15,7 +15,7 @@ impl super::Builtin for Defer {
     if args.argv.is_empty() {
       read_vars(|s| -> ShResult<()> {
         for line in s.cur_scope().display_deferred_cmds().lines() {
-          outln!("{line}")?;
+          outln!("{line}");
         }
         Ok(())
       })?;

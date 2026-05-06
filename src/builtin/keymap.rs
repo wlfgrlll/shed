@@ -1,12 +1,13 @@
 use crate::{
   expand::expand_keymap,
   getopt::{Opt, OptSpec},
-  prelude::*,
   readline::keys::KeyEvent,
   sherr,
   state::write_logic,
   util::{error::ShResult, with_status},
 };
+
+use bitflags::bitflags;
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3,7 +3,6 @@ use std::str::FromStr;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-  bitflags,
   expand::as_var_val_display,
   match_loop, outln, sherr,
   state::{VarKind, read_vars, write_shopts, write_vars},
@@ -12,6 +11,7 @@ use crate::{
     with_status,
   },
 };
+use bitflags::bitflags;
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -268,11 +268,11 @@ impl super::Builtin for Set {
               .map(|v| as_var_val_display(&v.to_string()))
               .collect::<Vec<_>>()
               .join(" ");
-            outln!("{k}=( {items} )")?;
+            outln!("{k}=( {items} )");
           }
           _ => {
             let v = as_var_val_display(&v.to_string());
-            outln!("{k}={v}")?;
+            outln!("{k}={v}");
           }
         }
       }
@@ -310,7 +310,7 @@ impl super::Builtin for Set {
               }
               if !found {
                 let output = build_set_call(should_set);
-                outln!("{output}")?;
+                outln!("{output}");
               }
             }
             Some(c) => {

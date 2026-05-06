@@ -20,7 +20,6 @@ pub use var::{expand_glob, expand_raw, expand_var};
 use crate::expand::var::expand_raw_inner;
 use crate::{match_loop, state};
 use crate::parse::lex::{Tk, TkFlags, TkRule};
-use crate::prelude::*;
 use crate::readline::markers::{self, strip_markers};
 use crate::state::read_shopts;
 use crate::util::error::{ShResult, ShResultExt};
@@ -197,7 +196,7 @@ impl Expander {
           delim_has_non_ws = false;
           match_loop!(chars.next() => q_ch, {
             markers::ARG_SEP if ch == markers::DUB_QUOTE => {
-              words.push(mem::take(&mut cur_word));
+              words.push(std::mem::take(&mut cur_word));
             }
             _ if q_ch == ch => {
               was_quoted = true;
@@ -220,12 +219,12 @@ impl Expander {
             // Just exited a field (or saw leading IFS). Decide whether to emit.
             if is_ws {
               if !cur_word.is_empty() || was_quoted {
-                words.push(mem::take(&mut cur_word));
+                words.push(std::mem::take(&mut cur_word));
                 was_quoted = false;
               }
             } else {
               // Non-WS IFS always emits (preserves leading/middle empty fields).
-              words.push(mem::take(&mut cur_word));
+              words.push(std::mem::take(&mut cur_word));
               was_quoted = false;
               delim_has_non_ws = true;
             }

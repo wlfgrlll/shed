@@ -1,12 +1,16 @@
+use std::path::PathBuf;
+
 use crate::expand::subshell::expand_cmd_sub;
 use crate::match_loop;
-use crate::prelude::*;
 use crate::state;
+use crate::state::read_shopts;
 use crate::state::read_vars;
 use crate::state::{read_jobs, read_logic, write_meta};
 use crate::status_msg;
 use crate::util::error::ShResult;
 use crate::util::ui::ansi_from_description;
+
+use nix::sys::wait::WaitStatus as WtStat;
 
 #[derive(Debug)]
 pub enum PromptTk {
@@ -408,7 +412,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       let pathbuf = PathBuf::from(&pwd);
       let mut segments = pathbuf.iter().count();
       let mut path_iter = pathbuf.iter();
-      let max_segments = crate::state::read_shopts(|s| s.prompt.trunc_prompt_path);
+      let max_segments = read_shopts(|s| s.prompt.trunc_prompt_path);
       while segments > max_segments {
         path_iter.next();
         segments -= 1;

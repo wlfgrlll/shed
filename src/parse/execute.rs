@@ -1,7 +1,7 @@
-use std::{collections::VecDeque, os::unix::fs::PermissionsExt, rc::Rc};
+use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use ariadne::Fmt;
-use nix::unistd::execve;
+use nix::{errno::Errno, unistd::{ForkResult, Pid, execve, execvpe, fork, setpgid}};
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,7 +16,6 @@ use crate::{
   errln,
   expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
-  prelude::*,
   procio::{PipeGenerator, RedirGuard, RedirSet, RedirSpec},
   sherr,
   shopt::xtrace_print,
@@ -73,7 +72,7 @@ pub fn is_in_path(name: Tk) -> bool {
     }
     false
   } else {
-    let Ok(path) = env::var("PATH") else {
+    let Ok(path) = std::env::var("PATH") else {
       return false;
     };
     let paths = path.split(':');
@@ -417,7 +416,7 @@ impl Dispatcher {
 
     if read_shopts(|o| o.set.verbose) {
       let command = span.as_str().to_string();
-      errln!("{command}").ok();
+      errln!("{command}");
     }
 
     let mut elem_iter = elements.into_iter();
@@ -1100,13 +1099,13 @@ impl Dispatcher {
       let exec_args = match ExecArgs::new(argv) {
         Ok(Some(args)) => args,
         Ok(None) => {
-          exit(0);
+          unsafe { nix::libc::_exit(0) };
         }
         Err(e) => {
           sherr!(ExecFail @ blame, "{e}")
             .with_context(context)
             .print_error();
-          exit(1);
+          unsafe { nix::libc::_exit(1) };
         }
       };
 
@@ -1140,7 +1139,7 @@ impl Dispatcher {
             .print_error();
         }
       }
-      exit(e as i32)
+      unsafe { nix::libc::_exit(e as i32) }
     };
 
     if no_fork {
@@ -1173,7 +1172,7 @@ impl Dispatcher {
         crate::signal::reset_signals(self.fg_job);
         let _guard = with_term(|t| t.interactive_guard(false));
         f(self);
-        unsafe { libc::_exit(state::get_status()) }
+        unsafe { nix::libc::_exit(state::get_status()) }
       }
       ForkResult::Parent { child } => {
         let job = self.job_stack.curr_job_mut().unwrap();

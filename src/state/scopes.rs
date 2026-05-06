@@ -3,10 +3,10 @@ use super::*;
 use std::{
   collections::{HashMap, VecDeque, hash_map::Entry},
   sync::atomic::Ordering,
-  time::Duration,
+  time::{Duration, Instant},
 };
 
-use crate::{builtin::map::MapNode, prelude::*, sherr, util::error::ShResult};
+use crate::{builtin::map::MapNode, sherr, util::error::ShResult};
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
@@ -125,7 +125,7 @@ impl ScopeStack {
         flat_vars.insert(var_name.clone(), var.clone());
       }
     }
-    for var in env::vars() {
+    for var in std::env::vars() {
       if let Entry::Vacant(e) = flat_vars.entry(var.0) {
         e.insert(Var::new(VarKind::Str(var.1), VarFlags::EXPORT));
       }
