@@ -1,3 +1,5 @@
+use std::os::fd::BorrowedFd;
+
 use nix::unistd::{Whence, lseek};
 
 use crate::{
@@ -58,8 +60,11 @@ impl super::Builtin for Seek {
       Whence::SeekSet
     };
 
-    let new_off =
-      lseek(fd as i32, offset, whence).map_err(|e| sherr!(ExecFail @ span, "lseek failed: {e}"))?;
+    let new_off = lseek(
+      unsafe { BorrowedFd::borrow_raw(fd as i32) }, // lseek will validate this for us
+      offset,
+      whence,
+    ).map_err(|e| sherr!(ExecFail @ span, "lseek failed: {e}"))?;
 
     outln!("{new_off}");
 

@@ -1,7 +1,7 @@
 use super::*;
 
 use std::{
-  collections::{HashMap, HashSet, VecDeque}, fmt::Write, os::{fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd}, unix::{
+  collections::{HashMap, HashSet, VecDeque}, fmt::Write, os::{fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd}, unix::{
     fs::PermissionsExt,
     net::{UnixListener, UnixStream},
   }}, path::{Path, PathBuf}, rc::Rc, str::FromStr, time::{Duration, Instant, SystemTime}
@@ -20,7 +20,7 @@ use nix::{
     resource::{Usage, UsageWho, getrusage},
     stat::{FchmodatFlags, Mode, fchmodat},
     time::TimeVal, wait::WaitStatus as WtStat,
-  }, unistd::{Pid, close, read, write}
+  }, unistd::{Pid, read, write}
 };
 use regex::Regex;
 
@@ -337,16 +337,18 @@ impl ShedSocket {
     let mode = Self::mode();
 
     fchmodat(
-      None,
+      nix::fcntl::AT_FDCWD,
       Path::new(&sock_path),
       mode,
       FchmodatFlags::FollowSymlink,
     )?;
 
-    let raw_fd = listener.into_raw_fd();
-    let high_fd = fcntl(raw_fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
-    close(raw_fd)?;
+    let high_fd = {
+      let old = listener; // move listener into this lower scope
+      fcntl(old, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))
+    }?; // listener drops here, closes
 
+    // repack the high fd here
     let listener = unsafe { UnixListener::from_raw_fd(high_fd) };
     listener.set_nonblocking(true).ok();
 
@@ -1282,7 +1284,7 @@ impl MetaTab {
     let mut bytes = vec![];
     loop {
       let mut buffer = [0u8; 1024];
-      match read(conn.as_raw_fd(), &mut buffer) {
+      match read(conn, &mut buffer) {
         Ok(0) => break,
         Ok(n) => {
           if let Some(pos) = buffer[..n].iter().position(|&b| b == b'\n') {

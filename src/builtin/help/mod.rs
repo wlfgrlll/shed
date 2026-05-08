@@ -245,7 +245,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
         break;
       };
       pager.display()?;
-      match poll(&mut [tty_fd], PollTimeout::NONE) {
+      match poll(&mut [tty_fd.clone()], PollTimeout::NONE) {
         Ok(0) => {
           // timeout? eof?
           break;

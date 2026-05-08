@@ -11,15 +11,10 @@ use std::{
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use crate::{
-  builtin::map::MapNode,
-  expand::{as_var_val_display, expand_arithmetic, expand_raw},
-  parse::lex::{LexFlags, LexStream, Tk},
-  readline::{complete::Candidate, markers},
-  sherr,
-  util::{
+  builtin::map::MapNode, expand::{as_var_val_display, expand_arithmetic, expand_raw}, parse::lex::{LexFlags, LexStream, Tk}, procio::stdin_fileno, readline::{complete::Candidate, markers}, sherr, util::{
     VecDequeExt,
     error::{ShErr, ShResult},
-  },
+  }
 };
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
@@ -574,7 +569,7 @@ impl VarTab {
       |pb: Result<PathBuf, std::io::Error>| pb.unwrap_or_default().to_string_lossy().to_string();
     // First, inherit any env vars from the parent process
     let term = {
-      if isatty(1).unwrap() {
+      if isatty(stdin_fileno()).unwrap() {
         if let Ok(term) = std::env::var("TERM") {
           term
         } else {

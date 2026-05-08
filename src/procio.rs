@@ -21,18 +21,18 @@ pub const MIN_INTERNAL_FD: RawFd = 10;
 
 /// Like `dup()`, but places the new fd at `MIN_INTERNAL_FD` or above so it
 /// doesn't collide with user-managed fds.
-fn dup_high(fd: BorrowedFd) -> nix::Result<OwnedFd> {
-  let fd = fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
+pub fn dup_high(fd: BorrowedFd) -> nix::Result<OwnedFd> {
+  let fd = fcntl(fd, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))?;
   unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
 }
 
 fn dup_high_no_cloexec(fd: BorrowedFd) -> nix::Result<OwnedFd> {
-  let fd = fcntl(fd.as_raw_fd(), FcntlArg::F_DUPFD(MIN_INTERNAL_FD))?;
+  let fd = fcntl(fd, FcntlArg::F_DUPFD(MIN_INTERNAL_FD))?;
   Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 /// Like `dup_high()` but takes and closes an existing OwnedFd.
-fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
+pub fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
   let new_fd = dup_high(fd.as_fd())?;
   Ok(new_fd)
 } // fd is closed here
@@ -55,7 +55,6 @@ where F: FnOnce() -> T {
   let _dummies = (3..min_fd).filter_map(|_| {
     // painful to write
     open("/dev/null", OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
-      .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
       .ok()
   }).collect::<Vec<_>>();
 
@@ -101,7 +100,10 @@ impl Redir {
   }
   pub fn apply(&mut self) -> ShResult<()> {
     if let Some(from) = &self.from {
-      nix::unistd::dup2(from.as_raw_fd(), self.fd)?;
+      let ret = unsafe { nix::libc::dup2(from.as_raw_fd(), self.fd) };
+      if ret < 0 {
+        return Err(nix::Error::last().into());
+      }
     } else {
       nix::unistd::close(self.fd)?;
     }
@@ -452,12 +454,10 @@ impl RedirSpec {
         Ok(Redir::close(fd))
       }
       RedirSpec::Buffer { fd, buf } => {
-        use nix::sys::memfd::{memfd_create, MemFdCreateFlag};
-        use std::ffi::CString;
+        use nix::sys::memfd::{memfd_create, MFdFlags};
         use std::io::{Seek, SeekFrom, Write};
 
-        let name = CString::new("shed_heredoc").unwrap();
-        let owned = memfd_create(&name, MemFdCreateFlag::MFD_CLOEXEC)
+        let owned = memfd_create(c"shed_heredoc", MFdFlags::MFD_CLOEXEC)
           .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
 
         let mut file = std::fs::File::from(owned);
@@ -576,7 +576,12 @@ impl IoGroup {
   pub fn restore(&self) -> ShResult<()> {
     for (&fd, saved) in &self.0 {
       match saved {
-        Some(owned) => { nix::unistd::dup2(owned.as_raw_fd(), fd)?; },
+        Some(owned) => {
+          let ret = unsafe { nix::libc::dup2(owned.as_raw_fd(), fd) };
+          if ret < 0 {
+            return Err(nix::Error::last().into());
+          }
+        },
         None => { nix::unistd::close(fd).ok(); },
       }
     }

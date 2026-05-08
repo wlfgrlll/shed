@@ -3,7 +3,6 @@ use std::{collections::VecDeque, time::Duration};
 use bitflags::bitflags;
 use nix::{
   errno::Errno,
-  libc::STDIN_FILENO,
   poll::{PollFd, PollFlags, PollTimeout, poll},
   unistd::read,
 };
@@ -108,13 +107,13 @@ fn read_bytes(
     .unwrap_or(PollTimeout::NONE);
 
   loop {
-    if poll(&mut [poll_fd], timeout)? == 0 {
+    if poll(&mut [poll_fd.clone()], timeout)? == 0 {
       state::set_status(1);
       return String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}")); // timeout
     }
 
     let mut in_buf = [0u8; 1];
-    match read(STDIN_FILENO, &mut in_buf) {
+    match read(stdin_fileno(), &mut in_buf) {
       Ok(0) => {
         state::set_status(1);
         let ret =

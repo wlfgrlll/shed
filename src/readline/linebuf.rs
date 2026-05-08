@@ -19,7 +19,7 @@ use crate::{
   parse::{
     ParseFlags, ParsedSrc, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
   },
-  procio::{self, RedirSet, RedirSpec, capture_command},
+  procio::{self, RedirSet, RedirSpec, capture_command, stdin_fileno},
   readline::{
     context::{CtxTkRule, get_context_tokens},
     editcmd::{LineAddr, ReadSrc, StashArgs, StashListArg, VerbCmd, WriteDest},
@@ -1012,7 +1012,7 @@ impl LineBuf {
       } else if let Some(pre) = height.strip_suffix('%')
         && let Ok(num) = pre.parse::<usize>()
       {
-        if !isatty(STDIN_FILENO).unwrap_or_default() {
+        if !isatty(stdin_fileno()).unwrap_or_default() {
           return DEFAULT_VIEWPORT_HEIGHT;
         };
         let (_, rows) = get_win_size(STDIN_FILENO);
@@ -1022,7 +1022,7 @@ impl LineBuf {
           "Invalid viewport height shopt value: '{}', using 50% of terminal height as default",
           height
         );
-        if !isatty(STDIN_FILENO).unwrap_or_default() {
+        if !isatty(stdin_fileno()).unwrap_or_default() {
           return DEFAULT_VIEWPORT_HEIGHT;
         };
         let (_, rows) = get_win_size(STDIN_FILENO);

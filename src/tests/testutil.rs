@@ -1,16 +1,11 @@
 use std::{
-  collections::HashMap,
-  env,
-  os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
-  path::PathBuf,
-  sync::{Arc, Condvar, Mutex},
-  thread::JoinHandle,
+  cmp::Ordering, collections::HashMap, env, os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{Arc, Condvar, Mutex}, thread::JoinHandle
 };
 
 use nix::{
   pty::openpty,
   sys::termios::{OutputFlags, SetArg, tcgetattr, tcsetattr},
-  unistd::{pipe, read},
+  unistd::pipe,
 };
 
 #[macro_export]
@@ -113,14 +108,22 @@ impl TestGuard {
     let _read_handle = std::thread::spawn(move || {
       let mut buf = [0u8; 4096];
       loop {
-        match read(master_raw, &mut buf) {
-          Ok(0) => break,
-          Ok(n) => {
+        let n = unsafe {
+          nix::libc::read(
+            master_raw,
+            buf.as_mut_ptr() as *mut nix::libc::c_void,
+            buf.len(),
+          )
+        };
+        match n.cmp(&0) {
+          Ordering::Greater => {
+            let n = n as usize;
             let (mu, cv) = &*output_clone;
             mu.lock().unwrap().extend_from_slice(&buf[..n]);
             cv.notify_all();
-          },
-          Err(_) => break,
+          }
+          Ordering::Less |
+          Ordering::Equal => break,
         }
       }
     });

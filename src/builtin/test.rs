@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, fs::metadata, path::PathBuf, str::FromStr};
+use std::{cell::RefCell, collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf, str::FromStr};
 
 use nix::{
   sys::stat::{self, SFlag},
@@ -226,7 +226,7 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
           },
 
           UnaryOp::Terminal => match operand.as_str().parse::<i32>() {
-            Ok(fd) => match isatty(fd) {
+            Ok(fd) => match isatty(unsafe { BorrowedFd::borrow_raw(fd) }) {
               Ok(b) => b,
               Err(e) => return Err(ShErr::from(e).promote(err_span)),
             },

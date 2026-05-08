@@ -1,9 +1,6 @@
 use std::io::Write;
 
-use nix::{
-  libc::STDOUT_FILENO,
-  unistd::{isatty, write},
-};
+use nix::unistd::{isatty, write};
 use regex::Regex;
 
 use crate::{
@@ -71,7 +68,7 @@ pub struct HelpPager {
 
 impl HelpPager {
   pub fn new(content: String, scroll_offset: usize, filename: Option<String>) -> Option<Self> {
-    if !isatty(STDOUT_FILENO).unwrap_or(false) {
+    if !isatty(stdout_fileno()).unwrap_or(false) {
       // If we're not in a terminal, just print the content and exit
       // Someone could be piping the output, like `help | grep foo`
       write(stdout_fileno(), content.as_bytes()).ok();

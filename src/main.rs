@@ -14,7 +14,6 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use nix::errno::Errno;
-use nix::libc::STDIN_FILENO;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::{FchmodatFlags, fchmodat};
@@ -25,7 +24,7 @@ use crate::builtin::keymap::KeyMapMatch;
 use crate::builtin::source_builtin_completions;
 use crate::builtin::trap::TrapTarget;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
-use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack};
+use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno};
 use crate::readline::editmode::ModeReport;
 use crate::readline::linebuf::{Hint, Lines, Pos};
 use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
@@ -189,7 +188,7 @@ fn main() -> ExitCode {
 
   if let Err(e) = if let Some(cmd) = args.command {
     exec_dash_c(cmd, args.script_args)
-  } else if args.stdin || !isatty(STDIN_FILENO).unwrap_or(false) {
+  } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
     read_commands(args.script_args)
   } else if !args.script_args.is_empty() {
     let path = args.script_args.remove(0);
@@ -220,7 +219,7 @@ fn main() -> ExitCode {
   write_jobs(|j| j.hang_up());
 
   let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
-  if code == 0 && isatty(STDIN_FILENO).unwrap_or_default() {
+  if code == 0 && isatty(stdin_fileno()).unwrap_or_default() {
     errln!("\nexit");
   }
 
@@ -231,7 +230,7 @@ fn read_commands(args: Vec<String>) -> ShResult<()> {
   let mut input = vec![];
   let mut read_buf = [0u8; 4096];
   loop {
-    match read(STDIN_FILENO, &mut read_buf) {
+    match read(stdin_fileno(), &mut read_buf) {
       Ok(0) => break,
       Ok(n) => input.extend_from_slice(&read_buf[..n]),
       Err(Errno::EINTR) => continue,
@@ -449,9 +448,9 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
     let _flush_guard = state::FlushGuard; // flushes terminal on drop
 
     poll_fds.clear();
-    poll_fds.push(tty_poll);
-    if let Some(fd) = socket_poll {
-      poll_fds.push(fd);
+    poll_fds.push(tty_poll.clone());
+    if let Some(fd) = &socket_poll {
+      poll_fds.push(fd.clone());
     }
 
     if read_shopts(|o| o.set.vi) != vi_mode {
@@ -574,7 +573,7 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
       // the mode changed, call chmod
       let path = ShedSocket::path();
       fchmodat(
-        None,
+        nix::fcntl::AT_FDCWD,
         Path::new(&path),
         curr_socket_mode,
         FchmodatFlags::FollowSymlink,
