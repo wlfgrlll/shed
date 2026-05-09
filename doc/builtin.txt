@@ -13,6 +13,7 @@ The following builtins are available:
   `bg`          resume a stopped job in the background      |builtin-bg|
   `cd`          change the working directory                |builtin-cd|
   `complete`    define custom tab completion rules          |builtin-complete|
+  `declare`     declare variables with type and attributes  |builtin-declare|
   `defer`       register cleanup tied to scope exit         |builtin-defer|
   `dirs`        display the directory stack                 |builtin-dirs|
   `disown`      remove a job from the job table             |builtin-disown|
@@ -333,6 +334,80 @@ COMPGEN                                          *builtin-compgen* *compgen*
       `compgen -v HOME`                 list variables starting with HOME
       `compgen -F _my_func`             run function and print results
       `compgen -o default`              fall back to default completion
+
+==============================================================================
+DECLARE                                          *builtin-declare* *declare*
+
+  `declare [-aAirx] [name[=value] ...]`
+  `declare -p [name ...]`
+  `declare -f [name ...]`
+  `declare -F [name ...]`
+
+  Declare variables, optionally setting their type and attributes in
+  the same step. With no flags and a `name=value` argument, behaves
+  like a plain assignment. Combined with `-a`, `-A`, `-i`, `-r`, or
+  `-x`, fixes the variable's type and/or attributes at declaration
+  time.
+
+  With no arguments and no introspection flag, lists all variables in
+  the current scope as `declare`-syntax assignments suitable for
+  re-execution.
+
+  Type flags ~
+
+    `-a`    indexed array. RHS may be `(elem1 elem2 ...)`
+    `-A`    associative array. RHS may be `([key1]=v1 [key2]=v2 ...)`
+    `-i`    integer. RHS is arithmetic-evaluated, so `declare -i x=5+3`
+            stores `8`. Subsequent assignments are also evaluated.
+
+  Only one type flag may be given per call. Without a type flag, the
+  variable is a string.
+
+  Attribute flags ~
+
+    `-r`    read-only. Equivalent to `readonly`. Cannot be reassigned
+            or unset. See |builtin-readonly|.
+    `-x`    export. Equivalent to `export`. Marks the variable for
+            propagation to child processes. See |builtin-export|.
+
+  Type and attribute flags can be combined: `declare -ix N=10` makes
+  `N` an integer that is also exported.
+
+  Introspection flags ~
+
+    `-p`    print all variables (or only the named ones) as
+            `declare`-syntax assignments. Suitable for re-execution.
+    `-f`    print all functions (or only the named ones) including
+            their bodies, as parseable function definitions.
+    `-F`    print only the function names (or only the named ones),
+            one per line in the form `declare -f {name}`. Useful for
+            checking whether a function is defined without dumping its
+            body.
+
+  Introspection flags are mutually exclusive with each other and with
+  type/attribute flags.
+
+  Scope ~
+
+  `declare` operates on the current scope, the same way |builtin-local|
+  does. Inside a function or brace group, the variable is local to
+  that scope and is discarded when the scope exits. At the top level,
+  it is global.
+
+  Examples:
+
+      `declare`                       list all variables in scope
+      `declare x=10`                  string variable
+      `declare -i n=5+3`              integer, evaluates to 8
+      `declare -a arr=(a b c)`        indexed array
+      `declare -A m=([k1]=v1 [k2]=v2)` associative array
+      `declare -rx PATH`              mark existing var read-only and exported
+      `declare -p PATH`               print PATH as a declare statement
+      `declare -F`                    list all defined function names
+      `declare -f my_func`            print the body of my_func
+
+  See also: |builtin-local|, |builtin-export|, |builtin-readonly|,
+  |builtin-unset|.
 
 ==============================================================================
 DEFER                                            *builtin-defer* *defer*

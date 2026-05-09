@@ -15,7 +15,7 @@ version() {
   local semver="${maj}.${min}.${patch}"
   local triple="shed v${semver} (${arch} ${os})"
 
-  if [ $verbose -gt 0 ]; then
+  if [[ $verbose -gt 0 ]]; then
     echo "$triple"
   else
     echo "$semver"
