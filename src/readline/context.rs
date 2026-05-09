@@ -447,6 +447,14 @@ impl CtxTk {
       }
     } else if flags.intersects(TkFlags::KEYWORD | TkFlags::FUNCNAME) {
       CtxTkRule::Keyword
+    } else if flags.contains(TkFlags::ASSIGN)
+      && !value.as_str().starts_with('=')
+    {
+      // Assignment-shaped token: structurally tokenize so the index
+      // (which can contain $(...) / ${...}) and the RHS are properly
+      // recognized for highlighting / completion. Skip the leading-`=`
+      // case — that's a regular command, not an assignment.
+      return parse_assignment(span, flags);
     } else if check_path_exists(value.as_str()) {
       CtxTkRule::ArgumentFile
     } else {
@@ -593,6 +601,118 @@ fn subdivide_argument(mut tk: CtxTk) -> Vec<CtxTk> {
   }
 
   tokens
+}
+
+/// Tokenize an assignment-shaped Tk like `arr[$(echo foo)]=biz` into
+/// structured `AssignmentLeft` / `AssignmentOp` / `AssignmentRight` tokens.
+/// The index and the RHS get recursively scanned so nested expansions
+/// (`$(...)`, `${...}`, etc.) are properly recognized for highlighting
+/// and completion. Without this, the whole string falls into
+/// `subdivide_argument` and gets shredded on `=` / `[` / `(` from
+/// COMP_WORDBREAKS with no awareness of the underlying structure.
+fn parse_assignment(span: &Span, flags: TkFlags) -> Vec<CtxTk> {
+  let raw = span.as_str();
+  let span_start = span.range().start;
+
+  // Find the `=` operator. ASSIGN was set, so this should always succeed.
+  let Some((eq_off, eq_len)) = split_at_unescaped(raw, "=") else {
+    return vec![CtxTk {
+      span: span.clone(),
+      class: CtxTkRule::Argument,
+      sub_tokens: vec![],
+    }];
+  };
+  let lhs_text = &raw[..eq_off];
+  let lhs_end = span_start + eq_off;
+  let op_end = lhs_end + eq_len;
+
+  // LHS: ParamName + optional ParamIndex.
+  let mut lhs_sub = vec![];
+  let bracket_off = lhs_text.find('[');
+  let name_end = bracket_off.map(|b| span_start + b).unwrap_or(lhs_end);
+
+  lhs_sub.push(CtxTk {
+    span: Span::new(span_start..name_end, span.get_source()),
+    class: CtxTkRule::ParamName,
+    sub_tokens: vec![],
+  });
+
+  if let Some(b) = bracket_off {
+    // Find matching `]` tracking depth (so `arr[a[0]]` parses correctly).
+    let mut depth = 0;
+    let mut close_off = lhs_text.len();
+    for (i, ch) in lhs_text[b..].char_indices() {
+      match ch {
+        '[' => depth += 1,
+        ']' => {
+          depth -= 1;
+          if depth == 0 {
+            close_off = b + i + 1;
+            break;
+          }
+        }
+        _ => {}
+      }
+    }
+    let index_start = span_start + b;
+    let index_end = span_start + close_off;
+
+    // Recursively scan the index contents (excluding the brackets).
+    // ARITH context matches what `${arr[idx]}` already uses.
+    let inner_text = &lhs_text[b + 1..close_off - 1];
+    let inner_span = Span::new(
+      (index_start + 1)..(index_end - 1),
+      span.get_source(),
+    );
+    let mut inner_chars = inner_text.char_indices().peekable();
+    let (_, inner) = scan_subspans(
+      &mut inner_chars,
+      &inner_span,
+      flags,
+      ScanCtx::ARITH,
+      TerminatorCtx::Eof,
+    );
+
+    lhs_sub.push(CtxTk {
+      span: Span::new(index_start..index_end, span.get_source()),
+      class: CtxTkRule::ParamIndex,
+      sub_tokens: inner,
+    });
+  }
+
+  let lhs_tk = CtxTk {
+    span: Span::new(span_start..lhs_end, span.get_source()),
+    class: CtxTkRule::AssignmentLeft,
+    sub_tokens: lhs_sub,
+  };
+
+  let op_tk = CtxTk {
+    span: Span::new(lhs_end..op_end, span.get_source()),
+    class: CtxTkRule::AssignmentOp,
+    sub_tokens: vec![],
+  };
+
+  // RHS: scan as full top-level expansion context.
+  let rhs_text = &raw[eq_off + eq_len..];
+  let rhs_start = op_end;
+  let rhs_end = span_start + raw.len();
+  let rhs_span = Span::new(rhs_start..rhs_end, span.get_source());
+  let mut rhs_chars = rhs_text.char_indices().peekable();
+  let (_, rhs_sub) = scan_subspans(
+    &mut rhs_chars,
+    &rhs_span,
+    flags,
+    ScanCtx::TOP_LEVEL,
+    TerminatorCtx::Eof,
+  );
+
+  let rhs_tk = CtxTk {
+    span: rhs_span,
+    class: CtxTkRule::AssignmentRight,
+    sub_tokens: rhs_sub,
+  };
+
+  vec![lhs_tk, op_tk, rhs_tk]
 }
 
 fn next_is(chars: &mut Peekable<CharIndices>, ch: char) -> bool {
