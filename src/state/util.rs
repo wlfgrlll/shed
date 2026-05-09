@@ -620,3 +620,53 @@ pub fn get_home() -> Option<PathBuf> {
 pub fn get_home_str() -> Option<String> {
   get_home().map(|h| h.to_string_lossy().to_string())
 }
+
+pub fn get_exec_wrappers() -> Vec<String> {
+  let mut wrappers = vec![
+    "sudo"       .into(),
+    "doas"       .into(),
+    "pkexec"     .into(),
+    "run0"       .into(),
+    "runuser"    .into(),
+    "please"     .into(),
+    "gosu"       .into(),
+    "strace"     .into(),
+    "ltrace"     .into(),
+    "ktrace"     .into(),
+    "valgrind"   .into(),
+    "perf"       .into(),
+    "rr"         .into(),
+    "heaptrack"  .into(),
+    "nohup"      .into(),
+    "nice"       .into(),
+    "ionice"     .into(),
+    "chrt"       .into(),
+    "taskset"    .into(),
+    "setsid"     .into(),
+    "setpriv"    .into(),
+    "ulimit"     .into(),
+    "unshare"    .into(),
+    "bwrap"      .into(),
+    "firejail"   .into(),
+    "systemd-run".into(),
+    "proot"      .into(),
+    "timeout"    .into(),
+    "watch"      .into(),
+    "chronic"    .into(),
+    "parallel"   .into(),
+    "stdbuf"     .into(),
+    "ts"         .into(),
+    "hyperfine"  .into(),
+    "command"    .into(),
+    "builtin"    .into(),
+    "env"        .into(),
+    "exec"       .into(),
+  ];
+
+  // lets users define their own exec wrappers for the highlighter if they want
+  // for instance, my personal config has a wrapper function called 'invoke'
+  let user_wrappers = read_vars(|v| v.get_arr_elems("SHED_EXEC_WRAPPERS"));
+  wrappers.extend(user_wrappers);
+
+  wrappers
+}

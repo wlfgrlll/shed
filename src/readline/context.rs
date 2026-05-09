@@ -9,8 +9,8 @@ use crate::{
   match_loop,
   parse::{execute::{in_cd_path, is_in_path}, lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule}},
   readline::{linebuf::Delim, markers::strip_markers},
-  state::{self, ShellParam, read_meta, read_shopts},
-  util::strops::{QuoteState, split_at_unescaped},
+  state::{self, ShellParam, get_exec_wrappers, read_meta, read_shopts},
+  util::{has_unescaped, strops::{QuoteState, split_at_unescaped}},
 };
 
 pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
@@ -23,7 +23,85 @@ pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
   // we unpacked the heredoc tokens, but they arent in their literal positions
   // so we now have to sort by span start
   out.sort_by_key(|t| t.span.range().start);
+
+  // promote exec wrappers like 'sudo' and 'strace' to keyword status
+  promote_exec_wrappers(&mut out);
+
+  // subdivide arguments at comp_wordbreaks
+  subdivide_arguments(&mut out);
+
   out
+}
+
+const EXEC_WRAPPERS: [&str;3] = [
+  "sudo",
+  "run0",
+  "strace"
+];
+fn is_exec_wrapper(tk: &CtxTk) -> bool {
+  get_exec_wrappers().into_iter().any(|wr| wr.as_str() == tk.span().as_str())
+  && is_valid_cmd(tk.as_tk())
+}
+
+fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
+  let mut tokens = tokens.iter_mut().peekable();
+  'outer: while let Some(tk) = tokens.next() {
+    promote_exec_wrappers(&mut tk.sub_tokens);
+
+    if is_exec_wrapper(tk) {
+      tk.class = CtxTkRule::Keyword;
+
+      while let Some(target) = tokens.peek() {
+        match target.class {
+          CtxTkRule::Argument |
+          CtxTkRule::ArgumentFile => {
+            if target.span.as_str().starts_with('-')
+            || has_unescaped(target.span.as_str(), "=") {
+              // looks like an option or an assignment
+              tokens.next();
+              continue;
+            }
+            if EXEC_WRAPPERS.contains(&target.span.as_str()) {
+              // chaining exec wrappers is a thing people do, e.g. `sudo strace cmd`
+              // continue the outer loop and let it get picked up by the next iteration
+              // we don't use is_exec_wrapper() for this since it doesnt have the ValidCommand rule
+              continue 'outer;
+            }
+            let target = tokens.next().unwrap();
+            target.class = match is_valid_cmd(target.as_tk()) {
+              true => CtxTkRule::ValidCommand,
+              false => CtxTkRule::InvalidCommand,
+            };
+            break
+          }
+          CtxTkRule::HereDocStart => {
+            tokens.next();
+            continue;
+          }
+          CtxTkRule::Redirect => {
+            tokens.next(); // consume it
+            let redir_target = tokens.next();
+            if redir_target.is_none_or(|t| !matches!(t.class, CtxTkRule::Argument | CtxTkRule::ArgumentFile)) {
+              break;
+            }
+          }
+          _ => break,
+        }
+      }
+    }
+  }
+}
+
+fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
+  let mut out = Vec::with_capacity(tokens.len());
+  for mut tk in tokens.drain(..) {
+    subdivide_arguments(&mut tk.sub_tokens);
+    match tk.class {
+      CtxTkRule::Argument => out.extend(subdivide_argument(tk)),
+      _ => out.push(tk),
+    }
+  }
+  *tokens = out;
 }
 
 /// Checks if a command name is valid
