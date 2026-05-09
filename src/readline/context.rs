@@ -10,7 +10,7 @@ use crate::{
   parse::{execute::{in_cd_path, is_in_path}, lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule}},
   readline::{linebuf::Delim, markers::strip_markers},
   state::{self, ShellParam, read_meta, read_shopts},
-  util::strops::QuoteState,
+  util::strops::{QuoteState, split_at_unescaped},
 };
 
 pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {

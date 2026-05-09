@@ -11,7 +11,7 @@ pub mod var;
 pub use alias::{expand_aliases, expand_keymap, parse_key_alias};
 pub use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
 pub use escape::{as_var_val_display, escape_str, unescape_heredoc, unescape_math, unescape_str};
-pub use param::{ParamExp, parse_pos_len, perform_param_expansion};
+pub use param::{ParamExp, parse_param_exp, parse_pos_len, perform_param_expansion};
 pub use prompt::{PromptTk, expand_prompt, format_cmd_runtime};
 pub use subshell::{expand_cmd_sub, expand_proc_sub};
 pub use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};

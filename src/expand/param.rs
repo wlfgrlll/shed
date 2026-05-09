@@ -1,14 +1,12 @@
-use std::str::FromStr;
-
 use glob::Pattern;
 
 use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
-use crate::expand::var::expand_raw;
+use crate::expand::var::expand_raw_inner;
 use crate::parse::lex::TkFlags;
 use crate::sherr;
 use crate::state::{VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars};
-use crate::util::error::{ShErr, ShResult};
+use crate::util::error::ShResult;
 use crate::{match_loop, state};
 
 #[derive(Debug)]
@@ -40,130 +38,162 @@ pub enum ParamExp {
   ExpandInnerVar(String),            // !var
 }
 
-impl FromStr for ParamExp {
-  type Err = ShErr;
+/// Parse a parameter-expansion suffix into a `ParamExp`.
+///
+/// `expand_cmd_subs` controls whether `$(...)` inside slice expressions
+/// (`${var:start:len}`) actually executes the command sub. Keystroke-path
+/// callers (highlighter, completer, hint generator) MUST pass `false` —
+/// otherwise typing into `${arr[$(rm -rf /)]}` would execute the sub on
+/// every keystroke. Real expansion at command-execution time passes `true`.
+///
+/// `FromStr` is intentionally not implemented: that trait can't carry the
+/// cmd-sub flag, and providing a `parse()` default would silently make
+/// keystroke paths run cmd subs.
+pub fn parse_param_exp(s: &str, expand_cmd_subs: bool) -> ShResult<ParamExp> {
+  use ParamExp::*;
 
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    use ParamExp::*;
+  let parse_err = || Err(sherr!(SyntaxErr, "Invalid parameter expansion",));
 
-    let parse_err = || Err(sherr!(SyntaxErr, "Invalid parameter expansion",));
+  if s == "^^" {
+    return Ok(ToUpperAll);
+  }
+  if s == "^" {
+    return Ok(ToUpperFirst);
+  }
+  if s == ",," {
+    return Ok(ToLowerAll);
+  }
+  if s == "," {
+    return Ok(ToLowerFirst);
+  }
 
-    if s == "^^" {
-      return Ok(ToUpperAll);
-    }
-    if s == "^" {
-      return Ok(ToUpperFirst);
-    }
-    if s == ",," {
-      return Ok(ToLowerAll);
-    }
-    if s == "," {
-      return Ok(ToLowerFirst);
-    }
-
-    // Handle indirect var expansion: ${!var}
-    if let Some(var) = s.strip_prefix('!') {
-      if var.ends_with('*') || var.ends_with('@') {
-        return Ok(VarNamesWithPrefix(var.to_string()));
-      }
+  // Handle indirect var expansion: ${!var}
+  if let Some(var) = s.strip_prefix('!') {
+    if var.ends_with(']') && (var.contains("[@]") || var.contains("[*]")) {
       return Ok(ExpandInnerVar(var.to_string()));
     }
-
-    // Pattern removals
-    if let Some(rest) = s.strip_prefix("##") {
-      return Ok(RemLongestPrefix(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('#') {
-      return Ok(RemShortestPrefix(rest.to_string()));
+    if var.ends_with('*') || var.ends_with('@') {
+      return Ok(VarNamesWithPrefix(var.to_string()));
     }
-    if let Some(rest) = s.strip_prefix("%%") {
-      return Ok(RemLongestSuffix(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('%') {
-      return Ok(RemShortestSuffix(rest.to_string()));
-    }
+    return Ok(ExpandInnerVar(var.to_string()));
+  }
 
-    // Replacements
-    if let Some(rest) = s.strip_prefix("//") {
+  // Pattern removals
+  if let Some(rest) = s.strip_prefix("##") {
+    return Ok(RemLongestPrefix(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('#') {
+    return Ok(RemShortestPrefix(rest.to_string()));
+  }
+  if let Some(rest) = s.strip_prefix("%%") {
+    return Ok(RemLongestSuffix(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('%') {
+    return Ok(RemShortestSuffix(rest.to_string()));
+  }
+
+  // Replacements
+  if let Some(rest) = s.strip_prefix("//") {
+    let mut parts = rest.splitn(2, '/');
+    let pattern = parts.next().unwrap_or("");
+    let repl = parts.next().unwrap_or("");
+    return Ok(ReplaceAllMatches(pattern.to_string(), repl.to_string()));
+  }
+  if let Some(rest) = s.strip_prefix('/') {
+    if let Some(rest) = rest.strip_prefix('%') {
       let mut parts = rest.splitn(2, '/');
       let pattern = parts.next().unwrap_or("");
       let repl = parts.next().unwrap_or("");
-      return Ok(ReplaceAllMatches(pattern.to_string(), repl.to_string()));
+      return Ok(ReplaceSuffix(pattern.to_string(), repl.to_string()));
+    } else if let Some(rest) = rest.strip_prefix('#') {
+      let mut parts = rest.splitn(2, '/');
+      let pattern = parts.next().unwrap_or("");
+      let repl = parts.next().unwrap_or("");
+      return Ok(ReplacePrefix(pattern.to_string(), repl.to_string()));
+    } else {
+      let mut parts = rest.splitn(2, '/');
+      let pattern = parts.next().unwrap_or("");
+      let repl = parts.next().unwrap_or("");
+      return Ok(ReplaceFirstMatch(pattern.to_string(), repl.to_string()));
     }
-    if let Some(rest) = s.strip_prefix('/') {
-      if let Some(rest) = rest.strip_prefix('%') {
-        let mut parts = rest.splitn(2, '/');
-        let pattern = parts.next().unwrap_or("");
-        let repl = parts.next().unwrap_or("");
-        return Ok(ReplaceSuffix(pattern.to_string(), repl.to_string()));
-      } else if let Some(rest) = rest.strip_prefix('#') {
-        let mut parts = rest.splitn(2, '/');
-        let pattern = parts.next().unwrap_or("");
-        let repl = parts.next().unwrap_or("");
-        return Ok(ReplacePrefix(pattern.to_string(), repl.to_string()));
-      } else {
-        let mut parts = rest.splitn(2, '/');
-        let pattern = parts.next().unwrap_or("");
-        let repl = parts.next().unwrap_or("");
-        return Ok(ReplaceFirstMatch(pattern.to_string(), repl.to_string()));
-      }
-    }
-
-    // Fallback / assignment / alt
-    if let Some(rest) = s.strip_prefix(":-") {
-      return Ok(DefaultUnsetOrNull(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('-') {
-      return Ok(DefaultUnset(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix(":+") {
-      return Ok(AltSetNotNull(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('+') {
-      return Ok(AltNotNull(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix(":=") {
-      return Ok(SetDefaultUnsetOrNull(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('=') {
-      return Ok(SetDefaultUnset(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix(":?") {
-      return Ok(ErrUnsetOrNull(rest.to_string()));
-    } else if let Some(rest) = s.strip_prefix('?') {
-      return Ok(ErrUnset(rest.to_string()));
-    }
-
-    // Substring
-    if let Some((pos, len)) = parse_pos_len(s) {
-      return Ok(match len {
-        Some(l) => SliceClosed(pos, l),
-        None => SliceOpen(pos),
-      });
-    }
-
-    parse_err()
   }
+
+  // Fallback / assignment / alt
+  if let Some(rest) = s.strip_prefix(":-") {
+    return Ok(DefaultUnsetOrNull(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('-') {
+    return Ok(DefaultUnset(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix(":+") {
+    return Ok(AltSetNotNull(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('+') {
+    return Ok(AltNotNull(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix(":=") {
+    return Ok(SetDefaultUnsetOrNull(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('=') {
+    return Ok(SetDefaultUnset(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix(":?") {
+    return Ok(ErrUnsetOrNull(rest.to_string()));
+  } else if let Some(rest) = s.strip_prefix('?') {
+    return Ok(ErrUnset(rest.to_string()));
+  }
+
+  // Substring
+  if let Some((pos, len)) = parse_pos_len(s, expand_cmd_subs) {
+    return Ok(match len {
+      Some(l) => SliceClosed(pos, l),
+      None => SliceOpen(pos),
+    });
+  }
+
+  parse_err()
 }
 
-pub fn parse_pos_len(s: &str) -> Option<(usize, Option<usize>)> {
+pub fn parse_pos_len(s: &str, expand_cmd_subs: bool) -> Option<(usize, Option<usize>)> {
   let raw = s.strip_prefix(':')?;
   if let Some((start, len)) = raw.split_once(':') {
-    let start = expand_raw(&mut start.chars().peekable()).unwrap_or_else(|_| start.to_string());
-    let len = expand_raw(&mut len.chars().peekable()).unwrap_or_else(|_| len.to_string());
+    let start = expand_raw_inner(&mut start.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| start.to_string());
+    let len = expand_raw_inner(&mut len.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| len.to_string());
     Some((start.parse::<usize>().ok()?, len.parse::<usize>().ok()))
   } else {
-    let raw = expand_raw(&mut raw.chars().peekable()).unwrap_or_else(|_| raw.to_string());
+    let raw = expand_raw_inner(&mut raw.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| raw.to_string());
     Some((raw.parse::<usize>().ok()?, None))
   }
 }
 
-pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
+pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<String> {
   let mut chars = raw.chars();
   let mut var_name = String::new();
   let mut rest = String::new();
   if raw.starts_with('#') {
-    let var = read_vars(|v| v.get_var_meta(raw.strip_prefix('#').unwrap()));
-    return Ok(
-      match var.kind() {
-        VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
-        VarKind::Arr(items) => items.len(),
-        VarKind::AssocArr(items) => items.len(),
+    let var_spec = raw.strip_prefix('#').unwrap();
+    let parsed = VarName::parse(var_spec, expand_cmd_subs)?;
+    if let Some(idx) = parsed.index() {
+      match idx {
+        crate::state::ArrIndex::AllSplit | crate::state::ArrIndex::AllJoined | crate::state::ArrIndex::ArgCount => {
+          let var = read_vars(|v| v.get_var_meta(parsed.name()));
+          return Ok(
+            match var.kind() {
+              VarKind::Arr(items) => items.len(),
+              VarKind::AssocArr(items) => items.len(),
+              _ => 0,
+            }
+            .to_string(),
+          );
+        }
+        _ => {
+          let val = read_vars(|v| v.index_var(parsed.name(), idx.clone()))?;
+          return Ok(val.len().to_string());
+        }
       }
-      .to_string(),
-    );
+    } else {
+      let var = read_vars(|v| v.get_var_meta(var_spec));
+      return Ok(
+        match var.kind() {
+          VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
+          VarKind::Arr(items) => items.len(),
+          VarKind::AssocArr(items) => items.len(),
+        }
+        .to_string(),
+      );
+    }
   }
 
   // Scan for the variable name (may include [index]) and the operator
@@ -208,7 +238,7 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
 
   // Parse and expand the variable name (including any array index) before
   // entering read_vars, to avoid re-entrant borrows from index expansion
-  let parsed = VarName::parse(&var_name)?;
+  let parsed = VarName::parse(&var_name, expand_cmd_subs)?;
   let get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed).unwrap_or_default();
   let try_get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed);
   let compare = |old: &str, new: &str| {
@@ -222,7 +252,7 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
     }
   };
 
-  if let Ok(expansion) = rest.parse::<ParamExp>() {
+  if let Ok(expansion) = parse_param_exp(&rest, expand_cmd_subs) {
     match expansion {
       ParamExp::Len => unreachable!(),
       ParamExp::ToUpperAll => {
@@ -262,17 +292,17 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       }
       ParamExp::DefaultUnsetOrNull(default) => match read_vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
-        None => expand_raw(&mut default.chars().peekable()),
+        None => expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs),
       },
       ParamExp::DefaultUnset(default) => match read_vars(try_get) {
         Some(val) => Ok(val),
-        None => expand_raw(&mut default.chars().peekable()),
+        None => expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs),
       },
       ParamExp::SetDefaultUnsetOrNull(default) => {
         match read_vars(try_get).filter(|v| !v.is_empty()) {
           Some(val) => Ok(val),
           None => {
-            let expanded = expand_raw(&mut default.chars().peekable())?;
+            let expanded = expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs)?;
             write_vars(|v| {
               v.set_var(
                 parsed.name(),
@@ -287,7 +317,7 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
       ParamExp::SetDefaultUnset(default) => match read_vars(try_get) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw(&mut default.chars().peekable())?;
+          let expanded = expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs)?;
           write_vars(|v| {
             v.set_var(
               parsed.name(),
@@ -299,24 +329,24 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
         }
       },
       ParamExp::AltSetNotNull(alt) => match read_vars(try_get).filter(|v| !v.is_empty()) {
-        Some(_) => expand_raw(&mut alt.chars().peekable()),
+        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), expand_cmd_subs),
         None => Ok("".into()),
       },
       ParamExp::AltNotNull(alt) => match read_vars(try_get) {
-        Some(_) => expand_raw(&mut alt.chars().peekable()),
+        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), expand_cmd_subs),
         None => Ok("".into()),
       },
       ParamExp::ErrUnsetOrNull(err) => match read_vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw(&mut err.chars().peekable())?;
+          let expanded = expand_raw_inner(&mut err.chars().peekable(), expand_cmd_subs)?;
           Err(sherr!(ExecFail, "{expanded}"))
         }
       },
       ParamExp::ErrUnset(err) => match read_vars(try_get) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw(&mut err.chars().peekable())?;
+          let expanded = expand_raw_inner(&mut err.chars().peekable(), expand_cmd_subs)?;
           Err(sherr!(ExecFail, "{expanded}"))
         }
       },
@@ -497,9 +527,19 @@ pub fn perform_param_expansion(raw: &str) -> ShResult<String> {
         Ok(match_vars.join(" "))
       }
       ParamExp::ExpandInnerVar(inner) => {
-        let inner_name = VarName::parse(&inner)?;
-        let value = read_vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
-        Ok(read_vars(|v| v.get_var(&value)))
+        if inner.contains("[@]") || inner.contains("[*]") {
+          let var_name = if let Some(pos) = inner.find('[') {
+            &inner[..pos]
+          } else {
+            &inner
+          };
+          let joined = inner.contains("[*]");
+          read_vars(|v| v.get_array_keys(var_name, joined))
+        } else {
+          let inner_name = VarName::parse(&inner, expand_cmd_subs)?;
+          let value = read_vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
+          Ok(read_vars(|v| v.get_var(&value)))
+        }
       }
     }
   } else {
@@ -517,131 +557,139 @@ mod tests {
   use crate::state::{VarFlags, VarKind, read_vars, write_vars};
   use crate::tests::testutil::{TestGuard, test_input};
 
+  fn test_param_parse(val: &str) -> ParamExp {
+    parse_param_exp(val, true).unwrap()
+  }
+
+  fn test_param_expansion(val: &str) -> ShResult<String> {
+    perform_param_expansion(val, true)
+  }
+
   // ===================== ParamExp parsing =====================
 
   #[test]
   fn param_exp_default_unset_or_null() {
-    let exp: ParamExp = ":-default".parse().unwrap();
+    let exp = test_param_parse(":-default");
     assert!(matches!(exp, ParamExp::DefaultUnsetOrNull(ref d) if d == "default"));
   }
 
   #[test]
   fn param_exp_default_unset() {
-    let exp: ParamExp = "-fallback".parse().unwrap();
+    let exp = test_param_parse("-fallback");
     assert!(matches!(exp, ParamExp::DefaultUnset(ref d) if d == "fallback"));
   }
 
   #[test]
   fn param_exp_set_default_unset_or_null() {
-    let exp: ParamExp = ":=val".parse().unwrap();
+    let exp = test_param_parse(":=val");
     assert!(matches!(exp, ParamExp::SetDefaultUnsetOrNull(ref v) if v == "val"));
   }
 
   #[test]
   fn param_exp_set_default_unset() {
-    let exp: ParamExp = "=val".parse().unwrap();
+    let exp = test_param_parse("=val");
     assert!(matches!(exp, ParamExp::SetDefaultUnset(ref v) if v == "val"));
   }
 
   #[test]
   fn param_exp_alt_set_not_null() {
-    let exp: ParamExp = ":+alt".parse().unwrap();
+    let exp = test_param_parse(":+alt");
     assert!(matches!(exp, ParamExp::AltSetNotNull(ref a) if a == "alt"));
   }
 
   #[test]
   fn param_exp_alt_not_null() {
-    let exp: ParamExp = "+alt".parse().unwrap();
+    let exp = test_param_parse("+alt");
     assert!(matches!(exp, ParamExp::AltNotNull(ref a) if a == "alt"));
   }
 
   #[test]
   fn param_exp_err_unset_or_null() {
-    let exp: ParamExp = ":?errmsg".parse().unwrap();
+    let exp = test_param_parse(":?errmsg");
     assert!(matches!(exp, ParamExp::ErrUnsetOrNull(ref e) if e == "errmsg"));
   }
 
   #[test]
   fn param_exp_err_unset() {
-    let exp: ParamExp = "?errmsg".parse().unwrap();
+    let exp = test_param_parse("?errmsg");
     assert!(matches!(exp, ParamExp::ErrUnset(ref e) if e == "errmsg"));
   }
 
   #[test]
   fn param_exp_len() {
-    let exp: ParamExp = "##pattern".parse().unwrap();
+    let exp = test_param_parse("##pattern");
     assert!(matches!(exp, ParamExp::RemLongestPrefix(ref p) if p == "pattern"));
   }
 
   #[test]
   fn param_exp_rem_shortest_prefix() {
-    let exp: ParamExp = "#pat".parse().unwrap();
+    let exp = test_param_parse("#pat");
     assert!(matches!(exp, ParamExp::RemShortestPrefix(ref p) if p == "pat"));
   }
 
   #[test]
   fn param_exp_rem_longest_prefix() {
-    let exp: ParamExp = "##pat".parse().unwrap();
+    let exp = test_param_parse("##pat");
     assert!(matches!(exp, ParamExp::RemLongestPrefix(ref p) if p == "pat"));
   }
 
   #[test]
   fn param_exp_rem_shortest_suffix() {
-    let exp: ParamExp = "%pat".parse().unwrap();
+    let exp = test_param_parse("%pat");
     assert!(matches!(exp, ParamExp::RemShortestSuffix(ref p) if p == "pat"));
   }
 
   #[test]
   fn param_exp_rem_longest_suffix() {
-    let exp: ParamExp = "%%pat".parse().unwrap();
+    let exp = test_param_parse("%%pat");
     assert!(matches!(exp, ParamExp::RemLongestSuffix(ref p) if p == "pat"));
   }
 
   #[test]
   fn param_exp_replace_first() {
-    let exp: ParamExp = "/old/new".parse().unwrap();
+    let exp = test_param_parse("/old/new");
     assert!(matches!(exp, ParamExp::ReplaceFirstMatch(ref s, ref r) if s == "old" && r == "new"));
   }
 
   #[test]
   fn param_exp_replace_all() {
-    let exp: ParamExp = "//old/new".parse().unwrap();
+    let exp = test_param_parse("//old/new");
     assert!(matches!(exp, ParamExp::ReplaceAllMatches(ref s, ref r) if s == "old" && r == "new"));
   }
 
   #[test]
   fn param_exp_replace_prefix() {
-    let exp: ParamExp = "/#old/new".parse().unwrap();
+    let exp = test_param_parse("/#old/new");
     assert!(matches!(exp, ParamExp::ReplacePrefix(ref s, ref r) if s == "old" && r == "new"));
   }
 
   #[test]
   fn param_exp_replace_suffix() {
-    let exp: ParamExp = "/%old/new".parse().unwrap();
+    let exp = test_param_parse("/%old/new");
     assert!(matches!(exp, ParamExp::ReplaceSuffix(ref s, ref r) if s == "old" && r == "new"));
   }
 
   #[test]
   fn param_exp_indirect() {
-    let exp: ParamExp = "!var".parse().unwrap();
+    let exp = test_param_parse("!var");
     assert!(matches!(exp, ParamExp::ExpandInnerVar(ref v) if v == "var"));
   }
 
   #[test]
   fn param_exp_var_names_prefix() {
-    let exp: ParamExp = "!prefix*".parse().unwrap();
+    let exp = test_param_parse("!prefix*");
     assert!(matches!(exp, ParamExp::VarNamesWithPrefix(ref p) if p == "prefix*"));
   }
 
   #[test]
   fn param_exp_substr() {
-    let exp: ParamExp = ":2".parse().unwrap();
+    let exp = test_param_parse(":2");
     assert!(matches!(exp, ParamExp::SliceOpen(2)));
   }
 
   #[test]
   fn param_exp_substr_len() {
-    let exp: ParamExp = ":1:3".parse().unwrap();
+    let exp = test_param_parse(":1:3");
     assert!(matches!(exp, ParamExp::SliceClosed(1, 3)));
   }
 
@@ -650,7 +698,7 @@ mod tests {
   #[test]
   fn param_default_unset_or_null_unset() {
     let _guard = TestGuard::new();
-    let result = perform_param_expansion("UNSET:-fallback").unwrap();
+    let result = test_param_expansion("UNSET:-fallback").unwrap();
     assert_eq!(result, "fallback");
   }
 
@@ -659,7 +707,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("EMPTY:-fallback").unwrap();
+    let result = test_param_expansion("EMPTY:-fallback").unwrap();
     assert_eq!(result, "fallback");
   }
 
@@ -668,7 +716,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("SET:-fallback").unwrap();
+    let result = test_param_expansion("SET:-fallback").unwrap();
     assert_eq!(result, "value");
   }
 
@@ -678,7 +726,7 @@ mod tests {
     write_vars(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::NONE)).unwrap();
 
     // ${EMPTY-fallback} - EMPTY is set (even if null), so returns null
-    let result = perform_param_expansion("EMPTY-fallback").unwrap();
+    let result = test_param_expansion("EMPTY-fallback").unwrap();
     assert_eq!(result, "");
   }
 
@@ -687,7 +735,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("SET:+alt").unwrap();
+    let result = test_param_expansion("SET:+alt").unwrap();
     assert_eq!(result, "alt");
   }
 
@@ -695,7 +743,7 @@ mod tests {
   fn param_alt_unset() {
     let _guard = TestGuard::new();
 
-    let result = perform_param_expansion("UNSET:+alt").unwrap();
+    let result = test_param_expansion("UNSET:+alt").unwrap();
     assert_eq!(result, "");
   }
 
@@ -703,7 +751,7 @@ mod tests {
   fn param_err_unset() {
     let _guard = TestGuard::new();
 
-    let result = perform_param_expansion("UNSET:?variable not set");
+    let result = test_param_expansion("UNSET:?variable not set");
     assert!(result.is_err());
   }
 
@@ -712,7 +760,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("STR", VarKind::Str("hello".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("#STR").unwrap();
+    let result = test_param_expansion("#STR").unwrap();
     assert_eq!(result, "5");
   }
 
@@ -721,7 +769,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("STR:6").unwrap();
+    let result = test_param_expansion("STR:6").unwrap();
     assert_eq!(result, "world");
   }
 
@@ -730,7 +778,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("STR:0:5").unwrap();
+    let result = test_param_expansion("STR:0:5").unwrap();
     assert_eq!(result, "hello");
   }
 
@@ -746,7 +794,7 @@ mod tests {
     })
     .unwrap();
 
-    let result = perform_param_expansion("PATH#*/").unwrap();
+    let result = test_param_expansion("PATH#*/").unwrap();
     assert_eq!(result, "usr/local/bin");
   }
 
@@ -762,7 +810,7 @@ mod tests {
     })
     .unwrap();
 
-    let result = perform_param_expansion("PATH##*/").unwrap();
+    let result = test_param_expansion("PATH##*/").unwrap();
     assert_eq!(result, "bin");
   }
 
@@ -771,7 +819,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("FILE", VarKind::Str("file.tar.gz".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("FILE%.*").unwrap();
+    let result = test_param_expansion("FILE%.*").unwrap();
     assert_eq!(result, "file.tar");
   }
 
@@ -780,7 +828,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("FILE", VarKind::Str("file.tar.gz".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("FILE%%.*").unwrap();
+    let result = test_param_expansion("FILE%%.*").unwrap();
     assert_eq!(result, "file");
   }
 
@@ -789,7 +837,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("STR/hello/world").unwrap();
+    let result = test_param_expansion("STR/hello/world").unwrap();
     assert_eq!(result, "world hello");
   }
 
@@ -798,7 +846,7 @@ mod tests {
     let _guard = TestGuard::new();
     write_vars(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("STR//hello/world").unwrap();
+    let result = test_param_expansion("STR//hello/world").unwrap();
     assert_eq!(result, "world world");
   }
 
@@ -808,7 +856,7 @@ mod tests {
     write_vars(|v| v.set_var("REF", VarKind::Str("TARGET".into()), VarFlags::NONE)).unwrap();
     write_vars(|v| v.set_var("TARGET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
 
-    let result = perform_param_expansion("!REF").unwrap();
+    let result = test_param_expansion("!REF").unwrap();
     assert_eq!(result, "value");
   }
 
@@ -816,7 +864,7 @@ mod tests {
   fn param_set_default_assigns() {
     let _guard = TestGuard::new();
 
-    let result = perform_param_expansion("NEWVAR:=assigned").unwrap();
+    let result = test_param_expansion("NEWVAR:=assigned").unwrap();
     assert_eq!(result, "assigned");
 
     // Verify it was actually set

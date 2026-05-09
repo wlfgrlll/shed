@@ -121,7 +121,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
     }
     '}' if brace_depth > 0 && inner_brace_depth == 0 => {
       chars.next(); // consume the brace
-      let val = perform_param_expansion(&var_name)?;
+      let val = perform_param_expansion(&var_name, expand_cmd_subs)?;
       return Ok(val);
     }
     markers::ESCAPE if brace_depth > 0 => {

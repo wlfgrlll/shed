@@ -162,12 +162,30 @@ pub enum ArrIndex {
   ArgCount,
   AllJoined,
   AllSplit,
+  Key(String),
+
+  /// Unresolved index, parsed depending on whether we are targeting an
+  /// indexed array or an associative array
+  Raw(String),
 }
 
-impl FromStr for ArrIndex {
-  type Err = ShErr;
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    let s = expand_raw(&mut s.chars().peekable())?;
+impl ArrIndex {
+  /// Parse an array index expression.
+  ///
+  /// `expand_cmd_subs` controls whether `$(...)` inside the index
+  /// actually executes. Keystroke-path callers (highlighter, completer,
+  /// hint generator) MUST pass `false` — otherwise `${arr[$(rm -rf /)]}`
+  /// would execute on every keystroke. Real expansion at command time
+  /// passes `true`.
+  ///
+  /// `FromStr` is intentionally not implemented: that trait can't carry
+  /// the cmd-sub flag, and providing a `parse()` default would silently
+  /// make keystroke paths run cmd subs.
+  pub fn parse(s: &str, expand_cmd_subs: bool) -> ShResult<Self> {
+    let s = crate::expand::var::expand_raw_inner(
+      &mut s.chars().peekable(),
+      expand_cmd_subs,
+    )?;
     match s.as_str() {
       "@" => Ok(Self::AllSplit),
       "*" => Ok(Self::AllJoined),
@@ -180,14 +198,32 @@ impl FromStr for ArrIndex {
         let idx = s.parse::<usize>().unwrap();
         Ok(Self::Literal(idx))
       }
-      _ => {
-        // let's try to handle something like '1+1'
-        if let Ok(res) = expand_arithmetic(&s) {
-          Self::from_str(&res)
-        } else {
-          Err(sherr!(ParseErr, "Invalid array index: {}", s,))
+      // Anything else — variable references, arithmetic expressions,
+      // string keys — gets deferred to `resolve_for`. Whether it's
+      // arithmetic-evaluated or used as a literal key depends on
+      // whether the target is indexed or associative.
+      _ => Ok(Self::Raw(s)),
+    }
+  }
+}
+
+impl ArrIndex {
+  pub fn resolve_for(self, kind: &VarKind) -> ShResult<Self> {
+    match self {
+      Self::Raw(s) => match kind {
+        VarKind::Arr(_) | VarKind::Str(_) | VarKind::Int(_) => {
+          let evaluated = expand_arithmetic(&s)?;
+          let n: usize = evaluated.parse().map_err(|_| {
+            sherr!(ParseErr, "Invalid array index '{s}': not a number")
+          })?;
+          Ok(Self::Literal(n))
         }
+        VarKind::AssocArr(_) => Ok(Self::Key(s)),
+      },
+      Self::Literal(n) if matches!(kind, VarKind::AssocArr(_)) => {
+        Ok(Self::Key(n.to_string()))
       }
+      _ => Ok(self),
     }
   }
 }
@@ -222,7 +258,7 @@ pub struct VarName {
 }
 
 impl VarName {
-  pub fn parse(raw: &str) -> ShResult<Self> {
+  pub fn parse(raw: &str, expand_cmd_subs: bool) -> ShResult<Self> {
     let Some(bracket_start) = raw.find('[') else {
       return Ok(Self {
         name: raw.to_string(),
@@ -261,7 +297,7 @@ impl VarName {
 
     let name = raw[..bracket_start].to_string();
     let idx_str = &raw[bracket_start + 1..bracket_end];
-    let index = idx_str.parse::<ArrIndex>()?;
+    let index = ArrIndex::parse(idx_str, expand_cmd_subs)?;
 
     // Array slicing only applies to [@] and [*] indexes
     let (slice_start, slice_len) = if matches!(index, ArrIndex::AllSplit | ArrIndex::AllJoined) {

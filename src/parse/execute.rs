@@ -1219,7 +1219,7 @@ impl Dispatcher {
 
       // Parse and expand array index BEFORE entering write_vars borrow
       let indexed = state::parse_arr_bracket(var_name)
-        .map(|(name, idx_raw)| state::expand_arr_index(&idx_raw).map(|idx| (name, idx)))
+        .map(|(name, idx_raw)| state::expand_arr_index(&idx_raw, true).map(|idx| (name, idx)))
         .transpose()?;
 
       match kind {
