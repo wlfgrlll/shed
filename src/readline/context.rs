@@ -537,7 +537,13 @@ impl CtxTk {
         CtxTkRule::InvalidCommand
       }
     } else if flags.intersects(TkFlags::KEYWORD | TkFlags::FUNCNAME) {
-      CtxTkRule::Keyword
+      // Keywords are atomic literal text, we know exactly what they look like
+      // So we aren't going to scan the token's sub spans, we're just gonna return it.
+      return vec![Self {
+        span: span.clone(),
+        class: CtxTkRule::Keyword,
+        sub_tokens: vec![],
+      }];
     } else if flags.contains(TkFlags::ASSIGN)
       && !value.as_str().starts_with('=')
     {
@@ -1686,6 +1692,38 @@ mod tests {
   fn span_str<'a>(tk: &CtxTk, src: &'a str) -> &'a str {
     let r = tk.span.range();
     &src[r]
+  }
+
+  #[test]
+  fn tilde_expansion_strips_markers() {
+    // expand_no_side_effects must strip in-band expansion markers, otherwise
+    // is_valid_cmd sees a path with PUA chars in it and Path::is_absolute
+    // returns false, misclassifying valid commands as InvalidCommand.
+    let rc: std::rc::Rc<str> = "~/bin/foo".into();
+    let tk = LexStream::new(rc, LexFlags::LEX_UNFINISHED)
+      .filter_map(Result::ok)
+      .find(|t| !matches!(t.class, TkRule::SOI | TkRule::EOI | TkRule::Sep))
+      .expect("token");
+    let expanded = tk.expand_no_side_effects().expect("expand");
+    let word = expanded.get_first_word().expect("word");
+    assert!(word.starts_with('/'), "tilde-expanded path should be absolute, got {word:?}");
+    assert!(!word.chars().any(|c| ('\u{e000}'..='\u{e0ff}').contains(&c)),
+      "expanded path should not contain PUA marker chars, got {word:?}");
+  }
+
+  #[test]
+  fn dbracket_classification() {
+    let toks = get_context_tokens("[[ -f foo ]]");
+    let find_class = |s: &str| {
+      toks
+        .iter()
+        .find(|t| t.span.as_str() == s)
+        .map(|t| t.class)
+    };
+    assert_eq!(find_class("[["), Some(CtxTkRule::Keyword));
+    assert_eq!(find_class("-f"), Some(CtxTkRule::Argument));
+    assert_eq!(find_class("foo"), Some(CtxTkRule::Argument));
+    assert_eq!(find_class("]]"), Some(CtxTkRule::Keyword));
   }
 
   #[test]

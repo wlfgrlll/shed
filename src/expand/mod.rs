@@ -149,7 +149,8 @@ impl Expander {
   }
   pub fn expand_no_side_effects(&mut self) -> ShResult<String> {
     self.allow_side_effects = false;
-    self.expand_inner()
+    let raw = self.expand_inner()?;
+    Ok(strip_markers(&raw))
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;

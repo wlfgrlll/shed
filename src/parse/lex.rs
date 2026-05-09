@@ -429,6 +429,7 @@ pub struct LexStream {
   subsh_depth: usize,
   subsh_start: Option<usize>,
   case_depth: usize,
+  dbracket_depth: usize,
   heredoc_skip: Option<usize>,
   flags: LexFlags,
 }
@@ -451,6 +452,7 @@ impl LexStream {
       subsh_start: None,
       heredoc_skip: None,
       case_depth: 0,
+      dbracket_depth: 0,
     }
   }
   /// Returns a slice of the source input using the given range
@@ -1164,6 +1166,10 @@ impl LexStream {
           if text == "esac" && self.case_depth > 0 {
             self.case_depth -= 1;
           }
+          if text == "[[" {
+            self.dbracket_depth += 1;
+            self.set_next_is_cmd(false);
+          }
           new_tk.mark(TkFlags::KEYWORD);
         }
         _ if is_assignment(text) => {
@@ -1191,6 +1197,10 @@ impl LexStream {
     } else if self.flags.contains(LexFlags::EXPECTING_IN) && text == "in" {
       new_tk.mark(TkFlags::KEYWORD);
       self.flags &= !LexFlags::EXPECTING_IN;
+    } else if self.dbracket_depth > 0 && text == "]]" {
+      new_tk.mark(TkFlags::KEYWORD);
+      self.dbracket_depth -= 1;
+      self.set_next_is_cmd(true);
     } else if is_cmd_sub(text) {
       new_tk.mark(TkFlags::IS_CMDSUB)
     }

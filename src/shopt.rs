@@ -502,7 +502,7 @@ shopt_group! {
 
     /// The color used for highlighting operators like pipes and redirects
     #[validate(validate_color)]
-    operator: String = "bold".into(),
+    operator: String = "bold magenta".into(),
 
     /// The color used for highlighting comments
     #[validate(validate_color)]
