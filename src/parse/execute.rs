@@ -21,7 +21,7 @@ use crate::{
   shopt::xtrace_print,
   signal::{check_signals, signals_pending},
   state::{
-    self, ShFunc, ShellParam, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_logic, write_meta, write_vars
+    self, ShFunc, ShellParam, Var, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_logic, write_meta, write_vars
   },
   util::{
     error::{ShErr, ShErrKind, ShResult, ShResultExt, next_color},
@@ -1235,7 +1235,14 @@ impl Dispatcher {
           let mut var = if let Some((name, idx)) = &indexed {
             read_vars(|v| v.index_var(name, idx.clone()))?.into()
           } else {
-            read_vars(|v| v.get_var_meta(var_name))
+            read_vars(|v| v.try_get_var_meta(var_name)).unwrap_or_else(|| {
+              let kind = if is_arr {
+                VarKind::Arr(VecDeque::new())
+              } else {
+                VarKind::Str(String::new())
+              };
+              Var::new(kind, VarFlags::NONE)
+            })
           };
 
           let op_name = match op {
