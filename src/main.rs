@@ -21,7 +21,7 @@ use nix::unistd::{Pid, isatty, read, write};
 use smallvec::SmallVec;
 
 use crate::builtin::keymap::KeyMapMatch;
-use crate::builtin::source_builtin_completions;
+use crate::builtin::{source_builtin_completions, source_builtin_functions};
 use crate::builtin::trap::TrapTarget;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
 use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno};
@@ -34,7 +34,7 @@ use crate::signal::{
 };
 use crate::state::{
   AutoCmdKind, LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
-  VarFlags, VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts,
+  VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts,
   read_vars, source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
 };
 use crate::util::AutoCmdVecUtils;
@@ -144,6 +144,8 @@ fn main() -> ExitCode {
   });
 
   setup_panic_handler();
+  state::set_ver_info().ok();
+  state::set_sh_lvl().ok();
 
   let mut args = ShedArgs::parse();
   if std::env::args().next().is_some_and(|a| a.starts_with('-')) {
@@ -159,23 +161,6 @@ fn main() -> ExitCode {
       std::env::consts::OS
     );
     return ExitCode::SUCCESS;
-  }
-
-  // Increment SHLVL, or set to 1 if not present or invalid.
-  // This var represents how many nested shell instances we're in
-  if let Ok(var) = std::env::var("SHLVL")
-    && let Ok(lvl) = var.parse::<u32>()
-  {
-    write_vars(|v| {
-      v.set_var(
-        "SHLVL",
-        VarKind::Str((lvl + 1).to_string()),
-        VarFlags::EXPORT,
-      )
-    })
-    .ok();
-  } else {
-    write_vars(|v| v.set_var("SHLVL", VarKind::Str("1".into()), VarFlags::EXPORT)).ok();
   }
 
   if !args.no_rc && let Err(e) = source_env() {
@@ -395,6 +380,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     e.print_error();
   }
 
+  source_builtin_functions();
   source_builtin_completions();
 
   if let Ok(welcome) = std::env::var("SHELL_WELCOME") {

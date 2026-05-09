@@ -497,6 +497,50 @@ pub fn source_file(path: PathBuf) -> ShResult<()> {
   Ok(())
 }
 
+pub fn set_ver_info() -> ShResult<()> {
+  let version = env!("CARGO_PKG_VERSION");
+  let mut semver = version.split('.');
+  let major = semver.next().unwrap_or("0");
+  let minor = semver.next().unwrap_or("0");
+  let patch = semver.next().unwrap_or("0");
+  let arch = std::env::consts::ARCH;
+  let os = std::env::consts::OS;
+  let ver_info = vec![
+    ("major".into(), major.into()),
+    ("minor".into(), minor.into()),
+    ("patch".into(), patch.into()),
+    ("arch".into(),  arch.into()),
+    ("os".into(),    os.into()),
+  ];
+
+  write_vars(|v| {
+    v.set_var("SHED_VERSION", VarKind::Str(version.into()), VarFlags::EXPORT)?;
+    v.set_var("SHED_VER_INFO", VarKind::AssocArr(ver_info), VarFlags::NONE)
+  })?;
+
+  Ok(())
+}
+
+pub fn set_sh_lvl() -> ShResult<()> {
+  // Increment SHLVL, or set to 1 if not present or invalid.
+  // This var represents how many nested shell instances we're in
+  if let Ok(var) = std::env::var("SHLVL")
+    && let Ok(lvl) = var.parse::<u32>()
+  {
+    write_vars(|v| {
+      v.set_var(
+        "SHLVL",
+        VarKind::Str((lvl + 1).to_string()),
+        VarFlags::EXPORT,
+      )
+    })?;
+  } else {
+    write_vars(|v| v.set_var("SHLVL", VarKind::Str("1".into()), VarFlags::EXPORT))?;
+  }
+
+  Ok(())
+}
+
 #[track_caller]
 pub fn get_home_unchecked() -> PathBuf {
   if let Some(home) = get_home() {

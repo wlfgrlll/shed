@@ -48,6 +48,39 @@ pub mod times;
 pub mod trap;
 pub mod varcmds;
 
+macro_rules! register_functions {
+  ($($name:literal => $script:expr),* $(,)?) => {
+    static FUNCTIONS: &[(&str,&str)] = &[
+      $(($name, $script)),*
+    ];
+
+    pub fn source_builtin_functions() {
+      for (name, src) in FUNCTIONS {
+        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{name} func").into())) {
+          e.print_error();
+        }
+      }
+    }
+
+    #[cfg(test)]
+    mod func_test {
+      #[test]
+      fn builtin_functions_pass() {
+        let failures: Vec<&str> = super::FUNCTIONS.iter()
+          .filter(|(name,src)| {
+            $crate::parse::execute::exec_nonint(
+              src.to_string(),
+              Some(format!("{name} func").into())
+            ).is_err()
+          })
+          .map(|(name,_)| *name)
+          .collect();
+        assert!(failures.is_empty(), "Functions failed to source: {failures:?}");
+      }
+    }
+  };
+}
+
 macro_rules! register_completions {
   ($($name:literal => $script:expr),* $(,)?) => {
     static COMPLETIONS: &[(&str,&str)] = &[
@@ -251,6 +284,10 @@ register_completions! {
   "compadd"  => embed!("completions/compadd_comp.shed"),
   "help"     => embed!("completions/help_comp.shed"),
   "hist"     => embed!("completions/hist_comp.shed"),
+}
+
+register_functions! {
+  "version"  => embed!("version.shed"),
 }
 
 /// Lookup a name in the builtin table via binary search
