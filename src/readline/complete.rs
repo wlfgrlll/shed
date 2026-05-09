@@ -1,9 +1,5 @@
 use std::{
-  collections::HashSet,
-  fmt::{Debug, Display},
-  os::unix::fs::PermissionsExt,
-  path::{Path, PathBuf},
-  rc::Rc,
+  collections::HashSet, fmt::{Debug, Display}, os::unix::fs::PermissionsExt, path::{Path, PathBuf}, rc::Rc
 };
 
 use nix::sys::signal::Signal;
@@ -2049,21 +2045,21 @@ impl SimpleCompleter {
     let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
     self.token_span = (replace_span.range().start, replace_span.range().end);
-    match strat {
-      CompStrat::Var { prefix } => Ok(CompResult::from_candidates(complete_vars(&prefix))),
-      CompStrat::Tilde { prefix } => Ok(CompResult::from_candidates(complete_users(&prefix))),
-      CompStrat::Command { prefix } => Ok(CompResult::from_candidates(complete_commands(
-        &prefix,
-        leaf_cursor_pos,
-      ))),
-      CompStrat::Files { path } => Ok(CompResult::from_candidates(complete_path(
-        &path,
-        leaf_cursor_pos,
-      ))),
-      CompStrat::Separator => Ok(CompResult::Single {
+    let mut result = match strat {
+      CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),
+      CompStrat::Tilde { prefix } => CompResult::from_candidates(complete_users(&prefix)),
+      CompStrat::Command { prefix } => CompResult::from_candidates(complete_commands(
+          &prefix,
+          leaf_cursor_pos,
+      )),
+      CompStrat::Files { path } => CompResult::from_candidates(complete_path(
+          &path,
+          leaf_cursor_pos,
+      )),
+      CompStrat::Separator => CompResult::Single {
         result: Candidate::from(";"),
-      }),
-      CompStrat::Null => Ok(CompResult::NoMatch),
+      },
+      CompStrat::Null => CompResult::NoMatch,
       CompStrat::Argument { path } => {
         let ctx = self.build_comp_ctx(&tks, &line, cursor_pos)?;
         match self.try_comp_spec(&ctx)? {
@@ -2071,33 +2067,48 @@ impl SimpleCompleter {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
-            Ok(result)
+            result
           }
-          CompSpecResult::NoSpec => Ok(CompResult::from_candidates(complete_path(
-            &path,
-            leaf_cursor_pos,
-          ))),
+          CompSpecResult::NoSpec => CompResult::from_candidates(complete_path(
+              &path,
+              leaf_cursor_pos,
+          )),
           CompSpecResult::NoMatch { flags } => {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
             if flags.contains(CompOptFlags::DIRNAMES) {
-              Ok(CompResult::from_candidates(complete_dirs(
-                &path,
-                leaf_cursor_pos,
-              )))
+              CompResult::from_candidates(complete_dirs(
+                  &path,
+                  leaf_cursor_pos,
+              ))
             } else if flags.contains(CompOptFlags::DEFAULT) {
-              Ok(CompResult::from_candidates(complete_path(
-                &path,
-                leaf_cursor_pos,
-              )))
+              CompResult::from_candidates(complete_path(
+                  &path,
+                  leaf_cursor_pos,
+              ))
             } else {
-              Ok(CompResult::NoMatch)
+              CompResult::NoMatch
             }
           }
         }
       }
+    };
+
+    if let CompResult::Many { ref mut candidates } = result {
+      candidates.sort_by(|a, b| {
+        let a_content = a.content();
+        let b_content = b.content();
+        let a_len = a_content.len();
+        let b_len = b_content.len();
+
+        a_len.cmp(&b_len)
+          .then_with(|| a_content.cmp(b_content))
+      });
+      candidates.dedup();
     }
+
+    Ok(result)
   }
 }
 
