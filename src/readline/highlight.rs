@@ -30,7 +30,6 @@ impl Palette {
     };
     read_shopts(|o| {
       let ShOptHighlight {
-        enable: _,
         string,
         keyword,
         valid_command,
@@ -42,6 +41,7 @@ impl Palette {
         operator,
         comment,
         glob,
+        ..
       } = &o.highlight;
       Self {
         string: get_color(string),

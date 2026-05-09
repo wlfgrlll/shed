@@ -65,7 +65,7 @@ pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
 }
 
 /// Expand the raw index expression and parse it into an ArrIndex.
-pub fn expand_arr_index(idx_raw: &str, expand_cmd_subs: bool) -> ShResult<ArrIndex> {
+pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<ArrIndex> {
   let expanded = LexStream::new(idx_raw.into(), LexFlags::empty())
     .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
     .try_fold(vec![], |mut acc, wrds| {
@@ -79,7 +79,7 @@ pub fn expand_arr_index(idx_raw: &str, expand_cmd_subs: bool) -> ShResult<ArrInd
     .next()
     .ok_or_else(|| sherr!(ParseErr, "Empty array index"))?;
 
-  ArrIndex::parse(&expanded, expand_cmd_subs)
+  ArrIndex::parse(&expanded, allow_side_effects)
     .map_err(|_| sherr!(ParseErr, "Invalid array index: {}", expanded,))
 }
 

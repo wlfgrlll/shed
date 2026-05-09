@@ -172,19 +172,12 @@ pub enum ArrIndex {
 impl ArrIndex {
   /// Parse an array index expression.
   ///
-  /// `expand_cmd_subs` controls whether `$(...)` inside the index
-  /// actually executes. Keystroke-path callers (highlighter, completer,
-  /// hint generator) MUST pass `false` — otherwise `${arr[$(rm -rf /)]}`
-  /// would execute on every keystroke. Real expansion at command time
-  /// passes `true`.
-  ///
-  /// `FromStr` is intentionally not implemented: that trait can't carry
-  /// the cmd-sub flag, and providing a `parse()` default would silently
-  /// make keystroke paths run cmd subs.
-  pub fn parse(s: &str, expand_cmd_subs: bool) -> ShResult<Self> {
+  /// the allow_side_effects parameter controls whether or not mutating parameter
+  /// expansions and command substitutions will be evaluated.
+  pub fn parse(s: &str, allow_side_effects: bool) -> ShResult<Self> {
     let s = crate::expand::var::expand_raw_inner(
       &mut s.chars().peekable(),
-      expand_cmd_subs,
+      allow_side_effects,
     )?;
     match s.as_str() {
       "@" => Ok(Self::AllSplit),
@@ -258,7 +251,7 @@ pub struct VarName {
 }
 
 impl VarName {
-  pub fn parse(raw: &str, expand_cmd_subs: bool) -> ShResult<Self> {
+  pub fn parse(raw: &str, allow_side_effects: bool) -> ShResult<Self> {
     let Some(bracket_start) = raw.find('[') else {
       return Ok(Self {
         name: raw.to_string(),
@@ -297,7 +290,7 @@ impl VarName {
 
     let name = raw[..bracket_start].to_string();
     let idx_str = &raw[bracket_start + 1..bracket_end];
-    let index = ArrIndex::parse(idx_str, expand_cmd_subs)?;
+    let index = ArrIndex::parse(idx_str, allow_side_effects)?;
 
     // Array slicing only applies to [@] and [*] indexes
     let (slice_start, slice_len) = if matches!(index, ArrIndex::AllSplit | ArrIndex::AllJoined) {

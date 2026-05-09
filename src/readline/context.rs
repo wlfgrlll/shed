@@ -42,7 +42,11 @@ fn is_valid(command: Tk) -> bool {
     return true;
   }
 
-  let Ok(expanded) = command.expand_no_cmd_subs() else {
+  is_valid_cmd(command)
+}
+
+fn is_valid_cmd(command: Tk) -> bool {
+  let Ok(expanded) = command.expand_no_side_effects() else {
     return false
   };
   let Some(name) = expanded.get_first_word() else {
@@ -232,6 +236,15 @@ impl CtxTk {
       | TkRule::Null
       | TkRule::Str
       | TkRule::CasePattern => None,
+    }
+  }
+
+  /// Lossy conversion back to Tk. Useful for feeding subtokens back into functions that expect Tks, like `is_valid`.
+  fn as_tk(&self) -> Tk {
+    Tk {
+      span: self.span.clone(),
+      class: TkRule::Str,
+      flags: TkFlags::empty(),
     }
   }
 
@@ -466,12 +479,11 @@ impl CtxTk {
         ScanCtx::TOP_LEVEL,
         TerminatorCtx::Eof,
       );
-      let tk = Self {
+      return vec![Self {
         span: span.clone(),
         class: CtxTkRule::Argument,
         sub_tokens,
-      };
-      return subdivide_argument(tk);
+      }];
     };
     let scan_ctx = if flags.contains(TkFlags::IS_ARITH) {
       ScanCtx::ARITH

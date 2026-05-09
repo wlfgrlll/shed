@@ -35,10 +35,10 @@ impl Tk {
     let class = TkRule::Expanded { exp };
     Ok(Self { class, span, flags })
   }
-  pub fn expand_no_cmd_subs(self) -> ShResult<Self> {
+  pub fn expand_no_side_effects(self) -> ShResult<Self> {
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(self)?.expand_no_cmd_subs().promote_err(span.clone())?;
+    let exp = Expander::new(self)?.expand_no_side_effects().promote_err(span.clone())?;
     let class = TkRule::Expanded { exp: vec![exp] };
     Ok(Self { class, span, flags })
   }
@@ -78,7 +78,7 @@ pub struct Expander {
   flags: TkFlags,
   noglob: bool,
   nosplit: bool,
-  expand_cmd_subs: bool,
+  allow_side_effects: bool,
   raw: String,
 }
 
@@ -98,7 +98,7 @@ impl Expander {
       raw: unescaped,
       noglob: false,
       nosplit: false,
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       flags,
     })
   }
@@ -147,8 +147,8 @@ impl Expander {
 
     Ok(glob_words)
   }
-  pub fn expand_no_cmd_subs(&mut self) -> ShResult<String> {
-    self.expand_cmd_subs = false;
+  pub fn expand_no_side_effects(&mut self) -> ShResult<String> {
+    self.allow_side_effects = false;
     self.expand_inner()
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
@@ -161,7 +161,7 @@ impl Expander {
   }
   pub fn expand_inner(&mut self) -> ShResult<String> {
     let mut chars = self.raw.chars().peekable();
-    self.raw = expand_raw_inner(&mut chars, self.expand_cmd_subs)?;
+    self.raw = expand_raw_inner(&mut chars, self.allow_side_effects)?;
 
 
     Ok(self.raw.clone())
@@ -278,7 +278,7 @@ mod tests {
     let _guard = TestGuard::new();
 
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw: "hello world\tfoo".to_string(),
       noglob: false,
       nosplit: false,
@@ -296,7 +296,7 @@ mod tests {
     }
 
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw: "a:b:c".to_string(),
       noglob: false,
       nosplit: false,
@@ -314,7 +314,7 @@ mod tests {
     }
 
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw: "hello world".to_string(),
       noglob: false,
       nosplit: false,
@@ -330,7 +330,7 @@ mod tests {
 
     let raw = format!("{}hello world{}", markers::DUB_QUOTE, markers::DUB_QUOTE);
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw,
       noglob: false,
       nosplit: false,
@@ -348,7 +348,7 @@ mod tests {
 
     let raw = format!("hello{}world", unescape_str("\\ "));
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw,
       noglob: true,
       nosplit: false,
@@ -364,7 +364,7 @@ mod tests {
 
     let raw = format!("hello{}world", unescape_str("\\\t"));
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw,
       noglob: true,
       nosplit: false,
@@ -383,7 +383,7 @@ mod tests {
 
     let raw = format!("a{}b:c", unescape_str("\\:"));
     let mut exp = Expander {
-      expand_cmd_subs: true,
+      allow_side_effects: true,
       raw,
       noglob: true,
       nosplit: false,

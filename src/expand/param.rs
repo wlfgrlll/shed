@@ -38,18 +38,12 @@ pub enum ParamExp {
   ExpandInnerVar(String),            // !var
 }
 
-/// Parse a parameter-expansion suffix into a `ParamExp`.
+/// Parse a parameter expansion
 ///
-/// `expand_cmd_subs` controls whether `$(...)` inside slice expressions
-/// (`${var:start:len}`) actually executes the command sub. Keystroke-path
-/// callers (highlighter, completer, hint generator) MUST pass `false` —
-/// otherwise typing into `${arr[$(rm -rf /)]}` would execute the sub on
-/// every keystroke. Real expansion at command-execution time passes `true`.
-///
-/// `FromStr` is intentionally not implemented: that trait can't carry the
-/// cmd-sub flag, and providing a `parse()` default would silently make
-/// keystroke paths run cmd subs.
-pub fn parse_param_exp(s: &str, expand_cmd_subs: bool) -> ShResult<ParamExp> {
+/// The "allow_side_effects" thing prevents state-mutating stuff like "set if null" or expanding command subs
+/// It's set to false in places like the syntax highlighter where we really dont want to be silently executing
+/// unfinished commands.
+pub fn parse_param_exp(s: &str, allow_side_effects: bool) -> ShResult<ParamExp> {
   use ParamExp::*;
 
   let parse_err = || Err(sherr!(SyntaxErr, "Invalid parameter expansion",));
@@ -136,7 +130,7 @@ pub fn parse_param_exp(s: &str, expand_cmd_subs: bool) -> ShResult<ParamExp> {
   }
 
   // Substring
-  if let Some((pos, len)) = parse_pos_len(s, expand_cmd_subs) {
+  if let Some((pos, len)) = parse_pos_len(s, allow_side_effects) {
     return Ok(match len {
       Some(l) => SliceClosed(pos, l),
       None => SliceOpen(pos),
@@ -146,25 +140,25 @@ pub fn parse_param_exp(s: &str, expand_cmd_subs: bool) -> ShResult<ParamExp> {
   parse_err()
 }
 
-pub fn parse_pos_len(s: &str, expand_cmd_subs: bool) -> Option<(usize, Option<usize>)> {
+pub fn parse_pos_len(s: &str, allow_side_effects: bool) -> Option<(usize, Option<usize>)> {
   let raw = s.strip_prefix(':')?;
   if let Some((start, len)) = raw.split_once(':') {
-    let start = expand_raw_inner(&mut start.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| start.to_string());
-    let len = expand_raw_inner(&mut len.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| len.to_string());
+    let start = expand_raw_inner(&mut start.chars().peekable(), allow_side_effects).unwrap_or_else(|_| start.to_string());
+    let len = expand_raw_inner(&mut len.chars().peekable(), allow_side_effects).unwrap_or_else(|_| len.to_string());
     Some((start.parse::<usize>().ok()?, len.parse::<usize>().ok()))
   } else {
-    let raw = expand_raw_inner(&mut raw.chars().peekable(), expand_cmd_subs).unwrap_or_else(|_| raw.to_string());
+    let raw = expand_raw_inner(&mut raw.chars().peekable(), allow_side_effects).unwrap_or_else(|_| raw.to_string());
     Some((raw.parse::<usize>().ok()?, None))
   }
 }
 
-pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<String> {
+pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<String> {
   let mut chars = raw.chars();
   let mut var_name = String::new();
   let mut rest = String::new();
   if raw.starts_with('#') {
     let var_spec = raw.strip_prefix('#').unwrap();
-    let parsed = VarName::parse(var_spec, expand_cmd_subs)?;
+    let parsed = VarName::parse(var_spec, allow_side_effects)?;
     if let Some(idx) = parsed.index() {
       match idx {
         crate::state::ArrIndex::AllSplit | crate::state::ArrIndex::AllJoined | crate::state::ArrIndex::ArgCount => {
@@ -238,7 +232,7 @@ pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<Str
 
   // Parse and expand the variable name (including any array index) before
   // entering read_vars, to avoid re-entrant borrows from index expansion
-  let parsed = VarName::parse(&var_name, expand_cmd_subs)?;
+  let parsed = VarName::parse(&var_name, allow_side_effects)?;
   let get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed).unwrap_or_default();
   let try_get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed);
   let compare = |old: &str, new: &str| {
@@ -252,7 +246,7 @@ pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<Str
     }
   };
 
-  if let Ok(expansion) = parse_param_exp(&rest, expand_cmd_subs) {
+  if let Ok(expansion) = parse_param_exp(&rest, allow_side_effects) {
     match expansion {
       ParamExp::Len => unreachable!(),
       ParamExp::ToUpperAll => {
@@ -292,24 +286,26 @@ pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<Str
       }
       ParamExp::DefaultUnsetOrNull(default) => match read_vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
-        None => expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs),
+        None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
       },
       ParamExp::DefaultUnset(default) => match read_vars(try_get) {
         Some(val) => Ok(val),
-        None => expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs),
+        None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
       },
       ParamExp::SetDefaultUnsetOrNull(default) => {
         match read_vars(try_get).filter(|v| !v.is_empty()) {
           Some(val) => Ok(val),
           None => {
-            let expanded = expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs)?;
-            write_vars(|v| {
-              v.set_var(
-                parsed.name(),
-                VarKind::Str(expanded.clone()),
-                VarFlags::NONE,
-              )
-            })?;
+            let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
+            if allow_side_effects {
+              write_vars(|v| {
+                v.set_var(
+                  parsed.name(),
+                  VarKind::Str(expanded.clone()),
+                  VarFlags::NONE,
+                )
+              })?;
+            }
             Ok(expanded)
           }
         }
@@ -317,36 +313,44 @@ pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<Str
       ParamExp::SetDefaultUnset(default) => match read_vars(try_get) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw_inner(&mut default.chars().peekable(), expand_cmd_subs)?;
-          write_vars(|v| {
-            v.set_var(
-              parsed.name(),
-              VarKind::Str(expanded.clone()),
-              VarFlags::NONE,
-            )
-          })?;
+          let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
+          if allow_side_effects {
+            write_vars(|v| {
+              v.set_var(
+                parsed.name(),
+                VarKind::Str(expanded.clone()),
+                VarFlags::NONE,
+              )
+            })?;
+          }
           Ok(expanded)
         }
       },
       ParamExp::AltSetNotNull(alt) => match read_vars(try_get).filter(|v| !v.is_empty()) {
-        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), expand_cmd_subs),
+        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
         None => Ok("".into()),
       },
       ParamExp::AltNotNull(alt) => match read_vars(try_get) {
-        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), expand_cmd_subs),
+        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
         None => Ok("".into()),
       },
       ParamExp::ErrUnsetOrNull(err) => match read_vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw_inner(&mut err.chars().peekable(), expand_cmd_subs)?;
+          if !allow_side_effects {
+            return Ok(String::new());
+          }
+          let expanded = expand_raw_inner(&mut err.chars().peekable(), allow_side_effects)?;
           Err(sherr!(ExecFail, "{expanded}"))
         }
       },
       ParamExp::ErrUnset(err) => match read_vars(try_get) {
         Some(val) => Ok(val),
         None => {
-          let expanded = expand_raw_inner(&mut err.chars().peekable(), expand_cmd_subs)?;
+          if !allow_side_effects {
+            return Ok(String::new());
+          }
+          let expanded = expand_raw_inner(&mut err.chars().peekable(), allow_side_effects)?;
           Err(sherr!(ExecFail, "{expanded}"))
         }
       },
@@ -536,7 +540,7 @@ pub fn perform_param_expansion(raw: &str, expand_cmd_subs: bool) -> ShResult<Str
           let joined = inner.contains("[*]");
           read_vars(|v| v.get_array_keys(var_name, joined))
         } else {
-          let inner_name = VarName::parse(&inner, expand_cmd_subs)?;
+          let inner_name = VarName::parse(&inner, allow_side_effects)?;
           let value = read_vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
           Ok(read_vars(|v| v.get_var(&value)))
         }

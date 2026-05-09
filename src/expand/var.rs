@@ -16,7 +16,7 @@ use crate::util::error::ShResult;
 
 pub fn expand_raw_inner(
   chars: &mut Peekable<Chars<'_>>,
-  expand_cmd_subs: bool,
+  allow_side_effects: bool,
 ) -> ShResult<String> {
   let mut result = String::new();
 
@@ -55,7 +55,7 @@ pub fn expand_raw_inner(
         result.push_str(&home);
       }
     }
-    markers::PROC_SUB_OUT if expand_cmd_subs => {
+    markers::PROC_SUB_OUT if allow_side_effects => {
       let mut inner = String::new();
       match_loop!(chars.next() => ch, {
         markers::PROC_SUB_OUT => break,
@@ -64,7 +64,7 @@ pub fn expand_raw_inner(
       let fd_path = expand_proc_sub(&inner, false)?;
       result.push_str(&fd_path);
     }
-    markers::PROC_SUB_IN if expand_cmd_subs => {
+    markers::PROC_SUB_IN if allow_side_effects => {
       let mut inner = String::new();
       match_loop!(chars.next() => ch, {
         markers::PROC_SUB_IN => break,
@@ -74,7 +74,7 @@ pub fn expand_raw_inner(
       result.push_str(&fd_path);
     }
     markers::VAR_SUB => {
-      let expanded = expand_var(chars, expand_cmd_subs)?;
+      let expanded = expand_var(chars, allow_side_effects)?;
       result.push_str(&expanded);
     }
     _ => result.push(ch),
@@ -87,7 +87,7 @@ pub fn expand_raw(chars: &mut Peekable<Chars<'_>>) -> ShResult<String> {
   expand_raw_inner(chars, true)
 }
 
-pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShResult<String> {
+pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> ShResult<String> {
   let mut var_name = String::new();
   let mut brace_depth: i32 = 0;
   let mut inner_brace_depth: i32 = 0;
@@ -108,7 +108,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
         // and we got passed some unfinished input. Just treat it as literal text
         return Ok(format!("$({subsh_body}"));
       }
-      if expand_cmd_subs {
+      if allow_side_effects {
         let expanded = expand_cmd_sub(&subsh_body)?;
         return Ok(expanded);
       } else {
@@ -121,7 +121,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, expand_cmd_subs: bool) -> ShR
     }
     '}' if brace_depth > 0 && inner_brace_depth == 0 => {
       chars.next(); // consume the brace
-      let val = perform_param_expansion(&var_name, expand_cmd_subs)?;
+      let val = perform_param_expansion(&var_name, allow_side_effects)?;
       return Ok(val);
     }
     markers::ESCAPE if brace_depth > 0 => {

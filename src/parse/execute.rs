@@ -32,7 +32,7 @@ use crate::{
 };
 
 pub fn in_cd_path(name: Tk) -> bool {
-  let Ok(expanded) = name.expand_no_cmd_subs() else {
+  let Ok(expanded) = name.expand_no_side_effects() else {
     return false
   };
   let Some(name) = expanded.get_first_word() else {
@@ -53,7 +53,7 @@ pub fn in_cd_path(name: Tk) -> bool {
 }
 
 pub fn is_in_path(name: Tk) -> bool {
-  let Ok(expanded) = name.expand_no_cmd_subs() else {
+  let Ok(expanded) = name.expand_no_side_effects() else {
     return false
   };
   let Some(name) = expanded.get_first_word() else {
