@@ -1013,6 +1013,7 @@ impl ParseStream {
         "Expected a compound command after function name"
       );
     };
+    node_tks.extend(compound_cmd.tokens.clone());
     self.parse_redir(&mut compound_cmd.redirs, &mut node_tks)?;
     let body = Box::new(compound_cmd);
     // Replace placeholder with full-span label
