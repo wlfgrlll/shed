@@ -387,6 +387,11 @@
                 default = true;
                 description = "Whether to enable syntax highlighting in the shell";
               };
+              check_files = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Whether to underline valid paths. Can be slow on network mounts.";
+              };
               string = lib.mkOption {
                 type = lib.types.str;
                 default = "yellow";

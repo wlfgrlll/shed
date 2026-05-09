@@ -537,6 +537,10 @@ impl CtxTk {
 /// Check if a given path refers to a file or is a prefix of an existing filename
 fn check_path_exists(path: &str) -> bool {
   // NOTE: keep an eye on this. this might have pretty significant overhead on network mounts
+  if !read_shopts(|o| o.highlight.check_files) {
+    return false
+  }
+
   if path.is_empty() {
     return false;
   }

@@ -465,6 +465,9 @@ shopt_group! {
     /// Whether to enable syntax highlighting in the line editor
     enable: bool = true,
 
+    /// Whether to underline valid paths. Can be slow on network mounts.
+    check_files: bool = true,
+
     /// The color used for highlighting strings
     #[validate(validate_color)]
     string: String = "yellow".into(),
