@@ -144,6 +144,7 @@ register_builtins! {
   "compgen"  => complete::CompGen,
   "complete" => complete::Complete,
   "continue" => flowctl::Continue,
+  "declare"  => varcmds::Declare,
   "defer"    => defer::Defer,
   "dirs"     => dirstack::Dirs,
   "disown"   => jobctl::Disown,

@@ -231,11 +231,15 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_args_with_globs_not_re_expanded() {
     let g = TestGuard::new();
+    // `*.toml` matches Cargo.toml in the project root. Quoting `$1`
+    // suppresses pathname expansion, so the literal pattern survives
+    // even when a matching file exists — which is the actual property
+    // we want to assert (the unquoted version would correctly glob).
     crate::exec_dash_c(
-      "echo $1".into(),
-      vec!["s".into(), "*.txt".into()],
+      "echo \"$1\"".into(),
+      vec!["s".into(), "*.toml".into()],
     ).unwrap();
-    assert_output!(g, "*.txt\n");
+    assert_output!(g, "*.toml\n");
   }
 
   #[test]
