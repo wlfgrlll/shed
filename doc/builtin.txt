@@ -1463,6 +1463,20 @@ SHOPT                                            *builtin-shopt* *shopt*
     `comment`                 comments (default: `italic bright black`)
     `glob`                    glob characters (default: `bright cyan`)
 
+    `enable`                  enables/disables syntax highlighting (default: true)
+    `check_files`             enables/disables path validation (default: true)
+
+  Status line options (`statline.*`) ~
+
+    Options for `shed`'s persistent status line. These options take strings
+    that will be expanded the same way that the PS1 and PSR variables are (See |prompt|).
+
+    `statline.left_string`    left-justified status line content
+    `statline.middle_string`  center-justified status line content
+    `statline.right_string`   right-justified status line content
+
+    `enable`                  enables/disables the status line (default: true)
+
   Examples:
 
       `shopt`                                    list all options
