@@ -8,7 +8,7 @@ use crate::{
   parse::{NdRule, Node, execute::Dispatcher},
   readline::complete::{BashCompSpec, Candidate, CompContext, CompSpec},
   sherr,
-  state::{read_meta, read_vars, write_meta},
+  state::{VarKind, read_meta, read_vars, write_meta},
   util::{error::ShResult, with_status},
 };
 
@@ -191,6 +191,7 @@ impl super::Builtin for Compadd {
       OptSpec::single_arg('S'),
       OptSpec::single_arg('d'),
       OptSpec::single_arg('a'),
+      OptSpec::single_arg('A'),
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
@@ -198,22 +199,17 @@ impl super::Builtin for Compadd {
     let mut suffix = None;
     let mut desc_arr = None;
     let mut cand_arr = None;
+    let mut assoc_arr = None;
     for opt in args.opts {
       match opt {
         Opt::ShortWithArg('d', arg) => desc_arr = Some(arg),
         Opt::ShortWithArg('P', arg) => prefix = Some(arg),
         Opt::ShortWithArg('S', arg) => suffix = Some(arg),
         Opt::ShortWithArg('a', arg) => cand_arr = Some(arg),
+        Opt::ShortWithArg('A', arg) => assoc_arr = Some(arg),
         _ => {}
       }
     }
-    log::debug!(
-      "Compadd options - prefix: {:?}, suffix: {:?}, desc_arr: {:?}, cand_arr: {:?}",
-      prefix,
-      suffix,
-      desc_arr,
-      cand_arr
-    );
 
     let make_candidate = |mut a| {
       if let Some(p) = &prefix {
@@ -233,7 +229,6 @@ impl super::Builtin for Compadd {
       .collect();
 
     if let Some(cand_arr) = cand_arr {
-      log::debug!("arr exists: {:?}", read_vars(|v| v.get_var_meta(&cand_arr)));
       let elems: Vec<Candidate> = read_vars(|v| v.get_arr_elems(&cand_arr))
         .into_iter()
         .map(make_candidate)
@@ -241,21 +236,15 @@ impl super::Builtin for Compadd {
 
       candidates.extend(elems);
     }
-    log::debug!("Candidates: {:?}", candidates);
 
     let descriptions = if let Some(desc_arr) = desc_arr {
-      log::debug!(
-        "desc_arr exists: {:?}",
-        read_vars(|v| v.get_var_meta(&desc_arr))
-      );
       read_vars(|v| v.get_arr_elems(&desc_arr))
     } else {
       vec![]
     }
     .into_iter();
-    log::debug!("Descriptions: {:?}", descriptions);
 
-    let described: Vec<Candidate> = candidates
+    let mut described: Vec<Candidate> = candidates
       .into_iter()
       .zip_longest(descriptions)
       .filter_map(|pair| match pair {
@@ -265,9 +254,19 @@ impl super::Builtin for Compadd {
       })
       .collect();
 
+    if let Some(assoc_arr) = assoc_arr
+    && let Some(assoc_arr) = read_vars(|v| v.try_get_var_meta(&assoc_arr))
+    && let VarKind::AssocArr(arr) = assoc_arr.kind() {
+      for (cand,desc) in arr {
+        let cand = make_candidate(cand.clone())
+          .with_desc(desc.clone());
+
+        described.push(cand);
+      }
+    }
+
     write_meta(|m| {
       for candidate in described {
-        log::debug!("Adding completion candidate: {:?}", candidate);
         m.comp_add(candidate);
       }
     });
@@ -799,5 +798,108 @@ mod tests {
     let _g = TestGuard::new();
     test_input("compadd a b c").unwrap();
     assert_eq!(state::get_status(), 0);
+  }
+
+  // ===================== compadd -A (assoc-array source) =====================
+
+  #[test]
+  fn compadd_assoc_basic() {
+    let _g = TestGuard::new();
+    test_input("declare -A m=([alpha]=\"first letter\" [beta]=\"second letter\")").unwrap();
+    test_input("compadd -A m").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    assert_eq!(cands.len(), 2);
+    let map: std::collections::HashMap<&str, Option<&str>> =
+      cands.iter().map(|c| (c.content(), c.desc())).collect();
+    assert_eq!(map["alpha"], Some("first letter"));
+    assert_eq!(map["beta"], Some("second letter"));
+  }
+
+  #[test]
+  fn compadd_assoc_preserves_insertion_order() {
+    // VarKind::AssocArr is Vec-backed, so the order of -A iteration
+    // should match the order entries were added.
+    let _g = TestGuard::new();
+    test_input("declare -A m=([gamma]=g [alpha]=a [beta]=b)").unwrap();
+    test_input("compadd -A m").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    let order: Vec<&str> = cands.iter().map(|c| c.content()).collect();
+    assert_eq!(order, vec!["gamma", "alpha", "beta"]);
+  }
+
+  #[test]
+  fn compadd_assoc_with_prefix_and_suffix() {
+    let _g = TestGuard::new();
+    test_input("declare -A m=([n]=normal [i]=insert)").unwrap();
+    test_input("compadd -P '-' -S 'X' -A m").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    let map: std::collections::HashMap<&str, Option<&str>> =
+      cands.iter().map(|c| (c.content(), c.desc())).collect();
+    assert_eq!(map["-nX"], Some("normal"));
+    assert_eq!(map["-iX"], Some("insert"));
+  }
+
+  #[test]
+  fn compadd_assoc_combined_with_parallel_arrays() {
+    // -A entries should be additive on top of -a + -d entries.
+    let _g = TestGuard::new();
+    test_input("words=(p q)").unwrap();
+    test_input("descs=(\"P desc\" \"Q desc\")").unwrap();
+    test_input("declare -A m=([r]=\"R desc\" [s]=\"S desc\")").unwrap();
+    test_input("compadd -a words -d descs -A m").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    assert_eq!(cands.len(), 4);
+    let map: std::collections::HashMap<&str, Option<&str>> =
+      cands.iter().map(|c| (c.content(), c.desc())).collect();
+    assert_eq!(map["p"], Some("P desc"));
+    assert_eq!(map["q"], Some("Q desc"));
+    assert_eq!(map["r"], Some("R desc"));
+    assert_eq!(map["s"], Some("S desc"));
+  }
+
+  #[test]
+  fn compadd_assoc_combined_with_positional_args() {
+    // Positional args should also coexist with -A.
+    let _g = TestGuard::new();
+    test_input("declare -A m=([y]=yes [n]=no)").unwrap();
+    test_input("compadd -A m maybe").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    assert_eq!(cands.len(), 3);
+    let contents: std::collections::HashSet<&str> = cands.iter().map(|c| c.content()).collect();
+    assert!(contents.contains("y"));
+    assert!(contents.contains("n"));
+    assert!(contents.contains("maybe"));
+  }
+
+  #[test]
+  fn compadd_assoc_empty_produces_no_candidates() {
+    let _g = TestGuard::new();
+    test_input("declare -A m").unwrap();
+    test_input("compadd -A m").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    assert!(cands.is_empty(), "got {cands:?}");
+  }
+
+  #[test]
+  fn compadd_assoc_unbound_name_silently_skipped() {
+    // -A with a name that doesn't resolve to an assoc array (here:
+    // doesn't exist at all) should just contribute nothing.
+    let _g = TestGuard::new();
+    test_input("compadd -A nonexistent_var fallback").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
+    assert_eq!(contents, vec!["fallback"]);
+  }
+
+  #[test]
+  fn compadd_assoc_wrong_kind_silently_skipped() {
+    // -A with a non-assoc var (a plain string here) should also contribute
+    // nothing, rather than panicking or producing garbage.
+    let _g = TestGuard::new();
+    test_input("not_assoc=hello").unwrap();
+    test_input("compadd -A not_assoc fallback").unwrap();
+    let cands = state::write_meta(|m| m.take_comp_candidates());
+    let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
+    assert_eq!(contents, vec!["fallback"]);
   }
 }
