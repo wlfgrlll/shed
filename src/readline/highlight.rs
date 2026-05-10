@@ -224,6 +224,51 @@ fn paint(
 /// any portion overlapping any range in `selections` paints with an inverted
 /// variant of the same style. Multiple overlapping/adjacent selections are
 /// merged so each byte is emitted at most once.
+/// Render `text` under `style`, replacing ASCII control bytes with caret
+/// notation (`\x1b` -> `^[`, `\r` -> `^M`, `\x7f` -> `^?`, etc.) styled as
+/// dim+italic so they're visually distinct from real text. `\n` and `\t` are
+/// preserved as-is because they're structural to multi-line buffers.
+///
+/// Without this pass, a buffer containing raw control bytes (e.g. from
+/// `:r!cat file_with_escapes`) would emit those bytes straight to the
+/// terminal, letting any clipboard-injection-style sequence change the
+/// title, write to OSC 52, etc.
+fn paint_with_visualized_controls(
+  out: &mut String,
+  text: &str,
+  style: PaletteEntry,
+) {
+  // Hot path: nothing to visualize, single styled write.
+  if !text.bytes().any(is_visualized_control) {
+    write!(out, "{}", text.paint(style.style())).unwrap();
+    return;
+  }
+  let ctrl_style = style.dim().italic();
+  let mut run_start = 0;
+  for (i, ch) in text.char_indices() {
+    let b = ch as u32;
+    if b < 0x80 && is_visualized_control(b as u8) {
+      if run_start < i {
+        write!(out, "{}", text[run_start..i].paint(style.style())).unwrap();
+      }
+      let viz = match b as u8 {
+        0x7f => "^?".to_string(),
+        b => format!("^{}", (b ^ 0x40) as char),
+      };
+      write!(out, "{}", viz.paint(ctrl_style.style())).unwrap();
+      run_start = i + ch.len_utf8();
+    }
+  }
+  if run_start < text.len() {
+    write!(out, "{}", text[run_start..].paint(style.style())).unwrap();
+  }
+}
+
+fn is_visualized_control(b: u8) -> bool {
+  // Caret-notation everything below 0x20 except `\n` and `\t`, plus DEL (0x7f).
+  matches!(b, 0x00..=0x08 | 0x0b..=0x1f | 0x7f)
+}
+
 fn emit_with_selection(
   out: &mut String,
   src: &str,
@@ -240,7 +285,7 @@ fn emit_with_selection(
     .collect();
 
   if overlapping.is_empty() {
-    write!(out, "{}", src[range].paint(style.style())).unwrap();
+    paint_with_visualized_controls(out, &src[range], style);
     return;
   }
 
@@ -267,18 +312,18 @@ fn emit_with_selection(
     let sel_end = sel.end.min(range.end);
 
     if pos < sel_start {
-      write!(out, "{}", src[pos..sel_start].paint(style.style())).unwrap();
+      paint_with_visualized_controls(out, &src[pos..sel_start], style);
     }
 
     if sel_start < sel_end {
-      write!(out, "{}", src[sel_start..sel_end].paint(sel_style.style())).unwrap();
+      paint_with_visualized_controls(out, &src[sel_start..sel_end], sel_style);
     }
 
     pos = sel_end;
   }
 
   if pos < range.end {
-    write!(out, "{}", src[pos..range.end].paint(style.style())).unwrap();
+    paint_with_visualized_controls(out, &src[pos..range.end], style);
   }
 }
 
@@ -418,5 +463,86 @@ mod tests {
     let p = test_palette();
     let out = highlight("ls   ", &p, 0, vec![]);
     assert_eq!(strip_ansi(&out), "ls   ");
+  }
+
+  // ===================== control-byte visualization =====================
+
+  #[test]
+  fn esc_renders_as_caret_bracket() {
+    let p = test_palette();
+    let out = highlight("a\x1bb", &p, 0, vec![]);
+    let visible = strip_ansi(&out);
+    assert!(visible.contains("a^[b"), "got {visible:?}");
+  }
+
+  #[test]
+  fn cr_renders_as_caret_m() {
+    let p = test_palette();
+    let out = highlight("before\rafter", &p, 0, vec![]);
+    let visible = strip_ansi(&out);
+    assert!(visible.contains("before^Mafter"), "got {visible:?}");
+  }
+
+  #[test]
+  fn del_renders_as_caret_question() {
+    let p = test_palette();
+    let out = highlight("x\x7fy", &p, 0, vec![]);
+    let visible = strip_ansi(&out);
+    assert!(visible.contains("x^?y"), "got {visible:?}");
+  }
+
+  #[test]
+  fn newline_and_tab_pass_through_unchanged() {
+    // \n and \t are structural for multi-line buffers and indented commands;
+    // visualizing them would break layout.
+    let p = test_palette();
+    let out = highlight("a\nb\tc", &p, 0, vec![]);
+    let visible = strip_ansi(&out);
+    assert!(visible.contains("a\nb\tc"), "got {visible:?}");
+    assert!(!visible.contains("^J"));
+    assert!(!visible.contains("^I"));
+  }
+
+  #[test]
+  fn raw_control_bytes_do_not_reach_terminal_stream() {
+    // The whole point: raw \x1b should never appear in the rendered output
+    // (or it would let the terminal interpret embedded escape sequences).
+    let p = test_palette();
+    let out = highlight("\x1b]0;PWNED\x07", &p, 0, vec![]);
+    assert!(!out.contains('\x1b' as char) || {
+      // shed's own styling escapes are allowed; check by stripping CSI runs
+      // and confirming no raw \x1b survives unaccompanied by `[`
+      let stripped = strip_ansi(&out);
+      !stripped.contains('\x1b')
+    }, "raw ESC byte escaped sanitizer: {out:?}");
+  }
+
+  #[test]
+  fn no_control_bytes_takes_hot_path() {
+    // Smoke test: input without control bytes should still round-trip
+    // identically (we have a fast path that skips visualization).
+    let p = test_palette();
+    let out = highlight("echo hello world", &p, 0, vec![]);
+    assert_eq!(strip_ansi(&out), "echo hello world");
+  }
+
+  #[test]
+  fn control_visualization_is_styled_distinctly() {
+    // The visualized control byte should carry SGR codes (dim+italic)
+    // distinct from the surrounding text. We check that the raw output
+    // contains at least one extra SGR sequence introduced around the
+    // visualized char.
+    let p = test_palette();
+    let plain = highlight("ab", &p, 0, vec![]);
+    let with_ctrl = highlight("a\x1bb", &p, 0, vec![]);
+    // The control variant should contain "^[" (visualization) and have
+    // more bytes than the plain version (extra SGR codes).
+    assert!(with_ctrl.contains("^["), "missing visualization: {with_ctrl:?}");
+    assert!(
+      with_ctrl.len() > plain.len() + 2,
+      "visualization should add styling bytes; plain={} with_ctrl={}",
+      plain.len(),
+      with_ctrl.len()
+    );
   }
 }

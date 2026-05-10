@@ -54,9 +54,26 @@ impl Grapheme {
   pub fn chars(&self) -> &[char] {
     &self.0
   }
-  /// Returns the display width of the Grapheme, treating unprintable chars as width 0
+  /// Returns the display width of the Grapheme. ASCII control bytes (other
+  /// than `\n` and `\t`) and DEL render as 2-column caret notation (`^[`,
+  /// `^M`, `^?`, etc.) in the highlighter, so their width must match.
+  /// Other unprintable codepoints fall back to 0.
   pub fn width(&self) -> usize {
-    self.0.iter().map(|c| c.width().unwrap_or(0)).sum()
+    self
+      .0
+      .iter()
+      .map(|c| {
+        if Self::is_visualized_control(*c) {
+          2
+        } else {
+          c.width().unwrap_or(0)
+        }
+      })
+      .sum()
+  }
+
+  fn is_visualized_control(c: char) -> bool {
+    matches!(c, '\x00'..='\x08' | '\x0b'..='\x1f' | '\x7f')
   }
   pub fn len_utf8(&self) -> usize {
     self.0.iter().map(|c| c.len_utf8()).sum()

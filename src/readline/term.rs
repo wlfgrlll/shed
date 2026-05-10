@@ -321,7 +321,11 @@ impl Layout {
   }
 
   fn is_ctl_char(gr: &str) -> bool {
-    !gr.is_empty() && gr.as_bytes()[0] <= 0x1F && gr != "\n" && gr != "\t" && gr != "\r"
+    if gr.is_empty() {
+      return false;
+    }
+    let b = gr.as_bytes()[0];
+    matches!(b, 0x00..=0x08 | 0x0b..=0x1f | 0x7f)
   }
 
   pub fn calc_pos(
