@@ -33,9 +33,9 @@ pub struct Shed {
   pub var_scopes: RefCell<ScopeStack>,
   pub meta: RefCell<MetaTab>,
   pub logic: RefCell<LogTab>,
-  pub shopts: RefCell<ShOpts>,
   pub db_conn: OnceLock<Option<Arc<Connection>>>,
   pub terminal: RefCell<Terminal>,
+  pub shopts: RefCell<ShOpts>,
 
   #[cfg(test)]
   saved: RefCell<Option<Box<Self>>>,

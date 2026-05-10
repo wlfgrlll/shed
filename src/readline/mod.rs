@@ -1465,6 +1465,20 @@ impl ShedLine {
       }
       LineCmd::Quit => Ok(Some(ReadlineEvent::Eof)),
       LineCmd::ClearScreen => {
+        // When a scroll region is active (status line enabled), clear by
+        // scrolling the whole region's worth of content into scrollback and
+        // parking the cursor at the bottom of the region. The next redraw
+        // renders the prompt at the bottom, above the status line.
+        if let Some((top, bottom)) = with_term(|t| t.scroll_region()) {
+          let region_height = (bottom.saturating_sub(top) + 1) as usize;
+          with_term(|t| t.scroll_up(region_height)).ok();
+          with_term(|t| t.move_cursor_abs(bottom, 1));
+          self.old_layout = None;  // stale after manual cursor move
+          self.needs_redraw = true;
+          return Ok(None);
+        }
+
+        // Original behavior: scroll just enough to put the prompt at row 1.
         let cursor_row = with_term(|t| t.get_cursor_pos())
           .ok()
           .flatten()

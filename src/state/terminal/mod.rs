@@ -1304,9 +1304,9 @@ impl Terminal {
     // the terminal didn't. Bracket with cursor save/restore so DECSTBM
     // doesn't home the cursor as a side effect.
     if !on && let Some((top, bottom)) = self.scroll_region {
-      self.save_cursor();
-      write!(self, "\x1b[{top};{bottom}r").ok();
-      self.restore_cursor();
+      self.with_saved_cursor(|this| {
+        write!(this, "\x1b[{top};{bottom}r").ok();
+      });
     }
     Ok(())
   }
@@ -1344,21 +1344,31 @@ impl Terminal {
   /// Set the terminal scroll region (DECSTBM). `top` and `bottom` are
   /// 1-indexed inclusive row numbers.
   pub fn set_scroll_region(&mut self, top: u16, bottom: u16) -> ShResult<()> {
-    self.save_cursor();
-    write!(self, "\x1b[{top};{bottom}r").ok();
-    self.restore_cursor();
+    self.with_saved_cursor(|this| {
+      write!(this, "\x1b[{top};{bottom}r").ok();
+    });
     self.scroll_region = Some((top, bottom));
     Ok(())
   }
 
-  /// Reset the scroll region to the full terminal. No-op if no region is
-  /// currently set. Like `set_scroll_region`, brackets the DECSTBM with
-  /// cursor save/restore to avoid the cursor-home side effect.
+  /// Perform an operation and restore the cursor's original position afterwards.
+  pub fn with_saved_cursor<T>(&mut self, f: impl Fn(&mut Self) -> T) -> T {
+    self.save_cursor();
+    let res = f(self);
+    self.restore_cursor();
+    res
+  }
+
   pub fn reset_scroll_region(&mut self) -> ShResult<()> {
-    if self.scroll_region.is_some() {
-      self.save_cursor();
-      self.input_buf.push_str(Self::SCROLL_REGION_RESET);
-      self.restore_cursor();
+    if let Some((_, bottom)) = self.scroll_region {
+      let max_row = self.t_rows as u16;
+      self.with_saved_cursor(|this| {
+        for row in (bottom + 1)..=max_row {
+          this.move_cursor_abs(row, 1);
+          this.input_buf.push_str(Self::ROW_CLEAR);
+        }
+        this.input_buf.push_str(Self::SCROLL_REGION_RESET);
+      });
       self.scroll_region = None;
     }
     Ok(())
@@ -1388,21 +1398,21 @@ impl Terminal {
   /// Render the status line at the bottom row of the terminal.
   pub fn draw_status_line(&mut self, content: &str) {
     let bottom_row = self.t_rows as u16;
-    self.save_cursor();
-    self.move_cursor_abs(bottom_row, 1);
-    self.input_buf.push_str(Self::ROW_CLEAR);
-    self.input_buf.push_str(content);
-    self.restore_cursor();
+    self.with_saved_cursor(|this| {
+      this.move_cursor_abs(bottom_row, 1);
+      this.input_buf.push_str(Self::ROW_CLEAR);
+      this.input_buf.push_str(content);
+    });
   }
 
   /// Render an ephemeral status message on the row directly above the status line (`t_rows - 1`).
   pub fn draw_status_message(&mut self, content: &str) {
     let row = (self.t_rows as u16).saturating_sub(1);
-    self.save_cursor();
-    self.move_cursor_abs(row, 1);
-    self.input_buf.push_str(Self::ROW_CLEAR);
-    self.input_buf.push_str(content);
-    self.restore_cursor();
+    self.with_saved_cursor(|this| {
+      this.move_cursor_abs(row, 1);
+      this.input_buf.push_str(Self::ROW_CLEAR);
+      this.input_buf.push_str(content);
+    });
   }
 
   /// Detach this Terminal from the TTY. After calling, `tty()` returns
@@ -1428,8 +1438,11 @@ impl Default for Terminal {
   }
 }
 
-impl Drop for Terminal {
-  fn drop(&mut self) {
+impl Terminal {
+  /// Reset terminal state for a clean shell exit. Called explicitly from
+  /// the shutdown path because `thread_local!` destructors do not run for
+  /// the main thread on normal program exit.
+  pub fn reset_for_exit(&mut self) {
     self.reset_scroll_region().ok();
     self.toggle_bracketed_paste(false).ok();
     self.toggle_kitty_proto(false).ok();

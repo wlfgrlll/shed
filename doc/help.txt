@@ -14,7 +14,11 @@ Features include:
 * Fuzzy history search/tab completion
 * Extensive, navigable documentation via `help`
 
-Press {Tab} to follow cross-reference links in the help pages.
+Press `Tab` to follow cross-reference links in the help pages. Visible links
+will be given a hint with a letter, typing that letter follows the link.
+
+Cross-reference links can also be `clicked` directly with the mouse.
+
 ==============================================================================
 1. Available Topics                            *help-topics*
 
@@ -85,6 +89,5 @@ Press {Tab} to follow cross-reference links in the help pages.
       and open the referenced help page. Press {Esc} to cancel.
 
       Cross-references can also be clicked directly with the mouse.
-
 
 ==============================================================================

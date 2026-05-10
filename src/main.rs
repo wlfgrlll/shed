@@ -68,32 +68,53 @@ pub mod tests;
   long_about = "shed is an experimental POSIX shell focused on interative user experience, extensibility, and powerful line editing."
 )]
 struct ShedArgs {
-  #[arg(short, conflicts_with_all = ["interactive", "stdin"])]
+  /// Evaluate the given string as a command and exit
+  #[arg(short, long, conflicts_with_all = ["interactive", "stdin"])]
   command: Option<String>,
 
+  /// Script path and arguments
   #[arg(trailing_var_arg = true)]
   script_args: Vec<String>,
 
+  /// Print version info
   #[arg(long)]
   version: bool,
 
-  #[arg(short)]
+  /// Start the shell in interactive mode
+  #[arg(short, long)]
   interactive: bool,
 
+  /// Read input from stdin
   #[arg(short)]
   stdin: bool,
 
+  /// Start the shell as a login shell (sources .shed_profile)
   #[arg(long, short)]
   login_shell: bool,
 
+  /// Print the welcome message after arriving at the prompt
   #[arg(long, short)]
   welcome: bool,
 
+  /// Skip sourcing runtime command files
   #[arg(long)]
   no_rc: bool,
 
+  /// List of POSIX 'set' options to enable
+  #[arg(short = 'o', value_name = "OPTION", value_parser = Self::SET_OPTS)]
+  set: Vec<String>,
+
+  /// Input is read as a keymap for the line editor to execute
+  /// instead of raw shell commands. Used to script the line editor
   #[arg(long)]
   edit_script: bool,
+}
+
+impl ShedArgs {
+  const SET_OPTS: [&str;15] = [
+    "errexit", "allexport", "ignoreeof", "monitor", "noclobber", "noglob", "noexec",
+    "nolog", "notify", "nounset", "verbose", "vi", "emacs", "xtrace", "hashall",
+  ];
 }
 
 /// We need to make sure that even if we panic, our child processes get sighup
@@ -173,6 +194,14 @@ fn main() -> ExitCode {
     e.print_error();
   }
 
+  for set_opt in &args.set {
+    if set_opt == "emacs" {
+      write_shopts(|o| o.query("set.vi=false")).ok();
+      continue;
+    }
+    write_shopts(|o| o.query(&format!("set.{set_opt}=true"))).ok();
+  }
+
   do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
     state::init_db_conn()
   });
@@ -204,6 +233,8 @@ fn main() -> ExitCode {
   if code == 0 && isatty(stdin_fileno()).unwrap_or_default() {
     errln!("\nexit");
   }
+
+  with_term(|t| t.reset_for_exit());
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
 }
@@ -405,7 +436,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
   })?;
 
   if let Some(msg) = read_meta(|m| m.welcome_message(args.welcome)) {
-    outln!("\n{msg}");
+    outln!("\n{msg}\n\n");
   }
 
   if args.login_shell && !args.no_rc {
@@ -639,6 +670,9 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
   Ok(())
 }
 
+/// Run some provided key events. These come from the --edit-script flag,
+/// and are meant to simulate a user typing those keys interactively.
+/// Mainly useful for testing/profiling, but may have some other legitimate niche use-cases
 fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()> {
   let mut queue: VecDeque<KeyEvent> = keys.into();
   while let Some(key) = queue.pop_front() {
