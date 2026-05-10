@@ -147,6 +147,42 @@ impl ScopeStack {
     // Not found in any scope - create in global scope
     self.set_var_global(var_name, val, flags)
   }
+
+  /// Mutate the value of an existing variable in place, finding it in the
+  /// nearest scope that owns it and preserving its existing flags. Falls
+  /// back to creating a new global if the name is unbound. Use this for
+  /// compound-assignment paths (`arr+=`, `n+=1`, etc.) where the var is
+  /// being updated rather than declared — naive `set_var` with a recovered
+  /// LOCAL flag would shadow the original in whatever scope happens to be
+  /// current (e.g. a `for`-loop body).
+  pub fn update_var(&mut self, var_name: &str, val: VarKind) -> ShResult<()> {
+    for scope in self.scopes.iter_mut().rev() {
+      if scope.var_exists(var_name) {
+        return scope.set_var(var_name, val, VarFlags::NONE);
+      }
+    }
+    self.set_var_global(var_name, val, VarFlags::NONE)
+  }
+
+  /// Indexed counterpart to `update_var`: writes a single element of an
+  /// existing array, in the scope that owns the array. Falls back to
+  /// creating in global scope if no binding exists.
+  pub fn update_var_indexed(
+    &mut self,
+    var_name: &str,
+    idx: ArrIndex,
+    val: String,
+  ) -> ShResult<()> {
+    for scope in self.scopes.iter_mut().rev() {
+      if scope.var_exists(var_name) {
+        return scope.set_index(var_name, idx, val);
+      }
+    }
+    let Some(scope) = self.scopes.first_mut() else {
+      return Ok(());
+    };
+    scope.set_index(var_name, idx, val)
+  }
   pub fn set_var_indexed(
     &mut self,
     var_name: &str,

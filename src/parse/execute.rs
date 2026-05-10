@@ -1370,9 +1370,9 @@ impl Dispatcher {
           }
 
           if let Some((name, idx)) = indexed {
-            write_vars(|v| v.set_var_indexed(&name, idx, var.to_string(), var.flags()))?;
+            write_vars(|v| v.update_var_indexed(&name, idx, var.to_string()))?;
           } else {
-            write_vars(|v| v.set_var(var_name, var.kind().clone(), var.flags()))?;
+            write_vars(|v| v.update_var(var_name, var.kind().clone()))?;
           }
         }
       }
