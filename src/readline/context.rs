@@ -1228,6 +1228,13 @@ fn scan_subspans(
             }
           }
           if pos == name_start {
+            // Empty body (`${}` or `${` at EOF). Pull in a trailing `}` if
+            // present so the wrapper span covers it; otherwise we leave it
+            // as a stray brace for the outer scanner.
+            if let Some(&(_, '}')) = chars.peek() {
+              consume(chars, consumed);
+              pos += 1;
+            }
             sub_tokens.push(CtxTk {
               span: Span::new(var_start..pos, span.get_source()),
               class: CtxTkRule::VarSub,
