@@ -109,6 +109,57 @@ enum IntrospectMode {
   FunctionNames,  // -F
 }
 
+/// Shared assignment loop for `declare` / `local` / etc. Parses the
+/// var-declaration flags (`-i`, `-r`, `-x`, `-a`, `-A`) out of `opts`, OR-s
+/// them onto `base_flags`, and applies each assignment in `argv` with the
+/// resulting kind+flags. Other opts (e.g. `-p`/`-f`/`-F`) are caller-handled
+/// before delegating here.
+fn apply_var_decl(
+  opts: &[Opt],
+  argv: Vec<(String, Span)>,
+  base_flags: VarFlags,
+) -> ShResult<()> {
+  let mut flags = base_flags;
+  let mut kind = DeclareKind::Str;
+  for opt in opts {
+    match opt {
+      Opt::Short('r') => flags |= VarFlags::READONLY,
+      Opt::Short('x') => flags |= VarFlags::EXPORT,
+      Opt::Short('i') => kind = DeclareKind::Int,
+      Opt::Short('a') => kind = DeclareKind::Arr,
+      Opt::Short('A') => kind = DeclareKind::Assoc,
+      _ => {}
+    }
+  }
+
+  for (arg, span) in argv {
+    let (name, raw_val) = split_assignment_raw(arg);
+    let val = match (kind, raw_val.as_deref()) {
+      (DeclareKind::Str, Some(v)) => VarKind::parse(v),
+      (DeclareKind::Str, None) => VarKind::Str(String::new()),
+      (DeclareKind::Int, Some(v)) => {
+        let evaluated = expand_arithmetic(v).promote_err(span.clone())?;
+        let n = evaluated.parse::<i32>().map_err(|_| {
+          sherr!(ExecFail @ span.clone(), "declare -i: invalid arithmetic '{v}'")
+        })?;
+        VarKind::Int(n)
+      }
+      (DeclareKind::Int, None) => VarKind::Int(0),
+      (DeclareKind::Arr, Some(v)) => {
+        VarKind::arr_from_raw(v).promote_err(span.clone())?
+      }
+      (DeclareKind::Arr, None) => VarKind::Arr(VecDeque::new()),
+      (DeclareKind::Assoc, Some(v)) => {
+        VarKind::assoc_arr_from_raw(v).promote_err(span.clone())?
+      }
+      (DeclareKind::Assoc, None) => VarKind::AssocArr(Vec::new()),
+    };
+    write_vars(|v| v.set_var(&name, val, flags)).promote_err(span)?;
+  }
+
+  with_status(0)
+}
+
 pub(super) struct Declare;
 impl super::Builtin for Declare {
   fn opts(&self) -> Vec<crate::getopt::OptSpec> {
@@ -132,17 +183,9 @@ impl super::Builtin for Declare {
     Ok((argv, opts))
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let mut flags = VarFlags::NONE;
     let mut introspect: Option<IntrospectMode> = None;
-    let mut kind = DeclareKind::Str;
-
     for opt in &args.opts {
       match opt {
-        Opt::Short('r') => flags |= VarFlags::READONLY,
-        Opt::Short('x') => flags |= VarFlags::EXPORT,
-        Opt::Short('i') => kind = DeclareKind::Int,
-        Opt::Short('a') => kind = DeclareKind::Arr,
-        Opt::Short('A') => kind = DeclareKind::Assoc,
         Opt::Short('p') => introspect = Some(IntrospectMode::Vars),
         Opt::Short('f') => introspect = Some(IntrospectMode::FunctionsFull),
         Opt::Short('F') => introspect = Some(IntrospectMode::FunctionNames),
@@ -161,35 +204,7 @@ impl super::Builtin for Declare {
       return with_status(0);
     }
 
-    for (arg, span) in args.argv {
-      let (name, raw_val) = split_assignment_raw(arg);
-      let val = match (kind, raw_val.as_deref()) {
-        (DeclareKind::Str, Some(v)) => VarKind::parse(v),
-        (DeclareKind::Str, None) => VarKind::Str(String::new()),
-        (DeclareKind::Int, Some(v)) => {
-          // Arithmetic-evaluate the RHS so `declare -i x=5+3` stores 8.
-          let evaluated = expand_arithmetic(v).promote_err(span.clone())?;
-          let n = evaluated.parse::<i32>().map_err(|_| {
-            sherr!(ExecFail @ span.clone(), "declare -i: invalid arithmetic '{v}'")
-          })?;
-          VarKind::Int(n)
-        }
-        (DeclareKind::Int, None) => VarKind::Int(0),
-        (DeclareKind::Arr, Some(v)) => {
-          // Raw text was preserved by `prepare_assignment_argv`, so for
-          // `declare -a arr=(a b c)` we have v == "(a b c)".
-          VarKind::arr_from_raw(v).promote_err(span.clone())?
-        }
-        (DeclareKind::Arr, None) => VarKind::Arr(VecDeque::new()),
-        (DeclareKind::Assoc, Some(v)) => {
-          VarKind::assoc_arr_from_raw(v).promote_err(span.clone())?
-        }
-        (DeclareKind::Assoc, None) => VarKind::AssocArr(Vec::new()),
-      };
-      write_vars(|v| v.set_var(&name, val, flags)).promote_err(span)?;
-    }
-
-    with_status(0)
+    apply_var_decl(&args.opts, args.argv, VarFlags::NONE)
   }
 }
 
@@ -332,12 +347,22 @@ impl super::Builtin for Export {
 
 pub(super) struct Local;
 impl super::Builtin for Local {
+  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+    vec![
+      OptSpec::flag('i'),
+      OptSpec::flag('r'),
+      OptSpec::flag('x'),
+      OptSpec::flag('a'),
+      OptSpec::flag('A'),
+    ]
+  }
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
-    let mut argv = prepare_assignment_argv(argv)?;
+    let (raw_argv, opts) = get_opts_from_tokens_raw(argv, &self.opts())?;
+    let mut argv = prepare_assignment_argv(raw_argv)?;
     if !argv.is_empty() {
       argv.remove(0);
     }
-    Ok((argv, vec![]))
+    Ok((argv, opts))
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
@@ -346,15 +371,7 @@ impl super::Builtin for Local {
       return with_status(0);
     }
 
-    for (arg, span) in args.argv {
-      let (var, val) = split_assignment(arg);
-      write_vars(|v| {
-        v.set_var(&var, val.unwrap_or_default(), VarFlags::LOCAL)
-          .promote_err(span)
-      })?;
-    }
-
-    with_status(0)
+    apply_var_decl(&args.opts, args.argv, VarFlags::LOCAL)
   }
 }
 
@@ -969,5 +986,145 @@ mod tests {
     test_input("echo ${aa[k]}").unwrap();
     let out = guard.read_output();
     assert!(out.contains("new"), "got {out:?}");
+  }
+
+  // ===================== local with declare-style flags =====================
+
+  #[test]
+  fn local_assoc_empty() {
+    let _g = TestGuard::new();
+    test_input("foo() { local -A m; m[k]=v; echo \"${m[k]}\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("v"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_assoc_init() {
+    let _g = TestGuard::new();
+    test_input(
+      "foo() { local -A m=([a]=1 [b]=2); echo \"${m[a]} ${m[b]}\"; }",
+    )
+    .unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("1 2"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_assoc_is_scoped() {
+    // The local -A should not leak out of the function.
+    let _g = TestGuard::new();
+    test_input("foo() { local -A m=([k]=v); }").unwrap();
+    test_input("foo").unwrap();
+    assert_eq!(read_vars(|v| v.get_var("m")), "");
+  }
+
+  #[test]
+  fn local_array_explicit_flag() {
+    // Explicit `-a` flag should produce the same result as bare `local arr=(...)`.
+    let _g = TestGuard::new();
+    test_input("foo() { local -a arr=(x y z); echo \"${arr[1]}\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("y"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_int_arithmetic() {
+    let _g = TestGuard::new();
+    test_input("foo() { local -i n=2+3; echo \"$n\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("5"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_readonly_combined() {
+    let _g = TestGuard::new();
+    test_input("foo() { local -r x=fixed; x=changed; echo \"$x\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").ok();
+    let out = guard.read_output();
+    assert!(out.contains("fixed"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_export_combined() {
+    let _g = TestGuard::new();
+    test_input("foo() { local -x EXPORTED_LOCAL=hi; env | grep '^EXPORTED_LOCAL='; }")
+      .unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("EXPORTED_LOCAL=hi"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_assoc_does_not_leak_into_outer() {
+    // Verify the LOCAL flag is set, not just that the var doesn't survive.
+    let _g = TestGuard::new();
+    test_input("declare -A m=([outer]=1)").unwrap();
+    test_input("foo() { local -A m=([inner]=2); echo \"${m[inner]}\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    test_input("echo \"${m[outer]}\"").unwrap();
+    let out = guard.read_output();
+    let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines, vec!["2", "1"], "got {out:?}");
+  }
+
+  // ===================== compound-assignment scope correctness =====================
+
+  #[test]
+  fn local_array_append_in_for_loop() {
+    // Regression: previously `arr+=("$c")` inside a for loop body wrote
+    // a shadow copy in the loop's scope and the parent's local stayed empty.
+    let _g = TestGuard::new();
+    test_input("foo() { local arr=(); for c in x y z; do arr+=(\"$c\"); done; echo \"( ${arr[@]} )\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("( x y z )"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_array_append_in_nested_loops() {
+    // Same bug pattern with nested loops — should still mutate the outermost local.
+    let _g = TestGuard::new();
+    test_input(
+      "foo() { local arr=(); for i in 1 2; do for j in a b; do arr+=(\"$i$j\"); done; done; echo \"( ${arr[@]} )\"; }",
+    )
+    .unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("( 1a 1b 2a 2b )"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_int_pluseq_in_for_loop() {
+    // Same fix path covers scalar +=. Counter should reach 3.
+    let _g = TestGuard::new();
+    test_input("foo() { local -i n=0; for _ in 1 2 3; do n+=1; done; echo \"$n\"; }").unwrap();
+    let guard = TestGuard::new();
+    test_input("foo").unwrap();
+    let out = guard.read_output();
+    assert!(out.contains("3"), "got {out:?}");
+  }
+
+  #[test]
+  fn local_array_append_preserves_local_flag() {
+    // After the loop appends, the outer var should still be flagged LOCAL
+    // (i.e., the fix didn't accidentally promote it to global).
+    let _g = TestGuard::new();
+    test_input("foo() { local arr=(); for c in x; do arr+=(\"$c\"); done; }").unwrap();
+    test_input("foo").unwrap();
+    // arr was local to foo; should not exist at top level.
+    assert_eq!(read_vars(|v| v.get_var("arr")), "");
   }
 }
