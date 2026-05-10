@@ -1,28 +1,8 @@
 lib: cfg:
 
 let
-  # This method of escaping is O(n^2)
-  # Shouldn't matter in practice though
-  # We arent going to be handling monster strings here
-  isEscaped = str:
-    let
-      chars = lib.reverseList lib.stringToCharacters str;
-      result = lib.foldl' (acc: ch:
-        if acc.done then acc
-        else if ch == "\\" then { done = acc.done; escaped = !acc.escaped; }
-        else { done = true; escaped = acc.escaped; }
-      ) { done = false; escaped = false; } chars;
-    in result.escaped;
-
-  escape = str:
-    let
-      chars = lib.stringToCharacters str;
-      escaped = lib.foldl' (acc: ch:
-        if ch == "'" && !isEscaped acc
-        then acc + "\\'"
-        else acc + ch
-      ) "" chars;
-    in escaped;
+  # replace embedded single quotes with '\''
+  escape = str: lib.replaceStrings ["'"] ["'\\''"] str;
 
   boolToString = b:
   if b then "true" else "false";
