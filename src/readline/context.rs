@@ -1134,7 +1134,7 @@ fn scan_subspans(
         );
         sub_tokens.push(sub_tk);
       }
-      dir @ ('<' | '>') if next_is(chars, '(') => {
+      dir @ ('<' | '>') if next_is(chars, '(') && scan_ctx.contains(S::VAR_SUB) => {
         if consume(chars, consumed).is_none() {
           continue;
         };
