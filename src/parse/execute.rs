@@ -962,6 +962,10 @@ impl Dispatcher {
     let mut pipes = PipeGenerator::new(num_cmds);
     let mut result = Ok(());
 
+    let _scroll_guard = (!is_bg).then(|| {
+      with_term(|t| t.yield_terminal()).activate()
+    });
+
     for (i, mut cmd) in cmds.into_iter().enumerate() {
       if num_cmds > 1 {
         // builtins must fork in multi-command pipelines

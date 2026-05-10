@@ -432,6 +432,17 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     errln!("{welcome}");
   }
 
+  // If the status line is enabled, reserve the bottom 2 rows: one for the
+  // status line itself (row t_rows) and one above it as visual breathing
+  // room (row t_rows - 1, left blank). The scroll region ends 2 rows
+  // before the bottom so the prompt can't render into either reserved row.
+  if read_shopts(|o| o.statline.enable) {
+    with_term(|t| {
+      let bottom = (t.t_rows() as u16).saturating_sub(2).max(1);
+      t.set_scroll_region(1, bottom)
+    })?;
+  }
+
   Ok(raw_mode)
 }
 
@@ -623,15 +634,6 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
   Ok(())
 }
 
-/// Drain a pre-built key sequence into the readline loop, one key at a time.
-///
-/// Used by `--edit-script`. Each key is fed into `process_input` individually so
-/// the readline pipeline produces events between keys (e.g. a `<CR>` after
-/// `echo foo` fires a `Line` event that gets executed, then the loop
-/// continues with the next key). This makes multi-command scripts work
-/// naturally (e.g. `echo foo<CR>echo bar<CR>` runs both commands).
-///
-/// Exits when the queue is exhausted or any event signals shell exit.
 fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()> {
   let mut queue: VecDeque<KeyEvent> = keys.into();
   while let Some(key) = queue.pop_front() {
@@ -640,8 +642,6 @@ fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()>
       return Ok(());
     }
   }
-  // If the script ended mid-keymap (ambiguous prefix), resolve it as if a
-  // timeout had fired. Mirrors what the main loop does on poll-timeout.
   if !readline.pending_keymap.is_empty() {
     resolve_keymap(readline)?;
   }
@@ -727,10 +727,6 @@ fn handle_readline_event(
       {
         e.print_error();
       }
-
-      // Cache is updated incrementally by `History::push` at command-submit
-      // time, so no post-command full re-query is needed. (`refresh_hist_entries`
-      // remains available for cases like external history modifications.)
 
       with_term(|t| t.fix_cursor_column())?;
       write_term!("\n\r")?;

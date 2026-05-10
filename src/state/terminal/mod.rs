@@ -634,6 +634,8 @@ pub struct Terminal {
   t_cols: usize,
   t_rows: usize,
 
+  scroll_region: Option<(u16, u16)>,
+
   last_bell: Option<Instant>,
 
   /// When set, terminal-capability and cursor-position probes short-circuit
@@ -660,6 +662,7 @@ impl Clone for Terminal {
       term_caps: self.term_caps,
       t_cols: self.t_cols,
       t_rows: self.t_rows,
+      scroll_region: self.scroll_region,
       last_bell: self.last_bell,
       test_mode: self.test_mode,
     }
@@ -680,6 +683,10 @@ impl Terminal {
   pub const CLEAR_SCREEN: &str = "\x1b[2J\x1b[H";
   pub const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1003h\x1b[?1006h";
   pub const MOUSE_OFF: &str = "\x1b[?1003l\x1b[?1000l\x1b[?1006l";
+  pub const SCROLL_REGION_RESET: &str = "\x1b[r";
+  pub const CURSOR_SAVE: &str = "\x1b7";
+  pub const CURSOR_RESTORE: &str = "\x1b8";
+  pub const ROW_CLEAR: &str = "\x1b[2K";
   fn toggle_attr(
     buf: &mut String,
     switch: &mut bool,
@@ -724,6 +731,7 @@ impl Terminal {
       term_caps: TermCap::empty(),
       t_cols: cols as usize,
       t_rows: rows as usize,
+      scroll_region: None,
       last_bell: None,
       test_mode: false,
     }
@@ -839,8 +847,16 @@ impl Terminal {
       .with_cursor_style(self.cursor_style)
       .with_mouse_support(self.mouse_enabled)
       .with_cursor_visible(self.cursor_visible)
-      .with_termios_depth(self.termios_stack.len());
+      .with_termios_depth(self.termios_stack.len())
+      .with_scroll_region(self.scroll_region);
 
+    Snapshot::new(guard)
+  }
+
+  pub fn yield_terminal(&mut self) -> Snapshot {
+    let guard = TermGuard::new().with_scroll_region(self.scroll_region);
+    self.reset_scroll_region().ok();
+    self.flush().ok();  // ensure the reset reaches the terminal before exec
     Snapshot::new(guard)
   }
 
@@ -906,6 +922,16 @@ impl Terminal {
     if let Some(interactive) = guard.interactive() {
       self.interactive = interactive;
     }
+    if let Some(scroll_region) = guard.scroll_region() {
+      match scroll_region {
+        Some((top, bottom)) => {
+          self.set_scroll_region(top, bottom)?;
+          self.move_cursor_abs(bottom, 1);
+        }
+        None => self.reset_scroll_region()?,
+      }
+      wrote_seq = true;
+    }
 
     if wrote_seq {
       self.flush()?; // flush restore sequences immediately
@@ -918,6 +944,14 @@ impl Terminal {
     let (cols, rows) = get_win_size(tty.as_raw_fd());
     self.t_cols = cols as usize;
     self.t_rows = rows as usize;
+
+    // If a scroll region is active, recompute its bottom relative to the
+    // new terminal size. Assumes the owner intends to reserve 2 rows at
+    // the bottom (status line + gap above it).
+    if let Some((top, _)) = self.scroll_region {
+      let new_bottom = (rows.saturating_sub(2)).max(top);
+      self.set_scroll_region(top, new_bottom).ok();
+    }
   }
 
   pub fn poll(&mut self, timeout: PollTimeout) -> ShResult<i32> {
@@ -1267,7 +1301,17 @@ impl Terminal {
       Self::ALT_BUFFER_ENTER,
       Self::ALT_BUFFER_EXIT,
       on,
-    )
+    )?;
+    // Most xterm-class terminals save/restore the scroll region across
+    // alt-screen transitions. Re-assert ours on exit defensively in case
+    // the terminal didn't. Bracket with cursor save/restore so DECSTBM
+    // doesn't home the cursor as a side effect.
+    if !on && let Some((top, bottom)) = self.scroll_region {
+      self.save_cursor();
+      write!(self, "\x1b[{top};{bottom}r").ok();
+      self.restore_cursor();
+    }
+    Ok(())
   }
 
   pub fn toggle_bracketed_paste(&mut self, on: bool) -> ShResult<()> {
@@ -1300,6 +1344,70 @@ impl Terminal {
     )
   }
 
+  /// Set the terminal scroll region (DECSTBM). `top` and `bottom` are
+  /// 1-indexed inclusive row numbers.
+  pub fn set_scroll_region(&mut self, top: u16, bottom: u16) -> ShResult<()> {
+    self.save_cursor();
+    write!(self, "\x1b[{top};{bottom}r").ok();
+    self.restore_cursor();
+    self.scroll_region = Some((top, bottom));
+    Ok(())
+  }
+
+  /// Reset the scroll region to the full terminal. No-op if no region is
+  /// currently set. Like `set_scroll_region`, brackets the DECSTBM with
+  /// cursor save/restore to avoid the cursor-home side effect.
+  pub fn reset_scroll_region(&mut self) -> ShResult<()> {
+    if self.scroll_region.is_some() {
+      self.save_cursor();
+      self.input_buf.push_str(Self::SCROLL_REGION_RESET);
+      self.restore_cursor();
+      self.scroll_region = None;
+    }
+    Ok(())
+  }
+
+  pub fn scroll_region(&self) -> Option<(u16, u16)> {
+    self.scroll_region
+  }
+
+  /// Buffer an `\x1b7` cursor-save. Pairs with `restore_cursor`.
+  pub fn save_cursor(&mut self) {
+    self.input_buf.push_str(Self::CURSOR_SAVE);
+  }
+
+  /// Buffer an `\x1b8` cursor-restore. Restores both position and SGR
+  /// state from the matching `save_cursor`.
+  pub fn restore_cursor(&mut self) {
+    self.input_buf.push_str(Self::CURSOR_RESTORE);
+  }
+
+  /// Buffer a CUP (cursor position) sequence to move to absolute (row, col).
+  /// Both are 1-indexed.
+  pub fn move_cursor_abs(&mut self, row: u16, col: u16) {
+    write!(self, "\x1b[{row};{col}H").ok();
+  }
+
+  /// Render the status line at the bottom row of the terminal.
+  pub fn draw_status_line(&mut self, content: &str) {
+    let bottom_row = self.t_rows as u16;
+    self.save_cursor();
+    self.move_cursor_abs(bottom_row, 1);
+    self.input_buf.push_str(Self::ROW_CLEAR);
+    self.input_buf.push_str(content);
+    self.restore_cursor();
+  }
+
+  /// Render an ephemeral status message on the row directly above the status line (`t_rows - 1`).
+  pub fn draw_status_message(&mut self, content: &str) {
+    let row = (self.t_rows as u16).saturating_sub(1);
+    self.save_cursor();
+    self.move_cursor_abs(row, 1);
+    self.input_buf.push_str(Self::ROW_CLEAR);
+    self.input_buf.push_str(content);
+    self.restore_cursor();
+  }
+
   #[cfg(test)]
   pub fn set_fd_for_testing(&mut self, fd: Option<RawFd>) {
     self.tty = fd;
@@ -1315,6 +1423,7 @@ impl Default for Terminal {
 
 impl Drop for Terminal {
   fn drop(&mut self) {
+    self.reset_scroll_region().ok();
     self.toggle_bracketed_paste(false).ok();
     self.toggle_kitty_proto(false).ok();
     self.toggle_cursor_visibility(true).ok();

@@ -21,7 +21,7 @@ use crate::readline::complete::{FuzzyCompleter, FuzzySelector, SelectorResponse}
 use crate::readline::editcmd::Direction;
 use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
 use crate::readline::history::HistEntry;
-use crate::readline::term::{calc_str_width, clear_rows, move_cursor_to_end, redraw};
+use crate::readline::term::{calc_str_width, clear_rows, move_cursor_to_end, redraw, truncate_with_ellipsis};
 use crate::state::{
   self, AutoCmdKind, Var, VarFlags, VarKind, read_logic, read_shopts, with_term,
   with_vars, write_meta, write_vars,
@@ -278,6 +278,104 @@ pub struct LineData {
   pub mode: String,
 }
 
+pub struct StatusLine {
+  left: String,
+  middle: String,
+  right: String,
+  dirty: bool,
+}
+
+impl StatusLine {
+  pub fn new() -> Self {
+    let (left_raw,middle_raw,right_raw) = read_shopts(|o| {
+      let s = &o.statline;
+      (s.left_string.clone(), s.middle_string.clone(), s.right_string.clone())
+    });
+    let saved_status = state::get_status();
+    let left = expand_prompt(&left_raw).unwrap_or(left_raw.clone());
+    let middle = expand_prompt(&middle_raw).unwrap_or(middle_raw.clone());
+    let right = expand_prompt(&right_raw).unwrap_or(right_raw.clone());
+    state::set_status(saved_status);
+
+    Self {
+      left,
+      middle,
+      right,
+      dirty: false,
+    }
+  }
+  pub fn get_left(&mut self) -> &str {
+    if self.dirty {
+      self.refresh_now();
+    }
+    &self.left
+  }
+  pub fn get_middle(&mut self) -> &str {
+    if self.dirty {
+      self.refresh_now();
+    }
+    &self.middle
+  }
+  pub fn get_right(&mut self) -> &str {
+    if self.dirty {
+      self.refresh_now();
+    }
+    &self.right
+  }
+  pub fn parts(&mut self) -> (&str, &str, &str) {
+    if self.dirty {
+      self.refresh_now();
+    }
+    (&self.left, &self.middle, &self.right)
+  }
+  pub fn render(&mut self, term_width: usize) -> String {
+    let (left,middle,right) = self.parts();
+
+    let lw = calc_str_width(left);
+    let mw = calc_str_width(middle);
+    let rw = calc_str_width(right);
+
+    let right_w = rw.min(term_width);
+    let after_right = term_width.saturating_sub(right_w);
+
+    let middle_w = mw.min(after_right);
+    let after_middle = after_right.saturating_sub(middle_w);
+
+    let left_w = lw.min(after_middle);
+    let leftover = after_middle.saturating_sub(left_w);
+
+    let middle_str = if middle_w < mw {
+      truncate_with_ellipsis(middle, middle_w)
+    } else {
+      middle.to_string()
+    };
+
+    let left_str = if left_w < lw {
+      truncate_with_ellipsis(left, left_w)
+    } else {
+      left.to_string()
+    };
+
+    let pad_lm = " ".repeat(leftover / 2);
+    let pad_mr = " ".repeat(leftover - (leftover / 2));
+
+
+    format!("{left_str}{pad_lm}{middle_str}{pad_mr}{right}")
+  }
+  pub fn refresh(&mut self) {
+    self.dirty = true;
+  }
+  pub fn refresh_now(&mut self) {
+    *self = Self::new();
+  }
+}
+
+impl Default for StatusLine {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 pub struct Prompt {
   ps1_expanded: String,
   ps1_raw: String,
@@ -433,6 +531,7 @@ impl MacroRecord {
 
 pub struct ShedLine {
   pub prompt: Prompt,
+  pub statline: Option<StatusLine>,
   pub completer: Option<FuzzyCompleter>,
 
   pub mode: Box<dyn EditMode>,
@@ -463,6 +562,9 @@ impl ShedLine {
   }
 
   fn new_private(prompt: Prompt, with_hist: bool) -> ShResult<Self> {
+    let statline = read_shopts(|o| o.statline.enable)
+      .then(StatusLine::new);
+
     let history = if with_hist {
       if let Some(conn) = state::get_db_conn() {
         History::new(conn, "shed_history")?
@@ -484,6 +586,7 @@ impl ShedLine {
     };
     let mut new = Self {
       prompt,
+      statline,
       completer: None,
       mode,
       saved_mode: None,
@@ -508,6 +611,9 @@ impl ShedLine {
       )
     })?;
     new.prompt.refresh();
+    if let Some(line) = new.statline.as_mut() {
+      line.refresh();
+    }
     write_term!("\n").ok();
     new.print_line(false)?;
     Ok(new)
@@ -552,6 +658,10 @@ impl ShedLine {
   /// Mark that the display needs to be redrawn (e.g., after SIGWINCH)
   pub fn mark_dirty(&mut self) {
     self.needs_redraw = true;
+    self.prompt.refresh();
+    if let Some(line) = self.statline.as_mut() {
+      line.refresh();
+    }
   }
 
   pub fn reset_active_widget(&mut self, full_redraw: bool) -> ShResult<()> {
@@ -573,6 +683,9 @@ impl ShedLine {
     // Clear old display before resetting state - old_layout must survive
     // so print_line can call clear_rows with the full multi-line layout
     self.prompt.refresh();
+    if let Some(line) = self.statline.as_mut() {
+      line.refresh();
+    }
     self.editor = Default::default();
     let mut mode = if read_shopts(|o| o.set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
@@ -583,6 +696,10 @@ impl ShedLine {
     self.needs_redraw = true;
     if full_redraw {
       self.old_layout = None;
+    }
+    if self.statline.is_none() {
+      self.statline = read_shopts(|o| o.statline.enable)
+        .then(StatusLine::new);
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
@@ -675,6 +792,9 @@ impl ShedLine {
         })
         .ok();
         self.prompt.refresh();
+        if let Some(line) = self.statline.as_mut() {
+          line.refresh();
+        }
         self.needs_redraw = true;
       }
       SelectorResponse::Dismiss => {
@@ -695,6 +815,9 @@ impl ShedLine {
         })
         .ok();
         self.prompt.refresh();
+        if let Some(line) = self.statline.as_mut() {
+          line.refresh();
+        }
         self.needs_redraw = true;
       }
       SelectorResponse::Consumed => {
@@ -738,6 +861,9 @@ impl ShedLine {
         })
         .ok();
         self.prompt.refresh();
+        if let Some(line) = self.statline.as_mut() {
+          line.refresh();
+        }
 
         with_vars(
           [("COMP_CANDIDATE".into(), candidate.content().to_string())],
@@ -766,6 +892,9 @@ impl ShedLine {
         })
         .ok();
         self.prompt.refresh();
+        if let Some(line) = self.statline.as_mut() {
+          line.refresh();
+        }
         Ok(true)
       }
       CompResponse::Consumed => {
@@ -869,6 +998,7 @@ impl ShedLine {
       // Bypass keymap matching and send directly to the mode handler
       let ev = self.handle_key(key)?;
       self.update_editor_search();
+      self.editor.set_cursor_clamp(self.mode.clamp_cursor());
 
       Ok(ev)
     } else {
@@ -1001,6 +1131,9 @@ impl ShedLine {
           })
           .ok();
           self.prompt.refresh();
+          if let Some(line) = self.statline.as_mut() {
+            line.refresh();
+          }
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
@@ -1064,6 +1197,9 @@ impl ShedLine {
           })
           .ok();
           self.prompt.refresh();
+          if let Some(line) = self.statline.as_mut() {
+            line.refresh();
+          }
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
@@ -1607,13 +1743,15 @@ impl ShedLine {
       .as_ref()
       .is_some_and(|psr| new_layout.end.col + 1 < t_cols.saturating_sub(psr.width()));
 
+
+
     if !final_draw
       && let Some(seq) = pending_seq
       && !seq.is_empty()
       && !(prompt_string_right.is_some() && one_line)
       && seq_fits
       && !self.mode.is_input_mode()
-    {
+    { // write our pending sequence
       let to_col = t_cols - calc_str_width(&seq);
       let up = new_layout.cursor.row; // rows to move up from cursor to top line of prompt
 
@@ -1629,7 +1767,7 @@ impl ShedLine {
     } else if !final_draw
       && let Some(psr) = prompt_string_right
       && psr_fits
-    {
+    { // write PSR
       let to_col = t_cols - calc_str_width(&psr);
       let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
       let move_down = if down > 0 {
@@ -1649,6 +1787,43 @@ impl ShedLine {
       new_layout.psr_end = Some(Layout::calc_pos(t_cols, &psr, psr_start, 0, false));
     }
 
+    write_term!("{}", &self.mode.cursor_style()).unwrap();
+
+    // Move to end of layout for overlay draws (completer, history search)
+    let has_overlays = self.completer.is_some() || self.history_fzf().is_some();
+
+    let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
+    if has_overlays && down > 0 {
+      write_term!("\x1b[{down}B")?;
+      new_layout.cursor.row = new_layout.end.row;
+    }
+
+    // Tell the completer the width of the prompt line above its \n so it can
+    // account for wrapping when clearing after a resize.
+    let preceding_width = if new_layout.psr_end.is_some() {
+      t_cols
+    } else {
+      // Without PSR, use the content width on the cursor's row
+      (new_layout.end.col + 1).max(new_layout.cursor.col + 1)
+    };
+
+    if let Some(comp) = self.completer.as_mut() {
+      comp.set_prompt_line_context(preceding_width, new_layout.end.col);
+      let _ = comp.draw()?;
+    }
+
+    if let Some(finder) = self.history_fzf() {
+      finder.set_prompt_line_context(preceding_width, new_layout.end.col);
+      let _ = finder.draw()?;
+    }
+
+    if let Some(statline) = self.statline.as_mut() && !final_draw {
+      let cols = with_term(|t| t.t_cols());
+      let rendered = statline.render(cols);
+      with_term(|t| t.draw_status_line(&rendered));
+    }
+
+    // write sub-prompts for stuff like ex mode
     if let ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search = self.mode.report_mode() {
       let pending_seq = self.mode.pending_seq().unwrap_or_default();
       let prefix_seq = match self.mode.report_mode() {
@@ -1679,68 +1854,35 @@ impl ShedLine {
       write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
     }
 
-    write_term!("{}", &self.mode.cursor_style()).unwrap();
-
-    // Move to end of layout for overlay draws (completer, history search)
-    let has_overlays = self.completer.is_some() || self.history_fzf().is_some();
-
-    let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
-    if has_overlays && down > 0 {
-      write_term!("\x1b[{down}B")?;
-      new_layout.cursor.row = new_layout.end.row;
-    }
-
-    // Tell the completer the width of the prompt line above its \n so it can
-    // account for wrapping when clearing after a resize.
-    let preceding_width = if new_layout.psr_end.is_some() {
-      t_cols
-    } else {
-      // Without PSR, use the content width on the cursor's row
-      (new_layout.end.col + 1).max(new_layout.cursor.col + 1)
-    };
-
-    let mut fuzzy_window_rows = 0usize;
-    if let Some(comp) = self.completer.as_mut() {
-      comp.set_prompt_line_context(preceding_width, new_layout.end.col);
-      fuzzy_window_rows += comp.draw()?;
-    }
-
-    if let Some(finder) = self.history_fzf() {
-      finder.set_prompt_line_context(preceding_width, new_layout.end.col);
-      fuzzy_window_rows += finder.draw()?;
-    }
 
     while let Some(msg) = write_meta(|m| m.pop_status_message()) {
       let now = Instant::now();
       self.status_msgs.push_back((msg, now));
     }
-
     while self.status_msgs.len() > 1 {
       self.status_msgs.pop_front();
     }
 
-    while !final_draw && let Some((msg, time)) = self.status_msgs.front() {
-      if time.elapsed().as_secs() < 5 {
-        let diff = 5000.0 - time.elapsed().as_millis() as f64;
-        let timeout = PollTimeout::try_from(diff.max(0.0) as i32).unwrap_or(PollTimeout::NONE);
-        write_meta(|m| m.set_poll_timeout(Some(timeout)));
-
-        let down = new_layout.end.row - new_layout.cursor.row;
-        let fuzzy_rows = fuzzy_window_rows.saturating_sub(1); // the cursor is one row below the top
-        let total = down.saturating_add(fuzzy_rows);
-        let move_down = if total > 0 {
-          format!("\x1b[{total}B")
+    if !final_draw {
+      let content = if let Some((msg, time)) = self.status_msgs.front() {
+        let elapsed = time.elapsed().as_secs();
+        if elapsed < 5 {
+          // Schedule a wakeup so the row clears when the message expires
+          // even if the user isn't typing.
+          let diff = 5000.0 - time.elapsed().as_millis() as f64;
+          let timeout = PollTimeout::try_from(diff.max(0.0) as i32).unwrap_or(PollTimeout::NONE);
+          write_meta(|m| m.set_poll_timeout(Some(timeout)));
+          // Reserved row is single-line; if the message has multiple lines,
+          // show only the first one.
+          msg.lines().next().unwrap_or("").to_string()
         } else {
+          self.status_msgs.pop_front();
           String::new()
-        };
-        let move_up = total + 2;
-        let col = new_layout.cursor.col + 1;
-        write_term!("{move_down}\n\n\x1b7\x1b[2K{msg}\x1b8\x1b[{move_up}A\x1b[{col}G")?;
-        new_layout.end.row += 2 + msg.chars().filter(|c| *c == '\n').count();
-        break;
+        }
       } else {
-        self.status_msgs.pop_front();
-      }
+        String::new()
+      };
+      with_term(|t| t.draw_status_message(&content));
     }
 
     self.old_layout = Some(new_layout);
@@ -1763,6 +1905,9 @@ impl ShedLine {
     })
     .ok();
     self.prompt.refresh();
+    if let Some(line) = self.statline.as_mut() {
+      line.refresh();
+    }
 
     let post_mode_change = read_logic(|l| l.get_autocmds(AutoCmdKind::PostModeChange));
     post_mode_change.exec();
@@ -1861,6 +2006,9 @@ impl ShedLine {
         )
       })?;
       self.prompt.refresh();
+      if let Some(line) = self.statline.as_mut() {
+        line.refresh();
+      }
       return Ok(());
     }
 
@@ -1902,6 +2050,9 @@ impl ShedLine {
       )
     })?;
     self.prompt.refresh();
+    if let Some(line) = self.statline.as_mut() {
+      line.refresh();
+    }
 
     Ok(())
   }
@@ -2117,6 +2268,9 @@ impl ShedLine {
     if is_shell_cmd {
       self.needs_redraw = true;
       self.prompt.refresh();
+      if let Some(line) = self.statline.as_mut() {
+        line.refresh();
+      }
     }
 
     res

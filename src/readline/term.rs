@@ -122,6 +122,44 @@ pub fn calc_str_width(s: &str) -> usize {
   s.graphemes(true).map(|g| width(g, &mut esc_seq)).sum()
 }
 
+pub fn truncate_visual(s: &str, max_width: usize) -> String {
+  let mut out = String::new();
+  let mut visible = 0;
+  let mut esc_seq = 0u8;
+  let mut wrote_anything_visible = false;
+
+  for g in s.graphemes(true) {
+    let w = width(g, &mut esc_seq);
+    if esc_seq == 0 && visible + w > max_width {
+      break;
+    }
+    out.push_str(g);
+    visible += w;
+    if w > 0 {
+      wrote_anything_visible = true;
+    }
+  }
+
+  if wrote_anything_visible {
+    out.push_str("\x1b[0m");
+  }
+  out
+}
+
+pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
+  if calc_str_width(s) <= max_width {
+    return s.to_string();
+  }
+  if max_width <= 3 {
+    // Not enough room even for the ellipsis itself; just hard-truncate.
+    return truncate_visual(s, max_width);
+  }
+  let mut out = truncate_visual(s, max_width - 3);
+  out.push_str("...");
+  out
+}
+
+
 // Big credit to rustyline for this
 fn width(s: &str, esc_seq: &mut u8) -> usize {
   if *esc_seq == 1 {

@@ -1210,7 +1210,7 @@ pub struct FuzzyLayout {
   preceding_cursor_col: usize,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug)]
 pub struct QueryEditor {
   mode: ViInsert,
   scroll_offset: usize,

@@ -3055,7 +3055,7 @@ impl LineBuf {
         }
 
         Motion::RepeatMotion | Motion::RepeatMotionRev => {
-          unreachable!("Repeat motions should have been resolved in readline/mod.rs")
+          None
         }
         Motion::Null => None,
         Motion::Selection(mode) => {

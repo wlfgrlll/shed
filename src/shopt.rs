@@ -165,6 +165,7 @@ pub struct ShOpts {
   pub set: ShOptSet,
   pub prompt: ShOptPrompt,
   pub highlight: ShOptHighlight,
+  pub statline: ShOptStatLine,
 }
 
 impl Default for ShOpts {
@@ -174,6 +175,7 @@ impl Default for ShOpts {
     let set = ShOptSet::default();
     let prompt = ShOptPrompt::default();
     let highlight = ShOptHighlight::default();
+    let statline = ShOptStatLine::default();
 
     Self {
       core,
@@ -181,6 +183,7 @@ impl Default for ShOpts {
       set,
       prompt,
       highlight,
+      statline
     }
   }
 }
@@ -209,6 +212,10 @@ impl ShOpts {
 
     lines.push("# - Syntax Highlighting -".into());
     lines.extend(ShOptHighlight::generate_rc_lines());
+    lines.push(String::new());
+
+    lines.push("# - Status Line -".into());
+    lines.extend(ShOptStatLine::generate_rc_lines());
     lines
   }
 
@@ -228,6 +235,7 @@ impl ShOpts {
       self.query("set")?.unwrap_or_default().to_string(),
       self.query("prompt")?.unwrap_or_default().to_string(),
       self.query("highlight")?.unwrap_or_default().to_string(),
+      self.query("statline")?.unwrap_or_default().to_string(),
     ];
 
     Ok(output.join("\n"))
@@ -247,6 +255,7 @@ impl ShOpts {
       "set" => self.set.set(&remainder, val)?,
       "prompt" => self.prompt.set(&remainder, val)?,
       "highlight" => self.highlight.set(&remainder, val)?,
+      "statline" => self.statline.set(&remainder, val)?,
       _ => {
         return Err(sherr!(SyntaxErr, "shopt: Unknown shopt set '{}'", key,));
       }
@@ -268,6 +277,7 @@ impl ShOpts {
       "set" => self.set.get(&remainder),
       "prompt" => self.prompt.get(&remainder),
       "highlight" => self.highlight.get(&remainder),
+      "statline" => self.statline.get(&remainder),
       _ => Err(sherr!(SyntaxErr, "shopt: Unknown shopt set '{}'", key,)),
     }
   }
@@ -448,6 +458,23 @@ shopt_group! {
 
     /// If set, expands aliases on the prompt instead of after submitting
     expand_aliases: bool = true,
+  }
+}
+
+shopt_group! {
+  #[derive(Clone, Debug)]
+  pub struct ShOptStatLine ("statline") {
+    /// Whether to enable the status line
+    enable: bool = true,
+
+    /// The raw string used for the left side of the status line.
+    left_string: String = "".into(),
+
+    /// The raw string used for the middle of the status line.
+    middle_string: String = "".into(),
+
+    /// The raw string used for the right side of the status line.
+    right_string: String = "".into(),
   }
 }
 

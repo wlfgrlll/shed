@@ -22,6 +22,9 @@ pub struct TermGuard {
   mouse_support: Option<bool>,
   interactive: Option<bool>,
   termios_depth: Option<usize>,
+  /// Outer Option: did this guard capture the scroll region?
+  /// Inner Option: was a scroll region active at capture time?
+  scroll_region: Option<Option<(u16, u16)>>,
 
   /// This determines whether the drop impl will actually restore the state or not.
   active: bool,
@@ -39,6 +42,7 @@ impl TermGuard {
       mouse_support: None,
       interactive: None,
       termios_depth: None,
+      scroll_region: None,
       active: false,
     }
   }
@@ -105,6 +109,13 @@ impl TermGuard {
     self.termios_depth = Some(termios_depth);
     self
   }
+  pub fn with_scroll_region(mut self, scroll_region: Option<(u16, u16)>) -> Self {
+    if self.active {
+      return self;
+    }
+    self.scroll_region = Some(scroll_region);
+    self
+  }
   pub fn raw_mode(&self) -> Option<bool> {
     self.raw_mode
   }
@@ -131,6 +142,9 @@ impl TermGuard {
   }
   pub fn termios_depth(&self) -> Option<usize> {
     self.termios_depth
+  }
+  pub fn scroll_region(&self) -> Option<Option<(u16, u16)>> {
+    self.scroll_region
   }
 
   pub fn activate(self) -> Self {

@@ -379,6 +379,34 @@
           default = {};
           description = "Settings related to the prompt (i.e. the 'shopt prompt.*' options)";
         };
+        statline = lib.mkOption {
+          type = lib.types.submodule {
+            options = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Whether to enable the status line at the bottom of the terminal";
+              };
+              left_string = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Prompt-style template for the left-justified portion of the status line";
+              };
+              middle_string = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Prompt-style template for the centered portion of the status line";
+              };
+              right_string = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Prompt-style template for the right-justified portion of the status line";
+              };
+            };
+          };
+          default = {};
+          description = "Settings related to the status line (i.e. the 'shopt statline.*' options)";
+        };
         highlight = lib.mkOption {
           type = lib.types.submodule {
             options = {

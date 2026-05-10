@@ -117,6 +117,11 @@ lib.concatLines [
         "shopt prompt.hist_cat=${boolToString cfg.shopts.prompt.hist_cat}"
         "shopt prompt.expand_aliases=${boolToString cfg.shopts.prompt.expand_aliases}"
 
+        "shopt statline.enable=${boolToString cfg.shopts.statline.enable}"
+        "shopt statline.left_string='${escape cfg.shopts.statline.left_string}'"
+        "shopt statline.middle_string='${escape cfg.shopts.statline.middle_string}'"
+        "shopt statline.right_string='${escape cfg.shopts.statline.right_string}'"
+
         ''shopt highlight.enable="${boolToString cfg.shopts.highlight.enable}"''
         ''shopt highlight.string="${cfg.shopts.highlight.string}"''
         ''shopt highlight.keyword="${cfg.shopts.highlight.keyword}"''

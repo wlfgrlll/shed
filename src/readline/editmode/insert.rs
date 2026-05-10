@@ -1,12 +1,14 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
 use crate::readline::editcmd::{Direction, EditCmd, Motion, MotionCmd, To, Verb, VerbCmd, Word};
+use crate::readline::editmode::ViNormal;
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::CursorStyle;
+use crate::state::{CursorStyle, VarFlags, VarKind, write_vars};
 use crate::{key, motion, verb};
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Debug)]
 pub struct ViInsert {
   cmds: Vec<EditCmd>,
+  normal: Option<ViNormal>,
   pending_cmd: EditCmd,
   repeat_count: u16,
 }
@@ -40,6 +42,7 @@ impl ViInsert {
       .iter()
       .filter(|cmd: &&EditCmd| matches!(cmd.verb(), Some(VerbCmd(1, Verb::Delete))))
       .count();
+
     insert_count > backspace_count
   }
   pub fn register_cmd(&mut self, cmd: &EditCmd) {
@@ -52,6 +55,37 @@ impl ViInsert {
 
 impl EditMode for ViInsert {
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
+    if let Some(mut normal) = self.normal.take() {
+      if matches!(key, key!(Esc)) {
+        write_vars(|v| {
+          v.set_var(
+            "SHED_EDIT_MODE",
+            VarKind::Str("INSERT".into()),
+            VarFlags::NONE,
+          )
+        }).ok();
+        return None;
+      }
+
+      let Some(cmd) = normal.handle_key(key) else {
+        self.normal = Some(normal);
+        return None;
+      };
+
+      write_vars(|v| {
+        v.set_var(
+          "SHED_EDIT_MODE",
+          VarKind::Str("INSERT".into()),
+          VarFlags::NONE,
+        )
+      }).ok();
+
+      if cmd.verb_is(Verb::InsertMode) && cmd.motion_is(Motion::BackwardChar) {
+        // they pressed 'i', no op
+        return None;
+      }
+      return Some(cmd);
+    }
     match key {
       E(K::Char(ch), M::NONE) => {
         self.pending_cmd.set_verb(verb!(Verb::InsertChar(ch)));
@@ -70,6 +104,18 @@ impl EditMode for ViInsert {
           .pending_cmd
           .set_verb(verb!(Verb::Insert(seq.to_string())));
         self.register_and_return()
+      }
+      key!(Ctrl + 'o') => {
+        let mode = ViNormal::new();
+        self.normal = Some(mode);
+        write_vars(|v| {
+          v.set_var(
+            "SHED_EDIT_MODE",
+            VarKind::Str("(insert)".into()),
+            VarFlags::NONE,
+          )
+        }).ok();
+        None
       }
       key!(Ctrl + 'w') => {
         self.pending_cmd.set_verb(verb!(Verb::Delete));
@@ -121,21 +167,27 @@ impl EditMode for ViInsert {
   }
 
   fn cursor_style(&self) -> String {
-    CursorStyle::Beam(false).to_string()
+    self.normal.as_ref().map(|n| n.cursor_style()).unwrap_or_else(|| {
+      CursorStyle::Beam(false).to_string()
+    })
   }
   fn pending_seq(&self) -> Option<String> {
-    None
+    self.normal.as_ref().and_then(|n| n.pending_seq())
   }
   fn move_cursor_on_undo(&self) -> bool {
-    true
+    self.normal.is_none()
   }
   fn clamp_cursor(&self) -> bool {
-    false
+    self.normal.is_some()
   }
   fn hist_scroll_start_pos(&self) -> Option<To> {
     Some(To::End)
   }
   fn report_mode(&self) -> ModeReport {
-    ModeReport::Insert
+    if self.normal.is_some() {
+      ModeReport::Normal
+    } else {
+      ModeReport::Insert
+    }
   }
 }
