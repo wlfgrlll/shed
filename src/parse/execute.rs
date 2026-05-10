@@ -1148,6 +1148,26 @@ impl Dispatcher {
           sherr!(NotFound @ span, "command not found")
             .with_context(context)
             .print_error();
+
+          unsafe { nix::libc::_exit(127) };
+        }
+        Errno::EACCES => {
+          sherr!(BadPermission @ span, "permission denied")
+            .with_context(context)
+            .print_error();
+          unsafe { nix::libc::_exit(126) };
+        }
+        Errno::EISDIR => {
+          sherr!(ExecFail @ span, "is a directory")
+            .with_context(context)
+            .print_error();
+          unsafe { nix::libc::_exit(126) };
+        }
+        Errno::ENOEXEC => {
+          sherr!(ExecFail @ span, "exec format error")
+            .with_context(context)
+            .print_error();
+          unsafe { nix::libc::_exit(126) };
         }
         _ => {
           sherr!(Errno(e) @ span, "{e}")
@@ -1155,6 +1175,9 @@ impl Dispatcher {
             .print_error();
         }
       }
+
+
+
       unsafe { nix::libc::_exit(e as i32) }
     };
 

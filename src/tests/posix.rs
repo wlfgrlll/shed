@@ -592,8 +592,8 @@ mod reserved_words_2_4 {
     sup_squote_arg    : r#"echo 'if'"#                => "if\n";
     sup_dquote_arg    : r#"echo "then""#              => "then\n";
 
-    sup_quoted_bang   : r#"'!' 2>/dev/null; echo $?"# => "2\n";
-    sup_escaped_if    : r#"\if 2>/dev/null; echo $?"# => "2\n";
+    sup_quoted_bang   : r#"'!' 2>/dev/null; echo $?"# => "127\n";
+    sup_escaped_if    : r#"\if 2>/dev/null; echo $?"# => "127\n";
   }
 
   // Positional rules specific to `case` and `for`.
@@ -711,7 +711,7 @@ mod params_and_vars_2_5 {
       dollar_q_explicit_exit  : "(exit 42); echo $?"                   => "42\n";
       dollar_q_only_last      : "false; true; echo $?"                 => "0\n";
       dollar_q_after_pipe     : "true | false; echo $?"                => "1\n";
-      dollar_q_cmd_not_found  : "no_such_cmd_xyz 2>/dev/null; echo $?" => "2\n";
+      dollar_q_cmd_not_found  : "no_such_cmd_xyz 2>/dev/null; echo $?" => "127\n";
     }
 
     test_input! {
