@@ -13,7 +13,7 @@ The following builtins are available:
   `bg`          resume a stopped job in the background      |builtin-bg|
   `cd`          change the working directory                |builtin-cd|
   `compadd`     register completion candidates              |builtin-compadd|
-  `compgen`     emit completion candidates                  |builtin-compadd|
+  `compgen`     emit completion candidates                  |builtin-compgen|
   `complete`    define custom tab completion rules          |builtin-complete|
   `declare`     declare variables with type and attributes  |builtin-declare|
   `defer`       register cleanup tied to scope exit         |builtin-defer|
