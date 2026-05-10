@@ -180,6 +180,8 @@ pub mod markers {
 }
 type Marker = char;
 
+pub const DEFAULT_PS1: &str = "\\e[0m\\n\\e[1;0m\\u\\e[1;36m@\\e[1;31m\\h\\n\\e[1;36m\\W\\e[1;32m/\\n\\e[1;32m\\$\\e[0m ";
+
 /// A simple line editor with optional history
 ///
 /// Used for simpler text inputs like Ex mode and the help builtin's search bar
@@ -385,8 +387,6 @@ pub struct Prompt {
 }
 
 impl Prompt {
-  const DEFAULT_PS1: &str =
-    "\\e[0m\\n\\e[1;0m\\u\\e[1;36m@\\e[1;31m\\h\\n\\e[1;36m\\W\\e[1;32m/\\n\\e[1;32m\\$\\e[0m ";
   pub fn new() -> Self {
     let pre_prompt = read_logic(|l| l.get_autocmds(AutoCmdKind::PrePrompt));
     pre_prompt.exec();
@@ -461,9 +461,9 @@ impl Prompt {
 impl Default for Prompt {
   fn default() -> Self {
     Self {
-      ps1_expanded: expand_prompt(Self::DEFAULT_PS1)
-        .unwrap_or_else(|_| Self::DEFAULT_PS1.to_string()),
-      ps1_raw: Self::DEFAULT_PS1.to_string(),
+      ps1_expanded: expand_prompt(DEFAULT_PS1)
+        .unwrap_or_else(|_| DEFAULT_PS1.to_string()),
+      ps1_raw: DEFAULT_PS1.to_string(),
       psr_expanded: None,
       psr_raw: None,
       dirty: false,

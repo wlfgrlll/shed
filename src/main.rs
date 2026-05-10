@@ -436,10 +436,15 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
   // status line itself (row t_rows) and one above it as visual breathing
   // room (row t_rows - 1, left blank). The scroll region ends 2 rows
   // before the bottom so the prompt can't render into either reserved row.
+  // Also park the cursor at the bottom of the new region so the first
+  // prompt draws from the bottom (same position subsequent prompts land
+  // after command execution), giving a consistent tmux-like layout.
   if read_shopts(|o| o.statline.enable) {
-    with_term(|t| {
+    with_term(|t| -> ShResult<()> {
       let bottom = (t.t_rows() as u16).saturating_sub(2).max(1);
-      t.set_scroll_region(1, bottom)
+      t.set_scroll_region(1, bottom)?;
+      t.move_cursor_abs(bottom, 1);
+      Ok(())
     })?;
   }
 
