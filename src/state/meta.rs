@@ -1212,7 +1212,19 @@ impl MetaTab {
     for path in paths {
       if let Ok(entries) = path.read_dir() {
         for entry in entries.flatten() {
-          let Ok(meta) = std::fs::metadata(entry.path()) else {
+          // file_type() is free (uses dirent.d_type when available). For
+          // regular files, entry.metadata() avoids the full-path resolution
+          // that std::fs::metadata(entry.path()) would do. For symlinks we
+          // must use the path-based stat so the target is followed (PATH
+          // entries on NixOS / Homebrew are routinely symlink farms).
+          let ft = entry.file_type().ok();
+          let is_symlink = ft.is_some_and(|t| t.is_symlink());
+          let meta = if is_symlink {
+            std::fs::metadata(entry.path())
+          } else {
+            entry.metadata()
+          };
+          let Ok(meta) = meta else {
             continue;
           };
           let is_exec = meta.permissions().mode() & 0o111 != 0;
@@ -1235,7 +1247,14 @@ impl MetaTab {
     let mut files = vec![];
     if let Ok(entries) = Path::new(&cwd).read_dir() {
       for entry in entries.flatten() {
-        let Ok(meta) = std::fs::metadata(entry.path()) else {
+        let ft = entry.file_type().ok();
+        let is_symlink = ft.is_some_and(|t| t.is_symlink());
+        let meta = if is_symlink {
+          std::fs::metadata(entry.path())
+        } else {
+          entry.metadata()
+        };
+        let Ok(meta) = meta else {
           continue;
         };
         let is_exec = meta.permissions().mode() & 0o111 != 0;

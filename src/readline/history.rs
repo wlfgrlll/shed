@@ -126,10 +126,42 @@ impl History {
       virt_cursor: 0,
       max_size,
     };
-    let entries = query_masked(None, &hist.conn, &hist.table);
+    // Ensure the cache slot exists so consumers don't see a missing key
+    // before the async load finishes.
     if let Ok(mut cache) = HIST_ENTRIES.write() {
-      cache.insert(hist.table.clone(), entries);
+      cache.entry(hist.table.clone()).or_default();
     }
+
+    // Load the existing history asynchronously. `History::push` can run
+    // concurrently and mutate the cache while we're loading; when the load
+    // completes we merge by treating any commands already in the cache
+    // (added by push during load) as the authoritative newer entry.
+    let table_name = hist.table.clone();
+    std::thread::spawn(move || {
+      do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
+        let Some(conn) = state::open_db_conn().ok() else {
+          return;
+        };
+        conn.execute_batch("PRAGMA journal_mode=WAL").ok();
+        let loaded = query_masked(None, &conn, &table_name);
+        if let Ok(mut cache) = HIST_ENTRIES.write() {
+          let existing = cache.entry(table_name).or_default();
+          // Anything already in the cache was pushed during the load and is
+          // newer than what we just queried; drop loaded entries shadowed
+          // by those pushes (matches GROUP BY command + MAX(timestamp)
+          // semantics in `query_masked`).
+          let pushed_cmds: std::collections::HashSet<String> =
+            existing.iter().map(|e| e.command.clone()).collect();
+          let mut merged: Vec<HistEntry> = loaded
+            .into_iter()
+            .filter(|e| !pushed_cmds.contains(&e.command))
+            .collect();
+          merged.append(existing);
+          *existing = merged;
+        }
+      });
+    });
+
     hist.reset();
     Ok(hist)
   }
@@ -160,6 +192,11 @@ impl History {
 				runtime	INTEGER NOT NULL DEFAULT 0,
 				command TEXT NOT NULL
 			);
+			-- Composite index supports `query_masked`'s GROUP BY command + MAX(timestamp).
+			-- Without it, the planner falls back to full-table scan + hash aggregate +
+			-- sort, which dominated CPU profiles on large histories.
+			CREATE INDEX IF NOT EXISTS {table}_command_ts_idx
+				ON {table}(command, timestamp DESC);
 		"#
     ))?;
 
@@ -248,8 +285,26 @@ impl History {
 
     self.conn.execute(
       &format!("INSERT INTO {table} (id, timestamp, runtime, command, cwd, token) VALUES (?1, ?2, 0, ?3, ?4, ?5)"),
-      rusqlite::params![new_id, timestamp, command, cwd, token.to_string()],
+      rusqlite::params![new_id, timestamp, command.clone(), cwd.clone(), token.to_string()],
     )?;
+
+    // Incremental cache update: the new entry supersedes any prior entry with
+    // the same command (matching `query_masked`'s GROUP BY semantics).
+    // Avoids the post-command SQLite re-query that dominated CPU profiles.
+    let entry = HistEntry {
+      runtime: Duration::default(),
+      timestamp: SystemTime::now(),
+      command: command.clone(),
+      cwd: cwd.unwrap_or_default(),
+      status: 0,
+      token,
+    };
+    if let Ok(mut cache) = HIST_ENTRIES.write() {
+      let table_entries = cache.entry(self.table.clone()).or_default();
+      table_entries.retain(|e| e.command != command);
+      table_entries.push(entry);
+    }
+
     Ok(Some(token))
   }
 
