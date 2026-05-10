@@ -1,6 +1,6 @@
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
 use crate::readline::linebuf::{Lines, Pos, ordered};
-use crate::readline::register::{RegisterContent, append_register, read_register};
+use crate::readline::register::{RegisterContent, append_register, read_register, write_register};
 use crate::{flush_term, motion, status_msg, verb, write_term};
 use editcmd::{CmdFlags, EditCmd, Motion, MotionCmd, RegisterName, Verb, VerbCmd};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
@@ -1361,6 +1361,7 @@ impl ShedLine {
       let Some(register) = cmd.register.name() else {
         return Ok(None)
       };
+      write_register(Some(register), RegisterContent::Macro(vec![]));
       self.macro_record = MacroRecord::Recording(register);
       return Ok(None);
     }
