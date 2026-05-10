@@ -22,7 +22,7 @@ use nix::unistd::{Pid, isatty, read, write};
 use smallvec::SmallVec;
 
 use crate::builtin::keymap::KeyMapMatch;
-use crate::builtin::{source_builtin_completions, source_builtin_functions};
+use crate::builtin::{source_builtin_completions, source_builtin_scripts};
 use crate::builtin::trap::TrapTarget;
 use crate::expand::expand_keymap;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
@@ -455,22 +455,17 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     e.print_error();
   }
 
-  source_builtin_functions();
+  source_builtin_scripts();
   source_builtin_completions();
 
   if let Ok(welcome) = std::env::var("SHELL_WELCOME") {
     // support for systemd's run0 message
-    errln!("{welcome}");
+    errln!("\n{welcome}\n\n");
   }
 
-  // If the status line is enabled, reserve the bottom 2 rows: one for the
-  // status line itself (row t_rows) and one above it as visual breathing
-  // room (row t_rows - 1, left blank). The scroll region ends 2 rows
-  // before the bottom so the prompt can't render into either reserved row.
-  // Also park the cursor at the bottom of the new region so the first
-  // prompt draws from the bottom (same position subsequent prompts land
-  // after command execution), giving a consistent tmux-like layout.
   if read_shopts(|o| o.statline.enable) {
+    // statline enabled, reserve scroll region rows
+    // also move the cursor down there too
     with_term(|t| -> ShResult<()> {
       let bottom = (t.t_rows() as u16).saturating_sub(2).max(1);
       t.set_scroll_region(1, bottom)?;

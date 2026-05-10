@@ -48,32 +48,44 @@ pub mod times;
 pub mod trap;
 pub mod varcmds;
 
-macro_rules! register_functions {
-  ($($name:literal => $script:expr),* $(,)?) => {
-    static FUNCTIONS: &[(&str,&str)] = &[
-      $(($name, $script)),*
+/// Embed a completion script directly in the binary.
+///
+/// The script has to define a completion function *and* call complete -F {func} {name}
+macro_rules! embed {
+  ($path:literal) => {
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))
+  };
+}
+
+/// Register a script to embed in the binary and source on shell startup
+///
+/// These are mainly used for builtin functions, aliases and utility variables
+macro_rules! register_scripts {
+  ($($path:literal),* $(,)?) => {
+    static SCRIPTS: &[(&str,&str)] = &[
+      $(($path, embed!($path))),*
     ];
 
-    pub fn source_builtin_functions() {
-      for (name, src) in FUNCTIONS {
-        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{name} func").into())) {
+    pub fn source_builtin_scripts() {
+      for (path, src) in SCRIPTS {
+        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
           e.print_error();
         }
       }
     }
 
     #[cfg(test)]
-    mod func_test {
+    mod script_test {
       #[test]
       fn builtin_functions_pass() {
-        let failures: Vec<&str> = super::FUNCTIONS.iter()
-          .filter(|(name,src)| {
+        let failures: Vec<&str> = super::SCRIPTS.iter()
+          .filter(|(path,src)| {
             $crate::parse::execute::exec_nonint(
               src.to_string(),
-              Some(format!("{name} func").into())
+              Some(format!("{path}").into())
             ).is_err()
           })
-          .map(|(name,_)| *name)
+          .map(|(path,_)| *path)
           .collect();
         assert!(failures.is_empty(), "Functions failed to source: {failures:?}");
       }
@@ -240,15 +252,6 @@ macro_rules! compgen {
   };
 }
 
-/// Embed a completion script directly in the binary.
-///
-/// The script has to define a completion function *and* call complete -F {func} {name}
-macro_rules! embed {
-  ($path:literal) => {
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))
-  };
-}
-
 register_completions! {
   "unalias"  => compgen!("unalias",  "-a"),
   "alias"    => compgen!("alias",    "-a"),
@@ -286,8 +289,8 @@ register_completions! {
   "hist"     => embed!("completions/hist_comp.shed"),
 }
 
-register_functions! {
-  "version"  => embed!("version.shed"),
+register_scripts! {
+  "version.shed",
 }
 
 /// Lookup a name in the builtin table via binary search

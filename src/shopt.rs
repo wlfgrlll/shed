@@ -88,9 +88,10 @@ macro_rules! shopt_group {
               })?;
               $(
                 let validate: fn(&$ty) -> Result<(), String> = $validator;
-                if let Err(e) = validate(&parsed).map_err(|msg| {
-                  sherr!(SyntaxErr, "shopt: {msg}")
-                }) { e.print_error(); return $crate::util::with_status(1) }
+                if let Err(e) = validate(&parsed).map_err(|msg| sherr!(SyntaxErr, "shopt: {msg}")) {
+                  $crate::state::set_status(2);
+                  return Err(e);
+                }
               )?
               self.$field = parsed;
             }
@@ -570,7 +571,7 @@ mod tests {
     opts.set("core.max_hist", "-1").unwrap();
     assert_eq!(opts.core.max_hist, -1);
 
-    opts.set("core.max_hist", "-500").unwrap();
+    opts.set("core.max_hist", "-500").unwrap_err();
     assert_status_ne!(0);
   }
 

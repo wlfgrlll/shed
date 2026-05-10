@@ -228,7 +228,7 @@ impl ShErr {
   /// Promotes a shell error from a simple error to an error that blames a span
   pub fn promote(mut self, span: Span) -> Self {
     if self.notes.is_empty() {
-      return self;
+      return self.try_blame(span);
     }
     let first = self.notes[0].clone();
     if self.notes.len() > 1 {
@@ -237,7 +237,7 @@ impl ShErr {
       self.notes = vec![];
     }
 
-    self.labeled(span, first)
+    self.try_blame(span.clone()).labeled(span, first)
   }
   /// Persist all io guards, closing saved fds without restoring them.
   /// Use this when an error is being converted to a control flow signal
@@ -277,41 +277,13 @@ impl ShErr {
         .with_message(msg),
     )
   }
-  pub fn blame(self, span: Span) -> Self {
-    let ShErr {
-      kind,
-      src_span: _,
-      labels,
-      sources,
-      notes,
-      io_guards,
-    } = self;
-    Self {
-      kind,
-      src_span: Some(span),
-      labels,
-      sources,
-      notes,
-      io_guards,
-    }
+  pub fn blame(mut self, span: Span) -> Self {
+    self.src_span = Some(span);
+    self
   }
   pub fn try_blame(self, span: Span) -> Self {
     match self {
-      ShErr {
-        kind,
-        src_span: None,
-        labels,
-        sources,
-        notes,
-        io_guards,
-      } => Self {
-        kind,
-        src_span: Some(span),
-        labels,
-        sources,
-        notes,
-        io_guards,
-      },
+      ShErr { src_span: None, .. } => Self { src_span: Some(span), ..self },
       _ => self,
     }
   }
@@ -330,66 +302,21 @@ impl ShErr {
     }
     self
   }
-  pub fn with_label(self, source: SpanSource, label: ariadne::Label<Span>) -> Self {
-    let ShErr {
-      kind,
-      src_span,
-      mut labels,
-      mut sources,
-      notes,
-      io_guards,
-    } = self;
-    sources.push(source);
-    labels.push(label);
-    Self {
-      kind,
-      src_span,
-      labels,
-      sources,
-      notes,
-      io_guards,
-    }
+  pub fn with_label(mut self, source: SpanSource, label: ariadne::Label<Span>) -> Self {
+    self.sources.push(source);
+    self.labels.push(label);
+    self
   }
-  pub fn with_context(self, ctx: VecDeque<(SpanSource, ariadne::Label<Span>)>) -> Self {
-    let ShErr {
-      kind,
-      src_span,
-      mut labels,
-      mut sources,
-      notes,
-      io_guards,
-    } = self;
+  pub fn with_context(mut self, ctx: VecDeque<(SpanSource, ariadne::Label<Span>)>) -> Self {
     for (src, label) in ctx {
-      sources.push(src);
-      labels.push(label);
+      self.sources.push(src);
+      self.labels.push(label);
     }
-    Self {
-      kind,
-      src_span,
-      labels,
-      sources,
-      notes,
-      io_guards,
-    }
+    self
   }
-  pub fn with_note(self, note: impl Into<String>) -> Self {
-    let ShErr {
-      kind,
-      src_span,
-      labels,
-      sources,
-      mut notes,
-      io_guards,
-    } = self;
-    notes.push(note.into());
-    Self {
-      kind,
-      src_span,
-      labels,
-      sources,
-      notes,
-      io_guards,
-    }
+  pub fn with_note(mut self, note: impl Into<String>) -> Self {
+    self.notes.push(note.into());
+    self
   }
   pub fn build_report(&self) -> Option<Report<'_, Span>> {
     let span = self.src_span.as_ref()?;
