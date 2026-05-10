@@ -13,6 +13,27 @@ use crate::{
   util::{has_unescaped, strops::{QuoteState, split_at_unescaped}},
 };
 
+/*
+ * Context Lexing
+ *
+ * When it comes to things like syntax highlighting and tab completion,
+ * we need a specialized approach to figuring out what a span of text "is".
+ * Normal lexing via LexStream works for getting arguments and stuff, but
+ * is not great for problems like "the user pressed tab, what is the cursor sitting on?"
+ *
+ * This module proposes a solution to this issue. We'll use the LexStream as usual,
+ * but every Tk will be processed into a CtxTk, which is a wrapper for Tk that contains
+ * more contextual metadata.
+ *
+ * Tk is itself a wrapper for a Span, and as such is just a flat line of text.
+ * CtxTk carries a vector of sub-tokens, which allows us to take something
+ * like `foo"bar $(echo biz) baz"buzz` which is itself a single token, and construct
+ * a tree-like structure from the tokens nested within it. This tree can then be walked
+ * to find what a specific byte position represents.
+ *
+ */
+
+/// Turn raw shell input into CtxTks
 pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
   let mut out: Vec<CtxTk> = LexStream::new(input.into(), LexFlags::LEX_UNFINISHED)
     .filter_map(Result::ok)
@@ -261,7 +282,10 @@ pub enum CtxTkRule {
 /// A token with richer contextual data than `Tk`
 ///
 /// These tokens exist somewhere inbetween 'token' and 'AST'.
-/// This type allows for modeling the total analysis of stuff like `foo"bar $biz baz"buzz` which is ultimately read as a single token but contains nested context information that is relevant for things like autocompletion and syntax highlighting.
+/// This type allows for modeling the total analysis of stuff like `foo"bar $biz baz"buzz` which is
+/// ultimately read as a single token but contains nested context information that is relevant
+/// for things like autocompletion and syntax highlighting.
+///
 /// This nesting of 'subtokens' allows for entire trees to be created in cases of heavily nested expressions.
 #[derive(Debug, Clone)]
 pub struct CtxTk {
@@ -369,10 +393,12 @@ impl CtxTk {
     }
   }
 
-  // split functions
-  // not splitting on points that fall inside of child tokens is an invariant
-  // similar to char boundaries in strings.
-
+  /// Check if a position is a valid split point
+  ///
+  /// Valid split points are those that are strictly within the token's span,
+  /// and do not fall within any of its subtokens' spans.
+  ///
+  /// This is used to determine if we can split a token at a given position without breaking any nested structures.
   pub fn can_split_at(&self, at: usize) -> bool {
     let r = self.span.range();
     if !(r.start..r.end).contains(&at) {
@@ -384,6 +410,10 @@ impl CtxTk {
     })
   }
 
+  /// Split a CtxTk at a specific byte position
+  ///
+  /// The split point must be a valid split point as defined by `can_split_at`.
+  /// Panics if the split point is invalid.
   pub fn split_at(self, at: usize) -> (CtxTk, CtxTk) {
     assert!(
       self.can_split_at(at),
@@ -423,6 +453,16 @@ impl CtxTk {
     )
   }
 
+  pub fn split_at_checked(&self, at: usize) -> Option<(CtxTk,CtxTk)> {
+    if !self.can_split_at(at) {
+      return None;
+    }
+    Some(self.clone().split_at(at))
+  }
+
+  /// Get the position of the cursor relative to the start of this token, if it falls within the token's span
+  ///
+  /// Returns None if the cursor is outside the token's span
   pub fn relative_cursor_pos(&self, at: usize) -> Option<usize> {
     if !self.range_inclusive().contains(&at) {
       return None;
@@ -446,7 +486,9 @@ impl CtxTk {
 
   /// Get the entire vertical slice that the cursor intersects with
   ///
-  /// Sorted by depth, deepest are at the end. Calling .pop() on the result will give you the most specific token under the cursor, and the rest of the vector will be its parents up to the root.
+  /// Sorted by depth, deepest are at the end.
+  /// Calling .pop() on the result will give you the most specific token under the cursor,
+  /// and the rest of the vector will be its parents up to the root.
   pub fn get_branch(&self, cursor_pos: usize) -> Vec<&CtxTk> {
     self.get_branch_inner(cursor_pos, vec![])
   }

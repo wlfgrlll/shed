@@ -4,6 +4,7 @@
   clippy::while_let_on_iterator,
   clippy::result_large_err
 )]
+use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::{AsRawFd, BorrowedFd};
@@ -23,9 +24,11 @@ use smallvec::SmallVec;
 use crate::builtin::keymap::KeyMapMatch;
 use crate::builtin::{source_builtin_completions, source_builtin_functions};
 use crate::builtin::trap::TrapTarget;
+use crate::expand::expand_keymap;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
 use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno};
 use crate::readline::editmode::ModeReport;
+use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::{Hint, Lines, Pos};
 use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
 use crate::readline::{LineData, Prompt, ReadlineEvent, ShedLine};
@@ -88,6 +91,9 @@ struct ShedArgs {
 
   #[arg(long)]
   no_rc: bool,
+
+  #[arg(long)]
+  edit_script: bool,
 }
 
 /// We need to make sure that even if we panic, our child processes get sighup
@@ -171,16 +177,7 @@ fn main() -> ExitCode {
     state::init_db_conn()
   });
 
-  if let Err(e) = if let Some(cmd) = args.command {
-    exec_dash_c(cmd, args.script_args)
-  } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
-    read_commands(args.script_args)
-  } else if !args.script_args.is_empty() {
-    let path = args.script_args.remove(0);
-    run_script(path, args.script_args)
-  } else {
-    shed_interactive(args)
-  } {
+  if let Err(e) = dispatch_input(args) {
     e.print_error();
   };
 
@@ -211,7 +208,65 @@ fn main() -> ExitCode {
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
 }
 
+fn dispatch_input(mut args: ShedArgs) -> ShResult<()> {
+  match args.edit_script {
+    true => {
+      // in this arm, we interpret the input we are given as a sequence of keys
+      // for the line editor to consume and execute
+      let input = if let Some(ref cmd) = args.command {
+        cmd.clone()
+
+      } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
+        read_input()?
+
+      } else if !args.script_args.is_empty() {
+        let path = args.script_args.remove(0);
+        std::fs::read_to_string(path)?
+
+      } else {
+        // no input provided, just run interactively
+        status_msg!("warning: --script was passed but no input was given");
+        return shed_interactive(args, None);
+      };
+
+      let keys = expand_keymap(&input);
+      shed_interactive(args, Some(keys))
+    }
+    false => {
+      if let Some(cmd) = args.command {
+        exec_dash_c(cmd, args.script_args)
+
+      } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
+        read_commands(args.script_args)
+
+      } else if !args.script_args.is_empty() {
+        let path = args.script_args.remove(0);
+        run_script(path, args.script_args)
+
+      } else {
+        shed_interactive(args, None)
+      }
+    }
+  }
+}
+
 fn read_commands(args: Vec<String>) -> ShResult<()> {
+  let commands = read_input()?;
+
+  write_vars(|v| {
+    let scope = v.cur_scope_mut();
+    let zero = scope.sh_argv().front().cloned().unwrap_or_default();
+    scope.sh_argv_mut().clear();
+    scope.bpush_arg(zero);
+    for arg in args {
+      scope.bpush_arg(arg);
+    }
+  });
+
+  exec_nonint(commands, None)
+}
+
+fn read_input() -> ShResult<String> {
   let mut input = vec![];
   let mut read_buf = [0u8; 4096];
   loop {
@@ -226,18 +281,7 @@ fn read_commands(args: Vec<String>) -> ShResult<()> {
     }
   }
 
-  let commands = String::from_utf8_lossy(&input).to_string();
-  write_vars(|v| {
-    let scope = v.cur_scope_mut();
-    let zero = scope.sh_argv().front().cloned().unwrap_or_default();
-    scope.sh_argv_mut().clear();
-    scope.bpush_arg(zero);
-    for arg in args {
-      scope.bpush_arg(arg);
-    }
-  });
-
-  exec_nonint(commands, None)
+  Ok(String::from_utf8_lossy(&input).to_string())
 }
 
 fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
@@ -391,8 +435,10 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
   Ok(raw_mode)
 }
 
-fn shed_interactive(args: ShedArgs) -> ShResult<()> {
+fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShResult<()> {
   let _raw_mode = interactive_setup(args)?;
+  state::try_hash();
+  error::clear_color();
 
   let mut readline = match ShedLine::new(Prompt::new()) {
     Ok(rl) => rl,
@@ -412,6 +458,11 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
       }
     }
   };
+
+  if let Some(keys) = script_keys {
+    return run_script_keys(&mut readline, keys);
+  }
+
   let mut vi_mode = read_shopts(|o| o.set.vi);
   let mut socket_mode = ShedSocket::mode();
 
@@ -572,6 +623,31 @@ fn shed_interactive(args: ShedArgs) -> ShResult<()> {
   Ok(())
 }
 
+/// Drain a pre-built key sequence into the readline loop, one key at a time.
+///
+/// Used by `--edit-script`. Each key is fed into `process_input` individually so
+/// the readline pipeline produces events between keys (e.g. a `<CR>` after
+/// `echo foo` fires a `Line` event that gets executed, then the loop
+/// continues with the next key). This makes multi-command scripts work
+/// naturally (e.g. `echo foo<CR>echo bar<CR>` runs both commands).
+///
+/// Exits when the queue is exhausted or any event signals shell exit.
+fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()> {
+  let mut queue: VecDeque<KeyEvent> = keys.into();
+  while let Some(key) = queue.pop_front() {
+    let event = readline.process_input(vec![key]);
+    if handle_readline_event(readline, event)? {
+      return Ok(());
+    }
+  }
+  // If the script ended mid-keymap (ambiguous prefix), resolve it as if a
+  // timeout had fired. Mirrors what the main loop does on poll-timeout.
+  if !readline.pending_keymap.is_empty() {
+    resolve_keymap(readline)?;
+  }
+  Ok(())
+}
+
 /// Handle a ReadlineEvent. Returns a boolean, `true` means "exit the shell", `false` means "keep looping"
 fn handle_readline_event(
   readline: &mut ShedLine,
@@ -652,7 +728,9 @@ fn handle_readline_event(
         e.print_error();
       }
 
-      readline.history.refresh_hist_entries();
+      // Cache is updated incrementally by `History::push` at command-submit
+      // time, so no post-command full re-query is needed. (`refresh_hist_entries`
+      // remains available for cases like external history modifications.)
 
       with_term(|t| t.fix_cursor_column())?;
       write_term!("\n\r")?;
@@ -821,10 +899,8 @@ fn handle_socket_request(
       }
     }
     SocketRequest::LineSendKeys(events) => {
-      for key in events {
-        if let Some(event) = readline.dispatch_key(key)? {
-          return Ok(Some(event));
-        }
+      if let Some(event) = readline.replay_keys(events, true)? {
+        return Ok(Some(event));
       }
     }
     SocketRequest::Query(query_header) => match query_header {

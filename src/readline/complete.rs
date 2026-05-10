@@ -655,11 +655,16 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
   candidates.into_iter()
     .map(|mut c| {
       let is_dir = c.desc.as_ref().is_some_and(|d| d.contains("dir"));
+      log::debug!("is_dir for candidate {:?} is {}", c.content, is_dir);
       let inner = unescaped_pre.len()..(c.content.len() - unescaped_post.len());
       let escaped = escape_str_bounded(&c.content, false, Some(inner));
 
-      let escaped = crate::expand::var::restore_glob_prefix(path, escaped);
-      log::debug!("Escaping candidate {:?} to {:?} with prefix {:?} and postfix {:?} (unescaped pre/post: {:?}/{:?})", c.content, escaped, prefix, postfix, unescaped_pre, unescaped_post);
+      let escaped = if path.starts_with("./") && !escaped.starts_with("./") && !escaped.starts_with('/') {
+        format!("./{escaped}")
+      } else {
+        escaped
+      };
+      log::debug!("Escaping candidate {:?} to {escaped:?} with prefix {prefix:?} and postfix {postfix:?} (unescaped pre/post: {unescaped_post:?}/{unescaped_post:?})", c.content);
 
       let after_prefix = escaped.strip_prefix(&unescaped_pre)
         .unwrap_or(&escaped);
