@@ -12,6 +12,8 @@ The following builtins are available:
   `autocmd`     register hooks for shell events             |builtin-autocmd|
   `bg`          resume a stopped job in the background      |builtin-bg|
   `cd`          change the working directory                |builtin-cd|
+  `compadd`     register completion candidates              |builtin-compadd|
+  `compgen`     emit completion candidates                  |builtin-compadd|
   `complete`    define custom tab completion rules          |builtin-complete|
   `declare`     declare variables with type and attributes  |builtin-declare|
   `defer`       register cleanup tied to scope exit         |builtin-defer|
@@ -314,6 +316,73 @@ COMPLETE                                         *builtin-complete* *complete*
   The function sets `$COMPREPLY` to an array of completion candidates.
 
 ==============================================================================
+COMPADD                                          *builtin-compadd* *compadd*
+
+  `compadd [options] [{candidate} ...]`
+
+  Add completion candidates to the current completion set. Intended for
+  use inside completion functions registered with `complete -F`. Each
+  positional argument is added as a candidate; the source flags below
+  pull additional candidates from shell variables.
+
+  Source flags ~
+
+    `-a {name}`     add each element of the indexed array `{name}` as
+                    a candidate.
+    `-d {name}`     pair each candidate (in order) with one description
+                    from the indexed array `{name}`. Extra descriptions
+                    are dropped; missing descriptions leave the
+                    candidate undescribed.
+    `-A {name}`     add candidates from the associative array `{name}`,
+                    using each key as a candidate and the corresponding
+                    value as its description. Insertion order is
+                    preserved. Pairing is intrinsic to the array, so it
+                    cannot fall out of sync the way parallel `-a`/`-d`
+                    arrays can.
+
+  Decoration flags ~
+
+    `-P {prefix}`   prepend `{prefix}` to every candidate's text. Does
+                    not affect descriptions.
+    `-S {suffix}`   append `{suffix}` to every candidate's text. Does
+                    not affect descriptions.
+
+  Sources are additive: positional arguments, `-a`, and `-A` can all be
+  passed in a single call and their candidates concatenate. `-P` and
+  `-S` apply to candidates from every source.
+
+  Lookups for `-a`, `-d`, and `-A` silently contribute nothing if the
+  named variable is unbound or has the wrong kind, so a stray bad name
+  in a completion function won't break the rest of the completion.
+
+  Examples:
+
+      `compadd alpha beta gamma`
+                  three plain candidates with no descriptions
+
+      `local -a words=(start stop restart)`
+      `compadd -a words`
+                  candidates from an indexed array
+
+      `local -a words=(a b c) descs=(first second third)`
+      `compadd -a words -d descs`
+                  parallel arrays, first/second/third describe a/b/c
+
+      `local -A modes=([n]=normal [i]=insert [v]=visual)`
+      `compadd -A modes`
+                  candidates n/i/v with their respective descriptions,
+                  in insertion order
+
+      `local -A modes=([n]=normal [i]=insert)`
+      `compadd -P "-" -A modes`
+                  produces -n and -i with descriptions preserved
+                  (typical pattern for completing short flags with
+                  human-readable hints)
+
+  See |builtin-complete| for registering a completion function and
+  |builtin-compgen| for generating candidates standalone.
+
+==============================================================================
 COMPGEN                                          *builtin-compgen* *compgen*
 
   `compgen [options] [{prefix}]`
@@ -356,7 +425,10 @@ DECLARE                                          *builtin-declare* *declare*
   Type flags ~
 
     `-a`    indexed array. RHS may be `(elem1 elem2 ...)`
-    `-A`    associative array. RHS may be `([key1]=v1 [key2]=v2 ...)`
+    `-A`    associative array. RHS may be `([key1]=v1 [key2]=v2 ...)`.
+            Insertion order is preserved, which makes assoc arrays the
+            natural source for completion candidates with descriptions
+            via `compadd -A`. See |builtin-compadd|.
     `-i`    integer. RHS is arithmetic-evaluated, so `declare -i x=5+3`
             stores `8`. Subsequent assignments are also evaluated.
 
