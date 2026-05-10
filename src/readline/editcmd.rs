@@ -63,6 +63,12 @@ impl Default for RegisterName {
   }
 }
 
+impl From<char> for RegisterName {
+  fn from(value: char) -> Self {
+    Self::new(Some(value), None)
+  }
+}
+
 bitflags! {
   #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct CmdFlags: u32 {
@@ -344,6 +350,8 @@ pub enum Verb {
   ToUpper,
   Complete,
   CompleteBackward,
+  RecordMacro,
+  PlayMacro,
   Undo,
   Redo,
   RepeatLast,

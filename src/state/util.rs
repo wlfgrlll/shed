@@ -634,7 +634,6 @@ pub fn get_exec_wrappers() -> Vec<String> {
     "ltrace"     .into(),
     "ktrace"     .into(),
     "valgrind"   .into(),
-    "perf"       .into(),
     "rr"         .into(),
     "heaptrack"  .into(),
     "nohup"      .into(),

@@ -316,6 +316,11 @@ impl Lines {
       && this_line.iter().zip(other_line.iter()).all(|(l, r)| l == r)
   }
 
+  pub fn into_lines(mut self) -> Vec<Line> {
+    self.push_empty();
+    self.0
+  }
+
   pub fn strip_prefix_lines(mut self, other: &Lines) -> Option<Lines> {
     if self.is_empty() {
       return None;
@@ -365,6 +370,12 @@ impl Default for Lines {
 impl std::iter::FromIterator<Line> for Lines {
   fn from_iter<T: IntoIterator<Item = Line>>(iter: T) -> Self {
     Self(iter.into_iter().collect())
+  }
+}
+
+impl From<Vec<Line>> for Lines {
+  fn from(value: Vec<Line>) -> Self {
+    Self(value)
   }
 }
 
@@ -3573,14 +3584,28 @@ impl LineBuf {
         self.cursor.pos = self.cursor.pos.col_add(1);
       }
       Verb::Undo => {
-        if let Some(edit) = self.undo_stack.pop() {
+        if let Some(mut edit) = self.undo_stack.pop() {
+          while edit.is_empty() {
+            if let Some(next) = self.undo_stack.pop() {
+              edit = next;
+            } else {
+              return Ok(());
+            }
+          }
           self.lines = edit.old.clone();
           self.cursor.pos = edit.old_cursor;
           self.redo_stack.push(edit);
         }
       }
       Verb::Redo => {
-        if let Some(edit) = self.redo_stack.pop() {
+        if let Some(mut edit) = self.redo_stack.pop() {
+          while edit.is_empty() {
+            if let Some(next) = self.redo_stack.pop() {
+              edit = next;
+            } else {
+              return Ok(());
+            }
+          }
           self.lines = edit.new.clone();
           self.cursor.pos = edit.new_cursor;
           self.undo_stack.push(edit);
@@ -3682,6 +3707,22 @@ impl LineBuf {
             }
           }
           RegisterContent::Block(lines) => unimplemented!(),
+          RegisterContent::Macro(keys) => {
+            // Pasting a macro: render to vim-style text and paste as a single
+            // span line. Mirrors vim, where macros and text registers are
+            // string-equivalent on paste.
+            let rendered: String = keys.iter().filter_map(|k| k.as_vim_seq().ok()).collect();
+            let mut line = Line::default();
+            line.push_str(&rendered);
+            let pos = Pos {
+              row: self.row(),
+              col: match effective_anchor {
+                Anchor::After => (self.col() + 1).min(self.cur_line().len()),
+                Anchor::Before => self.col(),
+              },
+            };
+            self.insert_lines_at(pos, Lines(vec![line]));
+          }
           RegisterContent::Empty => {}
         }
       }
@@ -4409,6 +4450,8 @@ impl LineBuf {
         }
       }
       Verb::RepeatLast
+      | Verb::RecordMacro
+      | Verb::PlayMacro
       | Verb::Interrupt
       | Verb::Quit
       | Verb::Normal(_)
@@ -4465,6 +4508,14 @@ impl LineBuf {
     if let Some(edit) = self.undo_stack.last_mut() {
       edit.merging = false;
     }
+
+    self.undo_stack.push(Edit {
+      old_cursor: self.cursor.pos,
+      new_cursor: self.cursor.pos,
+      old: self.lines.clone(),
+      new: self.lines.clone(),
+      merging: false,
+    });
   }
   pub fn is_merging(&self) -> bool {
     self.merging_undos || self.undo_stack.last().is_some_and(|edit| edit.merging)

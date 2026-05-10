@@ -1,6 +1,8 @@
 use std::{fmt::Display, sync::Mutex};
 
-use crate::readline::linebuf::Line;
+use itertools::Itertools;
+
+use crate::{expand::expand_keymap, readline::{keys::KeyEvent, linebuf::Line}};
 
 pub static REGISTERS: Mutex<Registers> = Mutex::new(Registers::new());
 
@@ -46,6 +48,7 @@ pub enum RegisterContent {
   Span(Vec<Line>),
   Line(Vec<Line>),
   Block(Vec<Line>),
+  Macro(Vec<KeyEvent>),
   #[default]
   Empty,
 }
@@ -54,14 +57,18 @@ impl Display for RegisterContent {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Block(s) | Self::Line(s) | Self::Span(s) => {
-        write!(
-          f,
-          "{}",
-          s.iter()
+        let joined = s.iter()
             .map(|l| l.to_string())
             .collect::<Vec<_>>()
-            .join("\n")
-        )
+            .join("\n");
+
+        write!(f, "{joined}")
+      }
+      Self::Macro(keys) => {
+        let expanded = keys.iter()
+          .map(|k| k.as_vim_seq().unwrap_or_default())
+          .join("");
+        write!(f, "{expanded}")
       }
       Self::Empty => write!(f, ""),
     }
@@ -75,6 +82,7 @@ impl RegisterContent {
   pub fn len(&self) -> usize {
     match self {
       Self::Span(s) | Self::Line(s) | Self::Block(s) => s.len(),
+      Self::Macro(keys) => keys.len(),
       Self::Empty => 0,
     }
   }
@@ -83,6 +91,7 @@ impl RegisterContent {
       Self::Span(s) => s.is_empty(),
       Self::Line(s) => s.is_empty(),
       Self::Block(s) => s.is_empty(),
+      Self::Macro(keys) => keys.is_empty(),
       Self::Empty => true,
     }
   }
@@ -250,17 +259,48 @@ impl Register {
   pub fn write(&mut self, buf: RegisterContent) {
     self.content = buf
   }
-  pub fn append(&mut self, mut buf: RegisterContent) {
-    match buf {
-      RegisterContent::Empty => {}
-      RegisterContent::Span(ref mut s)
-      | RegisterContent::Block(ref mut s)
-      | RegisterContent::Line(ref mut s) => match &mut self.content {
-        RegisterContent::Empty => self.content = buf,
-        RegisterContent::Span(existing)
-        | RegisterContent::Line(existing)
-        | RegisterContent::Block(existing) => existing.append(s),
-      },
+  pub fn append(&mut self, buf: RegisterContent) {
+    if matches!(buf, RegisterContent::Empty) {
+      return;
+    }
+    if matches!(self.content, RegisterContent::Empty) {
+      self.content = buf;
+      return;
+    }
+
+    use RegisterContent as C;
+    match (&mut self.content, buf) {
+      // same-shape text-into-text: extend in place
+      (
+        C::Span(a) | C::Line(a) | C::Block(a),
+        C::Span(mut b) | C::Line(mut b) | C::Block(mut b),
+      ) => {
+        a.append(&mut b);
+      }
+      // macro-into-macro: extend in place
+      (C::Macro(a), C::Macro(mut b)) => {
+        a.append(&mut b);
+      }
+
+      ( // text-into-macro: parse the text as a key sequence
+        C::Macro(a),
+        C::Span(b) | C::Line(b) | C::Block(b)
+      ) => {
+        let text = b.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        a.extend(expand_keymap(&text));
+      }
+
+      ( // macro-into-text: render keys as a vim-style string, push as one Line
+        C::Span(a) | C::Line(a) | C::Block(a),
+        C::Macro(b)
+      ) => {
+        let rendered: String = b.iter().filter_map(|k| k.as_vim_seq().ok()).collect();
+        let mut line = crate::readline::linebuf::Line::default();
+        line.push_str(&rendered);
+        a.push(line);
+      }
+      // both Empty cases handled above
+      (C::Empty, _) | (_, C::Empty) => unreachable!(),
     }
   }
   pub fn clear(&mut self) {

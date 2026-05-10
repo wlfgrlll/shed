@@ -1,5 +1,6 @@
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
-use crate::readline::linebuf::{Pos, ordered};
+use crate::readline::linebuf::{Lines, Pos, ordered};
+use crate::readline::register::{RegisterContent, append_register, read_register};
 use crate::{flush_term, motion, status_msg, verb, write_term};
 use editcmd::{CmdFlags, EditCmd, Motion, MotionCmd, RegisterName, Verb, VerbCmd};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
@@ -399,6 +400,37 @@ impl LineCmd {
   }
 }
 
+#[derive(Default,Debug)]
+pub enum MacroRecord {
+  #[default]
+  Idle,
+  Recording(char)
+}
+
+impl MacroRecord {
+  pub fn new() -> Self { Self::default() }
+  pub fn is_recording(&self) -> bool {
+    matches!(self, MacroRecord::Recording(_))
+  }
+  pub fn register(&self) -> Option<char> {
+    match self {
+      MacroRecord::Recording(c) => Some(*c),
+      MacroRecord::Idle => None,
+    }
+  }
+  pub fn feed_key_event(&self, event: KeyEvent) {
+    if let Some(reg) = self.register() {
+      append_register(Some(reg), register::RegisterContent::Macro(vec![event]));
+    }
+  }
+  pub fn status(&self) -> Option<String> {
+    match self {
+      MacroRecord::Recording(c) => Some(format!("recording {c}")),
+      MacroRecord::Idle => None,
+    }
+  }
+}
+
 pub struct ShedLine {
   pub prompt: Prompt,
   pub completer: Option<FuzzyCompleter>,
@@ -408,7 +440,9 @@ pub struct ShedLine {
   pub pending_keymap: Vec<KeyEvent>,
   pub repeat_action: Option<CmdReplay>,
   pub repeat_motion: Option<MotionCmd>,
+  pub repeat_macro: Option<char>,
   pub editor: LineBuf,
+  pub macro_record: MacroRecord,
 
   pub old_layout: Option<Layout>,
   pub history: History,
@@ -457,7 +491,9 @@ impl ShedLine {
       old_layout: None,
       repeat_action: None,
       repeat_motion: None,
+      repeat_macro: None,
       editor: LineBuf::new(),
+      macro_record: MacroRecord::Idle,
       history,
       ex_history,
       needs_redraw: true,
@@ -466,7 +502,7 @@ impl ShedLine {
     };
     write_vars(|v| {
       v.set_var(
-        "SHED_VI_MODE",
+        "SHED_EDIT_MODE",
         VarKind::Str(new.mode.report_mode().to_string()),
         VarFlags::NONE,
       )
@@ -632,7 +668,7 @@ impl ShedLine {
 
         write_vars(|v| {
           v.set_var(
-            "SHED_VI_MODE",
+            "SHED_EDIT_MODE",
             VarKind::Str(self.mode.report_mode().to_string()),
             VarFlags::NONE,
           )
@@ -652,7 +688,7 @@ impl ShedLine {
         self.focused_history().stop_search();
         write_vars(|v| {
           v.set_var(
-            "SHED_VI_MODE",
+            "SHED_EDIT_MODE",
             VarKind::Str(self.mode.report_mode().to_string()),
             VarFlags::NONE,
           )
@@ -695,7 +731,7 @@ impl ShedLine {
 
         write_vars(|v| {
           v.set_var(
-            "SHED_VI_MODE",
+            "SHED_EDIT_MODE",
             VarKind::Str(self.mode.report_mode().to_string()),
             VarFlags::NONE,
           )
@@ -723,7 +759,7 @@ impl ShedLine {
         self.completer = None;
         write_vars(|v| {
           v.set_var(
-            "SHED_VI_MODE",
+            "SHED_EDIT_MODE",
             VarKind::Str(self.mode.report_mode().to_string()),
             VarFlags::NONE,
           )
@@ -785,6 +821,14 @@ impl ShedLine {
 
     // Process all available keys
     for key in keys {
+      if self.macro_record.is_recording() {
+        if let KeyEvent(KeyCode::Char('q'), ModKeys::NONE) = key {
+          self.repeat_macro = self.macro_record.register();
+          self.macro_record = MacroRecord::Idle;
+          continue;
+        }
+        self.macro_record.feed_key_event(key.clone());
+      }
       if let Some(ev) = self.dispatch_key(key)? {
         return Ok(ev);
       }
@@ -792,7 +836,7 @@ impl ShedLine {
     if self.completer.is_none() && self.history_fzf().is_none() {
       write_vars(|v| {
         v.set_var(
-          "SHED_VI_MODE",
+          "SHED_EDIT_MODE",
           VarKind::Str(self.mode.report_mode().to_string()),
           VarFlags::NONE,
         )
@@ -830,6 +874,25 @@ impl ShedLine {
     } else {
       self.handle_keymap(key)
     }
+  }
+
+  /// Replay a sequence of `KeyEvent`s as if they came from the input stream.
+  pub fn replay_keys(
+    &mut self,
+    keys: Vec<KeyEvent>,
+    with_keymaps: bool,
+  ) -> ShResult<Option<ReadlineEvent>> {
+    for key in keys {
+      let ev = if with_keymaps {
+        self.dispatch_key(key)?
+      } else {
+        self.handle_key(key)?
+      };
+      if let Some(ev) = ev {
+        return Ok(Some(ev));
+      }
+    }
+    Ok(None)
   }
 
   fn accept_hint(&mut self) -> ShResult<Option<ReadlineEvent>> {
@@ -903,7 +966,7 @@ impl ShedLine {
         self.update_editor_hint();
         write_vars(|v| {
           v.set_var(
-            "SHED_VI_MODE",
+            "SHED_EDIT_MODE",
             VarKind::Str(self.mode.report_mode().to_string()),
             VarFlags::NONE,
           )
@@ -931,7 +994,7 @@ impl ShedLine {
           self.completer = Some(comp);
           write_vars(|v| {
             v.set_var(
-              "SHED_VI_MODE",
+              "SHED_EDIT_MODE",
               VarKind::Str("COMPLETE".to_string()),
               VarFlags::NONE,
             )
@@ -994,7 +1057,7 @@ impl ShedLine {
         if self.history_fzf().is_some() {
           write_vars(|v| {
             v.set_var(
-              "SHED_VI_MODE",
+              "SHED_EDIT_MODE",
               VarKind::Str("SEARCH".to_string()),
               VarFlags::NONE,
             )
@@ -1158,15 +1221,48 @@ impl ShedLine {
       self.ex_history.reset();
     }
 
+    if cmd.verb_is(Verb::RecordMacro) {
+      let Some(register) = cmd.register.name() else {
+        return Ok(None)
+      };
+      self.macro_record = MacroRecord::Recording(register);
+      return Ok(None);
+    }
+
+    if cmd.verb_is(Verb::PlayMacro) {
+      let Some(register) = cmd.register.name().or(self.repeat_macro) else {
+        return Ok(None)
+      };
+      let events = match read_register(Some(register)) {
+        None => return Ok(None),
+        Some(content) => match content {
+          RegisterContent::Empty => return Ok(None),
+          RegisterContent::Span(s) |
+          RegisterContent::Line(s) |
+          RegisterContent::Block(s) => {
+            let joined = Lines::from(s).join();
+            expand_keymap(&joined)
+          }
+          RegisterContent::Macro(keys) => keys
+        }
+      };
+
+      self.editor.start_undo_merge();
+      if let Ok(Some(event)) = self.replay_keys(events, false) {
+        self.editor.stop_undo_merge();
+        return Ok(Some(event));
+      }
+      self.editor.stop_undo_merge();
+      return Ok(None);
+    }
+
     let before = self.editor.joined();
     let before_cursor = self.editor.cursor;
 
     self.exec_cmd(cmd, false)?;
 
     if let Some(keys) = write_meta(|m| m.take_pending_widget_keys()) {
-      for key in keys {
-        self.handle_key(key)?;
-      }
+      self.replay_keys(keys, false)?;
     }
     let after = self.editor.joined();
     let after_cursor = self.editor.cursor;
@@ -1264,11 +1360,9 @@ impl ShedLine {
           self.editor.set_cursor(linebuf::Pos { row: line, col: 0 });
           self.swap_mode(&mut (Box::new(ViNormal::new()) as Box<dyn EditMode>));
 
-          for key in keys.clone() {
-            if let Err(e) = self.handle_key(key) {
-              self.editor.stop_undo_merge();
-              return Err(e);
-            }
+          if let Err(e) = self.replay_keys(keys.clone(), false) {
+            self.editor.stop_undo_merge();
+            return Err(e);
           }
         }
         self.editor.stop_undo_merge();
@@ -1464,7 +1558,7 @@ impl ShedLine {
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
-    let pending_seq = self.mode.pending_seq();
+    let pending_seq = self.macro_record.status().or_else(|| self.mode.pending_seq());
     let mut prompt_string_right = self.prompt.psr_expanded.clone();
 
     if prompt_string_right
@@ -1662,7 +1756,7 @@ impl ShedLine {
     self.editor.set_cursor_clamp(self.mode.clamp_cursor());
     write_vars(|v| {
       v.set_var(
-        "SHED_VI_MODE",
+        "SHED_EDIT_MODE",
         VarKind::Str(self.mode.report_mode().to_string()),
         VarFlags::NONE,
       )
@@ -1761,7 +1855,7 @@ impl ShedLine {
       self.saved_mode = Some(mode);
       write_vars(|v| {
         v.set_var(
-          "SHED_VI_MODE",
+          "SHED_EDIT_MODE",
           VarKind::Str(self.mode.report_mode().to_string()),
           VarFlags::NONE,
         )
@@ -1802,7 +1896,7 @@ impl ShedLine {
 
     write_vars(|v| {
       v.set_var(
-        "SHED_VI_MODE",
+        "SHED_EDIT_MODE",
         VarKind::Str(self.mode.report_mode().to_string()),
         VarFlags::NONE,
       )

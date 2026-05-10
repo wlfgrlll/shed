@@ -123,42 +123,76 @@ impl ViNormal {
       };
       match ch {
         'g' => {
-          if let Some(ch) = chars_clone.peek() {
-            match ch {
-              'v' => {
-                return Some(EditCmd {
-                  register,
-                  verb: Some(verb!(Verb::VisualModeSelectLast)),
-                  motion: None,
-                  raw_seq: self.take_cmd(),
-                  flags: self.flags(),
-                });
-              }
-              '~' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'verb_parse Some(verb!(count, Verb::ToggleCaseRange));
-              }
-              'u' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'verb_parse Some(verb!(count, Verb::ToLower));
-              }
-              'U' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'verb_parse Some(verb!(count, Verb::ToUpper));
-              }
-              '?' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'verb_parse Some(verb!(count, Verb::Rot13));
-              }
-              _ => break 'verb_parse None,
-            }
-          } else {
+          let Some(ch) = chars_clone.peek() else {
             break 'verb_parse None;
+          };
+          match ch {
+            'v' => {
+              return Some(EditCmd {
+                register,
+                verb: Some(verb!(Verb::VisualModeSelectLast)),
+                motion: None,
+                raw_seq: self.take_cmd(),
+                flags: self.flags(),
+              });
+            }
+            '~' => {
+              chars_clone.next();
+              chars = chars_clone;
+              break 'verb_parse Some(verb!(count, Verb::ToggleCaseRange));
+            }
+            'u' => {
+              chars_clone.next();
+              chars = chars_clone;
+              break 'verb_parse Some(verb!(count, Verb::ToLower));
+            }
+            'U' => {
+              chars_clone.next();
+              chars = chars_clone;
+              break 'verb_parse Some(verb!(count, Verb::ToUpper));
+            }
+            '?' => {
+              chars_clone.next();
+              chars = chars_clone;
+              break 'verb_parse Some(verb!(count, Verb::Rot13));
+            }
+            _ => break 'verb_parse None,
           }
+        }
+        'q' => {
+          let reg = chars_clone.next()?;
+          let register: RegisterName = reg.into();
+          return Some(EditCmd {
+            register,
+            verb: Some(verb!(Verb::RecordMacro)),
+            motion: None,
+            raw_seq: self.take_cmd(),
+            flags: self.flags(),
+          });
+        }
+        '@' => {
+          let reg = chars_clone.next()?;
+          let register: RegisterName = if reg == '@' {
+            RegisterName::new(None, None)
+          } else {
+            reg.into()
+          };
+          return Some(EditCmd {
+            register,
+            verb: Some(verb!(count, Verb::PlayMacro)),
+            motion: None,
+            raw_seq: self.take_cmd(),
+            flags: self.flags(),
+          });
+        }
+        'Q' => {
+          return Some(EditCmd {
+            register: RegisterName::new(None,None),
+            verb: Some(verb!(count, Verb::PlayMacro)),
+            motion: None,
+            raw_seq: self.take_cmd(),
+            flags: self.flags(),
+          });
         }
         '.' => {
           return Some(EditCmd {
