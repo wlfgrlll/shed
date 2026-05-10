@@ -278,22 +278,22 @@ register_completions! {
   "fpush"    => compgen!("fpush",    "-v"),
   "rotate"   => compgen!("rotate",   "-v"),
   "builtin"  => compgen!("builtin",  "-b"),
-  "kill"     => embed!("completions/kill_comp.shed"),
-  "keymap"   => embed!("completions/keymap_comp.shed"),
-  "declare"  => embed!("completions/declare_comp.shed"),
-  "trap"     => embed!("completions/trap_comp.shed"),
-  "ulimit"   => embed!("completions/ulimit_comp.shed"),
-  "set"      => embed!("completions/set_comp.shed"),
-  "autocmd"  => embed!("completions/autocmd_comp.shed"),
-  "cd"       => embed!("completions/cd_comp.shed"),
-  "shopt"    => embed!("completions/shopt_comp.shed"),
-  "compadd"  => embed!("completions/compadd_comp.shed"),
-  "help"     => embed!("completions/help_comp.shed"),
-  "hist"     => embed!("completions/hist_comp.shed"),
+  "kill"     => embed!("completions/kill_comp.sh"),
+  "keymap"   => embed!("completions/keymap_comp.sh"),
+  "declare"  => embed!("completions/declare_comp.sh"),
+  "trap"     => embed!("completions/trap_comp.sh"),
+  "ulimit"   => embed!("completions/ulimit_comp.sh"),
+  "set"      => embed!("completions/set_comp.sh"),
+  "autocmd"  => embed!("completions/autocmd_comp.sh"),
+  "cd"       => embed!("completions/cd_comp.sh"),
+  "shopt"    => embed!("completions/shopt_comp.sh"),
+  "compadd"  => embed!("completions/compadd_comp.sh"),
+  "help"     => embed!("completions/help_comp.sh"),
+  "hist"     => embed!("completions/hist_comp.sh"),
 }
 
 register_scripts! {
-  "version.shed",
+  "version.sh",
 }
 
 /// Lookup a name in the builtin table via binary search
