@@ -962,6 +962,7 @@ impl Dispatcher {
     let mut pipes = PipeGenerator::new(num_cmds);
     let mut result = Ok(());
 
+    let saved_region = with_term(|t| t.scroll_region());
     let _scroll_guard = (!is_bg).then(|| {
       with_term(|t| t.yield_terminal()).activate()
     });
@@ -1019,6 +1020,17 @@ impl Dispatcher {
     let dispatch_result = dispatch_job(job, is_bg, with_term(|t| t.interactive()));
     result?;
     dispatch_result?;
+
+    if !is_bg
+      && with_term(|t| t.interactive())
+      && let Some((_, bottom)) = saved_region
+    {
+      with_term(|t| {
+        use std::io::Write;
+        write!(t, "\n\n").ok(); // make room for the status line
+        t.move_cursor_abs(bottom, 1);
+      });
+    }
 
     check_err(pipeline_flags, None, Some(pipeline_span))?;
     Ok(())

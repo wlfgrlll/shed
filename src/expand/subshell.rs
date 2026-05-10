@@ -4,7 +4,7 @@ use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
 use crate::procio::{RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string};
 use crate::sherr;
-use crate::state::{self, write_meta};
+use crate::state::{self, with_term, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
 
 use nix::unistd::{ForkResult, fork};
@@ -67,8 +67,9 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
   match unsafe { fork()? } {
     ForkResult::Child => {
+      with_term(|t| t.detach_tty()); // close tty fd
       let redir: RedirSet = RedirSpec::dup(wpipe.as_raw_fd(), 1, RedirType::Output).into();
-      let _guard = redir.apply()?;
+      let _redir_guard = redir.apply()?;
 
       if let Err(e) = exec_nonint(raw.to_string(), Some("command_sub".into())) {
         if let ShErrKind::CleanExit(code) = e.kind() {

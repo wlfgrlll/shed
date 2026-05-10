@@ -924,10 +924,7 @@ impl Terminal {
     }
     if let Some(scroll_region) = guard.scroll_region() {
       match scroll_region {
-        Some((top, bottom)) => {
-          self.set_scroll_region(top, bottom)?;
-          self.move_cursor_abs(bottom, 1);
-        }
+        Some((top, bottom)) => self.set_scroll_region(top, bottom)?,
         None => self.reset_scroll_region()?,
       }
       wrote_seq = true;
@@ -1406,6 +1403,16 @@ impl Terminal {
     self.input_buf.push_str(Self::ROW_CLEAR);
     self.input_buf.push_str(content);
     self.restore_cursor();
+  }
+
+  /// Detach this Terminal from the TTY. After calling, `tty()` returns
+  /// None and `flush()` silently discards buffered output. Used in forked
+  /// children whose stdout is redirected (e.g., command substitutions) to
+  /// prevent any terminal-control escape sequences they might emit from
+  /// reaching the parent's TTY through the shared fd.
+  pub fn detach_tty(&mut self) {
+    self.input_buf.clear();
+    self.tty = None;
   }
 
   #[cfg(test)]
