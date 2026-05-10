@@ -157,11 +157,12 @@ impl CompStrat {
   ///
   /// For Argument leaves: if the cursor is on a structurally-meaningful
   /// sub-token (VarSub, Tilde, CmdSub) we dispatch on that and the
-  /// replacement targets just the sub-token's range,so `foo/$FL/bar`
-  /// completing `$FL` to `$FLAKEPATH` produces `foo/$FLAKEPATH/bar`, not a
-  /// graft after the last `/`. Otherwise we treat the leaf as path-shaped
-  /// and target the whole leaf so `get_completed_line`'s last-`/` graft
-  /// preserves the parent text.
+  /// replacement targets just the sub-token's range, so `foo/$FL/bar`
+  /// completing `$FL` to `$FLAKEPATH` produces `foo/$FLAKEPATH/bar`.
+  /// Otherwise we treat the leaf as path-shaped and target the whole leaf;
+  /// `complete_path` decides per-candidate whether to graft (preserving
+  /// `$VAR`/`~` in the user's literal text) or wholesale-replace (for glob
+  /// patterns where the literal text doesn't appear in the match).
   fn from_leaf(leaf: &CtxTk, cursor_pos: usize) -> (Self, Span, usize) {
     log::debug!(
       "Cursor inside {:?} with class {:?}",
@@ -655,26 +656,27 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
   candidates.into_iter()
     .map(|mut c| {
       let is_dir = c.desc.as_ref().is_some_and(|d| d.contains("dir"));
-      log::debug!("is_dir for candidate {:?} is {}", c.content, is_dir);
-      let inner = unescaped_pre.len()..(c.content.len() - unescaped_post.len());
-      let escaped = escape_str_bounded(&c.content, false, Some(inner));
+      let raw = c.content.clone();
 
-      let escaped = if path.starts_with("./") && !escaped.starts_with("./") && !escaped.starts_with('/') {
-        format!("./{escaped}")
-      } else {
-        escaped
+      let mut new_content = match raw.strip_prefix(&unescaped_pre) {
+        Some(after_prefix) => {
+          let middle = after_prefix.strip_suffix(&unescaped_post).unwrap_or(after_prefix);
+          let middle_escaped = escape_str_bounded(middle, false, None);
+          format!("{prefix}{middle_escaped}{postfix}")
+        }
+        None => escape_str_bounded(&raw, false, None),
       };
-      log::debug!("Escaping candidate {:?} to {escaped:?} with prefix {prefix:?} and postfix {postfix:?} (unescaped pre/post: {unescaped_post:?}/{unescaped_post:?})", c.content);
 
-      let after_prefix = escaped.strip_prefix(&unescaped_pre)
-        .unwrap_or(&escaped);
-      let stripped = after_prefix.strip_suffix(&unescaped_post)
-        .unwrap_or(after_prefix);
-
-      c.content = format!("{prefix}{stripped}{postfix}");
-      if is_dir {
-        c.content.push('/');
+      // glob strips this, we have to add it back
+      if path.starts_with("./") && !new_content.starts_with("./") && !new_content.starts_with('/') {
+        new_content = format!("./{new_content}")
       }
+
+      if is_dir {
+        new_content.push('/');
+      }
+
+      c.content = new_content;
       c
     }).collect()
 }
@@ -2049,6 +2051,10 @@ impl SimpleCompleter {
     let tks = get_context_tokens(&line);
     let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
+    log::debug!(
+      "get_candidates: line={line:?} cursor_pos={cursor_pos} strat={strat:?} span={:?} leaf_cursor_pos={leaf_cursor_pos}",
+      replace_span.range()
+    );
     self.token_span = (replace_span.range().start, replace_span.range().end);
     let mut result = match strat {
       CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),
