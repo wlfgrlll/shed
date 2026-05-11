@@ -339,6 +339,12 @@ impl VarName {
   pub fn index(&self) -> Option<&ArrIndex> {
     self.index.as_ref()
   }
+  /// Replace the parsed index. Used to substitute a pre-resolved index
+  /// (e.g. one whose `expand_arithmetic` was performed outside a borrow
+  /// to avoid forking under a held RefCell guard).
+  pub fn set_index(&mut self, idx: ArrIndex) {
+    self.index = Some(idx);
+  }
   pub fn slice_start(&self) -> Option<usize> {
     self.slice_start
   }

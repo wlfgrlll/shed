@@ -5,7 +5,7 @@ use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
 use crate::parse::lex::TkFlags;
 use crate::sherr;
-use crate::state::{VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars};
+use crate::state::{ArrIndex, ScopeStack, VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars};
 use crate::util::error::ShResult;
 use crate::{match_loop, state};
 
@@ -230,11 +230,19 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     _ => var_name.push(ch),
   });
 
-  // Parse and expand the variable name (including any array index) before
-  // entering read_vars, to avoid re-entrant borrows from index expansion
-  let parsed = VarName::parse(&var_name, allow_side_effects)?;
-  let get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed).unwrap_or_default();
-  let try_get = |v: &crate::state::scopes::ScopeStack| v.resolve_var(&parsed);
+  let mut parsed = VarName::parse(&var_name, allow_side_effects)?;
+
+  if matches!(parsed.index(), Some(ArrIndex::Raw(_))) {
+    // Brief read_vars to grab just the kind (cloned), then the borrow
+    // releases before we do any expansion work.
+    let kind = read_vars(|v| v.try_get_var_kind(parsed.name()));
+    if let Some(kind) = kind {
+      let resolved = parsed.index().unwrap().clone().resolve_for(&kind)?;
+      parsed.set_index(resolved);
+    }
+  }
+  let get = |v: &ScopeStack| v.resolve_var(&parsed).unwrap_or_default();
+  let try_get = |v: &ScopeStack| v.resolve_var(&parsed);
   let compare = |old: &str, new: &str| {
     // for some of these that do mutation on the var, we set the status based on whether it changed
     // this allows scripts to do stuff like "while foo=${foo#bar}" or just generally check

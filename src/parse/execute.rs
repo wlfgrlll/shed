@@ -1891,4 +1891,20 @@ mod tests {
     let out = g.read_output();
     assert_eq!(out, "3\n2\n1\ndone\n");
   }
+
+  #[test]
+  fn nested_cmd_sub_index() {
+    let g = TestGuard::new();
+    test_input("foo=(bar biz bam); echo \"$(echo ${foo[$(echo 1)+1]})\"").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "bam\n");
+  }
+
+  #[test]
+  fn nested_cmd_sub_index_with_space() {
+    let g = TestGuard::new();
+    test_input("foo=(bar biz bam); echo \"$(echo ${foo[$(echo 1) + 1]})\"").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "bam\n");
+  }
 }

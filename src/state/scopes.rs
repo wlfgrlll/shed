@@ -576,6 +576,17 @@ impl ScopeStack {
     }
     None
   }
+
+  pub fn try_get_var_kind(&self, var_name: &str) -> Option<VarKind> {
+    for scope in self.scopes.iter().rev() {
+      if scope.var_exists(var_name)
+        && let Some(var) = scope.vars().get(var_name)
+      {
+        return Some(var.kind().clone());
+      }
+    }
+    None
+  }
   pub fn all_vars(&self) -> HashMap<String, Var> {
     let mut vars = HashMap::new();
     for scope in self.scopes.iter() {

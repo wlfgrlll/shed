@@ -162,12 +162,6 @@ fn read_subsh(chars: &mut Peekable<Chars>, result: &mut String) {
         _ => result.push(q_ch),
       });
     }
-    '$' if chars.peek() == Some(&'\'') => {
-      result.push(subsh_ch);
-    }
-    '$' if chars.peek() != Some(&'(') => {
-      read_varsub(chars, result);
-    }
     '(' => {
       paren_count += 1;
       result.push(subsh_ch)
