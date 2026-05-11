@@ -9,6 +9,7 @@ use itertools::Either;
 use keys::{KeyCode, KeyEvent, ModKeys};
 use linebuf::LineBuf;
 use nix::poll::PollTimeout;
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::time::Instant;
 use term::Layout;
@@ -544,6 +545,7 @@ pub struct ShedLine {
   pub macro_record: MacroRecord,
 
   pub old_layout: Option<Layout>,
+  pub blank_rows_above: u16,
   pub history: History,
   pub ex_history: History,
 
@@ -592,6 +594,7 @@ impl ShedLine {
       saved_mode: None,
       pending_keymap: Vec::new(),
       old_layout: None,
+      blank_rows_above: 0,
       repeat_action: None,
       repeat_motion: None,
       repeat_macro: None,
@@ -1256,6 +1259,10 @@ impl ShedLine {
       self.editor.trim();
     }
     write_term!("\n").ok();
+    // Command output fills the region from below the prompt; tracked
+    // blank rows above will scroll into scrollback as it does. Reset
+    // the counter — its on-screen meaning is gone.
+    self.blank_rows_above = 0;
     let buf = self.editor.take_buf();
     self.focused_history().reset();
     Ok(Some(ReadlineEvent::Line(buf)))
@@ -1741,6 +1748,37 @@ impl ShedLine {
 
     if let Some(layout) = self.old_layout.as_ref() {
       clear_rows(layout)?;
+
+      // attempt to anchor the bottom of the prompt
+      // to the status line, if it is enabled.
+      // pushes terminal content upwards if it is about to overwrite.
+      if with_term(|t| t.scroll_region()).is_some() {
+        let old_h = layout.end.row as i32;
+        let new_h = new_layout.end.row as i32;
+        let diff = new_h - old_h;
+        match diff.cmp(&0) {
+          Ordering::Less => {
+            // the prompt shrank
+            let delta = (-diff) as u16;
+            write_term!("\x1b[{delta}L")?; // insert empty rows at cursor
+            write_term!("\x1b[{delta}B")?; // move down
+            self.blank_rows_above = self.blank_rows_above.saturating_add(delta);
+          }
+          Ordering::Greater => {
+            let diff_u = diff as u16;
+            let consume = self.blank_rows_above.min(diff_u);
+            let scroll_needed = diff_u.saturating_sub(consume);
+            if scroll_needed > 0 {
+              // pushes existing content upward
+              with_term(|t| t.scroll_up(scroll_needed as usize)).ok();
+            }
+            // take needed space
+            write_term!("\x1b[{diff_u}A")?;
+            self.blank_rows_above = self.blank_rows_above.saturating_sub(consume);
+          }
+          Ordering::Equal => { /* nothing to do */ }
+        }
+      }
     }
 
     redraw(
