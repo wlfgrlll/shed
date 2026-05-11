@@ -71,6 +71,13 @@ pub fn has_cmd(cmd: &str) -> bool {
     .any(|c| c.name() == cmd)
 }
 
+/// Marks the end of a test's output
+pub const TEST_OUTPUT_SENTINEL: &[u8] = b"\x07__shed_test_end__\x07";
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+  haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 pub fn test_input(input: impl Into<String>) -> ShResult<()> {
   exec_nonint(input.into(), None)
 }
@@ -178,27 +185,36 @@ impl TestGuard {
   }
 
   pub fn read_output(&self) -> String {
+    // if we are here, then that means we have probably finished executing
+    // our test. we now write this to the pty
+    let _ = nix::unistd::write(self.pty_slave.as_fd(), TEST_OUTPUT_SENTINEL);
+
     let (mu, cv) = &*self.output;
     let mut buf = mu.lock().unwrap();
 
-    while buf.is_empty() {
-      let r = cv.wait_timeout(buf, std::time::Duration::from_millis(100)).unwrap();
-      buf = r.0;
-      if r.1.timed_out() { break }
-    }
-
-    loop {
-      let len_before = buf.len();
-      let r = cv.wait_timeout(buf, std::time::Duration::from_millis(2)).unwrap();
-      buf = r.0;
-      if r.1.timed_out() && buf.len() == len_before {
-        break
+    // 2-second deadline is a "your test deadlocked" backstop, not a
+    // tuning knob. In normal operation we exit as soon as the sentinel
+    // arrives (typically sub-millisecond).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while find_subsequence(&buf, TEST_OUTPUT_SENTINEL).is_none() {
+      let now = std::time::Instant::now();
+      if now >= deadline {
+        break;
       }
+      let r = cv.wait_timeout(buf, deadline - now).unwrap();
+      buf = r.0;
     }
 
-    let res = String::from_utf8_lossy(&buf).to_string();
-    buf.clear();
-    res
+    // drain until our sentinel sequence
+    let sentinel_pos = find_subsequence(&buf, TEST_OUTPUT_SENTINEL);
+    let (end, drain_to) = match sentinel_pos {
+      Some(pos) => (pos, pos + TEST_OUTPUT_SENTINEL.len()),
+      None => (buf.len(), buf.len()),
+    };
+    let res = String::from_utf8_lossy(&buf[..end]).to_string();
+    buf.drain(..drain_to);
+
+    res // done
   }
 }
 
