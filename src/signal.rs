@@ -9,12 +9,11 @@ use nix::{
 
 use crate::{
   builtin::trap::TrapTarget,
-  jobs::{Job, JobCmdFlags, JobID, take_term},
+  jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
   parse::execute::exec_nonint,
   sherr,
   state::{
-    AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs, write_meta,
-    write_vars,
+    self, AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs, write_meta, write_vars
   },
   util::{AutoCmdVecUtils, error::ShResult},
 };
@@ -33,7 +32,7 @@ pub static GOT_SIGWINCH: AtomicBool = AtomicBool::new(false);
 /// Useful for dynamic prompt content and asynchronous refreshing
 pub static GOT_SIGUSR1: AtomicBool = AtomicBool::new(false);
 
-const MISC_SIGNALS: [Signal; 22] = [
+const MISC_SIGNALS: [Signal; 21] = [
   Signal::SIGILL,
   Signal::SIGTRAP,
   Signal::SIGABRT,
@@ -44,7 +43,6 @@ const MISC_SIGNALS: [Signal; 22] = [
   Signal::SIGUSR2,
   Signal::SIGPIPE,
   Signal::SIGALRM,
-  Signal::SIGTERM,
   Signal::SIGSTKFLT,
   Signal::SIGCONT,
   Signal::SIGURG,
@@ -154,6 +152,15 @@ pub fn check_signals() -> ShResult<()> {
   if got_signal(Signal::SIGUSR1) {
     GOT_SIGUSR1.store(true, Ordering::SeqCst);
     run_trap(Signal::SIGUSR1)?;
+  }
+  if got_signal(Signal::SIGTERM) {
+    // POSIX says, if we are interactive, sigterm does nothing
+    // if we are not interactive, sigterm kills the shell
+    if !state::INTERACTIVE.load(Ordering::SeqCst) {
+      SHOULD_QUIT.store(true, Ordering::SeqCst);
+      QUIT_CODE.store(SIG_EXIT_OFFSET + Signal::SIGTERM as i32, Ordering::SeqCst);
+    }
+    run_trap(Signal::SIGTERM)?;
   }
 
   for sig in MISC_SIGNALS {
