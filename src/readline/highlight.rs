@@ -509,7 +509,7 @@ mod tests {
     // (or it would let the terminal interpret embedded escape sequences).
     let p = test_palette();
     let out = highlight("\x1b]0;PWNED\x07", &p, 0, vec![]);
-    assert!(!out.contains('\x1b' as char) || {
+    assert!(!out.contains('\x1b') || {
       // shed's own styling escapes are allowed; check by stripping CSI runs
       // and confirming no raw \x1b survives unaccompanied by `[`
       let stripped = strip_ansi(&out);

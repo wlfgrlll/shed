@@ -546,6 +546,7 @@ pub struct ShedLine {
 
   pub old_layout: Option<Layout>,
   pub blank_rows_above: u16,
+  pub overlay_displacement: u16,
   pub history: History,
   pub ex_history: History,
 
@@ -595,6 +596,7 @@ impl ShedLine {
       pending_keymap: Vec::new(),
       old_layout: None,
       blank_rows_above: 0,
+      overlay_displacement: 0,
       repeat_action: None,
       repeat_motion: None,
       repeat_macro: None,
@@ -1260,9 +1262,10 @@ impl ShedLine {
     }
     write_term!("\n").ok();
     // Command output fills the region from below the prompt; tracked
-    // blank rows above will scroll into scrollback as it does. Reset
-    // the counter — its on-screen meaning is gone.
+    // blank rows above will scroll into scrollback as it does, and any
+    // overlay displacement is moot once the prompt is gone.
     self.blank_rows_above = 0;
+    self.overlay_displacement = 0;
     let buf = self.editor.take_buf();
     self.focused_history().reset();
     Ok(Some(ReadlineEvent::Line(buf)))
@@ -1746,15 +1749,38 @@ impl ShedLine {
       finder.clear()?;
     }
 
+    let predicted_overlay_rows: u16 = self
+      .completer
+      .as_ref()
+      .map(|c| c.selector.predicted_rows())
+      .unwrap_or(0)
+      .saturating_add(
+        self
+          .focused_history()
+          .fuzzy_finder
+          .as_ref()
+          .map(|f| f.predicted_rows())
+          .unwrap_or(0),
+      )
+      .try_into()
+      .unwrap_or(u16::MAX);
+
+    log::debug!(
+      "print_line: predicted_overlay_rows={predicted_overlay_rows} \
+       prev_displacement={} blank_rows_above={} new_end.row={}",
+      self.overlay_displacement,
+      self.blank_rows_above,
+      new_layout.end.row,
+    );
+
     if let Some(layout) = self.old_layout.as_ref() {
       clear_rows(layout)?;
 
-      // attempt to anchor the bottom of the prompt
-      // to the status line, if it is enabled.
-      // pushes terminal content upwards if it is about to overwrite.
+      let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
+
       if with_term(|t| t.scroll_region()).is_some() {
-        let old_h = layout.end.row as i32;
-        let new_h = new_layout.end.row as i32;
+        let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
+        let new_h = new_layout.end.row as i32 + predicted_overlay_rows as i32;
         let diff = new_h - old_h;
         match diff.cmp(&0) {
           Ordering::Less => {
@@ -1860,15 +1886,17 @@ impl ShedLine {
       (new_layout.end.col + 1).max(new_layout.cursor.col + 1)
     };
 
+    let mut overlay_rows: usize = 0;
     if let Some(comp) = self.completer.as_mut() {
       comp.set_prompt_line_context(preceding_width, new_layout.end.col);
-      let _ = comp.draw()?;
+      overlay_rows += comp.draw()?;
     }
 
     if let Some(finder) = self.history_fzf() {
       finder.set_prompt_line_context(preceding_width, new_layout.end.col);
-      let _ = finder.draw()?;
+      overlay_rows += finder.draw()?;
     }
+    self.overlay_displacement = overlay_rows.try_into().unwrap_or(u16::MAX);
 
     if let Some(statline) = self.statline.as_mut() && !final_draw {
       let cols = with_term(|t| t.t_cols());

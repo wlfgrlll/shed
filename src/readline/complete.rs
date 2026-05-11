@@ -1321,6 +1321,32 @@ impl FuzzySelector {
     }
   }
 
+  /// Calculate how many rows we need in order to draw this thing
+  pub fn predicted_rows(&self) -> usize {
+    if self.candidates.is_empty() && self.filtered.is_empty() {
+      return 0;
+    }
+    const CHROME_ROWS: usize = 4;
+
+    let mut cand_rows = 0usize;
+    for c in self.filtered.iter().skip(self.scroll_offset) {
+      let h = c
+        .candidate
+        .content()
+        .trim_end()
+        .lines()
+        .count()
+        .max(1);
+      if cand_rows + h > self.max_height {
+        cand_rows = self.max_height;
+        break;
+      }
+      cand_rows += h;
+    }
+
+    CHROME_ROWS + cand_rows
+  }
+
   pub fn candidates(&self) -> &[Candidate] {
     &self.candidates
   }
