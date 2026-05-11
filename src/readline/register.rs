@@ -2,7 +2,10 @@ use std::{fmt::Display, sync::Mutex};
 
 use itertools::Itertools;
 
-use crate::{expand::expand_keymap, readline::{keys::KeyEvent, linebuf::Line}};
+use crate::{
+  expand::expand_keymap,
+  readline::{keys::KeyEvent, linebuf::Line},
+};
 
 pub static REGISTERS: Mutex<Registers> = Mutex::new(Registers::new());
 
@@ -57,15 +60,17 @@ impl Display for RegisterContent {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Block(s) | Self::Line(s) | Self::Span(s) => {
-        let joined = s.iter()
-            .map(|l| l.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let joined = s
+          .iter()
+          .map(|l| l.to_string())
+          .collect::<Vec<_>>()
+          .join("\n");
 
         write!(f, "{joined}")
       }
       Self::Macro(keys) => {
-        let expanded = keys.iter()
+        let expanded = keys
+          .iter()
           .map(|k| k.as_vim_seq().unwrap_or_default())
           .join("");
         write!(f, "{expanded}")
@@ -282,17 +287,23 @@ impl Register {
         a.append(&mut b);
       }
 
-      ( // text-into-macro: parse the text as a key sequence
+      (
+        // text-into-macro: parse the text as a key sequence
         C::Macro(a),
-        C::Span(b) | C::Line(b) | C::Block(b)
+        C::Span(b) | C::Line(b) | C::Block(b),
       ) => {
-        let text = b.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        let text = b
+          .iter()
+          .map(|l| l.to_string())
+          .collect::<Vec<_>>()
+          .join("\n");
         a.extend(expand_keymap(&text));
       }
 
-      ( // macro-into-text: render keys as a vim-style string, push as one Line
+      (
+        // macro-into-text: render keys as a vim-style string, push as one Line
         C::Span(a) | C::Line(a) | C::Block(a),
-        C::Macro(b)
+        C::Macro(b),
       ) => {
         let rendered: String = b.iter().filter_map(|k| k.as_vim_seq().ok()).collect();
         let mut line = crate::readline::linebuf::Line::default();

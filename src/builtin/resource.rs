@@ -5,12 +5,12 @@ use nix::sys::{
 };
 
 use crate::{
-  getopt::{Opt, OptSpec}, outln, parse::lex::Span, util::error::{ShResult, next_color}
+  getopt::{Opt, OptSpec},
+  outln,
+  parse::lex::Span,
+  util::error::{ShResult, next_color},
 };
-use crate::{
-  sherr,
-  util::with_status,
-};
+use crate::{sherr, util::with_status};
 
 pub(super) struct ULimit;
 impl super::Builtin for ULimit {

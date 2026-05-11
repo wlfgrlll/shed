@@ -22,11 +22,13 @@ use nix::unistd::{Pid, isatty, read, write};
 use smallvec::SmallVec;
 
 use crate::builtin::keymap::KeyMapMatch;
-use crate::builtin::{source_builtin_completions, source_builtin_scripts};
 use crate::builtin::trap::TrapTarget;
+use crate::builtin::{source_builtin_completions, source_builtin_scripts};
 use crate::expand::expand_keymap;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
-use crate::procio::{MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno};
+use crate::procio::{
+  MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno,
+};
 use crate::readline::editmode::ModeReport;
 use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::{Hint, Lines, Pos};
@@ -37,8 +39,8 @@ use crate::signal::{
 };
 use crate::state::{
   AutoCmdKind, LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
-  VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts,
-  read_vars, source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
+  VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts, read_vars,
+  source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
 };
 use crate::util::AutoCmdVecUtils;
 use crate::util::error::{self, ShErrKind, ShResult};
@@ -59,7 +61,6 @@ pub mod util;
 
 #[cfg(test)]
 pub mod tests;
-
 
 #[derive(Parser, Debug)]
 #[command(
@@ -111,9 +112,22 @@ struct ShedArgs {
 }
 
 impl ShedArgs {
-  const SET_OPTS: [&str;15] = [
-    "errexit", "allexport", "ignoreeof", "monitor", "noclobber", "noglob", "noexec",
-    "nolog", "notify", "nounset", "verbose", "vi", "emacs", "xtrace", "hashall",
+  const SET_OPTS: [&str; 15] = [
+    "errexit",
+    "allexport",
+    "ignoreeof",
+    "monitor",
+    "noclobber",
+    "noglob",
+    "noexec",
+    "nolog",
+    "notify",
+    "nounset",
+    "verbose",
+    "vi",
+    "emacs",
+    "xtrace",
+    "hashall",
   ];
 }
 
@@ -190,7 +204,9 @@ fn main() -> ExitCode {
     return ExitCode::SUCCESS;
   }
 
-  if !args.no_rc && let Err(e) = source_env() {
+  if !args.no_rc
+    && let Err(e) = source_env()
+  {
     e.print_error();
   }
 
@@ -202,9 +218,7 @@ fn main() -> ExitCode {
     write_shopts(|o| o.query(&format!("set.{set_opt}=true"))).ok();
   }
 
-  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
-    state::init_db_conn()
-  });
+  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || state::init_db_conn());
 
   if let Err(e) = dispatch_input(args) {
     e.print_error();
@@ -246,14 +260,11 @@ fn dispatch_input(mut args: ShedArgs) -> ShResult<()> {
       // for the line editor to consume and execute
       let input = if let Some(ref cmd) = args.command {
         cmd.clone()
-
       } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
         read_input()?
-
       } else if !args.script_args.is_empty() {
         let path = args.script_args.remove(0);
         std::fs::read_to_string(path)?
-
       } else {
         // no input provided, just run interactively
         status_msg!("warning: --script was passed but no input was given");
@@ -266,14 +277,11 @@ fn dispatch_input(mut args: ShedArgs) -> ShResult<()> {
     false => {
       if let Some(cmd) = args.command {
         exec_dash_c(cmd, args.script_args)
-
       } else if args.stdin || !isatty(stdin_fileno()).unwrap_or(false) {
         read_commands(args.script_args)
-
       } else if !args.script_args.is_empty() {
         let path = args.script_args.remove(0);
         run_script(path, args.script_args)
-
       } else {
         shed_interactive(args, None)
       }
@@ -451,7 +459,9 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     }
   }
 
-  if !args.no_rc && let Err(e) = source_rc() {
+  if !args.no_rc
+    && let Err(e) = source_rc()
+  {
     e.print_error();
   }
 
@@ -518,7 +528,8 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
   let tty_poll = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty_fd) }, PollFlags::POLLIN);
 
   let socket_fd = write_meta(|m| m.get_socket().map(|s| s.as_raw_fd()));
-  let socket_poll = socket_fd.map(|fd| PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN));
+  let socket_poll =
+    socket_fd.map(|fd| PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN));
 
   // Main poll loop
   loop {

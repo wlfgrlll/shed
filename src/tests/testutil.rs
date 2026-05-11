@@ -1,5 +1,11 @@
 use std::{
-  cmp::Ordering, collections::HashMap, env, os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd}, path::PathBuf, sync::{Arc, Condvar, Mutex}, thread::JoinHandle
+  cmp::Ordering,
+  collections::HashMap,
+  env,
+  os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+  path::PathBuf,
+  sync::{Arc, Condvar, Mutex},
+  thread::JoinHandle,
 };
 
 use nix::{
@@ -129,8 +135,7 @@ impl TestGuard {
             mu.lock().unwrap().extend_from_slice(&buf[..n]);
             cv.notify_all();
           }
-          Ordering::Less |
-          Ordering::Equal => break,
+          Ordering::Less | Ordering::Equal => break,
         }
       }
     });
@@ -139,14 +144,12 @@ impl TestGuard {
 
     let redirs: RedirSet = vec![
       RedirSpec::dup(stdin_read.as_raw_fd(), 0, RedirType::Input),
-      RedirSpec::dup(pty_slave.as_raw_fd(),  1, RedirType::Output),
-      RedirSpec::dup(pty_slave.as_raw_fd(),  2, RedirType::Output),
-    ].into();
+      RedirSpec::dup(pty_slave.as_raw_fd(), 1, RedirType::Output),
+      RedirSpec::dup(pty_slave.as_raw_fd(), 2, RedirType::Output),
+    ]
+    .into();
 
-    let _redir_guard = redirs.apply()
-      .ok()
-      .flatten()
-      .unwrap();
+    let _redir_guard = redirs.apply().ok().flatten().unwrap();
 
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();

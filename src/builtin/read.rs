@@ -8,10 +8,17 @@ use nix::{
 };
 
 use crate::{
-  expand::expand_keymap, getopt::{Opt, OptSpec}, out, parse::lex::Span, procio::stdin_fileno, sherr, signal, state::{self, VarFlags, VarKind, with_term, write_vars}, util::{
+  expand::expand_keymap,
+  getopt::{Opt, OptSpec},
+  out,
+  parse::lex::Span,
+  procio::stdin_fileno,
+  sherr, signal,
+  state::{self, VarFlags, VarKind, with_term, write_vars},
+  util::{
     error::{ShErrKind, ShResult, ShResultExt},
     with_status,
-  }
+  },
 };
 
 bitflags! {

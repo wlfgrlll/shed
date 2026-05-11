@@ -187,7 +187,7 @@ impl ViNormal {
         }
         'Q' => {
           return Some(EditCmd {
-            register: RegisterName::new(None,None),
+            register: RegisterName::new(None, None),
             verb: Some(verb!(count, Verb::PlayMacro)),
             motion: None,
             raw_seq: self.take_cmd(),

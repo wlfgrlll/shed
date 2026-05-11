@@ -3,11 +3,17 @@ use std::env;
 use std::collections::VecDeque;
 
 use crate::{
-  expand::{as_var_val_display, expand_arithmetic}, getopt::{Opt, OptSpec, get_opts_from_tokens_raw}, outln, parse::lex::{Span, Tk}, sherr, state::{ScopeStack, VarFlags, VarKind, read_logic, read_vars, write_vars}, util::{
+  expand::{as_var_val_display, expand_arithmetic},
+  getopt::{Opt, OptSpec, get_opts_from_tokens_raw},
+  outln,
+  parse::lex::{Span, Tk},
+  sherr,
+  state::{ScopeStack, VarFlags, VarKind, read_logic, read_vars, write_vars},
+  util::{
     error::{ShResult, ShResultExt},
     strops::split_at_unescaped,
     with_status,
-  }
+  },
 };
 
 /// Like `prepare_argv` but preserves raw token text for `name=(...)` array
@@ -104,9 +110,9 @@ enum DeclareKind {
 
 #[derive(Clone, Copy)]
 enum IntrospectMode {
-  Vars,           // -p
-  FunctionsFull,  // -f
-  FunctionNames,  // -F
+  Vars,          // -p
+  FunctionsFull, // -f
+  FunctionNames, // -F
 }
 
 /// Shared assignment loop for `declare` / `local` / etc. Parses the
@@ -114,11 +120,7 @@ enum IntrospectMode {
 /// them onto `base_flags`, and applies each assignment in `argv` with the
 /// resulting kind+flags. Other opts (e.g. `-p`/`-f`/`-F`) are caller-handled
 /// before delegating here.
-fn apply_var_decl(
-  opts: &[Opt],
-  argv: Vec<(String, Span)>,
-  base_flags: VarFlags,
-) -> ShResult<()> {
+fn apply_var_decl(opts: &[Opt], argv: Vec<(String, Span)>, base_flags: VarFlags) -> ShResult<()> {
   let mut flags = base_flags;
   let mut kind = DeclareKind::Str;
   for opt in opts {
@@ -139,19 +141,15 @@ fn apply_var_decl(
       (DeclareKind::Str, None) => VarKind::Str(String::new()),
       (DeclareKind::Int, Some(v)) => {
         let evaluated = expand_arithmetic(v).promote_err(span.clone())?;
-        let n = evaluated.parse::<i32>().map_err(|_| {
-          sherr!(ExecFail @ span.clone(), "declare -i: invalid arithmetic '{v}'")
-        })?;
+        let n = evaluated
+          .parse::<i32>()
+          .map_err(|_| sherr!(ExecFail @ span.clone(), "declare -i: invalid arithmetic '{v}'"))?;
         VarKind::Int(n)
       }
       (DeclareKind::Int, None) => VarKind::Int(0),
-      (DeclareKind::Arr, Some(v)) => {
-        VarKind::arr_from_raw(v).promote_err(span.clone())?
-      }
+      (DeclareKind::Arr, Some(v)) => VarKind::arr_from_raw(v).promote_err(span.clone())?,
       (DeclareKind::Arr, None) => VarKind::Arr(VecDeque::new()),
-      (DeclareKind::Assoc, Some(v)) => {
-        VarKind::assoc_arr_from_raw(v).promote_err(span.clone())?
-      }
+      (DeclareKind::Assoc, Some(v)) => VarKind::assoc_arr_from_raw(v).promote_err(span.clone())?,
       (DeclareKind::Assoc, None) => VarKind::AssocArr(Vec::new()),
     };
     write_vars(|v| v.set_var(&name, val, flags)).promote_err(span)?;
@@ -253,7 +251,8 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
       let dump = read_logic(|l| {
         let mut keys: Vec<_> = l.funcs().keys().cloned().collect();
         keys.sort();
-        keys.into_iter()
+        keys
+          .into_iter()
           .filter(|k| names.is_empty() || names.contains(&k.as_str()))
           .map(|k| format!("declare -f {k}"))
           .collect::<Vec<_>>()
@@ -949,7 +948,10 @@ mod tests {
     test_input("declare -A aa=([a]=1 [b]=2 [c]=3)").unwrap();
     test_input("echo ${aa[@]}").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("1") && out.contains("2") && out.contains("3"), "got {out:?}");
+    assert!(
+      out.contains("1") && out.contains("2") && out.contains("3"),
+      "got {out:?}"
+    );
   }
 
   #[test]
@@ -1003,10 +1005,7 @@ mod tests {
   #[test]
   fn local_assoc_init() {
     let _g = TestGuard::new();
-    test_input(
-      "foo() { local -A m=([a]=1 [b]=2); echo \"${m[a]} ${m[b]}\"; }",
-    )
-    .unwrap();
+    test_input("foo() { local -A m=([a]=1 [b]=2); echo \"${m[a]} ${m[b]}\"; }").unwrap();
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
@@ -1056,8 +1055,7 @@ mod tests {
   #[test]
   fn local_export_combined() {
     let _g = TestGuard::new();
-    test_input("foo() { local -x EXPORTED_LOCAL=hi; env | grep '^EXPORTED_LOCAL='; }")
-      .unwrap();
+    test_input("foo() { local -x EXPORTED_LOCAL=hi; env | grep '^EXPORTED_LOCAL='; }").unwrap();
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
@@ -1085,7 +1083,10 @@ mod tests {
     // Regression: previously `arr+=("$c")` inside a for loop body wrote
     // a shadow copy in the loop's scope and the parent's local stayed empty.
     let _g = TestGuard::new();
-    test_input("foo() { local arr=(); for c in x y z; do arr+=(\"$c\"); done; echo \"( ${arr[@]} )\"; }").unwrap();
+    test_input(
+      "foo() { local arr=(); for c in x y z; do arr+=(\"$c\"); done; echo \"( ${arr[@]} )\"; }",
+    )
+    .unwrap();
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();

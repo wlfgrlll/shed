@@ -401,7 +401,6 @@ macro_rules! err {
   }};
 }
 
-
 // not ignoring io errors on this one since it takes an arbitrary fd
 #[macro_export]
 macro_rules! writefd {

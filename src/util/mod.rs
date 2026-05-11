@@ -9,12 +9,12 @@ use std::os::fd::BorrowedFd;
 
 use ariadne::Span as AriadneSpan;
 
+use crate::parse::Node;
 use crate::parse::execute::exec_nonint;
 use crate::parse::lex::{Span, Tk, TkRule};
-use crate::parse::Node;
+use crate::state;
 use crate::state::AutoCmd;
 use crate::util::error::ShResult;
-use crate::state;
 pub use strops::*;
 
 pub trait VecDequeExt<T> {
@@ -136,7 +136,6 @@ impl TkVecUtils<Tk> for Vec<Tk> {
   }
 }
 
-
 impl NodeVecUtils<Node> for Vec<Node> {
   fn get_span(&self) -> Option<Span> {
     if let Some(first_nd) = self.first()
@@ -159,8 +158,7 @@ pub struct FdWriter<'a>(pub BorrowedFd<'a>);
 
 impl<'a> std::io::Write for FdWriter<'a> {
   fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-    nix::unistd::write(self.0, buf)
-      .map_err(|e| std::io::Error::from_raw_os_error(e as i32))
+    nix::unistd::write(self.0, buf).map_err(|e| std::io::Error::from_raw_os_error(e as i32))
   }
   fn flush(&mut self) -> std::io::Result<()> {
     Ok(())

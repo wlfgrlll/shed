@@ -8,13 +8,19 @@ use chrono::Utc;
 use chrono_english::{Dialect, Interval, parse_date_string};
 
 use crate::{
-  errln, getopt::{Opt, OptSpec}, outln, readline::{
+  errln,
+  getopt::{Opt, OptSpec},
+  outln,
+  readline::{
     histimport,
     history::{HistEntry, History},
-  }, sherr, state::{self, write_meta}, util::{
+  },
+  sherr,
+  state::{self, write_meta},
+  util::{
     error::{ShResult, ShResultExt},
     with_status,
-  }
+  },
 };
 
 /// Helper macro to reduce repetition when adding conditions to the query. It handles the '--not' logic and parameter binding.
@@ -257,10 +263,12 @@ impl HistQuery {
           Ok(re) => re,
           Err(e) => return Err(sherr!(ParseErr, "{e}")),
         };
-        Ok(entries
-          .into_iter()
-          .filter(|e| re.is_match(e.1.command()) != *not)
-          .collect())
+        Ok(
+          entries
+            .into_iter()
+            .filter(|e| re.is_match(e.1.command()) != *not)
+            .collect(),
+        )
       }
       _ => Ok(entries),
     }

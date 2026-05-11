@@ -4,10 +4,16 @@ use ariadne::Fmt;
 use nix::unistd::write;
 
 use crate::{
-  getopt::{Opt, OptSpec}, out, parse::lex::Span, procio::stdout_fileno, sherr, state::{change_dir, read_meta, write_meta}, util::{
+  getopt::{Opt, OptSpec},
+  out,
+  parse::lex::Span,
+  procio::stdout_fileno,
+  sherr,
+  state::{change_dir, read_meta, write_meta},
+  util::{
     error::{ShResult, ShResultExt, next_color},
     with_status,
-  }
+  },
 };
 
 fn is_index_arg(arg: &str) -> bool {

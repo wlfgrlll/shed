@@ -1,10 +1,14 @@
 use std::collections::VecDeque;
 
 use crate::{
-  builtin::BuiltinArgs, getopt::{Opt, OptSpec}, outln, sherr, state::{VarFlags, VarKind, write_vars}, util::{
+  builtin::BuiltinArgs,
+  getopt::{Opt, OptSpec},
+  outln, sherr,
+  state::{VarFlags, VarKind, write_vars},
+  util::{
     error::{ShResult, ShResultExt},
-    with_status
-  }
+    with_status,
+  },
 };
 
 trait ArrOp {

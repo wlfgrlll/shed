@@ -1,10 +1,18 @@
 use super::*;
 
 use std::{
-  collections::{HashMap, VecDeque}, fs::OpenOptions, io::{Read, Write}, path::{Path, PathBuf}, rc::Rc, sync::atomic::Ordering
+  collections::{HashMap, VecDeque},
+  fs::OpenOptions,
+  io::{Read, Write},
+  path::{Path, PathBuf},
+  rc::Rc,
+  sync::atomic::Ordering,
 };
 
-use nix::{sys::wait::WaitStatus as WtStat, unistd::{User, getuid}};
+use nix::{
+  sys::wait::WaitStatus as WtStat,
+  unistd::{User, getuid},
+};
 use rusqlite::Connection;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -509,12 +517,16 @@ pub fn set_ver_info() -> ShResult<()> {
     ("major".into(), major.into()),
     ("minor".into(), minor.into()),
     ("patch".into(), patch.into()),
-    ("arch".into(),  arch.into()),
-    ("os".into(),    os.into()),
+    ("arch".into(), arch.into()),
+    ("os".into(), os.into()),
   ];
 
   write_vars(|v| {
-    v.set_var("SHED_VERSION", VarKind::Str(version.into()), VarFlags::EXPORT)?;
+    v.set_var(
+      "SHED_VERSION",
+      VarKind::Str(version.into()),
+      VarFlags::EXPORT,
+    )?;
     v.set_var("SHED_VER_INFO", VarKind::AssocArr(ver_info), VarFlags::NONE)
   })?;
 
@@ -623,38 +635,38 @@ pub fn get_home_str() -> Option<String> {
 
 pub fn get_exec_wrappers() -> Vec<String> {
   let mut wrappers = vec![
-    "sudo"       .into(),
-    "doas"       .into(),
-    "pkexec"     .into(),
-    "run0"       .into(),
-    "please"     .into(),
-    "gosu"       .into(),
-    "strace"     .into(),
-    "ltrace"     .into(),
-    "ktrace"     .into(),
-    "valgrind"   .into(),
-    "heaptrack"  .into(),
-    "nohup"      .into(),
-    "nice"       .into(),
-    "ionice"     .into(),
-    "chrt"       .into(),
-    "setsid"     .into(),
-    "setpriv"    .into(),
-    "prlimit"    .into(),
-    "unshare"    .into(),
-    "bwrap"      .into(),
-    "firejail"   .into(),
+    "sudo".into(),
+    "doas".into(),
+    "pkexec".into(),
+    "run0".into(),
+    "please".into(),
+    "gosu".into(),
+    "strace".into(),
+    "ltrace".into(),
+    "ktrace".into(),
+    "valgrind".into(),
+    "heaptrack".into(),
+    "nohup".into(),
+    "nice".into(),
+    "ionice".into(),
+    "chrt".into(),
+    "setsid".into(),
+    "setpriv".into(),
+    "prlimit".into(),
+    "unshare".into(),
+    "bwrap".into(),
+    "firejail".into(),
     "systemd-run".into(),
-    "proot"      .into(),
-    "watch"      .into(),
-    "chronic"    .into(),
-    "parallel"   .into(),
-    "stdbuf"     .into(),
-    "hyperfine"  .into(),
-    "command"    .into(),
-    "builtin"    .into(),
-    "env"        .into(),
-    "exec"       .into(),
+    "proot".into(),
+    "watch".into(),
+    "chronic".into(),
+    "parallel".into(),
+    "stdbuf".into(),
+    "hyperfine".into(),
+    "command".into(),
+    "builtin".into(),
+    "env".into(),
+    "exec".into(),
   ];
 
   // lets users define their own exec wrappers for the highlighter if they want

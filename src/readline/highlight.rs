@@ -233,11 +233,7 @@ fn paint(
 /// `:r!cat file_with_escapes`) would emit those bytes straight to the
 /// terminal, letting any clipboard-injection-style sequence change the
 /// title, write to OSC 52, etc.
-fn paint_with_visualized_controls(
-  out: &mut String,
-  text: &str,
-  style: PaletteEntry,
-) {
+fn paint_with_visualized_controls(out: &mut String, text: &str, style: PaletteEntry) {
   // Hot path: nothing to visualize, single styled write.
   if !text.bytes().any(is_visualized_control) {
     write!(out, "{}", text.paint(style.style())).unwrap();
@@ -509,12 +505,15 @@ mod tests {
     // (or it would let the terminal interpret embedded escape sequences).
     let p = test_palette();
     let out = highlight("\x1b]0;PWNED\x07", &p, 0, vec![]);
-    assert!(!out.contains('\x1b') || {
-      // shed's own styling escapes are allowed; check by stripping CSI runs
-      // and confirming no raw \x1b survives unaccompanied by `[`
-      let stripped = strip_ansi(&out);
-      !stripped.contains('\x1b')
-    }, "raw ESC byte escaped sanitizer: {out:?}");
+    assert!(
+      !out.contains('\x1b') || {
+        // shed's own styling escapes are allowed; check by stripping CSI runs
+        // and confirming no raw \x1b survives unaccompanied by `[`
+        let stripped = strip_ansi(&out);
+        !stripped.contains('\x1b')
+      },
+      "raw ESC byte escaped sanitizer: {out:?}"
+    );
   }
 
   #[test]
@@ -537,7 +536,10 @@ mod tests {
     let with_ctrl = highlight("a\x1bb", &p, 0, vec![]);
     // The control variant should contain "^[" (visualization) and have
     // more bytes than the plain version (extra SGR codes).
-    assert!(with_ctrl.contains("^["), "missing visualization: {with_ctrl:?}");
+    assert!(
+      with_ctrl.contains("^["),
+      "missing visualization: {with_ctrl:?}"
+    );
     assert!(
       with_ctrl.len() > plain.len() + 2,
       "visualization should add styling bytes; plain={} with_ctrl={}",

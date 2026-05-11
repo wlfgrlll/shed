@@ -299,8 +299,7 @@ impl Tk {
   }
 
   pub fn is_closer(&self) -> bool {
-    CLOSERS.contains(&self.as_str())
-      || matches!(self.class, TkRule::BraceGrpEnd | TkRule::SubshEnd)
+    CLOSERS.contains(&self.as_str()) || matches!(self.class, TkRule::BraceGrpEnd | TkRule::SubshEnd)
   }
 
   pub fn filter_meta(&self) -> bool {
@@ -1295,8 +1294,7 @@ impl Iterator for LexStream {
 
     loop {
       let pos = self.cursor;
-      if self.slice(pos..pos + 2) == Some("\\\n")
-      || self.slice(pos..pos + 3) == Some("\\\r\n") {
+      if self.slice(pos..pos + 2) == Some("\\\n") || self.slice(pos..pos + 3) == Some("\\\r\n") {
         self.inc_cursor(2);
       } else if pos < self.source.len() && is_field_sep(get_char(&self.source, pos).unwrap()) {
         self.inc_cursor(1);

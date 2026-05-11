@@ -8,8 +8,7 @@ use crate::state::{VarFlags, VarKind, read_vars, write_vars};
 use crate::util::error::{ShErr, ShResult, next_color};
 use crate::{match_loop, sherr};
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum ArithOp {
   // math
   Add,
@@ -103,18 +102,18 @@ enum ArithTk {
   Var(String),
 
   // RPN-only opcodes for control flow (jump-based short-circuit + ternary)
-  JumpIfZero(usize),         // pop, if 0 jump to offset
-  JumpIfZeroPeek(usize),     // peek, if 0 jump (used by &&)
-  JumpIfNonZeroPeek(usize),  // peek, if non-zero jump (used by ||)
-  Jump(usize),               // unconditional jump
-  Pop,                       // discard top of stack
-  Nez,                       // replace top with 0 if it's 0, else 1
+  JumpIfZero(usize),        // pop, if 0 jump to offset
+  JumpIfZeroPeek(usize),    // peek, if 0 jump (used by &&)
+  JumpIfNonZeroPeek(usize), // peek, if non-zero jump (used by ||)
+  Jump(usize),              // unconditional jump
+  Pop,                      // discard top of stack
+  Nez,                      // replace top with 0 if it's 0, else 1
 
   // Ops-stack-only pending markers (carry indices to patch when flushed)
-  PendingAnd(usize),          // jump_idx of the placeholder JIFZ_PEEK
-  PendingOr(usize),           // jump_idx of the placeholder JIFNZ_PEEK
-  PendingTernaryThen(usize),  // jump_idx of the placeholder JIFZ (cond→else)
-  PendingTernaryElse(usize),  // jump_idx of the placeholder JMP (then→end)
+  PendingAnd(usize),         // jump_idx of the placeholder JIFZ_PEEK
+  PendingOr(usize),          // jump_idx of the placeholder JIFNZ_PEEK
+  PendingTernaryThen(usize), // jump_idx of the placeholder JIFZ (cond→else)
+  PendingTernaryElse(usize), // jump_idx of the placeholder JMP (then→end)
 }
 
 // Stack value used during eval_rpn, keeps Var names alive for assignment targets
@@ -540,10 +539,16 @@ impl ArithTk {
           output[jump_idx] = ArithTk::Jump(target);
         }
         ArithTk::PendingTernaryThen(_) => {
-          return Err(sherr!(ParseErr, "'?' without matching ':' in arithmetic expression"));
+          return Err(sherr!(
+            ParseErr,
+            "'?' without matching ':' in arithmetic expression"
+          ));
         }
         ArithTk::Question => {
-          return Err(sherr!(ParseErr, "'?' without matching ':' in arithmetic expression"));
+          return Err(sherr!(
+            ParseErr,
+            "'?' without matching ':' in arithmetic expression"
+          ));
         }
         other => output.push(other),
       }
@@ -555,7 +560,11 @@ impl ArithTk {
       matches!(top, ArithTk::LParen | ArithTk::Question)
     }
 
-    fn flush_ops(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>, until_paren: bool) -> ShResult<()> {
+    fn flush_ops(
+      ops: &mut Vec<ArithTk>,
+      output: &mut Vec<ArithTk>,
+      until_paren: bool,
+    ) -> ShResult<()> {
       while let Some(top) = ops.last() {
         if matches!(top, ArithTk::LParen) {
           break;
@@ -756,24 +765,40 @@ impl ArithTk {
 
         // Control flow
         // set i directly and continue (skip auto-increment).
-        ArithTk::Jump(target) => { i = target; continue; }
+        ArithTk::Jump(target) => {
+          i = target;
+          continue;
+        }
         ArithTk::JumpIfZero(target) => {
           let val = pop_num!();
-          if val == 0 { i = target; continue; }
+          if val == 0 {
+            i = target;
+            continue;
+          }
         }
         ArithTk::JumpIfZeroPeek(target) => {
-          let val = stack.last()
+          let val = stack
+            .last()
             .ok_or_else(|| sherr!(ParseErr, "Empty stack at conditional jump"))?
             .to_num()?;
-          if val == 0 { i = target; continue; }
+          if val == 0 {
+            i = target;
+            continue;
+          }
         }
         ArithTk::JumpIfNonZeroPeek(target) => {
-          let val = stack.last()
+          let val = stack
+            .last()
             .ok_or_else(|| sherr!(ParseErr, "Empty stack at conditional jump"))?
             .to_num()?;
-          if val != 0 { i = target; continue; }
+          if val != 0 {
+            i = target;
+            continue;
+          }
         }
-        ArithTk::Pop => { stack.pop(); }
+        ArithTk::Pop => {
+          stack.pop();
+        }
         ArithTk::Nez => {
           let val = pop_num!();
           stack.push(StackVal::Num(if val != 0 { 1 } else { 0 }));

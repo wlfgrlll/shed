@@ -1,4 +1,7 @@
-use std::{cell::RefCell, collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf, str::FromStr};
+use std::{
+  cell::RefCell, collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf,
+  str::FromStr,
+};
 
 use nix::{
   sys::stat::{self, SFlag},

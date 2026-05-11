@@ -10,11 +10,15 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::{
-  procio::{MIN_INTERNAL_FD, do_something_that_opens_fds_that_we_cant_access_hack}, readline::{
+  procio::{MIN_INTERNAL_FD, do_something_that_opens_fds_that_we_cant_access_hack},
+  readline::{
     complete::{Candidate, FuzzySelector},
     editcmd::Direction,
     linebuf::{Hint, LineBuf, Lines},
-  }, sherr, state::{self, read_shopts}, util::error::ShResult
+  },
+  sherr,
+  state::{self, read_shopts},
+  util::error::ShResult,
 };
 
 #[derive(Debug, Clone)]

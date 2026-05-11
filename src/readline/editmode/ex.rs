@@ -5,6 +5,7 @@ use std::str::Chars;
 use itertools::Itertools;
 
 use crate::expand::Expander;
+use crate::match_loop;
 use crate::parse::lex::TkFlags;
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
@@ -17,7 +18,6 @@ use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
 use crate::state::CursorStyle;
 use crate::util::error::ShResult;
-use crate::{match_loop};
 use crate::{key, motion, sherr};
 use crate::{status_msg, verb};
 use bitflags::bitflags;

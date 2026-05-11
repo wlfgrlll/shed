@@ -5,7 +5,9 @@ use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
 use crate::parse::lex::TkFlags;
 use crate::sherr;
-use crate::state::{ArrIndex, ScopeStack, VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars};
+use crate::state::{
+  ArrIndex, ScopeStack, VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars,
+};
 use crate::util::error::ShResult;
 use crate::{match_loop, state};
 
@@ -143,11 +145,14 @@ pub fn parse_param_exp(s: &str, allow_side_effects: bool) -> ShResult<ParamExp> 
 pub fn parse_pos_len(s: &str, allow_side_effects: bool) -> Option<(usize, Option<usize>)> {
   let raw = s.strip_prefix(':')?;
   if let Some((start, len)) = raw.split_once(':') {
-    let start = expand_raw_inner(&mut start.chars().peekable(), allow_side_effects).unwrap_or_else(|_| start.to_string());
-    let len = expand_raw_inner(&mut len.chars().peekable(), allow_side_effects).unwrap_or_else(|_| len.to_string());
+    let start = expand_raw_inner(&mut start.chars().peekable(), allow_side_effects)
+      .unwrap_or_else(|_| start.to_string());
+    let len = expand_raw_inner(&mut len.chars().peekable(), allow_side_effects)
+      .unwrap_or_else(|_| len.to_string());
     Some((start.parse::<usize>().ok()?, len.parse::<usize>().ok()))
   } else {
-    let raw = expand_raw_inner(&mut raw.chars().peekable(), allow_side_effects).unwrap_or_else(|_| raw.to_string());
+    let raw = expand_raw_inner(&mut raw.chars().peekable(), allow_side_effects)
+      .unwrap_or_else(|_| raw.to_string());
     Some((raw.parse::<usize>().ok()?, None))
   }
 }
@@ -161,7 +166,9 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     let parsed = VarName::parse(var_spec, allow_side_effects)?;
     if let Some(idx) = parsed.index() {
       match idx {
-        crate::state::ArrIndex::AllSplit | crate::state::ArrIndex::AllJoined | crate::state::ArrIndex::ArgCount => {
+        crate::state::ArrIndex::AllSplit
+        | crate::state::ArrIndex::AllJoined
+        | crate::state::ArrIndex::ArgCount => {
           let var = read_vars(|v| v.get_var_meta(parsed.name()));
           return Ok(
             match var.kind() {

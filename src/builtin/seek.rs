@@ -64,7 +64,8 @@ impl super::Builtin for Seek {
       unsafe { BorrowedFd::borrow_raw(fd as i32) }, // lseek will validate this for us
       offset,
       whence,
-    ).map_err(|e| sherr!(ExecFail @ span, "lseek failed: {e}"))?;
+    )
+    .map_err(|e| sherr!(ExecFail @ span, "lseek failed: {e}"))?;
 
     outln!("{new_off}");
 

@@ -159,7 +159,6 @@ pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
   out
 }
 
-
 // Big credit to rustyline for this
 fn width(s: &str, esc_seq: &mut u8) -> usize {
   if *esc_seq == 1 {

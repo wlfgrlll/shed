@@ -208,10 +208,7 @@ pub fn escape_glob(raw: &str, use_markers: bool) -> String {
 }
 
 pub fn restore_glob_prefix(pattern: &str, mut result: String) -> String {
-  if pattern.starts_with("./")
-    && !result.starts_with("./")
-    && !result.starts_with('/')
-  {
+  if pattern.starts_with("./") && !result.starts_with("./") && !result.starts_with('/') {
     result.insert_str(0, "./");
   }
   if pattern.ends_with('/') && !result.ends_with('/') {
@@ -446,7 +443,11 @@ mod tests {
 
     let mut got: Vec<String> = words
       .iter()
-      .filter_map(|w| std::path::Path::new(w).file_name().map(|n| n.to_string_lossy().into_owned()))
+      .filter_map(|w| {
+        std::path::Path::new(w)
+          .file_name()
+          .map(|n| n.to_string_lossy().into_owned())
+      })
       .collect();
     got.sort();
     assert_eq!(got, vec!["alpha", "beta", "gamma"]);
@@ -514,7 +515,11 @@ mod tests {
 
     let mut got: Vec<String> = words
       .iter()
-      .filter_map(|w| std::path::Path::new(w).file_name().map(|n| n.to_string_lossy().into_owned()))
+      .filter_map(|w| {
+        std::path::Path::new(w)
+          .file_name()
+          .map(|n| n.to_string_lossy().into_owned())
+      })
       .collect();
     got.sort();
     assert_eq!(got, vec!["a.txt", "b.txt"]);

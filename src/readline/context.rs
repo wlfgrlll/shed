@@ -7,10 +7,16 @@ use bitflags::bitflags;
 use crate::{
   expand::{unescape_str, var::expand_raw_inner},
   match_loop,
-  parse::{execute::{in_cd_path, is_in_path}, lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule}},
+  parse::{
+    execute::{in_cd_path, is_in_path},
+    lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
+  },
   readline::{linebuf::Delim, markers::strip_markers},
   state::{self, ShellParam, get_exec_wrappers, read_meta, read_shopts},
-  util::{has_unescaped, strops::{QuoteState, split_at_unescaped}},
+  util::{
+    has_unescaped,
+    strops::{QuoteState, split_at_unescaped},
+  },
 };
 
 /*
@@ -54,14 +60,12 @@ pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
   out
 }
 
-const EXEC_WRAPPERS: [&str;3] = [
-  "sudo",
-  "run0",
-  "strace"
-];
+const EXEC_WRAPPERS: [&str; 3] = ["sudo", "run0", "strace"];
 fn is_exec_wrapper(tk: &CtxTk) -> bool {
-  get_exec_wrappers().into_iter().any(|wr| wr.as_str() == tk.span().as_str())
-  && is_valid_cmd(tk.as_tk())
+  get_exec_wrappers()
+    .into_iter()
+    .any(|wr| wr.as_str() == tk.span().as_str())
+    && is_valid_cmd(tk.as_tk())
 }
 
 fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
@@ -74,10 +78,8 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
 
       while let Some(target) = tokens.peek() {
         match target.class {
-          CtxTkRule::Argument |
-          CtxTkRule::ArgumentFile => {
-            if target.span.as_str().starts_with('-')
-            || has_unescaped(target.span.as_str(), "=") {
+          CtxTkRule::Argument | CtxTkRule::ArgumentFile => {
+            if target.span.as_str().starts_with('-') || has_unescaped(target.span.as_str(), "=") {
               // looks like an option or an assignment
               tokens.next();
               continue;
@@ -93,7 +95,7 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
               true => CtxTkRule::ValidCommand,
               false => CtxTkRule::InvalidCommand,
             };
-            break
+            break;
           }
           CtxTkRule::HereDocStart => {
             tokens.next();
@@ -102,7 +104,9 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
           CtxTkRule::Redirect => {
             tokens.next(); // consume it
             let redir_target = tokens.next();
-            if redir_target.is_none_or(|t| !matches!(t.class, CtxTkRule::Argument | CtxTkRule::ArgumentFile)) {
+            if redir_target
+              .is_none_or(|t| !matches!(t.class, CtxTkRule::Argument | CtxTkRule::ArgumentFile))
+            {
               break;
             }
           }
@@ -133,10 +137,7 @@ fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
 /// 3. All directories in PATH environment variable
 /// 4. Shell functions and aliases in the current shell state
 fn is_valid(command: Tk) -> bool {
-  if read_shopts(|s| s.core.autocd)
-    && in_cd_path(command.clone())
-    && !is_in_path(command.clone())
-  {
+  if read_shopts(|s| s.core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone()) {
     // this is a directory and autocd is enabled
     return true;
   }
@@ -146,7 +147,7 @@ fn is_valid(command: Tk) -> bool {
 
 fn is_valid_cmd(command: Tk) -> bool {
   let Ok(expanded) = command.expand_no_side_effects() else {
-    return false
+    return false;
   };
   let Some(name) = expanded.get_first_word() else {
     return false;
@@ -453,7 +454,7 @@ impl CtxTk {
     )
   }
 
-  pub fn split_at_checked(&self, at: usize) -> Option<(CtxTk,CtxTk)> {
+  pub fn split_at_checked(&self, at: usize) -> Option<(CtxTk, CtxTk)> {
     if !self.can_split_at(at) {
       return None;
     }
@@ -586,9 +587,7 @@ impl CtxTk {
         class: CtxTkRule::Keyword,
         sub_tokens: vec![],
       }];
-    } else if flags.contains(TkFlags::ASSIGN)
-      && !value.as_str().starts_with('=')
-    {
+    } else if flags.contains(TkFlags::ASSIGN) && !value.as_str().starts_with('=') {
       // Assignment-shaped token: structurally tokenize so the index
       // (which can contain $(...) / ${...}) and the RHS are properly
       // recognized for highlighting / completion. Skip the leading-`=`
@@ -676,7 +675,7 @@ impl CtxTk {
 fn check_path_exists(path: &str) -> bool {
   // NOTE: keep an eye on this. this might have pretty significant overhead on network mounts
   if !read_shopts(|o| o.highlight.check_files) {
-    return false
+    return false;
   }
 
   if path.is_empty() {
@@ -802,10 +801,7 @@ fn parse_assignment(span: &Span, flags: TkFlags) -> Vec<CtxTk> {
     // Recursively scan the index contents (excluding the brackets).
     // ARITH context matches what `${arr[idx]}` already uses.
     let inner_text = &lhs_text[b + 1..close_off - 1];
-    let inner_span = Span::new(
-      (index_start + 1)..(index_end - 1),
-      span.get_source(),
-    );
+    let inner_span = Span::new((index_start + 1)..(index_end - 1), span.get_source());
     let mut inner_chars = inner_text.char_indices().peekable();
     let (_, inner) = scan_subspans(
       &mut inner_chars,
@@ -1755,20 +1751,20 @@ mod tests {
       .expect("token");
     let expanded = tk.expand_no_side_effects().expect("expand");
     let word = expanded.get_first_word().expect("word");
-    assert!(word.starts_with('/'), "tilde-expanded path should be absolute, got {word:?}");
-    assert!(!word.chars().any(|c| ('\u{e000}'..='\u{e0ff}').contains(&c)),
-      "expanded path should not contain PUA marker chars, got {word:?}");
+    assert!(
+      word.starts_with('/'),
+      "tilde-expanded path should be absolute, got {word:?}"
+    );
+    assert!(
+      !word.chars().any(|c| ('\u{e000}'..='\u{e0ff}').contains(&c)),
+      "expanded path should not contain PUA marker chars, got {word:?}"
+    );
   }
 
   #[test]
   fn dbracket_classification() {
     let toks = get_context_tokens("[[ -f foo ]]");
-    let find_class = |s: &str| {
-      toks
-        .iter()
-        .find(|t| t.span.as_str() == s)
-        .map(|t| t.class)
-    };
+    let find_class = |s: &str| toks.iter().find(|t| t.span.as_str() == s).map(|t| t.class);
     assert_eq!(find_class("[["), Some(CtxTkRule::Keyword));
     assert_eq!(find_class("-f"), Some(CtxTkRule::Argument));
     assert_eq!(find_class("foo"), Some(CtxTkRule::Argument));

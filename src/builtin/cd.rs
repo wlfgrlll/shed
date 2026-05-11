@@ -1,7 +1,13 @@
-use std::{env, path::{Path, PathBuf}};
+use std::{
+  env,
+  path::{Path, PathBuf},
+};
 
 use crate::{
-  getopt::{Opt, OptSpec}, outln, sherr, state::{self, read_vars}, util::{error::ShResult, with_status}
+  getopt::{Opt, OptSpec},
+  outln, sherr,
+  state::{self, read_vars},
+  util::{error::ShResult, with_status},
 };
 
 pub(super) struct Cd;

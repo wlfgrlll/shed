@@ -1,7 +1,11 @@
 #![allow(non_snake_case)]
 
 use crate::{
-  key, parse::lex::Span, readline::{Prompt, ShedLine}, state::{with_term, write_logic, write_shopts}, tests::testutil::TestGuard
+  key,
+  parse::lex::Span,
+  readline::{Prompt, ShedLine},
+  state::{with_term, write_logic, write_shopts},
+  tests::testutil::TestGuard,
 };
 
 /// Tests for our vim logic emulation. Each test consists of an initial text, a sequence of keys to feed, and the expected final text and cursor position.

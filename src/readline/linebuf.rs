@@ -1,5 +1,11 @@
 use std::{
-  cmp::Ordering, collections::{HashSet, VecDeque}, fmt::{self, Display}, fs::OpenOptions, io::Write, ops::{Deref, DerefMut, Index, IndexMut, Range}, slice::SliceIndex
+  cmp::Ordering,
+  collections::{HashSet, VecDeque},
+  fmt::{self, Display},
+  fs::OpenOptions,
+  io::Write,
+  ops::{Deref, DerefMut, Index, IndexMut, Range},
+  slice::SliceIndex,
 };
 
 use ariadne::Span as AriadneSpan;
@@ -17,7 +23,9 @@ use crate::{
   expand::alias::AliasExpander,
   match_loop, motion,
   parse::{
-    ParseFlags, ParsedSrc, execute::{exec_int, exec_nonint}, lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule}
+    ParseFlags, ParsedSrc,
+    execute::{exec_int, exec_nonint},
+    lex::{self, CLOSERS, LexFlags, LexStream, TkFlags, TkRule},
   },
   procio::{self, RedirSet, RedirSpec, capture_command, stdin_fileno},
   readline::{
@@ -752,9 +760,7 @@ impl IndentCtx {
       depths.push(src.block_depth);
     }
 
-    let levels: Vec<(usize, usize)> = (0..n_rows)
-      .map(|i| (depths[i], depths[i + 1]))
-      .collect();
+    let levels: Vec<(usize, usize)> = (0..n_rows).map(|i| (depths[i], depths[i + 1])).collect();
 
     (levels, failed)
   }
@@ -989,7 +995,7 @@ pub struct LineBuf {
   pub kill_cycle_pos: Option<Pos>,
 
   pub concat_points: VecDeque<Pos>,
-  pub indent_cache: Option<Vec<(usize,usize)>>,
+  pub indent_cache: Option<Vec<(usize, usize)>>,
   pub parse_status: bool,
 }
 
@@ -1210,13 +1216,19 @@ impl LineBuf {
       })
   }
   fn line_to_cursor(&self) -> &[Grapheme] {
-    let line = self.cur_line();
-    let col = self.cursor.pos.col.min(line.len());
+    self.line_to_pos(self.cursor.pos)
+  }
+  fn line_to_pos(&self, pos: Pos) -> &[Grapheme] {
+    let line = &self.lines[pos.row];
+    let col = pos.col.min(line.len());
     &line[..col]
   }
   fn line_from_cursor(&self) -> &[Grapheme] {
-    let line = self.cur_line();
-    let col = self.cursor.pos.col.min(line.len());
+    self.line_from_pos(self.cursor.pos)
+  }
+  fn line_from_pos(&self, pos: Pos) -> &[Grapheme] {
+    let line = &self.lines[pos.row];
+    let col = pos.col.min(line.len());
     &line[col..]
   }
   fn row_col(&self) -> (usize, usize) {
@@ -1321,7 +1333,7 @@ impl LineBuf {
     if invalidate_cache {
       self.indent_cache = None;
     }
-    let (_,end) = self.indent_levels_for_row(row + 1);
+    let (_, end) = self.indent_levels_for_row(row + 1);
     let new_line = self.lines.get_mut(row + 1).unwrap();
 
     let mut col = 0;
@@ -1710,35 +1722,69 @@ impl LineBuf {
       }
     }
   }
-  fn search_char(&self, dir: &Direction, dest: &Dest, char: &Grapheme) -> isize {
-    match dir {
-      Direction::Forward => {
-        let slice = self.line_from_cursor();
-        for (i, gr) in slice.iter().enumerate().skip(1) {
-          if gr == char {
-            match dest {
-              Dest::On => return i as isize,
-              Dest::Before => return (i as isize - 1).max(0),
-              Dest::After => unreachable!(),
+  fn search_char(&self, dir: &Direction, dest: &Dest, char: &Grapheme, count: usize) -> isize {
+    let mut off: isize = 0;
+    'outer: for it in 0..count {
+      let pos = self.offset_cursor(0, off);
+      match dir {
+        Direction::Forward => {
+          let slice = self.line_from_pos(pos);
+          for (i, gr) in slice.iter().enumerate().skip(1) {
+            let i = i as isize;
+            if gr == char {
+              match dest {
+                Dest::On => {
+                  off += i;
+                  continue 'outer;
+                }
+                Dest::Before => {
+                  if it != count.saturating_sub(1) {
+                    // there are more iterations to go
+                    // if we land before, we will stop in the same
+                    // place next time around
+                    off += i;
+                  } else {
+                    off += (i - 1).max(0);
+                  }
+                  continue 'outer;
+                }
+                Dest::After => unreachable!(),
+              }
             }
           }
+          return 0; // not found
         }
-      }
-      Direction::Backward => {
-        let slice = self.line_to_cursor();
-        for (i, gr) in slice.iter().rev().enumerate() {
-          if gr == char {
-            match dest {
-              Dest::On => return -(i as isize) - 1,
-              Dest::Before => return -(i as isize),
-              Dest::After => unreachable!(),
+        Direction::Backward => {
+          let slice = self.line_to_pos(pos);
+          for (i, gr) in slice.iter().rev().enumerate() {
+            let i = i as isize;
+            if gr == char {
+              match dest {
+                Dest::On => {
+                  off -= i + 1;
+                  continue 'outer;
+                }
+                Dest::Before => {
+                  if it != count.saturating_sub(1) {
+                    // there are more iterations to go
+                    // if we land before, we will stop in the same
+                    // place next time around
+                    off -= i + 1;
+                  } else {
+                    off -= i;
+                  }
+                  continue 'outer;
+                }
+                Dest::After => unreachable!(),
+              }
             }
           }
+          return 0; // not found
         }
       }
     }
 
-    0
+    off
   }
   fn eval_word_motion(
     &self,
@@ -2481,7 +2527,7 @@ impl LineBuf {
           Ok(re) => re,
           Err(e) => {
             status_msg!("{e}");
-            return Ok(None)
+            return Ok(None);
           }
         };
         let off = if matches!(dir, LineAddr::Pattern(_)) {
@@ -2672,7 +2718,7 @@ impl LineBuf {
       Ok(re) => re,
       Err(e) => {
         status_msg!("{e}");
-        return None
+        return None;
       }
     };
     let buf = self.joined();
@@ -2823,12 +2869,13 @@ impl LineBuf {
           this.eval_word_motion(*count, to, word, dir, ignore_trailing_ws, inclusive)
         }
         Motion::CharSearch(dir, dest, char) => {
-          let off = this.search_char(dir, dest, char);
+          let off = this.search_char(dir, dest, char, *count);
           let target = this.offset_cursor(0, off);
+          let inclusive = matches!(dir, Direction::Forward);
           (target != this.cursor.pos).then_some(MotionKind::Char {
             start: this.cursor.pos,
             end: target,
-            inclusive: true,
+            inclusive,
           })
         }
         dir @ (Motion::BackwardChar | Motion::ForwardChar)
@@ -3071,9 +3118,7 @@ impl LineBuf {
           Some(MotionKind::Lines { lines })
         }
 
-        Motion::RepeatMotion | Motion::RepeatMotionRev => {
-          None
-        }
+        Motion::RepeatMotion | Motion::RepeatMotionRev => None,
         Motion::Null => None,
         Motion::Selection(mode) => {
           unreachable!()
@@ -3117,7 +3162,7 @@ impl LineBuf {
       Ok(re) => re,
       Err(e) => {
         status_msg!("{e}");
-        return Ok(vec![])
+        return Ok(vec![]);
       }
     };
     let mut acc = 0;
@@ -3268,17 +3313,17 @@ impl LineBuf {
   fn delete_range(&mut self, motion: &MotionKind) -> Lines {
     self.extract_range(motion)
   }
-  pub fn indent_levels(&mut self) -> &[(usize,usize)] {
+  pub fn indent_levels(&mut self) -> &[(usize, usize)] {
     let has_cache = self.indent_cache.is_some();
     if !has_cache {
       let joined = self.joined();
-      let (levels,status) = self.indent_ctx.check_levels_per_row(&joined);
+      let (levels, status) = self.indent_ctx.check_levels_per_row(&joined);
       self.indent_cache = Some(levels);
       self.parse_status = status;
     }
     self.indent_cache.as_ref().unwrap()
   }
-  pub fn indent_levels_for(&mut self, buf: &str) -> (Vec<(usize,usize)>, bool) {
+  pub fn indent_levels_for(&mut self, buf: &str) -> (Vec<(usize, usize)>, bool) {
     self.indent_ctx.check_levels_per_row(buf)
   }
   /// Returns (depth-at-cursor, parse-failed). Computed from the prefix
@@ -3290,11 +3335,8 @@ impl LineBuf {
     let depth = levels.last().cloned().unwrap_or_default().1;
     (depth, failed)
   }
-  pub fn indent_levels_for_row(&mut self, row: usize) -> (usize,usize) {
-    self.indent_levels()
-      .get(row)
-      .cloned()
-      .unwrap_or_default()
+  pub fn indent_levels_for_row(&mut self, row: usize) -> (usize, usize) {
+    self.indent_levels().get(row).cloned().unwrap_or_default()
   }
   fn motion_mutation(&mut self, motion: &MotionKind, mut f: impl FnMut(&Grapheme) -> Grapheme) {
     match motion {
@@ -3466,7 +3508,7 @@ impl LineBuf {
             self.set_row(s);
             if *verb == Verb::Change {
               // we've gotta indent
-              let (start,_) = self.indent_levels_for_row(self.row());
+              let (start, _) = self.indent_levels_for_row(self.row());
               let line = self.cur_line_mut();
               let mut col = 0;
               for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
@@ -3483,7 +3525,7 @@ impl LineBuf {
             self.set_row(*s);
             if *verb == Verb::Change {
               // we've gotta indent
-              let (start,_) = self.indent_levels_for_row(self.row());
+              let (start, _) = self.indent_levels_for_row(self.row());
               let line = self.cur_line_mut();
               let mut col = 0;
               for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
@@ -3682,7 +3724,9 @@ impl LineBuf {
             let content_len: usize = lines.iter().map(|l| l.len()).sum();
             let row = selection_start.map(|p| p.row).unwrap_or_else(|| self.row());
             let col = if let Some(start) = selection_start {
-              start.col.min(self.lines.get(row).map(|l| l.len()).unwrap_or(0))
+              start
+                .col
+                .min(self.lines.get(row).map(|l| l.len()).unwrap_or(0))
             } else {
               match effective_anchor {
                 Anchor::After => (self.col() + 1).min(self.cur_line().len()),
@@ -3749,7 +3793,7 @@ impl LineBuf {
           let target = (row + 1).min(self.lines.len());
           self.lines.insert(target, Line::default());
 
-          let (start,_) = self.indent_levels_for_row(target);
+          let (start, _) = self.indent_levels_for_row(target);
           let line = self.line_mut(target);
           let mut col = 0;
           for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
@@ -3763,7 +3807,7 @@ impl LineBuf {
           let row = self.row();
           self.lines.insert(row, Line::default());
 
-          let (start,_) = self.indent_levels_for_row(row);
+          let (start, _) = self.indent_levels_for_row(row);
           let line = self.line_mut(row);
           let mut col = 0;
           for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
@@ -4008,7 +4052,10 @@ impl LineBuf {
           // Buffer becomes the command's stdin via a memfd. Materialize the
           // spec into a Redir, apply it under a RedirGuard so stdin restores
           // when the guard drops at the end of this scope.
-          let spec = RedirSpec::Buffer { fd: STDIN_FILENO, buf };
+          let spec = RedirSpec::Buffer {
+            fd: STDIN_FILENO,
+            buf,
+          };
           let redirs = RedirSet::from(spec);
           let _guard = redirs.apply()?;
 
@@ -4410,7 +4457,7 @@ impl LineBuf {
           Ok(re) => re,
           Err(e) => {
             status_msg!("{e}");
-            return Ok(())
+            return Ok(());
           }
         };
 
@@ -4485,7 +4532,7 @@ impl LineBuf {
     for row in line_nums {
       let line_len = self.line(row).len();
 
-      let (start,end) = self.indent_levels_for_row(row);
+      let (start, end) = self.indent_levels_for_row(row);
       let num_tabs = start.min(end);
 
       let line = self.line_mut(row);
@@ -4568,7 +4615,6 @@ impl LineBuf {
     if is_edit {
       self.indent_cache = None;
     }
-
 
     let before = self.lines.clone();
     let old_cursor = self.cursor.pos;

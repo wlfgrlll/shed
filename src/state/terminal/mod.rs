@@ -28,11 +28,15 @@ use nix::{
 use vte::Perform;
 
 use crate::{
-  procio::move_high, readline::{
+  procio::move_high,
+  readline::{
     keys::{KeyCode, KeyEvent, ModKeys},
     linebuf::Pos,
     term::get_win_size,
-  }, sherr, state::{read_shopts, with_term}, util::error::{ShErr, ShErrKind, ShResult}
+  },
+  sherr,
+  state::{read_shopts, with_term},
+  util::error::{ShErr, ShErrKind, ShResult},
 };
 
 static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
@@ -856,7 +860,7 @@ impl Terminal {
   pub fn yield_terminal(&mut self) -> Snapshot {
     let guard = TermGuard::new().with_scroll_region(self.scroll_region);
     self.reset_scroll_region().ok();
-    self.flush().ok();  // ensure the reset reaches the terminal before exec
+    self.flush().ok(); // ensure the reset reaches the terminal before exec
     Snapshot::new(guard)
   }
 
@@ -961,7 +965,9 @@ impl Terminal {
     if self.test_mode {
       return Ok(None);
     }
-    let Some(tty) = self.tty() else { return Ok(None) };
+    let Some(tty) = self.tty() else {
+      return Ok(None);
+    };
 
     self.write_direct(Self::CAP_QUERY)?;
 
@@ -985,7 +991,9 @@ impl Terminal {
     if self.test_mode {
       return Ok(None);
     }
-    let Some(tty) = self.tty() else { return Ok(None) };
+    let Some(tty) = self.tty() else {
+      return Ok(None);
+    };
 
     // ask the terminal where our cursor is
     self.write_direct(Self::CURSOR_QUERY)?;
@@ -1224,29 +1232,37 @@ impl Terminal {
 
   fn push_termios(&mut self) -> ShResult<()> {
     let Some(tty) = self.tty() else { return Ok(()) };
-    let current = tcgetattr(tty)
-      .map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
+    let current =
+      tcgetattr(tty).map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
     self.termios_stack.push(current);
     Ok(())
   }
 
   fn pop_termios(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty_raw() else { return Ok(()) };
+    let Some(tty) = self.tty_raw() else {
+      return Ok(());
+    };
     if let Some(termios) = self.termios_stack.pop() {
-      tcsetattr(unsafe { BorrowedFd::borrow_raw(tty) }, termios::SetArg::TCSANOW, &termios)
-        .map_err(|e| sherr!(InternalErr, "Failed to restore terminal attributes: {e}"))?;
+      tcsetattr(
+        unsafe { BorrowedFd::borrow_raw(tty) },
+        termios::SetArg::TCSANOW,
+        &termios,
+      )
+      .map_err(|e| sherr!(InternalErr, "Failed to restore terminal attributes: {e}"))?;
     }
     Ok(())
   }
 
   pub fn edit_termios<F: FnOnce(&mut Termios)>(&mut self, f: F) -> ShResult<()> {
-    let Some(tty) = self.tty_raw() else { return Ok(()) };
+    let Some(tty) = self.tty_raw() else {
+      return Ok(());
+    };
     let tty = unsafe { BorrowedFd::borrow_raw(tty) };
     self.push_termios()?;
 
-    let mut raw = tcgetattr(tty)
-      .map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
+    let mut raw =
+      tcgetattr(tty).map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
     f(&mut raw);
 

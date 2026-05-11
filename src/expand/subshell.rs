@@ -2,14 +2,16 @@ use std::os::fd::AsRawFd;
 
 use crate::expand::arithmetic::expand_arithmetic_wrapped;
 use crate::parse::execute::exec_nonint;
-use crate::procio::{RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string};
+use crate::procio::{
+  RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string,
+};
 use crate::sherr;
 use crate::state::{self, with_term, write_meta};
 use crate::util::error::{ShErrKind, ShResult};
 
-use nix::unistd::{ForkResult, fork};
-use nix::sys::wait::{waitpid, WaitStatus as WtStat, WaitPidFlag as WtFlag};
 use nix::errno::Errno;
+use nix::sys::wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid};
+use nix::unistd::{ForkResult, fork};
 
 pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
   let (rpipe, wpipe) = pipes_high_no_cloexec()?;
@@ -41,7 +43,8 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
     ForkResult::Child => {
       drop(register_fd);
 
-      let redir: RedirSet = RedirSpec::dup(proc_fd.as_raw_fd(), target_fd, RedirType::Output).into();
+      let redir: RedirSet =
+        RedirSpec::dup(proc_fd.as_raw_fd(), target_fd, RedirType::Output).into();
       let _guard = redir.apply()?;
 
       if let Err(e) = exec_nonint(raw.to_string(), Some("process_sub".into())) {
@@ -50,7 +53,7 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
       }
       unsafe { nix::libc::_exit(0) };
     }
-    ForkResult::Parent {..} => {
+    ForkResult::Parent { .. } => {
       write_meta(|m| m.save_procsub_fd(register_fd));
       // Do not wait; process may run in background
       Ok(path)

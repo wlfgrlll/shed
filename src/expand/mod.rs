@@ -18,11 +18,11 @@ pub use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
 pub use var::{expand_glob, expand_raw, expand_var};
 
 use crate::expand::var::expand_raw_inner;
-use crate::{match_loop, state};
 use crate::parse::lex::{Tk, TkFlags, TkRule};
 use crate::readline::markers::{self, strip_markers};
 use crate::state::read_shopts;
 use crate::util::error::{ShResult, ShResultExt};
+use crate::{match_loop, state};
 
 pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'];
 
@@ -38,7 +38,9 @@ impl Tk {
   pub fn expand_no_side_effects(self) -> ShResult<Self> {
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(self)?.expand_no_side_effects().promote_err(span.clone())?;
+    let exp = Expander::new(self)?
+      .expand_no_side_effects()
+      .promote_err(span.clone())?;
     let class = TkRule::Expanded { exp: vec![exp] };
     Ok(Self { class, span, flags })
   }
@@ -123,7 +125,12 @@ impl Expander {
     };
 
     if self.noglob {
-      return Ok(words.into_iter().map(|w| escape::strip_escape_markers(&w)).collect());
+      return Ok(
+        words
+          .into_iter()
+          .map(|w| escape::strip_escape_markers(&w))
+          .collect(),
+      );
     }
 
     let nullglob = read_shopts(|o| o.core.nullglob);
@@ -163,7 +170,6 @@ impl Expander {
   pub fn expand_inner(&mut self) -> ShResult<String> {
     let mut chars = self.raw.chars().peekable();
     self.raw = expand_raw_inner(&mut chars, self.allow_side_effects)?;
-
 
     Ok(self.raw.clone())
   }

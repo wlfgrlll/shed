@@ -1,9 +1,14 @@
 use crate::{
-  builtin::Builtin, expand::expand_prompt, getopt::{Opt, OptSpec}, out, state::read_shopts, util::{
+  builtin::Builtin,
+  expand::expand_prompt,
+  getopt::{Opt, OptSpec},
+  out,
+  state::read_shopts,
+  util::{
     error::{ShResult, ShResultExt},
     strops::expand_ansi_c,
     with_status,
-  }
+  },
 };
 use bitflags::bitflags;
 

@@ -63,7 +63,8 @@ impl EditMode for ViInsert {
             VarKind::Str("INSERT".into()),
             VarFlags::NONE,
           )
-        }).ok();
+        })
+        .ok();
         return None;
       }
 
@@ -78,7 +79,8 @@ impl EditMode for ViInsert {
           VarKind::Str("INSERT".into()),
           VarFlags::NONE,
         )
-      }).ok();
+      })
+      .ok();
 
       if cmd.verb_is(Verb::InsertMode) && cmd.motion_is(Motion::BackwardChar) {
         // they pressed 'i', no op
@@ -114,7 +116,8 @@ impl EditMode for ViInsert {
             VarKind::Str("(insert)".into()),
             VarFlags::NONE,
           )
-        }).ok();
+        })
+        .ok();
         None
       }
       key!(Ctrl + 'w') => {
@@ -167,9 +170,11 @@ impl EditMode for ViInsert {
   }
 
   fn cursor_style(&self) -> String {
-    self.normal.as_ref().map(|n| n.cursor_style()).unwrap_or_else(|| {
-      CursorStyle::Beam(false).to_string()
-    })
+    self
+      .normal
+      .as_ref()
+      .map(|n| n.cursor_style())
+      .unwrap_or_else(|| CursorStyle::Beam(false).to_string())
   }
   fn pending_seq(&self) -> Option<String> {
     self.normal.as_ref().and_then(|n| n.pending_seq())

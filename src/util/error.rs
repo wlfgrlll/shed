@@ -9,10 +9,10 @@ use std::io::Write;
 use std::rc::Rc;
 use yansi::Paint;
 
+use crate::parse::lex::{Span, SpanSource};
 use crate::procio::{RedirGuard, stderr_fileno, stdout_fileno};
 use crate::sherr;
 use crate::util::FdWriter;
-use crate::parse::lex::{Span, SpanSource};
 
 pub type ShResult<T> = Result<T, ShErr>;
 
@@ -283,7 +283,10 @@ impl ShErr {
   }
   pub fn try_blame(self, span: Span) -> Self {
     match self {
-      ShErr { src_span: None, .. } => Self { src_span: Some(span), ..self },
+      ShErr { src_span: None, .. } => Self {
+        src_span: Some(span),
+        ..self
+      },
       _ => self,
     }
   }

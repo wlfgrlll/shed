@@ -1,7 +1,12 @@
 use chrono::{DateTime, Local};
 
 use crate::{
-  builtin::join_raw_args, getopt::{Opt, OptSpec}, outln, sherr, state::read_meta, status_msg, system_msg, util::{error::ShResult, with_status}
+  builtin::join_raw_args,
+  getopt::{Opt, OptSpec},
+  outln, sherr,
+  state::read_meta,
+  status_msg, system_msg,
+  util::{error::ShResult, with_status},
 };
 
 pub(super) struct Msg;

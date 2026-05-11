@@ -1,9 +1,14 @@
-use std::{collections::VecDeque, fmt::{self, Debug}, rc::Rc, str::FromStr};
+use std::{
+  collections::VecDeque,
+  fmt::{self, Debug},
+  rc::Rc,
+  str::FromStr,
+};
 
 use ariadne::{Fmt, Label, Span as AriadneSpan};
 use bitflags::bitflags;
-use std::fmt::Display;
 use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
+use std::fmt::Display;
 
 use crate::{
   parse::lex::clean_input,
@@ -151,12 +156,14 @@ impl ParsedSrc {
   pub fn parse_src(&mut self) -> Result<(), Vec<ShErr>> {
     let mut tokens = vec![];
     let mut errors = vec![];
-    let mut stream = LexStream::new(self.src.clone(), self.lex_flags)
-      .with_name(self.name.clone());
+    let mut stream = LexStream::new(self.src.clone(), self.lex_flags).with_name(self.name.clone());
 
     while let Some(lex_result) = stream.next() {
       // inline what the previous .filter() did
-      if lex_result.as_ref().is_ok_and(|tk| matches!(tk.class, TkRule::Comment)) {
+      if lex_result
+        .as_ref()
+        .is_ok_and(|tk| matches!(tk.class, TkRule::Comment))
+      {
         continue;
       }
       match lex_result {
@@ -174,10 +181,8 @@ impl ParsedSrc {
     let in_array = stream.in_array();
 
     let mut nodes = vec![];
-    let parser = ParseStream::with_context(
-      tokens,
-      self.context.clone(),
-    ).with_flags(self.parse_flags);
+    let parser =
+      ParseStream::with_context(tokens, self.context.clone()).with_flags(self.parse_flags);
 
     for parse_result in parser {
       match parse_result {
@@ -188,7 +193,9 @@ impl ParsedSrc {
         Err((depth, error)) => {
           self.block_depth = depth;
           if self.parse_flags.contains(ParseFlags::ERR_RETURN) {
-            if in_array { self.block_depth += 1; }
+            if in_array {
+              self.block_depth += 1;
+            }
             return Err(vec![error]);
           } else {
             errors.push(error);
@@ -342,8 +349,7 @@ impl Node {
           cmd.walk_tree(f);
         }
       }
-      NdRule::Subshell { ref mut body } |
-      NdRule::BraceGrp { ref mut body } => {
+      NdRule::Subshell { ref mut body } | NdRule::BraceGrp { ref mut body } => {
         body.walk_tree(f);
       }
       NdRule::FuncDef {
@@ -1149,7 +1155,12 @@ impl ParseStream {
       }
     }
 
-    let body = Box::new(node!(self, body_tks, NdRule::List { commands: body }, vec![]));
+    let body = Box::new(node!(
+      self,
+      body_tks,
+      NdRule::List { commands: body },
+      vec![]
+    ));
 
     self.parse_redir(&mut redirs, &mut node_tks)?;
 
@@ -1210,7 +1221,12 @@ impl ParseStream {
       }
     }
 
-    let body = Box::new(node!(self, body_tks, NdRule::List { commands: body }, vec![]));
+    let body = Box::new(node!(
+      self,
+      body_tks,
+      NdRule::List { commands: body },
+      vec![]
+    ));
 
     if !from_func_def {
       self.parse_redir(&mut redirs, &mut node_tks)?;
@@ -1235,23 +1251,32 @@ impl ParseStream {
     }
 
     let Some(class) = redir_bldr.class else {
-      return Err(sherr!(
-        ParseErr @ redir_tk.span.clone(),
-        "Invalid redirection operator"
-      ).with_context(context));
+      return Err(
+        sherr!(
+          ParseErr @ redir_tk.span.clone(),
+          "Invalid redirection operator"
+        )
+        .with_context(context),
+      );
     };
     let Some(next_tk) = next().filter(|tk| tk.class != TkRule::EOI) else {
-      return Err(sherr!(
-        ParseErr @ redir_tk.span.clone(),
-        "Expected a filename after this redirection",
-      ).with_context(context));
+      return Err(
+        sherr!(
+          ParseErr @ redir_tk.span.clone(),
+          "Expected a filename after this redirection",
+        )
+        .with_context(context),
+      );
     };
 
     let target = match class {
       RedirType::HereString => {
         let mut body = next_tk.clone().expand_no_split()?;
         body.push('\n');
-        RedirTarget::HereDoc { body, flags: redir_tk.flags }
+        RedirTarget::HereDoc {
+          body,
+          flags: redir_tk.flags,
+        }
       }
       _ => {
         node_tks.push(next_tk.clone());
@@ -1337,10 +1362,15 @@ impl ParseStream {
       let mut arm_tks = vec![];
 
       while !found_end {
-        let Some(conj) = self.parse_conjunction()? else { break };
+        let Some(conj) = self.parse_conjunction()? else {
+          break;
+        };
         arm_tks.extend(conj.tokens.clone());
 
-        let trailing_dbl_semi = conj.tokens.iter().rev()
+        let trailing_dbl_semi = conj
+          .tokens
+          .iter()
+          .rev()
           .take_while(|tk| matches!(tk.class, TkRule::Sep))
           .any(|tk| tk.has_double_semi());
 
@@ -1352,7 +1382,13 @@ impl ParseStream {
         }
       }
 
-      let arm_body = node!(self, arm_tks, NdRule::List { commands: arm_commands });
+      let arm_body = node!(
+        self,
+        arm_tks,
+        NdRule::List {
+          commands: arm_commands
+        }
+      );
 
       let case_node = CaseNode {
         pattern: case_pat_tk,
@@ -1668,7 +1704,11 @@ impl ParseStream {
     Ok(Some(node!(
       self,
       node_tks,
-      NdRule::ForNode { vars, arr, body: Box::new(body) },
+      NdRule::ForNode {
+        vars,
+        arr,
+        body: Box::new(body)
+      },
       redirs
     )))
   }
@@ -2056,8 +2096,7 @@ impl Iterator for ParseStream {
   type Item = Result<Node, (usize, ShErr)>; // (block_depth and error)
   fn next(&mut self) -> Option<Self::Item> {
     // Empty token vector or only SOI/EOI tokens, nothing to do
-    if self.is_empty()
-      && self.len() == 1 && self.tokens().last().unwrap().class == TkRule::EOI {
+    if self.is_empty() && self.len() == 1 && self.tokens().last().unwrap().class == TkRule::EOI {
       return None;
     }
     while let Some(tk) = self.tokens().first() {
@@ -3030,7 +3069,10 @@ pub mod tests {
     let ast = get_ast(input).unwrap();
     assert_eq!(ast.len(), 1);
     let NdRule::List { ref commands } = ast[0].class else {
-      panic!("expected top-level List, got {:?}", ast[0].class.as_nd_kind());
+      panic!(
+        "expected top-level List, got {:?}",
+        ast[0].class.as_nd_kind()
+      );
     };
     assert_eq!(commands.len(), 2);
   }

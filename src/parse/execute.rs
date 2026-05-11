@@ -1,7 +1,10 @@
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use ariadne::Fmt;
-use nix::{errno::Errno, unistd::{ForkResult, Pid, execve, execvpe, fork, setpgid}};
+use nix::{
+  errno::Errno,
+  unistd::{ForkResult, Pid, execve, execvpe, fork, setpgid},
+};
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -21,7 +24,8 @@ use crate::{
   shopt::xtrace_print,
   signal::{check_signals, signals_pending},
   state::{
-    self, ShFunc, ShellParam, Var, VarFlags, VarKind, read_logic, read_meta, read_shopts, read_vars, with_term, write_logic, write_meta, write_vars
+    self, ShFunc, ShellParam, Var, VarFlags, VarKind, read_logic, read_meta, read_shopts,
+    read_vars, with_term, write_logic, write_meta, write_vars,
   },
   util::{
     error::{ShErr, ShErrKind, ShResult, ShResultExt, next_color},
@@ -33,7 +37,7 @@ use crate::{
 
 pub fn in_cd_path(name: Tk) -> bool {
   let Ok(expanded) = name.expand_no_side_effects() else {
-    return false
+    return false;
   };
   let Some(name) = expanded.get_first_word() else {
     return false;
@@ -54,7 +58,7 @@ pub fn in_cd_path(name: Tk) -> bool {
 
 pub fn is_in_path(name: Tk) -> bool {
   let Ok(expanded) = name.expand_no_side_effects() else {
-    return false
+    return false;
   };
   let Some(name) = expanded.get_first_word() else {
     return false;
@@ -231,10 +235,7 @@ pub fn exec_int(input: String, source_name: Option<Rc<str>>) -> ShResult<()> {
 }
 
 /// Execute non-interactively
-pub fn exec_nonint(
-  input: String,
-  source_name: Option<Rc<str>>,
-) -> ShResult<()> {
+pub fn exec_nonint(input: String, source_name: Option<Rc<str>>) -> ShResult<()> {
   let _guard = with_term(|t| t.interactive_guard(false));
   exec_input(input, source_name)
 }
@@ -243,10 +244,7 @@ pub fn exec_nonint(
 ///
 /// This should only be called directly if you wish to inherit
 /// the caller's interactive status.
-pub fn exec_input(
-  mut input: String,
-  source_name: Option<Rc<str>>,
-) -> ShResult<()> {
+pub fn exec_input(mut input: String, source_name: Option<Rc<str>>) -> ShResult<()> {
   let interactive = with_term(|t| t.interactive());
 
   if !interactive || !read_shopts(|o| o.prompt.expand_aliases) {
@@ -336,7 +334,9 @@ impl Dispatcher {
     Ok(())
   }
   pub fn exec_list(&mut self, node: Node) -> ShResult<()> {
-    let NdRule::List { commands } = node.class else { unreachable!() };
+    let NdRule::List { commands } = node.class else {
+      unreachable!()
+    };
     for node in commands {
       let blame = node.get_span();
       self.dispatch_node(node).try_blame(blame)?;
@@ -385,15 +385,10 @@ impl Dispatcher {
       self.exec_builtin(node)
     } else if is_arith(cmd_tk) {
       self.exec_arith(node)
-    } else if read_shopts(|s| s.core.autocd)
-      && in_cd_path(cmd.clone())
-      && !is_in_path(cmd.clone())
+    } else if read_shopts(|s| s.core.autocd) && in_cd_path(cmd.clone()) && !is_in_path(cmd.clone())
     {
       let dir = cmd.span.as_str().to_string();
-      exec_input(
-        format!("cd {dir}"),
-        Some(self.source_name.clone()),
-      )
+      exec_input(format!("cd {dir}"), Some(self.source_name.clone()))
     } else {
       self.exec_cmd(node)
     }
@@ -640,15 +635,14 @@ impl Dispatcher {
     let body_display = body_raw.graphemes(true).take(70).collect::<String>();
     let name = format!("( {body_display} )");
 
-    self
-      .run_fork(&name, report_time, |s| {
-        if let Err(e) = s.dispatch_node(*body.clone()) {
-          if let ShErrKind::CleanExit(code) = e.kind() {
-            std::process::exit(*code);
-          }
-          e.print_error();
+    self.run_fork(&name, report_time, |s| {
+      if let Err(e) = s.dispatch_node(*body.clone()) {
+        if let ShErrKind::CleanExit(code) = e.kind() {
+          std::process::exit(*code);
         }
-      })?;
+        e.print_error();
+      }
+    })?;
 
     Ok(())
   }
@@ -941,13 +935,6 @@ impl Dispatcher {
     let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && runs_inline(cmd) };
     // closure that gets the pgid we need if the child wants the tty
     let tty_controller = |s: &mut Self| -> Option<Pid> {
-      if with_term(|t| t.interactive()) {
-        log::debug!("Checking if we need to attach to tty for pipeline segment");
-        log::debug!(
-          "is_bg: {is_bg}, interactive: {}",
-          with_term(|t| t.interactive())
-        );
-      }
       (!is_bg && with_term(|t| t.interactive()))
         .then(|| s.job_stack.curr_job_mut().unwrap().pgid())
         .flatten()
@@ -963,9 +950,7 @@ impl Dispatcher {
     let mut result = Ok(());
 
     let saved_region = with_term(|t| t.scroll_region());
-    let _scroll_guard = (!is_bg).then(|| {
-      with_term(|t| t.yield_terminal()).activate()
-    });
+    let _scroll_guard = (!is_bg).then(|| with_term(|t| t.yield_terminal()).activate());
 
     for (i, mut cmd) in cmds.into_iter().enumerate() {
       if num_cmds > 1 {
@@ -973,9 +958,7 @@ impl Dispatcher {
         cmd.flags |= NdFlags::FORK_BUILTINS;
       }
 
-      let Some((r,w)) = pipes.next() else {
-        break
-      };
+      let Some((r, w)) = pipes.next() else { break };
       let _guard = RedirGuard::stdio();
 
       if i == 0 {
@@ -1175,8 +1158,6 @@ impl Dispatcher {
             .print_error();
         }
       }
-
-
 
       unsafe { nix::libc::_exit(e as i32) }
     };
@@ -1765,9 +1746,7 @@ mod tests {
   #[test]
   fn nested_compounds_with_lists() {
     let g = TestGuard::new();
-    test_input(
-      "if true; true; then if true; then echo a; echo b; fi; echo c; fi"
-    ).unwrap();
+    test_input("if true; true; then if true; then echo a; echo b; fi; echo c; fi").unwrap();
     let out = g.read_output();
     assert_eq!(out, "a\nb\nc\n");
   }
@@ -1828,8 +1807,7 @@ mod tests {
   #[test]
   fn func_body_if_takes_arg() {
     let g = TestGuard::new();
-    test_input("f() if [ \"$1\" = ok ]; then echo good; else echo bad; fi; f ok; f nope")
-      .unwrap();
+    test_input("f() if [ \"$1\" = ok ]; then echo good; else echo bad; fi; f ok; f nope").unwrap();
     let out = g.read_output();
     assert_eq!(out, "good\nbad\n");
   }

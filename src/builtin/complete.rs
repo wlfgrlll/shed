@@ -255,11 +255,11 @@ impl super::Builtin for Compadd {
       .collect();
 
     if let Some(assoc_arr) = assoc_arr
-    && let Some(assoc_arr) = read_vars(|v| v.try_get_var_meta(&assoc_arr))
-    && let VarKind::AssocArr(arr) = assoc_arr.kind() {
-      for (cand,desc) in arr {
-        let cand = make_candidate(cand.clone())
-          .with_desc(desc.clone());
+      && let Some(assoc_arr) = read_vars(|v| v.try_get_var_meta(&assoc_arr))
+      && let VarKind::AssocArr(arr) = assoc_arr.kind()
+    {
+      for (cand, desc) in arr {
+        let cand = make_candidate(cand.clone()).with_desc(desc.clone());
 
         described.push(cand);
       }

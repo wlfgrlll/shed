@@ -22,10 +22,12 @@ use crate::readline::complete::{FuzzyCompleter, FuzzySelector, SelectorResponse}
 use crate::readline::editcmd::Direction;
 use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
 use crate::readline::history::HistEntry;
-use crate::readline::term::{calc_str_width, clear_rows, move_cursor_to_end, redraw, truncate_with_ellipsis};
+use crate::readline::term::{
+  calc_str_width, clear_rows, move_cursor_to_end, redraw, truncate_with_ellipsis,
+};
 use crate::state::{
-  self, AutoCmdKind, Var, VarFlags, VarKind, read_logic, read_shopts, with_term,
-  with_vars, write_meta, write_vars,
+  self, AutoCmdKind, Var, VarFlags, VarKind, read_logic, read_shopts, with_term, with_vars,
+  write_meta, write_vars,
 };
 use crate::util::AutoCmdVecUtils;
 use crate::{
@@ -181,7 +183,8 @@ pub mod markers {
 }
 type Marker = char;
 
-pub const DEFAULT_PS1: &str = "\\e[0m\\n\\e[1;0m\\u\\e[1;36m@\\e[1;31m\\h\\n\\e[1;36m\\W\\e[1;32m/\\n\\e[1;32m\\$\\e[0m ";
+pub const DEFAULT_PS1: &str =
+  "\\e[0m\\n\\e[1;0m\\u\\e[1;36m@\\e[1;31m\\h\\n\\e[1;36m\\W\\e[1;32m/\\n\\e[1;32m\\$\\e[0m ";
 
 /// A simple line editor with optional history
 ///
@@ -290,9 +293,13 @@ pub struct StatusLine {
 
 impl StatusLine {
   pub fn new() -> Self {
-    let (left_raw,middle_raw,right_raw) = read_shopts(|o| {
+    let (left_raw, middle_raw, right_raw) = read_shopts(|o| {
       let s = &o.statline;
-      (s.left_string.clone(), s.middle_string.clone(), s.right_string.clone())
+      (
+        s.left_string.clone(),
+        s.middle_string.clone(),
+        s.right_string.clone(),
+      )
     });
     let saved_status = state::get_status();
     let left = expand_prompt(&left_raw).unwrap_or(left_raw.clone());
@@ -332,7 +339,7 @@ impl StatusLine {
     (&self.left, &self.middle, &self.right)
   }
   pub fn render(&mut self, term_width: usize) -> String {
-    let (left,middle,right) = self.parts();
+    let (left, middle, right) = self.parts();
 
     let lw = calc_str_width(left);
     let mw = calc_str_width(middle);
@@ -361,7 +368,6 @@ impl StatusLine {
 
     let pad_lm = " ".repeat(leftover / 2);
     let pad_mr = " ".repeat(leftover - (leftover / 2));
-
 
     format!("{left_str}{pad_lm}{middle_str}{pad_mr}{right}")
   }
@@ -462,8 +468,7 @@ impl Prompt {
 impl Default for Prompt {
   fn default() -> Self {
     Self {
-      ps1_expanded: expand_prompt(DEFAULT_PS1)
-        .unwrap_or_else(|_| DEFAULT_PS1.to_string()),
+      ps1_expanded: expand_prompt(DEFAULT_PS1).unwrap_or_else(|_| DEFAULT_PS1.to_string()),
       ps1_raw: DEFAULT_PS1.to_string(),
       psr_expanded: None,
       psr_raw: None,
@@ -499,15 +504,17 @@ impl LineCmd {
   }
 }
 
-#[derive(Default,Debug)]
+#[derive(Default, Debug)]
 pub enum MacroRecord {
   #[default]
   Idle,
-  Recording(char)
+  Recording(char),
 }
 
 impl MacroRecord {
-  pub fn new() -> Self { Self::default() }
+  pub fn new() -> Self {
+    Self::default()
+  }
   pub fn is_recording(&self) -> bool {
     matches!(self, MacroRecord::Recording(_))
   }
@@ -565,8 +572,7 @@ impl ShedLine {
   }
 
   fn new_private(prompt: Prompt, with_hist: bool) -> ShResult<Self> {
-    let statline = read_shopts(|o| o.statline.enable)
-      .then(StatusLine::new);
+    let statline = read_shopts(|o| o.statline.enable).then(StatusLine::new);
 
     let history = if with_hist {
       if let Some(conn) = state::get_db_conn() {
@@ -703,8 +709,7 @@ impl ShedLine {
       self.old_layout = None;
     }
     if self.statline.is_none() {
-      self.statline = read_shopts(|o| o.statline.enable)
-        .then(StatusLine::new);
+      self.statline = read_shopts(|o| o.statline.enable).then(StatusLine::new);
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
@@ -1335,14 +1340,10 @@ impl ShedLine {
       return Ok(Some(LineCmd::ClearScreen));
     }
 
-    if cmd.verb_is(Verb::EndOfFile)
-      && self.focused_editor().is_empty()
-    {
+    if cmd.verb_is(Verb::EndOfFile) && self.focused_editor().is_empty() {
       return Ok(Some(LineCmd::EndOfFile));
-
     } else if cmd.verb_is(Verb::Quit) {
       return Ok(Some(LineCmd::Quit));
-
     } else if cmd.verb_is(Verb::AcceptHint) {
       return Ok(Some(LineCmd::AppendHint));
     }
@@ -1369,7 +1370,7 @@ impl ShedLine {
 
     if cmd.verb_is(Verb::RecordMacro) {
       let Some(register) = cmd.register.name() else {
-        return Ok(None)
+        return Ok(None);
       };
       write_register(Some(register), RegisterContent::Macro(vec![]));
       self.macro_record = MacroRecord::Recording(register);
@@ -1378,20 +1379,18 @@ impl ShedLine {
 
     if cmd.verb_is(Verb::PlayMacro) {
       let Some(register) = cmd.register.name().or(self.repeat_macro) else {
-        return Ok(None)
+        return Ok(None);
       };
       let events = match read_register(Some(register)) {
         None => return Ok(None),
         Some(content) => match content {
           RegisterContent::Empty => return Ok(None),
-          RegisterContent::Span(s) |
-          RegisterContent::Line(s) |
-          RegisterContent::Block(s) => {
+          RegisterContent::Span(s) | RegisterContent::Line(s) | RegisterContent::Block(s) => {
             let joined = Lines::from(s).join();
             expand_keymap(&joined)
           }
-          RegisterContent::Macro(keys) => keys
-        }
+          RegisterContent::Macro(keys) => keys,
+        },
       };
 
       self.editor.start_undo_merge();
@@ -1484,7 +1483,7 @@ impl ShedLine {
           let region_height = (bottom.saturating_sub(top) + 1) as usize;
           with_term(|t| t.scroll_up(region_height)).ok();
           with_term(|t| t.move_cursor_abs(bottom, 1));
-          self.old_layout = None;  // stale after manual cursor move
+          self.old_layout = None; // stale after manual cursor move
           self.needs_redraw = true;
           return Ok(None);
         }
@@ -1719,9 +1718,15 @@ impl ShedLine {
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
-    let pending_seq = self.macro_record.status().or_else(|| self.mode.pending_seq());
+    let pending_seq = self
+      .macro_record
+      .status()
+      .or_else(|| self.mode.pending_seq());
     let mut prompt_string_right = self.prompt.psr_expanded.clone();
-    let has_sub_editor = matches!(self.mode.report_mode(), ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search);
+    let has_sub_editor = matches!(
+      self.mode.report_mode(),
+      ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search
+    );
 
     if prompt_string_right
       .as_ref()
@@ -1826,15 +1831,14 @@ impl ShedLine {
       .as_ref()
       .is_some_and(|psr| new_layout.end.col + 1 < t_cols.saturating_sub(psr.width()));
 
-
-
     if !final_draw
       && let Some(seq) = pending_seq
       && !seq.is_empty()
       && !(prompt_string_right.is_some() && one_line)
       && seq_fits
       && !self.mode.is_input_mode()
-    { // write our pending sequence
+    {
+      // write our pending sequence
       let to_col = t_cols - calc_str_width(&seq);
       let up = new_layout.cursor.row; // rows to move up from cursor to top line of prompt
 
@@ -1850,7 +1854,8 @@ impl ShedLine {
     } else if !final_draw
       && let Some(psr) = prompt_string_right
       && psr_fits
-    { // write PSR
+    {
+      // write PSR
       let to_col = t_cols - calc_str_width(&psr);
       let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
       let move_down = if down > 0 {
@@ -1902,7 +1907,9 @@ impl ShedLine {
     }
     self.overlay_displacement = overlay_rows.try_into().unwrap_or(u16::MAX);
 
-    if let Some(statline) = self.statline.as_mut() && !final_draw {
+    if let Some(statline) = self.statline.as_mut()
+      && !final_draw
+    {
       let cols = with_term(|t| t.t_cols());
       let rendered = statline.render(cols);
       with_term(|t| t.draw_status_line(&rendered));
@@ -1938,7 +1945,6 @@ impl ShedLine {
 
       write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
     }
-
 
     while let Some(msg) = write_meta(|m| m.pop_status_message()) {
       let now = Instant::now();

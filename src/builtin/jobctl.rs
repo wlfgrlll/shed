@@ -1,5 +1,8 @@
 use ariadne::Fmt;
-use nix::{sys::signal::{Signal, kill, killpg}, unistd::{Pid, getpgrp}};
+use nix::{
+  sys::signal::{Signal, kill, killpg},
+  unistd::{Pid, getpgrp},
+};
 
 use crate::{
   builtin::BuiltinArgs,

@@ -4,7 +4,12 @@ use std::{
 };
 
 use nix::{
-  libc, sys::{signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, kill, sigaction}, wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid}}, unistd::{Pid, getpgid, getpid, setpgid}
+  libc,
+  sys::{
+    signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, kill, sigaction},
+    wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid},
+  },
+  unistd::{Pid, getpgid, getpid, setpgid},
 };
 
 use crate::{
@@ -13,7 +18,8 @@ use crate::{
   parse::execute::exec_nonint,
   sherr,
   state::{
-    self, AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs, write_meta, write_vars
+    self, AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs,
+    write_meta, write_vars,
   },
   util::{AutoCmdVecUtils, error::ShResult},
 };

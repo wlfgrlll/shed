@@ -1,26 +1,48 @@
 use super::*;
 
 use std::{
-  collections::{HashMap, HashSet, VecDeque}, fmt::Write, os::{fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd}, unix::{
-    fs::PermissionsExt,
-    net::{UnixListener, UnixStream},
-  }}, path::{Path, PathBuf}, rc::Rc, str::FromStr, time::{Duration, Instant, SystemTime}
+  collections::{HashMap, HashSet, VecDeque},
+  fmt::Write,
+  os::{
+    fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd},
+    unix::{
+      fs::PermissionsExt,
+      net::{UnixListener, UnixStream},
+    },
+  },
+  path::{Path, PathBuf},
+  rc::Rc,
+  str::FromStr,
+  time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
-  builtin::BUILTIN_NAMES, expand::{expand_keymap, glob_to_regex}, jobs::Job, match_loop, procio::MIN_INTERNAL_FD, readline::{
+  builtin::BUILTIN_NAMES,
+  expand::{expand_keymap, glob_to_regex},
+  jobs::Job,
+  match_loop,
+  procio::MIN_INTERNAL_FD,
+  readline::{
     LineData,
     complete::{Candidate, CompSpec},
     keys::KeyEvent,
-  }, sherr, util::error::{ShErr, ShResult}, writefd
+  },
+  sherr,
+  util::error::{ShErr, ShResult},
+  writefd,
 };
 use itertools::{Itertools, izip};
 use nix::{
-  errno::Errno, fcntl::{FcntlArg, fcntl}, poll::{PollFd, PollTimeout}, sys::{
+  errno::Errno,
+  fcntl::{FcntlArg, fcntl},
+  poll::{PollFd, PollTimeout},
+  sys::{
     resource::{Usage, UsageWho, getrusage},
     stat::{FchmodatFlags, Mode, fchmodat},
-    time::TimeVal, wait::WaitStatus as WtStat,
-  }, unistd::{Pid, read, write}
+    time::TimeVal,
+    wait::WaitStatus as WtStat,
+  },
+  unistd::{Pid, read, write},
 };
 use regex::Regex;
 
@@ -308,7 +330,8 @@ pub struct ShedSocket {
 
 impl ShedSocket {
   pub fn dir() -> String {
-    std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
+    std::env::var("XDG_RUNTIME_DIR")
+      .unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
   }
   pub fn path() -> String {
     let pid = Pid::this();
@@ -1077,13 +1100,13 @@ impl MetaTab {
     let exp = expand_keymap(keys);
     self.pending_widget_keys = exp;
   }
-  pub fn get_regex(&mut self, pat: String) -> Result<Regex,String> {
+  pub fn get_regex(&mut self, pat: String) -> Result<Regex, String> {
     if let Some(regex) = self.regexes.get(&pat) {
       Ok(regex.clone())
     } else {
       let regex = match Regex::new(&pat) {
         Ok(re) => re,
-        Err(e) => return Err(e.to_string())
+        Err(e) => return Err(e.to_string()),
       };
       self.regexes.insert(pat, regex.clone());
       Ok(regex)

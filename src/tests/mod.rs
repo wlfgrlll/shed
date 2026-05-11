@@ -1,5 +1,5 @@
-pub mod testutil;
 pub mod posix;
+pub mod testutil;
 
 use testutil::{TestGuard, test_input};
 // General miscellaneous test module for stuff that doesn't quite fit in elsewhere

@@ -1,11 +1,18 @@
 use std::{
-  collections::HashSet, fmt::{Debug, Display}, os::unix::fs::PermissionsExt, path::{Path, PathBuf}, rc::Rc
+  collections::HashSet,
+  fmt::{Debug, Display},
+  os::unix::fs::PermissionsExt,
+  path::{Path, PathBuf},
+  rc::Rc,
 };
 
 use nix::sys::signal::Signal;
 
 use crate::{
-  builtin::{BUILTIN_NAMES, complete::{CompFlags, CompOptFlags, CompOpts}},
+  builtin::{
+    BUILTIN_NAMES,
+    complete::{CompFlags, CompOptFlags, CompOpts},
+  },
   expand::{
     escape::{as_var_val_display, escape_str_bounded},
     unescape_str,
@@ -481,14 +488,14 @@ impl Candidate {
 
 pub fn complete_signals(start: &str) -> Vec<Candidate> {
   let map_closure = if start.starts_with("SIG") || start.is_empty() {
+    |s: Signal| s.to_string()
+  } else {
     |s: Signal| {
       s.to_string()
+        .strip_prefix("SIG")
+        .unwrap_or(s.as_ref())
+        .to_string()
     }
-  } else {
-    |s: Signal| s.to_string()
-      .strip_prefix("SIG")
-      .unwrap_or(s.as_ref())
-      .to_string()
   };
   Signal::iterator()
     .map(map_closure)
@@ -592,7 +599,8 @@ pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
 }
 
 fn complete_builtins(start: &str) -> Vec<Candidate> {
-  BUILTIN_NAMES.iter()
+  BUILTIN_NAMES
+    .iter()
     .map(Candidate::from)
     .filter(|b| b.is_match(start))
     .collect()
@@ -653,14 +661,17 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
     .map(|it| it.filter_map(Result::ok).map(|c| c.into()).collect())
     .unwrap_or_default();
 
-  candidates.into_iter()
+  candidates
+    .into_iter()
     .map(|mut c| {
       let is_dir = c.desc.as_ref().is_some_and(|d| d.contains("dir"));
       let raw = c.content.clone();
 
       let mut new_content = match raw.strip_prefix(&unescaped_pre) {
         Some(after_prefix) => {
-          let middle = after_prefix.strip_suffix(&unescaped_post).unwrap_or(after_prefix);
+          let middle = after_prefix
+            .strip_suffix(&unescaped_post)
+            .unwrap_or(after_prefix);
           let middle_escaped = escape_str_bounded(middle, false, None);
           format!("{prefix}{middle_escaped}{postfix}")
         }
@@ -678,7 +689,8 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
 
       c.content = new_content;
       c
-    }).collect()
+    })
+    .collect()
 }
 
 fn file_desc<P: AsRef<Path>>(path: P) -> String {
@@ -1330,13 +1342,7 @@ impl FuzzySelector {
 
     let mut cand_rows = 0usize;
     for c in self.filtered.iter().skip(self.scroll_offset) {
-      let h = c
-        .candidate
-        .content()
-        .trim_end()
-        .lines()
-        .count()
-        .max(1);
+      let h = c.candidate.content().trim_end().lines().count().max(1);
       if cand_rows + h > self.max_height {
         cand_rows = self.max_height;
         break;
@@ -2085,14 +2091,12 @@ impl SimpleCompleter {
     let mut result = match strat {
       CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),
       CompStrat::Tilde { prefix } => CompResult::from_candidates(complete_users(&prefix)),
-      CompStrat::Command { prefix } => CompResult::from_candidates(complete_commands(
-          &prefix,
-          leaf_cursor_pos,
-      )),
-      CompStrat::Files { path } => CompResult::from_candidates(complete_path(
-          &path,
-          leaf_cursor_pos,
-      )),
+      CompStrat::Command { prefix } => {
+        CompResult::from_candidates(complete_commands(&prefix, leaf_cursor_pos))
+      }
+      CompStrat::Files { path } => {
+        CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+      }
       CompStrat::Separator => CompResult::Single {
         result: Candidate::from(";"),
       },
@@ -2106,24 +2110,17 @@ impl SimpleCompleter {
             }
             result
           }
-          CompSpecResult::NoSpec => CompResult::from_candidates(complete_path(
-              &path,
-              leaf_cursor_pos,
-          )),
+          CompSpecResult::NoSpec => {
+            CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+          }
           CompSpecResult::NoMatch { flags } => {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
             if flags.contains(CompOptFlags::DIRNAMES) {
-              CompResult::from_candidates(complete_dirs(
-                  &path,
-                  leaf_cursor_pos,
-              ))
+              CompResult::from_candidates(complete_dirs(&path, leaf_cursor_pos))
             } else if flags.contains(CompOptFlags::DEFAULT) {
-              CompResult::from_candidates(complete_path(
-                  &path,
-                  leaf_cursor_pos,
-              ))
+              CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
             } else {
               CompResult::NoMatch
             }
@@ -2139,8 +2136,7 @@ impl SimpleCompleter {
         let a_len = a_content.len();
         let b_len = b_content.len();
 
-        a_len.cmp(&b_len)
-          .then_with(|| a_content.cmp(b_content))
+        a_len.cmp(&b_len).then_with(|| a_content.cmp(b_content))
       });
       candidates.dedup();
     }

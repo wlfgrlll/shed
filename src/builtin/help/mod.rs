@@ -1,13 +1,24 @@
 mod markup;
 mod pager;
 
-use std::{env, os::fd::{AsRawFd, BorrowedFd}, path::Path};
+use std::{
+  env,
+  os::fd::{AsRawFd, BorrowedFd},
+  path::Path,
+};
 
 use crate::{
   builtin::help::{
     markup::StyledHelp,
     pager::{HelpPager, PagerEvent},
-  }, getopt::{Opt, OptSpec}, outln, parse::lex::Span, readline::complete::ScoredCandidate, sherr, state::{with_term, write_meta}, util::{error::ShResult, with_status}
+  },
+  getopt::{Opt, OptSpec},
+  outln,
+  parse::lex::Span,
+  readline::complete::ScoredCandidate,
+  sherr,
+  state::{with_term, write_meta},
+  util::{error::ShResult, with_status},
 };
 
 use markup::TAG_SEQ;
@@ -68,17 +79,15 @@ include_help_pages! {
 pub(super) struct Help;
 impl super::Builtin for Help {
   fn opts(&self) -> Vec<crate::getopt::OptSpec> {
-    vec![
-      OptSpec::flag("list-tags"),
-      OptSpec::flag('l')
-    ]
+    vec![OptSpec::flag("list-tags"), OptSpec::flag('l')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let _guard = scopeguard::guard((), |_| {
       write_meta(|m| m.disable_welcome_message()).unwrap();
     });
     let mut argv = args.argv.into_iter().peekable();
-    let list_tags = args.opts.contains(&Opt::Long("list-tags".into())) || args.opts.contains(&Opt::Short('l'));
+    let list_tags =
+      args.opts.contains(&Opt::Long("list-tags".into())) || args.opts.contains(&Opt::Short('l'));
 
     // Join all of the word-split arguments into a single string
     // Preserve the span too

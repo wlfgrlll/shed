@@ -2,15 +2,21 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use crate::{
-  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict}, jobs::ChildProc, parse::{
+  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
+  jobs::ChildProc,
+  parse::{
     NdFlags, NdRule, Node,
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
     lex::{Span, Tk},
-  }, procio::RedirSet, sherr, state::read_meta, util::{
+  },
+  procio::RedirSet,
+  sherr,
+  state::read_meta,
+  util::{
     error::{ShErrKind, ShResult},
     guards::var_ctx_guard,
     with_status,
-  }
+  },
 };
 
 pub mod alias;
@@ -245,8 +251,13 @@ register_builtins! {
 macro_rules! compgen {
   ($name:literal, $flag:expr) => {
     concat!(
-      "_",$name,"_comp() { compadd $(compgen ",$flag,r#" -- "$2"); }; complete -F _"#,
-      $name,"_comp ",
+      "_",
+      $name,
+      "_comp() { compadd $(compgen ",
+      $flag,
+      r#" -- "$2"); }; complete -F _"#,
+      $name,
+      "_comp ",
       $name
     )
   };
@@ -377,7 +388,8 @@ pub trait Builtin: Sync {
 
     // Handle exec specially - persist redirections before dispatch
     if cmd_raw.as_str() == "exec"
-    && let Some(guard) = guard {
+      && let Some(guard) = guard
+    {
       guard.persist();
     }
 

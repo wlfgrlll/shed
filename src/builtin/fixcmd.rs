@@ -1,4 +1,9 @@
-use std::{env, fmt::Write, io::{Read, Seek, Write as IoWrite}, sync::atomic::AtomicBool};
+use std::{
+  env,
+  fmt::Write,
+  io::{Read, Seek, Write as IoWrite},
+  sync::atomic::AtomicBool,
+};
 
 use tempfile::NamedTempFile;
 

@@ -2,19 +2,25 @@ use super::*;
 
 use std::{
   collections::{HashMap, VecDeque},
-  path::PathBuf,
   fmt::{self, Display},
   ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign},
+  path::PathBuf,
   str::FromStr,
 };
 
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use crate::{
-  builtin::map::MapNode, expand::{as_var_val_display, expand_arithmetic, expand_raw}, parse::lex::{LexFlags, LexStream, Tk}, procio::stdin_fileno, readline::{complete::Candidate, markers}, sherr, util::{
+  builtin::map::MapNode,
+  expand::{as_var_val_display, expand_arithmetic, expand_raw},
+  parse::lex::{LexFlags, LexStream, Tk},
+  procio::stdin_fileno,
+  readline::{complete::Candidate, markers},
+  sherr,
+  util::{
     VecDequeExt,
     error::{ShErr, ShResult},
-  }
+  },
 };
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
@@ -175,15 +181,15 @@ impl ArrIndex {
   /// the allow_side_effects parameter controls whether or not mutating parameter
   /// expansions and command substitutions will be evaluated.
   pub fn parse(s: &str, allow_side_effects: bool) -> ShResult<Self> {
-    let s = crate::expand::var::expand_raw_inner(
-      &mut s.chars().peekable(),
-      allow_side_effects,
-    )?;
+    let s = crate::expand::var::expand_raw_inner(&mut s.chars().peekable(), allow_side_effects)?;
     match s.as_str() {
       "@" => Ok(Self::AllSplit),
       "*" => Ok(Self::AllJoined),
       "#" => Ok(Self::ArgCount),
-      _ if s.starts_with('-') && !s[1..].is_empty() && s[1..].chars().all(|c| c.is_ascii_digit()) => {
+      _ if s.starts_with('-')
+        && !s[1..].is_empty()
+        && s[1..].chars().all(|c| c.is_ascii_digit()) =>
+      {
         let idx = s[1..].parse::<usize>().unwrap();
         Ok(Self::FromBack(idx))
       }
@@ -206,16 +212,14 @@ impl ArrIndex {
       Self::Raw(s) => match kind {
         VarKind::Arr(_) | VarKind::Str(_) | VarKind::Int(_) => {
           let evaluated = expand_arithmetic(&s)?;
-          let n: usize = evaluated.parse().map_err(|_| {
-            sherr!(ParseErr, "Invalid array index '{s}': not a number")
-          })?;
+          let n: usize = evaluated
+            .parse()
+            .map_err(|_| sherr!(ParseErr, "Invalid array index '{s}': not a number"))?;
           Ok(Self::Literal(n))
         }
         VarKind::AssocArr(_) => Ok(Self::Key(s)),
       },
-      Self::Literal(n) if matches!(kind, VarKind::AssocArr(_)) => {
-        Ok(Self::Key(n.to_string()))
-      }
+      Self::Literal(n) if matches!(kind, VarKind::AssocArr(_)) => Ok(Self::Key(n.to_string())),
       _ => Ok(self),
     }
   }
@@ -422,7 +426,11 @@ impl VarKind {
 
   pub fn assoc_arr_from_raw(raw: &str) -> ShResult<Self> {
     if !raw.starts_with('(') || !raw.ends_with(')') {
-      return Err(sherr!(ParseErr, "Invalid associative array syntax: {}", raw,));
+      return Err(sherr!(
+        ParseErr,
+        "Invalid associative array syntax: {}",
+        raw,
+      ));
     }
     let raw = raw[1..raw.len() - 1].to_string();
 

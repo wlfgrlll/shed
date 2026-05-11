@@ -167,12 +167,7 @@ impl ScopeStack {
   /// Indexed counterpart to `update_var`: writes a single element of an
   /// existing array, in the scope that owns the array. Falls back to
   /// creating in global scope if no binding exists.
-  pub fn update_var_indexed(
-    &mut self,
-    var_name: &str,
-    idx: ArrIndex,
-    val: String,
-  ) -> ShResult<()> {
+  pub fn update_var_indexed(&mut self, var_name: &str, idx: ArrIndex, val: String) -> ShResult<()> {
     for scope in self.scopes.iter_mut().rev() {
       if scope.var_exists(var_name) {
         return scope.set_index(var_name, idx, val);
@@ -414,38 +409,36 @@ impl ScopeStack {
               ));
             }
           }
-          VarKind::AssocArr(items) => {
-            match idx {
-              ArrIndex::AllSplit => {
-                let arg_sep = crate::readline::markers::ARG_SEP.to_string();
-                let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
-                return Ok(values.join(&arg_sep));
-              }
-              ArrIndex::AllJoined => {
-                let ifs = self
-                  .try_get_var("IFS")
-                  .unwrap_or_else(|| " \t\n".to_string())
-                  .chars()
-                  .next()
-                  .unwrap_or(' ')
-                  .to_string();
-                let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
-                return Ok(values.join(&ifs));
-              }
-              ArrIndex::ArgCount => {
-                return Ok(items.len().to_string());
-              }
-              ArrIndex::Key(key) => {
-                for (k, v) in items {
-                  if k == &key {
-                    return Ok(v.clone());
-                  }
-                }
-                return Ok(String::new());
-              }
-              _ => unreachable!("resolve_for guarantees Key/AllSplit/AllJoined/ArgCount on AssocArr"),
+          VarKind::AssocArr(items) => match idx {
+            ArrIndex::AllSplit => {
+              let arg_sep = crate::readline::markers::ARG_SEP.to_string();
+              let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
+              return Ok(values.join(&arg_sep));
             }
-          }
+            ArrIndex::AllJoined => {
+              let ifs = self
+                .try_get_var("IFS")
+                .unwrap_or_else(|| " \t\n".to_string())
+                .chars()
+                .next()
+                .unwrap_or(' ')
+                .to_string();
+              let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
+              return Ok(values.join(&ifs));
+            }
+            ArrIndex::ArgCount => {
+              return Ok(items.len().to_string());
+            }
+            ArrIndex::Key(key) => {
+              for (k, v) in items {
+                if k == &key {
+                  return Ok(v.clone());
+                }
+              }
+              return Ok(String::new());
+            }
+            _ => unreachable!("resolve_for guarantees Key/AllSplit/AllJoined/ArgCount on AssocArr"),
+          },
           _ => {
             return Err(sherr!(ExecFail, "Variable '{}' is not an array", var_name,));
           }

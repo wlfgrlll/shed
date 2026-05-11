@@ -184,7 +184,7 @@ impl Default for ShOpts {
       set,
       prompt,
       highlight,
-      statline
+      statline,
     }
   }
 }

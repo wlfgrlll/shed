@@ -1,12 +1,33 @@
-use std::{ collections::{BTreeMap, BTreeSet}, fmt::Debug, fs::{File, OpenOptions}, os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd}, path::Path, str::FromStr };
+use std::{
+  collections::{BTreeMap, BTreeSet},
+  fmt::Debug,
+  fs::{File, OpenOptions},
+  os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
+  path::Path,
+  str::FromStr,
+};
 
-use nix::{errno::Errno, fcntl::{FcntlArg, OFlag, fcntl, open}, libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO}, sys::{stat::Mode, wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid}}, unistd::{ForkResult, fork, write}};
+use nix::{
+  errno::Errno,
+  fcntl::{FcntlArg, OFlag, fcntl, open},
+  libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO},
+  sys::{
+    stat::Mode,
+    wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid},
+  },
+  unistd::{ForkResult, fork, write},
+};
 
 use crate::{
-  expand::Expander, match_loop, parse::{
+  expand::Expander,
+  match_loop,
+  parse::{
     execute::exec_nonint,
     lex::{Span, Tk, TkFlags},
-  }, sherr, state::{self, read_shopts}, util::error::{ ShErr, ShErrKind, ShResult }
+  },
+  sherr,
+  state::{self, read_shopts},
+  util::error::{ShErr, ShErrKind, ShResult},
 };
 
 /*
@@ -49,27 +70,35 @@ fn move_high_no_cloexec(fd: OwnedFd) -> nix::Result<OwnedFd> {
 ///
 /// Later on we will probably have to do something like using a custom sqlite VFS
 /// to limit the fd numbers it can use, but for now this will do. I guess.
-pub fn do_something_that_opens_fds_that_we_cant_access_hack<F,T>(min_fd: RawFd, something: F) -> T
-where F: FnOnce() -> T {
+pub fn do_something_that_opens_fds_that_we_cant_access_hack<F, T>(min_fd: RawFd, something: F) -> T
+where
+  F: FnOnce() -> T,
+{
   // these close at the end of the function
-  let _dummies = (3..min_fd).filter_map(|_| {
-    // painful to write
-    open("/dev/null", OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())
+  let _dummies = (3..min_fd)
+    .filter_map(|_| {
+      // painful to write
+      open(
+        "/dev/null",
+        OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+        Mode::empty(),
+      )
       .ok()
-  }).collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
 
   // now if this opens fds, they will be at least the value of min_fd
   something()
 }
 
 /// Creates pipes outside of the userspace range of FDs
-pub fn pipes_high() -> nix::Result<(OwnedFd,OwnedFd)> {
-  let (r,w) = nix::unistd::pipe()?;
+pub fn pipes_high() -> nix::Result<(OwnedFd, OwnedFd)> {
+  let (r, w) = nix::unistd::pipe()?;
   Ok((move_high(r)?, move_high(w)?))
 }
 
-pub fn pipes_high_no_cloexec() -> nix::Result<(OwnedFd,OwnedFd)> {
-  let (r,w) = nix::unistd::pipe()?;
+pub fn pipes_high_no_cloexec() -> nix::Result<(OwnedFd, OwnedFd)> {
+  let (r, w) = nix::unistd::pipe()?;
   Ok((move_high_no_cloexec(r)?, move_high_no_cloexec(w)?))
 }
 
@@ -172,24 +201,21 @@ impl RedirBldr {
     };
 
     match target {
-      RedirTarget::Path(path) if class.is_file_op() => {
-        Ok(RedirSpec::file(fd, path, class))
-      }
-      RedirTarget::Close => {
-        Ok(RedirSpec::close(fd))
-      }
-      RedirTarget::Fd(src_fd) if class.is_dup_op() => {
-        Ok(RedirSpec::dup(src_fd, fd, class))
-      }
+      RedirTarget::Path(path) if class.is_file_op() => Ok(RedirSpec::file(fd, path, class)),
+      RedirTarget::Close => Ok(RedirSpec::close(fd)),
+      RedirTarget::Fd(src_fd) if class.is_dup_op() => Ok(RedirSpec::dup(src_fd, fd, class)),
       RedirTarget::HereDoc { body, flags } => {
         // Strip leading tabs per line BEFORE expansion (POSIX order).
         let mut buf = if flags.contains(TkFlags::TAB_HEREDOC) {
           let trailing_nl = body.ends_with('\n');
-          let stripped: Vec<&str> = body.lines()
+          let stripped: Vec<&str> = body
+            .lines()
             .map(|line| line.trim_start_matches('\t'))
             .collect();
           let mut s = stripped.join("\n");
-          if trailing_nl { s.push('\n'); }
+          if trailing_nl {
+            s.push('\n');
+          }
           s
         } else {
           body
@@ -205,7 +231,10 @@ impl RedirBldr {
 
         RedirSpec::buffer(fd, buf)
       }
-      _ => Err(sherr!(ParseErr, "Invalid redirection target for redirection type").option_promote(self.span)),
+      _ => Err(
+        sherr!(ParseErr, "Invalid redirection target for redirection type")
+          .option_promote(self.span),
+      ),
     }
   }
 }
@@ -348,37 +377,31 @@ impl RedirType {
   pub fn is_input(&self) -> bool {
     matches!(
       self,
-      RedirType::Input |
-      RedirType::HereDoc |
-      RedirType::IndentHereDoc |
-      RedirType::HereString |
-      RedirType::ReadWrite
+      RedirType::Input
+        | RedirType::HereDoc
+        | RedirType::IndentHereDoc
+        | RedirType::HereString
+        | RedirType::ReadWrite
     )
   }
   pub fn is_output(&self) -> bool {
     matches!(
       self,
-      RedirType::Output |
-      RedirType::OutputForce |
-      RedirType::Append |
-      RedirType::ReadWrite
+      RedirType::Output | RedirType::OutputForce | RedirType::Append | RedirType::ReadWrite
     )
   }
   pub fn is_file_op(&self) -> bool {
     matches!(
       self,
-      RedirType::Output |
-      RedirType::OutputForce |
-      RedirType::Append |
-      RedirType::Input |
-      RedirType::ReadWrite
+      RedirType::Output
+        | RedirType::OutputForce
+        | RedirType::Append
+        | RedirType::Input
+        | RedirType::ReadWrite
     )
   }
   pub fn is_dup_op(&self) -> bool {
-    matches!(self,
-      RedirType::Output |
-      RedirType::Input
-    )
+    matches!(self, RedirType::Output | RedirType::Input)
   }
 }
 
@@ -392,10 +415,23 @@ pub enum RedirTarget {
 
 #[derive(Debug, Clone)]
 pub enum RedirSpec {
-  File { fd: RawFd, path: Tk, mode: RedirType },
-  Dup { from: RawFd, to: RawFd, mode: RedirType },
-  Close { fd: RawFd },
-  Buffer { fd: RawFd, buf: String }
+  File {
+    fd: RawFd,
+    path: Tk,
+    mode: RedirType,
+  },
+  Dup {
+    from: RawFd,
+    to: RawFd,
+    mode: RedirType,
+  },
+  Close {
+    fd: RawFd,
+  },
+  Buffer {
+    fd: RawFd,
+    buf: String,
+  },
 }
 
 impl RedirSpec {
@@ -431,7 +467,9 @@ impl RedirSpec {
     match self {
       RedirSpec::File { fd, path, mode } => {
         let span = path.span.clone();
-        let path = path.clone().expand()
+        let path = path
+          .clone()
+          .expand()
           .map(|tk| tk.get_words())
           .unwrap_or_default();
 
@@ -446,24 +484,25 @@ impl RedirSpec {
       }
       RedirSpec::Dup { from, to, mode: _ } => {
         let borrowed = unsafe { BorrowedFd::borrow_raw(from) };
-        let owned = borrowed.try_clone_to_owned()
+        let owned = borrowed
+          .try_clone_to_owned()
           .map_err(|e| sherr!(InternalErr, "Failed to duplicate fd {}: {}", from, e))?;
         Ok(Redir::new(to, owned))
       }
-      RedirSpec::Close { fd } => {
-        Ok(Redir::close(fd))
-      }
+      RedirSpec::Close { fd } => Ok(Redir::close(fd)),
       RedirSpec::Buffer { fd, buf } => {
-        use nix::sys::memfd::{memfd_create, MFdFlags};
+        use nix::sys::memfd::{MFdFlags, memfd_create};
         use std::io::{Seek, SeekFrom, Write};
 
         let owned = memfd_create(c"shed_heredoc", MFdFlags::MFD_CLOEXEC)
           .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
 
         let mut file = std::fs::File::from(owned);
-        file.write_all(buf.as_bytes())
+        file
+          .write_all(buf.as_bytes())
           .map_err(|e| sherr!(InternalErr, "heredoc write failed: {e}"))?;
-        file.seek(SeekFrom::Start(0))
+        file
+          .seek(SeekFrom::Start(0))
           .map_err(|e| sherr!(InternalErr, "heredoc seek failed: {e}"))?;
 
         Ok(Redir::new(fd, file.into()))
@@ -485,12 +524,9 @@ impl RedirSet {
   }
   pub fn apply(self) -> ShResult<Option<RedirGuard>> {
     if self.0.is_empty() {
-      return Ok(None)
+      return Ok(None);
     }
-    let targets: BTreeSet<RawFd> = self.0
-      .iter()
-      .map(|spec| spec.target_fd())
-      .collect();
+    let targets: BTreeSet<RawFd> = self.0.iter().map(|spec| spec.target_fd()).collect();
 
     let guard = RedirGuard::new(&targets)?;
     for spec in self.0 {
@@ -527,7 +563,7 @@ impl From<RedirSpec> for RedirSet {
 
 #[derive(Debug)]
 pub struct RedirGuard {
-  saved: Option<IoGroup>
+  saved: Option<IoGroup>,
 }
 
 impl RedirGuard {
@@ -540,7 +576,7 @@ impl RedirGuard {
     Self::new(&stdio_fds)
   }
   pub fn persist(mut self) {
-    use std::mem::{take, drop};
+    use std::mem::{drop, take};
     drop(take(&mut self.saved));
   }
 }
@@ -567,7 +603,7 @@ impl IoGroup {
       match dup_high(borrowed) {
         Ok(owned) => saved.insert(fd, Some(owned)),
         Err(Errno::EBADF) => saved.insert(fd, None), // fd is not open
-        Err(e) => return Err(e.into())
+        Err(e) => return Err(e.into()),
       };
     }
 
@@ -581,8 +617,10 @@ impl IoGroup {
           if ret < 0 {
             return Err(nix::Error::last().into());
           }
-        },
-        None => { nix::unistd::close(fd).ok(); },
+        }
+        None => {
+          nix::unistd::close(fd).ok();
+        }
       }
     }
     Ok(())
@@ -616,13 +654,15 @@ impl Iterator for PipeGenerator {
     let needs_write = self.cursor + 1 < self.num_cmds; // this is not the last command
 
     let rpipe = self.last_rpipe.take(); // None if this is the first command
-    let wpipe = needs_write.then(|| {
-      let (r, w) = pipes_high().ok()?;
-      let read = Redir::new(0, r);
-      let write = Redir::new(1, w);
-      self.last_rpipe = Some(read);
-      Some(write)
-    }).flatten();
+    let wpipe = needs_write
+      .then(|| {
+        let (r, w) = pipes_high().ok()?;
+        let read = Redir::new(0, r);
+        let write = Redir::new(1, w);
+        self.last_rpipe = Some(read);
+        Some(write)
+      })
+      .flatten();
 
     self.cursor += 1;
     Some((rpipe, wpipe))
@@ -711,9 +751,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
         write(pipe.as_fd(), stdin.unwrap().as_bytes())?;
       }
 
-      let captured = read_fd_to_string(rpipe)?
-        .trim_end()
-        .to_string();
+      let captured = read_fd_to_string(rpipe)?.trim_end().to_string();
 
       let status = loop {
         match waitpid(child, Some(WtFlag::WSTOPPED)) {
@@ -768,7 +806,6 @@ pub fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<Fil
   };
   Ok(result?)
 }
-
 
 #[cfg(test)]
 pub mod tests {

@@ -7,7 +7,12 @@ use crate::{
   builtin::help::{
     StyledHelp,
     markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
-  }, procio::stdout_fileno, readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width}, state::with_term, util::error::ShResult, write_term
+  },
+  procio::stdout_fileno,
+  readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width},
+  state::with_term,
+  util::error::ShResult,
+  write_term,
 };
 
 pub enum PagerEvent {
