@@ -1721,6 +1721,7 @@ impl ShedLine {
 
     let pending_seq = self.macro_record.status().or_else(|| self.mode.pending_seq());
     let mut prompt_string_right = self.prompt.psr_expanded.clone();
+    let has_sub_editor = matches!(self.mode.report_mode(), ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search);
 
     if prompt_string_right
       .as_ref()
@@ -1780,7 +1781,10 @@ impl ShedLine {
 
       if with_term(|t| t.scroll_region()).is_some() {
         let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
-        let new_h = new_layout.end.row as i32 + predicted_overlay_rows as i32;
+        let mut new_h = new_layout.end.row as i32 + predicted_overlay_rows as i32;
+        if has_sub_editor {
+          new_h += 1;
+        }
         let diff = new_h - old_h;
         match diff.cmp(&0) {
           Ordering::Less => {
