@@ -1429,7 +1429,7 @@ pub fn runs_inline(cmd: &Node) -> bool {
     .and_then(|c| c.clone().expand().ok())
     .and_then(|t| t.get_first_word())
     .unwrap_or_default();
-  !is_func(&cmd_word) && !BUILTIN_NAMES.contains(&cmd_word.as_str())
+  is_func(&cmd_word) || BUILTIN_NAMES.contains(&cmd_word.as_str())
 }
 
 pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShResult<()> {
