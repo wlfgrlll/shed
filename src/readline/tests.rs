@@ -255,6 +255,14 @@ vi_test! {
   vi_ex_repeat_global      : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
   vi_visual_dot_repeat     : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
   vi_visual_replace        : "echo ./barbiz/baz buzz"       => "wvEdwvep"            => "echo  ./barbiz/baz", 17;
+  vi_n_char_search_f       : "foo=(bar biz bam)"            => "d2fb"                => "iz bam)", 0;
+  vi_n_char_search_t       : "foo=(bar biz bam)"            => "d2tb"                => "biz bam)", 0;
+  vi_n_char_search_bkwd_f  : "foo=(bar biz bam)"            => "$d2Fb"               => "foo=(bar )", 9;
+  vi_n_char_search_bkwd_t  : "foo=(bar biz bam)"            => "$d2Tb"               => "foo=(bar b)", 10;
+  vi_count_search_fwd      : "foo=(bar biz bam)"            => "2/b\rx"              => "foo=(bar iz bam)", 9;
+  vi_count_search_bkwd     : "foo=(bar biz bam)"            => "3?b\rx"              => "foo=(ar biz bam)", 5;
+  vi_count_n_fwd           : "foo=(bar biz bam)"            => "/b\r2nx"             => "foo=(bar biz am)", 13;
+  vi_count_n_bkwd          : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
 }
 
 // ===================== Vi Tests =====================

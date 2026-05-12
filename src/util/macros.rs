@@ -37,16 +37,16 @@ macro_rules! flush_term {
 #[macro_export]
 macro_rules! verb {
   ($verb:expr) => {
-    VerbCmd(1, $verb)
+    $crate::readline::editcmd::Cmd(1, $verb)
   };
   ($verb:expr,) => {
-    VerbCmd(1, $verb)
+    $crate::readline::editcmd::Cmd(1, $verb)
   };
   ($count:expr, $verb:expr) => {
-    VerbCmd($count, $verb)
+    $crate::readline::editcmd::Cmd($count, $verb)
   };
   ($count:expr, $verb:expr,) => {
-    VerbCmd($count, $verb)
+    $crate::readline::editcmd::Cmd($count, $verb)
   };
 }
 
@@ -55,16 +55,16 @@ macro_rules! verb {
 #[macro_export]
 macro_rules! motion {
   ($motion:expr) => {
-    MotionCmd(1, $motion)
+    $crate::readline::editcmd::Cmd(1, $motion)
   };
   ($motion:expr,) => {
-    MotionCmd(1, $motion)
+    $crate::readline::editcmd::Cmd(1, $motion)
   };
   ($count:expr, $motion:expr) => {
-    MotionCmd($count, $motion)
+    $crate::readline::editcmd::Cmd($count, $motion)
   };
   ($count:expr, $motion:expr,) => {
-    MotionCmd($count, $motion)
+    $crate::readline::editcmd::Cmd($count, $motion)
   };
 }
 

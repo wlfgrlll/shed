@@ -1,5 +1,5 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{Direction, EditCmd, Motion, MotionCmd, To, Verb, VerbCmd, Word};
+use crate::readline::editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word};
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::state::CursorStyle;
 use crate::{key, motion, verb};
@@ -16,7 +16,7 @@ impl Emacs {
   fn reset_cmd(&mut self) {
     self.pending_cmd = None;
   }
-  fn set_verb(&mut self, verb: VerbCmd) {
+  fn set_verb(&mut self, verb: Cmd<Verb>) {
     if let Some(cmd) = &mut self.pending_cmd {
       cmd.verb = Some(verb);
     } else {
@@ -29,7 +29,7 @@ impl Emacs {
       });
     }
   }
-  fn set_motion(&mut self, motion: MotionCmd) {
+  fn set_motion(&mut self, motion: Cmd<Motion>) {
     if let Some(cmd) = &mut self.pending_cmd {
       cmd.motion = Some(motion);
     } else {

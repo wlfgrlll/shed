@@ -1,5 +1,5 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{CmdFlags, EditCmd, RegisterName, To, Verb, VerbCmd};
+use crate::readline::editcmd::{CmdFlags, EditCmd, RegisterName, To, Verb};
 use crate::readline::keys::{KeyCode as K, KeyEvent as E};
 use crate::state::CursorStyle;
 use crate::verb;

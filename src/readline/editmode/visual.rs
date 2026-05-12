@@ -1,19 +1,17 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use super::{CmdReplay, CmdState, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{
-  Anchor, Bound, CmdFlags, Dest, Direction, EditCmd, Motion, MotionCmd, RegisterName, TextObj, To,
-  Verb, VerbCmd, Word,
-};
+use super::{CmdReplay, CmdState, EditMode, ModeReport, ParseResult, ViParser, common_cmds};
+use crate::readline::editcmd::{Anchor, Cmd, CmdFlags, EditCmd, Motion, RegisterName, To, Verb};
+use crate::readline::editmode::parse::CallbackResult;
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::readline::linebuf::Grapheme;
 use crate::state::CursorStyle;
 use crate::{key, motion, verb};
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct ViVisual {
   pending_seq: String,
+  parser: ViParser,
   cmds: Vec<EditCmd>,
   pending_flags: CmdFlags,
   repeat_count: u16,
@@ -21,7 +19,13 @@ pub struct ViVisual {
 
 impl ViVisual {
   pub fn new() -> Self {
-    Self::default()
+    Self {
+      pending_seq: String::new(),
+      parser: Self::parser(),
+      cmds: vec![],
+      pending_flags: CmdFlags::empty(),
+      repeat_count: 0,
+    }
   }
   pub fn with_count(mut self, repeat_count: u16) -> Self {
     self.repeat_count = repeat_count;
@@ -40,7 +44,7 @@ impl ViVisual {
     self.cmds.push(cmd.clone());
   }
 
-  fn validate_combination(&self, verb: Option<&Verb>, motion: Option<&Motion>) -> CmdState {
+  fn validate_combination(verb: Option<&Verb>, motion: Option<&Motion>) -> CmdState {
     if verb.is_none() {
       match motion {
         Some(_) => return CmdState::Complete,
@@ -78,565 +82,241 @@ impl ViVisual {
     self.clear_cmd();
     None
   }
-  pub fn try_parse(&mut self, ch: char) -> Option<EditCmd> {
-    self.pending_seq.push(ch);
-    let mut chars = self.pending_seq.chars().peekable();
+  fn parser() -> ViParser {
+    ViParser::new(None, Some(Self::parse_verb), Self::validate_combination)
+  }
+  pub fn parse_verb(chars: &mut Peekable<Chars<'_>>, count: usize) -> CallbackResult<Cmd<Verb>> {
+    use CallbackResult as C;
+    let register = RegisterName::default();
 
-    let register = 'reg_parse: {
-      let mut chars_clone = chars.clone();
-      let count = self.parse_count(&mut chars_clone);
-
-      let Some('"') = chars_clone.next() else {
-        break 'reg_parse RegisterName::default();
-      };
-
-      let Some(reg_name) = chars_clone.next() else {
-        return None; // Pending register name
-      };
-      match reg_name {
-        'a'..='z' | 'A'..='Z' => { /* proceed */ }
-        _ => return self.quit_parse(),
-      }
-
-      chars = chars_clone;
-      RegisterName::new(Some(reg_name), count)
+    let Some(ch) = chars.next() else {
+      return C::pending();
     };
 
-    let verb = 'verb_parse: {
-      let mut chars_clone = chars.clone();
-      let count = self.parse_count(&mut chars_clone).unwrap_or(1);
-
-      let Some(ch) = chars_clone.next() else {
-        break 'verb_parse None;
-      };
-      match ch {
-        'g' => {
-          if let Some(ch) = chars_clone.peek() {
-            match ch {
-              'v' => {
-                return Some(EditCmd {
-                  register,
-                  verb: Some(verb!(Verb::VisualModeSelectLast)),
-                  motion: None,
-                  raw_seq: self.take_cmd(),
-                  flags: CmdFlags::empty(),
-                });
-              }
-              '?' => {
-                return Some(EditCmd {
-                  register,
-                  verb: Some(verb!(Verb::Rot13)),
-                  motion: None,
-                  raw_seq: self.take_cmd(),
-                  flags: CmdFlags::empty(),
-                });
-              }
-              _ => break 'verb_parse None,
-            }
-          } else {
-            break 'verb_parse None;
-          }
-        }
-        '.' => {
-          return Some(EditCmd {
+    match ch {
+      'g' => {
+        let Some(ch) = chars.peek() else {
+          return C::pending();
+        };
+        match ch {
+          'v' => C::complete(EditCmd {
             register,
-            verb: Some(verb!(count, Verb::RepeatLast)),
+            verb: Some(verb!(Verb::VisualModeSelectLast)),
             motion: None,
-            raw_seq: self.take_cmd(),
+            raw_seq: String::new(),
             flags: CmdFlags::empty(),
-          });
-        }
-        ':' => {
-          return Some(EditCmd {
+          }),
+          '?' => C::complete(EditCmd {
             register,
-            verb: Some(verb!(count, Verb::ExMode)),
+            verb: Some(verb!(Verb::Rot13)),
             motion: None,
-            raw_seq: self.take_cmd(),
+            raw_seq: String::new(),
             flags: CmdFlags::empty(),
-          });
+          }),
+          _ => C::no_match(),
         }
-        'x' => {
-          chars = chars_clone;
-          break 'verb_parse Some(verb!(count, Verb::Delete));
-        }
-        'X' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Delete)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'Y' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Yank)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'D' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Delete)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'R' | 'C' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Change)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: self.take_flags(),
-          });
-        }
-        '>' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Indent)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        '<' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Dedent)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        '=' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::Equalize)),
-            motion: Some(motion!(Motion::WholeLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'p' | 'P' => {
-          chars = chars_clone;
-          break 'verb_parse Some(verb!(count, Verb::Put(Anchor::Before)));
-        }
-        'r' => {
-          let ch = chars_clone.next()?;
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::ReplaceChar(ch))),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        '~' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(Verb::ToggleCaseRange)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'u' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::ToLower)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        's' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::Delete)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'S' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::Change)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'U' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::ToUpper)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'O' | 'o' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::SwapVisualAnchor)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'A' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::InsertMode)),
-            motion: Some(motion!(Motion::ForwardChar)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'I' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::InsertMode)),
-            motion: Some(motion!(Motion::StartOfLine)),
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'J' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::JoinLines)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'y' => {
-          return Some(EditCmd {
-            register,
-            verb: Some(verb!(count, Verb::Yank)),
-            motion: None,
-            raw_seq: self.take_cmd(),
-            flags: CmdFlags::empty(),
-          });
-        }
-        'd' => {
-          chars = chars_clone;
-          break 'verb_parse Some(verb!(count, Verb::Delete));
-        }
-        'c' => {
-          chars = chars_clone;
-          break 'verb_parse Some(verb!(count, Verb::Change));
-        }
-        _ => break 'verb_parse None,
       }
-    };
-
-    if let Some(verb) = verb {
-      return Some(EditCmd {
+      '.' => C::complete(EditCmd {
         register,
-        verb: Some(verb),
+        verb: Some(verb!(count, Verb::RepeatLast)),
         motion: None,
-        raw_seq: self.take_cmd(),
-        flags: self.take_flags(),
-      });
-    }
-
-    let motion = 'motion_parse: {
-      let mut chars_clone = chars.clone();
-      let count = self.parse_count(&mut chars_clone).unwrap_or(1);
-
-      let Some(ch) = chars_clone.next() else {
-        break 'motion_parse None;
-      };
-      match (ch, &verb) {
-        ('d', Some(VerbCmd(_, Verb::Delete)))
-        | ('y', Some(VerbCmd(_, Verb::Yank)))
-        | ('=', Some(VerbCmd(_, Verb::Equalize)))
-        | ('>', Some(VerbCmd(_, Verb::Indent)))
-        | ('<', Some(VerbCmd(_, Verb::Dedent))) => {
-          break 'motion_parse Some(motion!(count, Motion::WholeLine));
-        }
-        ('c', Some(VerbCmd(_, Verb::Change))) => {
-          break 'motion_parse Some(motion!(count, Motion::WholeLine));
-        }
-        _ => {}
-      }
-      match ch {
-        'g' => {
-          if let Some(ch) = chars_clone.peek() {
-            match ch {
-              'g' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'motion_parse Some(motion!(count, Motion::StartOfBuffer));
-              }
-              'e' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'motion_parse Some(motion!(
-                  count,
-                  Motion::WordMotion(To::End, Word::Normal, Direction::Backward),
-                ));
-              }
-              'E' => {
-                chars_clone.next();
-                chars = chars_clone;
-                break 'motion_parse Some(motion!(
-                  count,
-                  Motion::WordMotion(To::End, Word::Big, Direction::Backward),
-                ));
-              }
-              _ => return self.quit_parse(),
-            }
-          } else {
-            break 'motion_parse None;
-          }
-        }
-        ']' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-          match ch {
-            ')' => {
-              chars = chars_clone;
-              break 'motion_parse Some(motion!(count, Motion::ToParen(Direction::Forward)));
-            }
-            '}' => {
-              chars = chars_clone;
-              break 'motion_parse Some(motion!(count, Motion::ToBrace(Direction::Forward)));
-            }
-            _ => return self.quit_parse(),
-          }
-        }
-        '[' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-          match ch {
-            '(' => {
-              chars = chars_clone;
-              break 'motion_parse Some(motion!(count, Motion::ToParen(Direction::Backward)));
-            }
-            '{' => {
-              chars = chars_clone;
-              break 'motion_parse Some(motion!(count, Motion::ToBrace(Direction::Backward)));
-            }
-            _ => return self.quit_parse(),
-          }
-        }
-        '%' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::ToDelimMatch));
-        }
-        'f' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::CharSearch(Direction::Forward, Dest::On, Grapheme::from(*ch)),
-          ));
-        }
-        'F' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::CharSearch(Direction::Backward, Dest::On, Grapheme::from(*ch)),
-          ));
-        }
-        't' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::CharSearch(Direction::Forward, Dest::Before, Grapheme::from(*ch)),
-          ));
-        }
-        'T' => {
-          let Some(ch) = chars_clone.peek() else {
-            break 'motion_parse None;
-          };
-
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::CharSearch(Direction::Backward, Dest::Before, Grapheme::from(*ch)),
-          ));
-        }
-        ';' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::RepeatMotion));
-        }
-        ',' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::RepeatMotionRev));
-        }
-        '|' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::ToColumn));
-        }
-        '0' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::StartOfLine));
-        }
-        '$' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::EndOfLine));
-        }
-        'k' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::LineUp));
-        }
-        'j' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::LineDown));
-        }
-        'h' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::BackwardChar));
-        }
-        'l' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::ForwardChar));
-        }
-        'w' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::Start, Word::Normal, Direction::Forward),
-          ));
-        }
-        'W' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::Start, Word::Big, Direction::Forward),
-          ));
-        }
-        'e' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::End, Word::Normal, Direction::Forward),
-          ));
-        }
-        'E' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::End, Word::Big, Direction::Forward),
-          ));
-        }
-        'b' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::Start, Word::Normal, Direction::Backward),
-          ));
-        }
-        'B' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::WordMotion(To::Start, Word::Big, Direction::Backward),
-          ));
-        }
-        ')' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::TextObj(TextObj::Sentence(Direction::Forward)),
-          ));
-        }
-        '(' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::TextObj(TextObj::Sentence(Direction::Backward)),
-          ));
-        }
-        '}' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::TextObj(TextObj::Paragraph(Direction::Forward)),
-          ));
-        }
-        '{' => {
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(
-            count,
-            Motion::TextObj(TextObj::Paragraph(Direction::Backward)),
-          ));
-        }
-        ch if ch == 'i' || ch == 'a' => {
-          let bound = match ch {
-            'i' => Bound::Inside,
-            'a' => Bound::Around,
-            _ => unreachable!(),
-          };
-          if chars_clone.peek().is_none() {
-            break 'motion_parse None;
-          }
-          let obj = match chars_clone.next().unwrap() {
-            'w' => TextObj::Word(Word::Normal, bound),
-            'W' => TextObj::Word(Word::Big, bound),
-            's' => TextObj::WholeSentence(bound),
-            'p' => TextObj::WholeParagraph(bound),
-            '"' => TextObj::DoubleQuote(bound),
-            '\'' => TextObj::SingleQuote(bound),
-            '`' => TextObj::BacktickQuote(bound),
-            '(' | ')' | 'b' => TextObj::Paren(bound),
-            '{' | '}' | 'B' => TextObj::Brace(bound),
-            '[' | ']' => TextObj::Bracket(bound),
-            '<' | '>' => TextObj::Angle(bound),
-            _ => return self.quit_parse(),
-          };
-          chars = chars_clone;
-          break 'motion_parse Some(motion!(count, Motion::TextObj(obj)));
-        }
-        _ => return self.quit_parse(),
-      }
-    };
-
-    let _ = chars; // suppresses unused warnings, creates an error if we decide to use chars later
-
-    let verb_ref = verb.as_ref().map(|v| &v.1);
-    let motion_ref = motion.as_ref().map(|m| &m.1);
-
-    match self.validate_combination(verb_ref, motion_ref) {
-      CmdState::Complete => Some(EditCmd {
-        register,
-        verb,
-        motion,
-        raw_seq: std::mem::take(&mut self.pending_seq),
-        flags: self.take_flags(),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
       }),
-      CmdState::Pending => None,
-      CmdState::Invalid => {
-        self.pending_seq.clear();
-        None
+      ':' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::ExMode)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'X' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Delete)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'Y' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Yank)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'D' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Delete)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'R' | 'C' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Change)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      '>' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Indent)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      '<' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Dedent)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      '=' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::Equalize)),
+        motion: Some(motion!(Motion::WholeLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'p' | 'P' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Put(Anchor::Before))),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'x' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Delete)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'r' => {
+        let Some(ch) = chars.next() else {
+          return C::pending();
+        };
+        C::complete(EditCmd {
+          register,
+          verb: Some(verb!(Verb::ReplaceChar(ch))),
+          motion: None,
+          raw_seq: String::new(),
+          flags: CmdFlags::empty(),
+        })
       }
+      '~' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(Verb::ToggleCaseRange)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'u' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::ToLower)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      's' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Delete)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'S' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Change)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'U' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::ToUpper)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'O' | 'o' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::SwapVisualAnchor)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'A' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::InsertMode)),
+        motion: Some(motion!(Motion::ForwardChar)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'I' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::InsertMode)),
+        motion: Some(motion!(Motion::StartOfLine)),
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'J' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::JoinLines)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'y' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Yank)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'd' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Delete)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      'c' => C::complete(EditCmd {
+        register,
+        verb: Some(verb!(count, Verb::Change)),
+        motion: None,
+        raw_seq: String::new(),
+        flags: CmdFlags::empty(),
+      }),
+      _ => C::no_match(),
     }
+  }
+}
+
+impl Default for ViVisual {
+  fn default() -> Self {
+    Self::new()
   }
 }
 
 impl EditMode for ViVisual {
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     let mut cmd: Option<EditCmd> = match key {
-      E(K::Char(ch), M::NONE) => self.try_parse(ch),
+      E(K::Char(ch), M::NONE) => {
+        self.pending_seq.push(ch);
+        match self.parser.try_parse(&self.pending_seq) {
+          ParseResult::Complete(cmd) => {
+            self.pending_seq.clear();
+            Some(cmd)
+          }
+          ParseResult::Invalid => {
+            self.pending_seq.clear();
+            None
+          }
+          _ => None,
+        }
+      }
       key!(Backspace) => Some(EditCmd {
         register: Default::default(),
         verb: None,

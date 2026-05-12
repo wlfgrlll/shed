@@ -9,8 +9,8 @@ use crate::match_loop;
 use crate::parse::lex::TkFlags;
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
-  Anchor, CmdFlags, EditCmd, LineAddr, Motion, MotionCmd, ReadSrc, RegisterName, StashArgs,
-  StashListArg, To, Verb, VerbCmd, WriteDest,
+  Anchor, Cmd, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg,
+  To, Verb, WriteDest,
 };
 use crate::readline::editmode::{EditMode, ModeReport};
 use crate::readline::history::History;
@@ -240,12 +240,12 @@ pub fn parse_ex_input(raw: &str) -> Result<Option<EditCmd>, Option<String>> {
         return Ok(None);
       };
       motion = Some(motion!(result.0));
-      Some(VerbCmd(1, result.1))
+      Some(Cmd(1, result.1))
     } else {
       parse_ex_command(&mut chars)?.map(|v| verb!(v))
     }
   };
-  if motion.is_none() && !matches!(verb, Some(VerbCmd(_, Verb::Write(_) | Verb::ShellCmd(_)))) {
+  if motion.is_none() && !matches!(verb, Some(Cmd(_, Verb::Write(_) | Verb::ShellCmd(_)))) {
     motion = Some(motion!(Motion::Line(LineAddr::Current)))
   }
 

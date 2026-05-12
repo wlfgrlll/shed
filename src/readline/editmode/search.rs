@@ -2,7 +2,7 @@ use crate::{
   key, motion,
   readline::{
     SimpleEditor,
-    editcmd::{CmdFlags, Direction, EditCmd, Motion, MotionCmd, To},
+    editcmd::{CmdFlags, Direction, EditCmd, Motion, To},
     editmode::{CmdReplay, EditMode, ModeReport},
     history::History,
     keys::KeyEvent,
@@ -17,11 +17,15 @@ trait SearchMode {
     EditCmd {
       register: Default::default(),
       verb: None,
-      motion: Some(motion!(Motion::Search(self.pattern(), self.direction()))),
+      motion: Some(motion!(
+        self.count(),
+        Motion::Search(self.pattern(), self.direction())
+      )),
       raw_seq: self.pattern(),
       flags: CmdFlags::EXIT_CUR_MODE,
     }
   }
+  fn count(&self) -> usize;
   fn query_handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
     self.query_mut().handle_key(key).map(|_| None).ok()?
   }
@@ -46,43 +50,51 @@ trait SearchMode {
 
 pub struct ViSearch {
   query: SimpleEditor,
+  count: usize,
 }
 
 impl ViSearch {
-  pub fn new() -> Self {
+  pub fn new(count: usize) -> Self {
     Self {
       query: SimpleEditor::new(Some("search_history")),
+      count,
     }
   }
 }
 
 impl Default for ViSearch {
   fn default() -> Self {
-    Self::new()
+    Self::new(1)
   }
 }
 
 pub struct ViSearchRev {
   query: SimpleEditor,
+  count: usize,
 }
 
 impl ViSearchRev {
-  pub fn new() -> Self {
+  pub fn new(count: usize) -> Self {
     Self {
       query: SimpleEditor::new(Some("search_history")),
+      count,
     }
   }
 }
 
 impl Default for ViSearchRev {
   fn default() -> Self {
-    Self::new()
+    Self::new(1)
   }
 }
 
 impl SearchMode for ViSearch {
   fn direction(&self) -> Direction {
     Direction::Forward
+  }
+
+  fn count(&self) -> usize {
+    self.count
   }
 
   fn query(&self) -> &SimpleEditor {
@@ -101,6 +113,10 @@ impl SearchMode for ViSearch {
 impl SearchMode for ViSearchRev {
   fn direction(&self) -> Direction {
     Direction::Backward
+  }
+
+  fn count(&self) -> usize {
+    self.count
   }
 
   fn query(&self) -> &SimpleEditor {

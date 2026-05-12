@@ -1,5 +1,5 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{Direction, EditCmd, Motion, MotionCmd, To, Verb, VerbCmd, Word};
+use crate::readline::editcmd::{Direction, EditCmd, Motion, To, Verb, Word};
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::state::CursorStyle;
 use crate::{key, motion, verb};

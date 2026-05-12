@@ -88,8 +88,8 @@ bitflags! {
 #[derive(Clone, Default, Debug)]
 pub struct EditCmd {
   pub register: RegisterName,
-  pub verb: Option<VerbCmd>,
-  pub motion: Option<MotionCmd>,
+  pub verb: Option<Cmd<Verb>>,
+  pub motion: Option<Cmd<Motion>>,
   pub raw_seq: String,
   pub flags: CmdFlags,
 }
@@ -98,13 +98,13 @@ impl EditCmd {
   pub fn new() -> Self {
     Self::default()
   }
-  pub fn set_motion(&mut self, motion: MotionCmd) {
+  pub fn set_motion(&mut self, motion: Cmd<Motion>) {
     self.motion = Some(motion)
   }
-  pub fn set_verb(&mut self, verb: VerbCmd) {
+  pub fn set_verb(&mut self, verb: Cmd<Verb>) {
     self.verb = Some(verb)
   }
-  pub fn new_with_verb(&self, verb: Option<VerbCmd>) -> Self {
+  pub fn new_with_verb(&self, verb: Option<Cmd<Verb>>) -> Self {
     Self {
       verb,
       ..self.clone()
@@ -116,7 +116,7 @@ impl EditCmd {
   pub fn motion_is(&self, motion: Motion) -> bool {
     self.motion().is_some_and(|m| m.1 == motion)
   }
-  pub fn new_with_motion(&self, motion: Option<MotionCmd>) -> Self {
+  pub fn new_with_motion(&self, motion: Option<Cmd<Motion>>) -> Self {
     Self {
       motion,
       ..self.clone()
@@ -149,13 +149,13 @@ impl EditCmd {
       None
     }
   }
-  pub fn verb(&self) -> Option<&VerbCmd> {
+  pub fn verb(&self) -> Option<&Cmd<Verb>> {
     self.verb.as_ref()
   }
-  pub fn verb_mut(&mut self) -> Option<&mut VerbCmd> {
+  pub fn verb_mut(&mut self) -> Option<&mut Cmd<Verb>> {
     self.verb.as_mut()
   }
-  pub fn motion(&self) -> Option<&MotionCmd> {
+  pub fn motion(&self) -> Option<&Cmd<Motion>> {
     self.motion.as_ref()
   }
   pub fn verb_count(&self) -> usize {
@@ -171,8 +171,8 @@ impl EditCmd {
     let Some(motion) = self.motion.as_mut() else {
       return;
     };
-    let VerbCmd(v_count, _) = verb;
-    let MotionCmd(m_count, _) = motion;
+    let Cmd(v_count, _) = verb;
+    let Cmd(m_count, _) = motion;
     let product = *v_count * *m_count;
     verb.0 = 1;
     motion.0 = product;
@@ -284,21 +284,17 @@ impl EditCmd {
 }
 
 #[derive(Clone, Debug)]
-pub struct VerbCmd(pub usize, pub Verb);
-#[derive(Clone, Debug)]
-pub struct MotionCmd(pub usize, pub Motion);
+pub struct Cmd<T>(pub usize, pub T);
 
-impl MotionCmd {
-  pub fn invert_char_motion(self) -> Self {
-    let MotionCmd(count, Motion::CharSearch(dir, dest, ch)) = self else {
-      unreachable!()
-    };
-    let new_dir = match dir {
-      Direction::Forward => Direction::Backward,
-      Direction::Backward => Direction::Forward,
-    };
-    MotionCmd(count, Motion::CharSearch(new_dir, dest, ch))
-  }
+pub fn invert_char_motion(motion: Cmd<Motion>) -> Cmd<Motion> {
+  let Cmd(count, Motion::CharSearch(dir, dest, ch)) = motion else {
+    return motion;
+  };
+  let new_dir = match dir {
+    Direction::Forward => Direction::Backward,
+    Direction::Backward => Direction::Forward,
+  };
+  Cmd(count, Motion::CharSearch(new_dir, dest, ch))
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -541,6 +537,48 @@ impl Motion {
   }
   pub fn is_linewise(&self) -> bool {
     matches!(self, Self::WholeLine | Self::LineUp | Self::LineDown)
+  }
+  /// Builds a Motion::WordMotion from the given characters
+  /// takes a slice because of the 'ge' case.
+  /// Only works for w, W, b, B, e, and E, and 'ge'
+  pub fn word_motion(chars: &[char]) -> Option<Self> {
+    match chars.first()? {
+      'w' => Some(Motion::WordMotion(
+        To::Start,
+        Word::Normal,
+        Direction::Forward,
+      )),
+      'W' => Some(Motion::WordMotion(To::Start, Word::Big, Direction::Forward)),
+      'b' => Some(Motion::WordMotion(
+        To::Start,
+        Word::Normal,
+        Direction::Backward,
+      )),
+      'B' => Some(Motion::WordMotion(
+        To::Start,
+        Word::Big,
+        Direction::Backward,
+      )),
+      'e' => Some(Motion::WordMotion(
+        To::End,
+        Word::Normal,
+        Direction::Forward,
+      )),
+      'E' => Some(Motion::WordMotion(To::End, Word::Big, Direction::Forward)),
+      'g' => {
+        let next = chars.get(1)?;
+        match next {
+          'e' => Some(Motion::WordMotion(
+            To::End,
+            Word::Normal,
+            Direction::Backward,
+          )),
+          'E' => Some(Motion::WordMotion(To::End, Word::Big, Direction::Backward)),
+          _ => None,
+        }
+      }
+      _ => None,
+    }
   }
 }
 

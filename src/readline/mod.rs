@@ -2,7 +2,7 @@ use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
 use crate::readline::linebuf::{Lines, Pos, ordered};
 use crate::readline::register::{RegisterContent, append_register, read_register, write_register};
 use crate::{flush_term, motion, status_msg, verb, write_term};
-use editcmd::{CmdFlags, EditCmd, Motion, MotionCmd, RegisterName, Verb, VerbCmd};
+use editcmd::{CmdFlags, EditCmd, Motion, RegisterName, Verb};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
 use history::History;
 use itertools::Either;
@@ -19,7 +19,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::builtin::keymap::{KeyMapFlags, KeyMapMatch};
 use crate::expand::{expand_keymap, expand_prompt};
 use crate::readline::complete::{FuzzyCompleter, FuzzySelector, SelectorResponse};
-use crate::readline::editcmd::Direction;
+use crate::readline::editcmd::{Cmd, Direction, invert_char_motion};
 use crate::readline::editmode::{Emacs, ViEx, ViVerbatim};
 use crate::readline::history::HistEntry;
 use crate::readline::term::{
@@ -214,11 +214,11 @@ impl SimpleEditor {
     cmd.verb().is_none()
       && (cmd
         .motion()
-        .is_some_and(|m| matches!(m, MotionCmd(_, Motion::LineUp)))
+        .is_some_and(|m| matches!(m, Cmd(_, Motion::LineUp)))
         && self.buf.start_of_line() == 0)
       || (cmd
         .motion()
-        .is_some_and(|m| matches!(m, MotionCmd(_, Motion::LineDown)))
+        .is_some_and(|m| matches!(m, Cmd(_, Motion::LineDown)))
         && self.buf.on_last_line())
   }
   pub fn scroll_history(&mut self, count: isize) {
@@ -244,14 +244,14 @@ impl SimpleEditor {
     };
     if self.should_grab_history(&cmd) {
       let count = match cmd.motion().unwrap() {
-        MotionCmd(_, Motion::LineUp) => -1,
-        MotionCmd(_, Motion::LineDown) => 1,
+        Cmd(_, Motion::LineUp) => -1,
+        Cmd(_, Motion::LineDown) => 1,
         _ => unreachable!(),
       };
       self.scroll_history(count);
       return Ok(());
     }
-    if let Some(VerbCmd(_, Verb::DeleteOrEof)) = cmd.verb_mut() {
+    if let Some(Cmd(_, Verb::DeleteOrEof)) = cmd.verb_mut() {
       // user pressed Ctrl+D in emacs mode
       // we've gotta resolve this into either Delete or EndOfFile here
       if self.buf.is_empty() {
@@ -546,7 +546,7 @@ pub struct ShedLine {
   pub saved_mode: Option<Box<dyn EditMode>>,
   pub pending_keymap: Vec<KeyEvent>,
   pub repeat_action: Option<CmdReplay>,
-  pub repeat_motion: Option<MotionCmd>,
+  pub repeat_motion: Option<Cmd<Motion>>,
   pub repeat_macro: Option<char>,
   pub editor: LineBuf,
   pub macro_record: MacroRecord,
@@ -1222,7 +1222,7 @@ impl ShedLine {
   fn extract_line_nums(&self, cmd: &EditCmd) -> ShResult<Vec<usize>> {
     Ok(
       match cmd.motion() {
-        Some(MotionCmd(_, Motion::LineRange(s, e))) => {
+        Some(Cmd(_, Motion::LineRange(s, e))) => {
           let s = self
             .editor
             .resolve_line_addr(s)?
@@ -1234,14 +1234,14 @@ impl ShedLine {
           let (s, e) = ordered(s, e);
           Either::Left(s..=e)
         }
-        Some(MotionCmd(_, Motion::Line(addr))) => {
+        Some(Cmd(_, Motion::Line(addr))) => {
           let addr = self
             .editor
             .resolve_line_addr(addr)?
             .unwrap_or(self.editor.row());
           Either::Left(addr..=addr)
         }
-        Some(MotionCmd(_, m @ (Motion::Global(con, re) | Motion::NotGlobal(con, re)))) => {
+        Some(Cmd(_, m @ (Motion::Global(con, re) | Motion::NotGlobal(con, re)))) => {
           let polarity = matches!(m, Motion::Global(_, _));
           let lines = self.editor.get_matching_lines(con, re, polarity)?;
           Either::Right(lines.into_iter())
@@ -1300,11 +1300,11 @@ impl ShedLine {
   }
 
   pub fn resolve_cmd(&mut self, mut cmd: EditCmd) -> ShResult<Option<LineCmd>> {
-    if let Some(VerbCmd(_, Verb::Interrupt)) = cmd.verb() {
+    if let Some(Cmd(_, Verb::Interrupt)) = cmd.verb() {
       return Ok(Some(LineCmd::ResetWidget));
     }
 
-    if let Some(VerbCmd(_, Verb::Normal(seq))) = cmd.verb() {
+    if let Some(Cmd(_, Verb::Normal(seq))) = cmd.verb() {
       let line_nums = self.extract_line_nums(&cmd)?;
       return Ok(Some(LineCmd::NormalSeq(line_nums, seq.clone())));
     }
@@ -1327,7 +1327,7 @@ impl ShedLine {
       return Ok(Some(LineCmd::SubmitLine(cmd)));
     }
 
-    if let Some(VerbCmd(_, Verb::DeleteOrEof)) = cmd.verb_mut() {
+    if let Some(Cmd(_, Verb::DeleteOrEof)) = cmd.verb_mut() {
       // user pressed Ctrl+D in emacs mode
       // we've gotta resolve this into either Delete or EndOfFile here
       if self.focused_editor().is_empty() {
@@ -1336,7 +1336,7 @@ impl ShedLine {
         cmd.verb_mut().unwrap().1 = Verb::Delete;
       }
       return Ok(Some(LineCmd::Execute(cmd)));
-    } else if let Some(VerbCmd(_, Verb::ClearScreen)) = cmd.verb() {
+    } else if let Some(Cmd(_, Verb::ClearScreen)) = cmd.verb() {
       return Ok(Some(LineCmd::ClearScreen));
     }
 
@@ -1567,7 +1567,7 @@ impl ShedLine {
     // This function appends it to the end of the current buffer with '&&' or ';'
     // depending on if the user is holding shift or ctrl.
 
-    let MotionCmd(count, motion) = &cmd.motion.unwrap();
+    let Cmd(count, motion) = &cmd.motion.unwrap();
     let sep = if cmd.flags.contains(CmdFlags::HAS_SHIFT) {
       " && "
     } else {
@@ -1701,15 +1701,15 @@ impl ShedLine {
     cmd.is_virtual_scroll()
       || cmd
         .verb()
-        .is_some_and(|v| matches!(v, VerbCmd(_, Verb::HistoryUp | Verb::HistoryDown)))
+        .is_some_and(|v| matches!(v, Cmd(_, Verb::HistoryUp | Verb::HistoryDown)))
       || cmd.verb().is_none()
         && (cmd
           .motion()
-          .is_some_and(|m| matches!(m, MotionCmd(_, Motion::LineUp)))
+          .is_some_and(|m| matches!(m, Cmd(_, Motion::LineUp)))
           && self.editor.start_of_line() == 0)
       || (cmd
         .motion()
-        .is_some_and(|m| matches!(m, MotionCmd(_, Motion::LineDown)))
+        .is_some_and(|m| matches!(m, Cmd(_, Motion::LineDown)))
         && self.editor.on_last_line())
         && !cmd.flags.contains(CmdFlags::IS_SUBMIT)
   }
@@ -2064,8 +2064,8 @@ impl ShedLine {
           Box::new(ViVisual::new())
         }
 
-        Verb::SearchMode => Box::new(ViSearch::new()),
-        Verb::RevSearchMode => Box::new(ViSearchRev::new()),
+        Verb::SearchMode => Box::new(ViSearch::new(count)),
+        Verb::RevSearchMode => Box::new(ViSearchRev::new(count)),
 
         _ => unreachable!(),
       }
@@ -2158,8 +2158,8 @@ impl ShedLine {
       ModeReport::Verbatim => Box::new(ViVerbatim::new()),
       ModeReport::Emacs => Box::new(Emacs::new()),
       ModeReport::Remote => Box::new(RemoteMode),
-      ModeReport::Search => Box::new(ViSearch::new()),
-      ModeReport::RevSearch => Box::new(ViSearchRev::new()),
+      ModeReport::Search => Box::new(ViSearch::new(1)),
+      ModeReport::RevSearch => Box::new(ViSearchRev::new(1)),
       ModeReport::Unknown => unreachable!(),
     }
   }
@@ -2169,7 +2169,7 @@ impl ShedLine {
       return Ok(());
     };
     let EditCmd { verb, .. } = cmd;
-    let VerbCmd(count, _) = verb.unwrap();
+    let Cmd(count, _) = verb.unwrap();
     match replay {
       CmdReplay::ModeReplay { cmds, mut repeat } => {
         if count > 1 {
@@ -2204,8 +2204,8 @@ impl ShedLine {
             ModeReport::Emacs => Box::new(Emacs::new()),
             ModeReport::Remote => Box::new(RemoteMode),
             ModeReport::Ex => Box::new(ViEx::new(self.editor.is_selecting())),
-            ModeReport::Search => Box::new(ViSearch::new()),
-            ModeReport::RevSearch => Box::new(ViSearchRev::new()),
+            ModeReport::Search => Box::new(ViSearch::new(1)),
+            ModeReport::RevSearch => Box::new(ViSearchRev::new(1)),
             ModeReport::Unknown => unreachable!(),
           };
           self.mode = old_mode_clone;
@@ -2235,7 +2235,7 @@ impl ShedLine {
 
   pub fn handle_motion_repeat(&mut self, cmd: EditCmd) -> ShResult<()> {
     match cmd.motion.as_ref().unwrap() {
-      MotionCmd(count, Motion::RepeatMotion) => {
+      Cmd(count, Motion::RepeatMotion) => {
         let Some(motion) = self.repeat_motion.clone() else {
           return Ok(());
         };
@@ -2248,11 +2248,11 @@ impl ShedLine {
         };
         self.fire_editor_command(repeat_cmd)
       }
-      MotionCmd(count, Motion::RepeatMotionRev) => {
+      Cmd(count, Motion::RepeatMotionRev) => {
         let Some(motion) = self.repeat_motion.clone() else {
           return Ok(());
         };
-        let mut new_motion = motion.invert_char_motion();
+        let mut new_motion = invert_char_motion(motion);
         new_motion.0 = *count;
         let repeat_cmd = EditCmd {
           register: RegisterName::default(),

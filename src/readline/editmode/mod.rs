@@ -3,9 +3,7 @@ use std::str::FromStr;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::readline::editcmd::{
-  CmdFlags, Direction, EditCmd, Motion, MotionCmd, To, Verb, VerbCmd, Word,
-};
+use crate::readline::editcmd::{CmdFlags, Direction, EditCmd, Motion, To, Verb, Word};
 use crate::readline::history::History;
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::readline::linebuf::LineBuf;
@@ -16,6 +14,7 @@ mod emacs;
 mod ex;
 mod insert;
 mod normal;
+mod parse;
 mod remote;
 mod replace;
 mod search;
@@ -26,6 +25,7 @@ pub use emacs::Emacs;
 pub use ex::{SubFlags, ViEx};
 pub use insert::ViInsert;
 pub use normal::ViNormal;
+pub use parse::{ParseResult, ViParser};
 pub use remote::RemoteMode;
 pub use replace::ViReplace;
 pub use search::{ViSearch, ViSearchRev};
@@ -58,8 +58,8 @@ impl ModeReport {
       ModeReport::Verbatim => Box::new(ViVerbatim::new()) as Box<dyn EditMode>,
       ModeReport::Emacs => Box::new(Emacs::new()) as Box<dyn EditMode>,
       ModeReport::Remote => Box::new(RemoteMode) as Box<dyn EditMode>,
-      ModeReport::Search => Box::new(ViSearch::new()) as Box<dyn EditMode>,
-      ModeReport::RevSearch => Box::new(ViSearchRev::new()) as Box<dyn EditMode>,
+      ModeReport::Search => Box::new(ViSearch::new(1)) as Box<dyn EditMode>,
+      ModeReport::RevSearch => Box::new(ViSearchRev::new(1)) as Box<dyn EditMode>,
       ModeReport::Unknown => unimplemented!(),
     }
   }
@@ -93,6 +93,8 @@ impl FromStr for ModeReport {
       "VERBATIM" => Ok(Self::Verbatim),
       "REMOTE" => Ok(Self::Remote),
       "EMACS" => Ok(Self::Emacs),
+      "SEARCH" => Ok(Self::Search),
+      "REVSEARCH" => Ok(Self::RevSearch),
       _ => Err(crate::sherr!(ParseErr, "Invalid ModeReport kind: {s}")),
     }
   }

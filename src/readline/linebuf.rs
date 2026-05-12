@@ -15,9 +15,7 @@ use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
-use super::editcmd::{
-  Anchor, Bound, Dest, Direction, EditCmd, Motion, MotionCmd, TextObj, To, Verb, Word,
-};
+use super::editcmd::{Anchor, Bound, Dest, Direction, EditCmd, Motion, TextObj, To, Verb, Word};
 use crate::{
   builtin::stash::{Stash, StashedCmd},
   expand::alias::AliasExpander,
@@ -30,7 +28,7 @@ use crate::{
   procio::{self, RedirSet, RedirSpec, capture_command, stdin_fileno},
   readline::{
     context::{CtxTkRule, get_context_tokens},
-    editcmd::{LineAddr, ReadSrc, StashArgs, StashListArg, VerbCmd, WriteDest},
+    editcmd::{Cmd, LineAddr, ReadSrc, StashArgs, StashListArg, WriteDest},
     editmode::SubFlags,
     highlight::{self},
     history::History,
@@ -2710,7 +2708,7 @@ impl LineBuf {
       self.pos_to_byte(pos)
     }
   }
-  pub fn search(&mut self, motion: &Motion, save: bool) -> Option<MotionKind> {
+  pub fn search(&mut self, motion: &Motion, save: bool, count: usize) -> Option<MotionKind> {
     let Motion::Search(pat, dir) = motion else {
       return None;
     };
@@ -2722,23 +2720,27 @@ impl LineBuf {
       }
     };
     let buf = self.joined();
-    let cursor_byte = self.pos_to_byte(self.cursor.pos)?;
+    let mut offset = self.pos_to_byte(self.cursor.pos)?;
+    let mut target_byte = None;
 
-    let target_byte = match dir {
-      Direction::Forward => re
-        .find_at(&buf, cursor_byte + 1)
-        .or_else(|| re.find(&buf))
-        .map(|m| m.start()),
-      Direction::Backward => {
-        let matches: Vec<_> = re.find_iter(&buf).collect();
-        matches
-          .iter()
-          .rev()
-          .find(|m| m.start() < cursor_byte)
-          .or_else(|| matches.last())
-          .map(|m| m.start())
-      }
-    };
+    for it in 0..count {
+      target_byte = match dir {
+        Direction::Forward => re
+          .find_at(&buf, offset + 1)
+          .or_else(|| re.find(&buf))
+          .map(|m| m.start()),
+        Direction::Backward => {
+          let matches: Vec<_> = re.find_iter(&buf).collect();
+          matches
+            .iter()
+            .rev()
+            .find(|m| m.start() < offset)
+            .or_else(|| matches.last())
+            .map(|m| m.start())
+        }
+      };
+      offset = target_byte?;
+    }
 
     target_byte.and_then(|b| self.byte_to_pos(b)).map(|target| {
       if save {
@@ -2783,7 +2785,7 @@ impl LineBuf {
   }
   fn eval_motion_inner(&mut self, cmd: &EditCmd, check_hint: bool) -> ShResult<Option<MotionKind>> {
     let EditCmd { verb, motion, .. } = cmd;
-    let Some(MotionCmd(count, motion)) = motion.as_ref() else {
+    let Some(Cmd(count, motion)) = motion.as_ref() else {
       return Ok(None);
     };
     let mut motion = motion.clone();
@@ -2824,11 +2826,9 @@ impl LineBuf {
           })
         }
         Motion::StartOfFirstWord => {
-          let mut target = Pos {
-            row: this.row(),
-            col: 0,
-          };
-          let line = this.cur_line();
+          let row = this.row() + count.saturating_sub(1);
+          let mut target = Pos { row, col: 0 };
+          let line = this.line(row);
           for (i, gr) in line.0.iter().enumerate() {
             target.col = i;
             if !gr.is_ws() {
@@ -2848,7 +2848,8 @@ impl LineBuf {
             Motion::EndOfLine => (true, isize::MAX),
             _ => unreachable!(),
           };
-          let target = this.offset_cursor(0, off);
+          let row_offset = count.saturating_sub(1);
+          let target = this.offset_cursor(row_offset as isize, off);
           (target != this.cursor.pos).then_some(MotionKind::Char {
             start: this.cursor.pos,
             end: target,
@@ -2859,7 +2860,7 @@ impl LineBuf {
           // 'cw' is a weird case
           // if you are on the word's left boundary, it will not delete whitespace after
           // the end of the word
-          let ignore_trailing_ws = matches!(verb, Some(VerbCmd(_, Verb::Change)),)
+          let ignore_trailing_ws = matches!(verb, Some(Cmd(_, Verb::Change)),)
             && matches!(
               motion,
               Motion::WordMotion(To::Start, _, Direction::Forward,)
@@ -2976,11 +2977,11 @@ impl LineBuf {
           })
         }
 
-        Motion::Search(..) => this.search(&motion, true),
+        Motion::Search(..) => this.search(&motion, true, *count),
 
         Motion::RepeatSearch => {
           if let Some(search) = this.last_search.clone() {
-            this.search(&search, false)
+            this.search(&search, false, *count)
           } else {
             None
           }
@@ -2998,7 +2999,7 @@ impl LineBuf {
               }
               _ => unreachable!(),
             };
-            this.search(&rev_search, false)
+            this.search(&rev_search, false, *count)
           } else {
             None
           }
@@ -3429,7 +3430,7 @@ impl LineBuf {
       motion,
       ..
     } = cmd;
-    let Some(VerbCmd(_, verb)) = verb else {
+    let Some(Cmd(_, verb)) = verb else {
       // For verb-less motions in insert mode, merge hint before evaluating
       // so motions like `w` can see into the hint text
       let result = self.eval_motion_inner(cmd, true)?;

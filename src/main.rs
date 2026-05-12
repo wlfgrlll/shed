@@ -218,7 +218,7 @@ fn main() -> ExitCode {
     write_shopts(|o| o.query(&format!("set.{set_opt}=true"))).ok();
   }
 
-  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || state::init_db_conn());
+  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, state::init_db_conn);
 
   if let Err(e) = dispatch_input(args) {
     e.print_error();

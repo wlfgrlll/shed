@@ -1,5 +1,5 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{Direction, EditCmd, Motion, MotionCmd, To, Verb, VerbCmd, Word};
+use crate::readline::editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word};
 use crate::readline::editmode::ViNormal;
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::state::{CursorStyle, VarFlags, VarKind, write_vars};
@@ -35,12 +35,12 @@ impl ViInsert {
     let insert_count = self
       .cmds
       .iter()
-      .filter(|cmd: &&EditCmd| matches!(cmd.verb(), Some(VerbCmd(1, Verb::InsertChar(_)))))
+      .filter(|cmd: &&EditCmd| matches!(cmd.verb(), Some(Cmd(1, Verb::InsertChar(_)))))
       .count();
     let backspace_count = self
       .cmds
       .iter()
-      .filter(|cmd: &&EditCmd| matches!(cmd.verb(), Some(VerbCmd(1, Verb::Delete))))
+      .filter(|cmd: &&EditCmd| matches!(cmd.verb(), Some(Cmd(1, Verb::Delete))))
       .count();
 
     insert_count > backspace_count
