@@ -1,17 +1,15 @@
-use std::path::PathBuf;
-
 use bitflags::bitflags;
 
 use crate::{
   readline::{
-    editmode::{ExNode, SubFlags},
+    editmode::ExNode,
     linebuf::{Grapheme, Pos, SelectShape},
   },
   state::read_vars,
 };
 
 use super::{
-  editmode::{self, ExNdRule},
+  editmode::ExNdRule,
   register::{RegisterContent, append_register, read_register, write_register},
 };
 

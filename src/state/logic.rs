@@ -1,4 +1,6 @@
-use super::*;
+use nix::sys::signal::Signal;
+
+use super::{util::write_meta, *};
 
 use std::{
   collections::HashMap,
@@ -6,19 +8,28 @@ use std::{
   str::FromStr,
 };
 
-use crate::{
-  builtin::{
-    keymap::{KeyMap, KeyMapFlags, KeyMapMatch},
-    trap::TrapTarget,
-  },
-  parse::{Node, lex::Span},
-  readline::keys::KeyEvent,
+use super::{
+  signal::parse_signal,
+  parse::{Node, execute, lex::Span},
+  keys::{KeyMap, KeyMapFlags, KeyMapMatch, KeyEvent}
 };
 
 #[derive(Clone, Debug)]
-pub struct ShAlias {
-  pub body: String,
-  pub source: Span,
+pub(super) struct ShAlias {
+  body: String,
+  source: Span,
+}
+
+impl ShAlias {
+  pub fn new(body: String, source: Span) -> Self {
+    Self { body, source }
+  }
+  pub fn body(&self) -> &str {
+    &self.body
+  }
+  pub fn source(&self) -> &Span {
+    &self.source
+  }
 }
 
 impl Display for ShAlias {
@@ -49,7 +60,7 @@ impl ShFunc {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum AutoCmdKind {
+pub(crate) enum AutoCmdKind {
   PreCmd,
   PostCmd,
   PreChangeDir,
@@ -94,19 +105,66 @@ crate::two_way_display!(AutoCmdKind,
 );
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AutoCmd {
-  pub kind: AutoCmdKind,
-  pub command: String,
+pub(crate) struct AutoCmd {
+  kind: AutoCmdKind,
+  command: String,
 }
+
+impl AutoCmd {
+  pub fn new(kind: AutoCmdKind, command: String) -> Self {
+    Self { kind, command }
+  }
+  pub fn kind(&self) -> AutoCmdKind {
+    self.kind
+  }
+  pub fn command(&self) -> &str {
+    &self.command
+  }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub(crate) enum TrapTarget {
+  Exit,
+  Error,
+  Return,
+  Signal(Signal),
+}
+
+impl FromStr for TrapTarget {
+  type Err = ShErr;
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "EXIT" => Ok(TrapTarget::Exit),
+      "RETURN" => Ok(TrapTarget::Return),
+      "ERR" => Ok(TrapTarget::Error),
+      _ => Ok(TrapTarget::Signal(parse_signal(s)?)),
+    }
+  }
+}
+
+impl Display for TrapTarget {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      TrapTarget::Exit => write!(f, "EXIT"),
+      TrapTarget::Return => write!(f, "RETURN"),
+      TrapTarget::Error => write!(f, "ERR"),
+      TrapTarget::Signal(s) => {
+        let name = s.to_string();
+        write!(f, "{}", name.strip_prefix("SIG").unwrap_or(&name))
+      }
+    }
+  }
+}
+
 
 /// The logic table for the shell
 ///
 /// Contains aliases and functions
 #[derive(Default, Clone, Debug)]
-pub struct LogTab {
+pub(super) struct LogTab {
   functions: HashMap<String, ShFunc>,
   aliases: HashMap<String, ShAlias>,
-  pub dirty: bool, // flips on alias/function insertion. used for signaling function/alias caching.
+  dirty: bool, // flips on alias/function insertion. used for signaling function/alias caching.
 
   traps: HashMap<TrapTarget, String>,
   keymaps: Vec<KeyMap>,
@@ -116,6 +174,9 @@ pub struct LogTab {
 impl LogTab {
   pub fn new() -> Self {
     Self::default()
+  }
+  pub fn dirty(&self) -> bool {
+    self.dirty
   }
   pub fn autocmds(&self) -> &HashMap<AutoCmdKind, Vec<AutoCmd>> {
     &self.autocmds

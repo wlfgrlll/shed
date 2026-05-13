@@ -4,7 +4,7 @@ use crate::expand::escape::unescape_str;
 use crate::expand::var::expand_raw;
 use crate::match_loop;
 use crate::readline::markers;
-use crate::util::error::ShResult;
+use crate::util::ShResult;
 
 /// Expand a case pattern: performs variable/command expansion while preserving
 /// glob metacharacters that were inside quotes as literals (by backslash-escaping them).

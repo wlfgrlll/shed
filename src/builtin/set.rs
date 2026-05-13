@@ -7,7 +7,9 @@ use crate::{
   match_loop, outln, sherr,
   state::{VarKind, read_vars, write_shopts, write_vars},
   util::{
-    error::{ShErr, ShResult, ShResultExt},
+    ShErr,
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };

@@ -1,14 +1,13 @@
 use std::collections::VecDeque;
 
-use crate::{
-  builtin::BuiltinArgs,
+use super::{
+  BuiltinArgs,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{VarFlags, VarKind, write_vars},
-  util::{
-    error::{ShResult, ShResultExt},
-    with_status,
-  },
+  state::{vars::{VarFlags, VarKind}, util::write_vars},
+  ShResult,
+  ShResultExt,
+  with_status,
 };
 
 trait ArrOp {
@@ -236,7 +235,7 @@ impl super::Builtin for Rotate {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{self, vars::{VarFlags, VarKind}, util::{read_vars, write_vars}};
   use crate::tests::testutil::{TestGuard, test_input};
   use std::collections::VecDeque;
 

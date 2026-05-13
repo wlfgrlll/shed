@@ -2,7 +2,7 @@ use std::env;
 
 use crate::{
   outln,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Pwd;

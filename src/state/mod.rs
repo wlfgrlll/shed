@@ -6,56 +6,65 @@ use std::{
     atomic::{AtomicBool, AtomicI32},
   },
 };
-
-pub mod scopes;
 use rusqlite::Connection;
-pub use scopes::*;
-pub mod logic;
-pub use logic::*;
-pub mod vars;
-pub use vars::*;
-pub mod util;
-pub use util::*;
-pub mod meta;
-pub use meta::*;
-pub mod jobs;
-pub use jobs::*;
-pub mod terminal;
-pub use terminal::*;
 
-use crate::{shopt::ShOpts, util::error::ShErr};
+use super::{
+  keys,
+  signal,
+  parse,
+  shopt,
+  match_loop,
+  autocmd,
+  sherr,
+  expand,
+  procio,
+  util::{ShResult,ShErr}
+};
 
-pub static INTERACTIVE: AtomicBool = AtomicBool::new(false);
-pub static STATUS_CODE: AtomicI32 = AtomicI32::new(0);
+pub(super) mod scopes;
+pub(super) mod logic;
+pub(super) mod vars;
+pub(super) mod util;
+pub(super) mod meta;
+pub(super) mod jobs;
+pub(super) mod terminal;
+pub(super) use util::{get_status,set_status};
+
+pub(super) static INTERACTIVE: AtomicBool = AtomicBool::new(false);
+pub(super) static STATUS_CODE: AtomicI32 = AtomicI32::new(0);
+
+thread_local! {
+  static SHED: Shed = Shed::new();
+}
 
 #[derive(Debug)]
 pub struct Shed {
   // constructed in state/util.rs
-  pub jobs: RefCell<JobTab>,
-  pub var_scopes: RefCell<ScopeStack>,
-  pub meta: RefCell<MetaTab>,
-  pub logic: RefCell<LogTab>,
-  pub db_conn: OnceLock<Option<Arc<Connection>>>,
-  pub terminal: RefCell<Terminal>,
-  pub shopts: RefCell<ShOpts>,
+  pub jobs:       RefCell<jobs::JobTab>,
+  pub var_scopes: RefCell<scopes::ScopeStack>,
+  pub meta:       RefCell<meta::MetaTab>,
+  pub logic:      RefCell<logic::LogTab>,
+  pub terminal:   RefCell<terminal::Terminal>,
+  pub shopts:     RefCell<shopt::ShOpts>,
+  pub db_conn:    OnceLock<Option<Arc<Connection>>>,
 
   #[cfg(test)]
-  saved: RefCell<Option<Box<Self>>>,
+  saved:          RefCell<Option<Box<Self>>>,
 }
 
 impl Shed {
   pub fn new() -> Self {
     Self {
-      jobs: RefCell::new(JobTab::new()),
-      var_scopes: RefCell::new(ScopeStack::new()),
-      meta: RefCell::new(MetaTab::new()),
-      logic: RefCell::new(LogTab::new()),
-      shopts: RefCell::new(ShOpts::default()),
-      db_conn: OnceLock::new(),
-      terminal: RefCell::new(Terminal::new()),
+      jobs:       RefCell::new(jobs::JobTab::new()),
+      var_scopes: RefCell::new(scopes::ScopeStack::new()),
+      meta:       RefCell::new(meta::MetaTab::new()),
+      logic:      RefCell::new(logic::LogTab::new()),
+      terminal:   RefCell::new(terminal::Terminal::new()),
+      shopts:     RefCell::new(shopt::ShOpts::default()),
+      db_conn:    OnceLock::new(),
 
       #[cfg(test)]
-      saved: RefCell::new(None),
+      saved:      RefCell::new(None),
     }
   }
 

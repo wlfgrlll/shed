@@ -1,28 +1,31 @@
-pub mod alias;
-pub mod arithmetic;
+mod alias;
+mod arithmetic;
 mod brace;
-pub mod escape;
-pub mod param;
-pub mod prompt;
-pub mod subshell;
-pub mod util;
-pub mod var;
+mod escape;
+mod param;
+mod prompt;
+mod subshell;
+mod util;
+mod var;
+pub(super) mod markers;
 
-pub use alias::{expand_aliases, expand_keymap, parse_key_alias};
-pub use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
-pub use escape::{as_var_val_display, escape_str, unescape_heredoc, unescape_math, unescape_str};
-pub use param::{ParamExp, parse_param_exp, parse_pos_len, perform_param_expansion};
-pub use prompt::{PromptTk, expand_prompt, format_cmd_runtime};
-pub use subshell::{expand_cmd_sub, expand_proc_sub};
-pub use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
-pub use var::{expand_glob, expand_raw, expand_var};
+pub(super) use alias::{expand_aliases, expand_keymap, parse_key_alias};
+pub(super) use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
+pub(super) use escape::{as_var_val_display, escape_str, unescape_heredoc, unescape_math, unescape_str};
+pub(super) use param::{ParamExp, parse_param_exp, parse_pos_len, perform_param_expansion};
+pub(super) use prompt::{PromptTk, expand_prompt, format_cmd_runtime};
+pub(super) use subshell::{expand_cmd_sub, expand_proc_sub};
+pub(super) use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
+pub(super) use var::{expand_glob, expand_raw, expand_var};
+use markers::strip_markers;
 
-use crate::expand::var::expand_raw_inner;
-use crate::parse::lex::{Tk, TkFlags, TkRule};
-use crate::readline::markers::{self, strip_markers};
-use crate::state::read_shopts;
-use crate::util::error::{ShResult, ShResultExt};
-use crate::{match_loop, state};
+use super::{
+  expand::var::expand_raw_inner,
+  match_loop,
+  parse::lex::{Tk, TkFlags, TkRule},
+  state::{self, util::read_shopts},
+  util::{ShResult, ShResultExt},
+};
 
 pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'];
 
@@ -275,7 +278,7 @@ mod tests {
   use super::*;
   use std::collections::VecDeque;
 
-  use crate::state::{ArrIndex, VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{vars::{ArrIndex, VarFlags, VarKind}, util::{read_vars, write_vars}};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Word Splitting (TestGuard) =====================

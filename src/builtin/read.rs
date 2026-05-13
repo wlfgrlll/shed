@@ -16,7 +16,9 @@ use crate::{
   sherr, signal,
   state::{self, VarFlags, VarKind, with_term, write_vars},
   util::{
-    error::{ShErrKind, ShResult, ShResultExt},
+    ShErrKind,
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };

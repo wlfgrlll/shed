@@ -4,11 +4,11 @@ use nix::unistd::write;
 
 use crate::expand::expand_keymap;
 use crate::procio::stderr_fileno;
-use crate::util::ui::ansi_from_description;
+use crate::util::ansi_from_description;
 use crate::{
   parse::lex::Span,
   state::{read_shopts, read_vars},
-  util::error::{ShErr, ShResult},
+  util::{ShErr, ShResult},
 };
 use crate::{sherr, two_way_display};
 

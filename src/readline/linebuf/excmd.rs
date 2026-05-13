@@ -2,25 +2,17 @@ use std::{collections::HashSet, fs::OpenOptions, io::Write, path::PathBuf};
 
 use itertools::Itertools;
 use nix::libc::STDIN_FILENO;
+use scopeguard::defer;
 
 use crate::{
-  builtin::stash::{Stash, StashedCmd},
-  motion,
-  parse::execute::{exec_int, exec_nonint},
-  procio::{RedirSet, RedirSpec, capture_command},
-  readline::{
+  autocmd, builtin::stash::{Stash, StashedCmd}, motion, parse::execute::{exec_int, exec_nonint}, procio::{RedirSet, RedirSpec, capture_command}, readline::{
     editcmd::{Anchor, Cmd, EditCmd, ReadSrc, StashArgs, StashListArg, Verb, WriteDest},
     editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
     linebuf::{Line, Lines, MotionKind, Pos, ordered},
-  },
-  sherr,
-  state::{
-    AutoCmdKind, VarFlags, VarKind, read_logic, read_shopts, read_vars, with_term, write_meta,
+  }, state::{
+    VarFlags, VarKind, read_shopts, read_vars, with_term, write_meta,
     write_vars,
-  },
-  status_msg, system_msg,
-  util::{AutoCmdVecUtils, error::ShResult, format_size, guards::var_ctx_guard},
-  verb,
+  }, status_msg, system_msg, util::{ShResult, format_size, var_ctx_guard}, verb
 };
 
 impl super::LineBuf {
@@ -401,11 +393,11 @@ impl super::LineBuf {
         let redirs = RedirSet::from(spec);
         let _guard = redirs.apply()?;
 
-        let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
-        let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
-        pre_cmd.exec();
-        exec_nonint(cmd.to_string(), Some("ex write".into()))?;
-        post_cmd.exec();
+        autocmd!(PreCmd);
+        {
+          defer!(autocmd!(PostCmd));
+          exec_nonint(cmd.to_string(), Some("ex write".into()))?;
+        }
       }
     }
     Ok(())
@@ -432,19 +424,15 @@ impl super::LineBuf {
         contents
       }
       ReadSrc::Cmd(cmd) => {
-        let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
-        let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
-        pre_cmd.exec();
-        let output = match capture_command(cmd, None) {
+        autocmd!(PreCmd);
+        defer!(autocmd!(PostCmd));
+        match capture_command(cmd, None) {
           Ok(out) => out,
           Err(e) => {
-            post_cmd.exec();
             e.print_error();
             return Ok(());
           }
-        };
-        post_cmd.exec();
-        output
+        }
       }
     };
 
@@ -515,19 +503,16 @@ impl super::LineBuf {
       Ok(())
     })?;
 
-    let pre_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
-    let post_cmd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
-
-    pre_cmd.exec();
+    autocmd!(PreCmd);
     let output = if let Some(stdin) = stdin {
-      log::debug!("Executing shell command with stdin: '{}'", stdin);
+      defer!(autocmd!(PostCmd));
       Some(capture_command(sh_cmd, Some(stdin))?)
     } else {
+      defer!(autocmd!(PostCmd));
       let _guard = with_term(|t| t.cooked_mode_guard());
       exec_int(sh_cmd.to_string(), Some("<ex-mode-cmd>".into()))?;
       None
     };
-    post_cmd.exec();
 
     let mut new_anchor = None;
 

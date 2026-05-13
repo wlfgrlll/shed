@@ -165,7 +165,7 @@ impl EditMode for ViNormal {
         match self.parser.try_parse(&self.pending_seq) {
           ParseResult::Complete(cmd) => {
             self.pending_seq.clear();
-            Some(cmd)
+            Some(*cmd)
           }
           ParseResult::Invalid => {
             self.pending_seq.clear();

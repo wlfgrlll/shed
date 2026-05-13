@@ -1,7 +1,7 @@
 use crate::{
   sherr,
   state::write_vars,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Shift;

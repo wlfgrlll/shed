@@ -7,8 +7,8 @@ use crate::state::read_shopts;
 use crate::state::read_vars;
 use crate::state::{read_jobs, read_logic, write_meta};
 use crate::status_msg;
-use crate::util::error::ShResult;
-use crate::util::ui::ansi_from_description;
+use crate::util::ShResult;
+use crate::util::ansi_from_description;
 
 use nix::sys::wait::WaitStatus as WtStat;
 

@@ -7,7 +7,7 @@ use crate::procio::{
 };
 use crate::sherr;
 use crate::state::{self, with_term, write_meta};
-use crate::util::error::{ShErrKind, ShResult};
+use crate::util::{ShErrKind, ShResult};
 
 use nix::errno::Errno;
 use nix::sys::wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid};

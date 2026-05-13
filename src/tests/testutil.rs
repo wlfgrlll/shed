@@ -61,7 +61,7 @@ use crate::{
   procio::{RedirGuard, RedirSet, RedirSpec, RedirType},
   readline::register::{restore_registers, save_registers},
   state::{self, MetaTab, with_term},
-  util::error::ShResult,
+  util::ShResult,
 };
 
 pub fn has_cmds(cmds: &[&str]) -> bool {

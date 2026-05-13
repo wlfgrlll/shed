@@ -18,7 +18,7 @@ use crate::{
   sherr,
   state::{self, read_shopts, write_meta},
   status_msg,
-  util::error::ShResult,
+  util::ShResult,
 };
 
 use super::char_class::{CharClassIter, CharClassIterRev};

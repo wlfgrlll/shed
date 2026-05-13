@@ -1,13 +1,10 @@
-use ariadne::Fmt;
-
-use crate::{
-  builtin::varcmds::{display_as_var, display_as_vars, split_assignment_raw},
+use super::{
+  varcmds::{split_assignment_raw},
   outln, sherr,
-  state::{read_logic, write_logic},
-  util::{
-    error::{ShResult, next_color},
-    with_status,
-  },
+  state::util::{read_logic, write_logic},
+  state::vars::{display_as_var, display_as_vars},
+  ShResult,
+  with_status,
 };
 
 pub(super) struct Alias;
@@ -25,14 +22,14 @@ impl super::Builtin for Alias {
       if name == "command" || name == "builtin" {
         return Err(sherr!(
           ExecFail @ span,
-          "Cannot assign alias to reserved name '{}'", name.fg(next_color())
+          "Cannot assign alias to reserved name '{name}'"
         ));
       }
 
       if let Some(value) = value {
         write_logic(|l| l.insert_alias(&name, &value, span.clone()));
       } else if let Some(alias) = read_logic(|l| l.get_alias(&name)) {
-        outln!("{}", display_as_var(name, alias.body));
+        outln!("{}", display_as_var(name, alias.body()));
       } else {
         return Err(sherr!(
           SyntaxErr @ span,
@@ -59,7 +56,7 @@ impl super::Builtin for Unalias {
       if read_logic(|l| l.get_alias(&arg)).is_none() {
         return Err(sherr!(
           SyntaxErr @ span,
-          "unalias: alias '{}' not found", arg.fg(next_color()),
+          "unalias: alias '{arg}' not found",
         ));
       };
       write_logic(|l| l.remove_alias(&arg));
@@ -71,7 +68,7 @@ impl super::Builtin for Unalias {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, read_logic};
+  use crate::state::{self, util::read_logic};
   use crate::tests::testutil::{TestGuard, test_input};
   use pretty_assertions::assert_eq;
 
@@ -82,7 +79,7 @@ mod tests {
 
     let alias = read_logic(|l| l.get_alias("ll"));
     assert!(alias.is_some());
-    assert_eq!(alias.unwrap().body, "ls -la");
+    assert_eq!(alias.unwrap().body(), "ls -la");
 
     test_input("alias ll").unwrap();
     let out = guard.read_output();
@@ -95,8 +92,8 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("alias a='echo a' b='echo b'").unwrap();
 
-    assert_eq!(read_logic(|l| l.get_alias("a")).unwrap().body, "echo a");
-    assert_eq!(read_logic(|l| l.get_alias("b")).unwrap().body, "echo b");
+    assert_eq!(read_logic(|l| l.get_alias("a")).unwrap().body(), "echo a");
+    assert_eq!(read_logic(|l| l.get_alias("b")).unwrap().body(), "echo b");
   }
 
   #[test]
@@ -105,7 +102,7 @@ mod tests {
     test_input("alias x='first'").unwrap();
     test_input("alias x='second'").unwrap();
 
-    assert_eq!(read_logic(|l| l.get_alias("x")).unwrap().body, "second");
+    assert_eq!(read_logic(|l| l.get_alias("x")).unwrap().body(), "second");
   }
 
   #[test]
@@ -216,7 +213,7 @@ mod tests {
 
     let alias = read_logic(|l| l.get_alias("empty"));
     assert!(alias.is_some());
-    assert_eq!(alias.unwrap().body, "");
+    assert_eq!(alias.unwrap().body(), "");
   }
 
   #[test]

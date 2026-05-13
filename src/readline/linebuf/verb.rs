@@ -7,7 +7,7 @@ use crate::{
     register::RegisterContent,
   },
   status_msg,
-  util::error::ShResult,
+  util::ShResult,
   verb,
 };
 
@@ -670,7 +670,7 @@ impl super::LineBuf {
       start,
       end,
       inclusive,
-    }) = self.text_obj_word(1, this_word, Word::Normal, Bound::Inside)
+    }) = self.text_obj_word(this_word, Word::Normal, Bound::Inside)
     else {
       return Ok(());
     };
@@ -699,7 +699,7 @@ impl super::LineBuf {
       start,
       end,
       inclusive,
-    }) = self.text_obj_word(1, prev_word, Word::Normal, Bound::Inside)
+    }) = self.text_obj_word(prev_word, Word::Normal, Bound::Inside)
     else {
       return Ok(());
     };

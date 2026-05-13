@@ -11,7 +11,7 @@ use crate::{
   procio::stdout_fileno,
   readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width},
   state::with_term,
-  util::error::ShResult,
+  util::ShResult,
   write_term,
 };
 

@@ -1,13 +1,14 @@
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
 use crate::readline::linebuf::{Lines, Pos};
 use crate::readline::register::{RegisterContent, append_register, read_register, write_register};
-use crate::{flush_term, motion, status_msg, verb, write_term};
+use crate::{autocmd, flush_term, motion, status_msg, verb, write_term};
 use editcmd::{CmdFlags, EditCmd, Motion, RegisterName, Verb};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
 use history::History;
 use keys::{KeyCode, KeyEvent, ModKeys};
 use linebuf::LineBuf;
 use nix::poll::PollTimeout;
+use scopeguard::defer;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::time::Instant;
@@ -25,14 +26,13 @@ use crate::readline::term::{
   calc_str_width, clear_rows, move_cursor_to_end, redraw, truncate_with_ellipsis,
 };
 use crate::state::{
-  self, AutoCmdKind, Var, VarFlags, VarKind, read_logic, read_shopts, with_term, with_vars,
+  self, Var, VarFlags, VarKind, read_logic, read_shopts, with_term, with_vars,
   write_meta, write_vars,
 };
-use crate::util::AutoCmdVecUtils;
 use crate::{
   key,
   readline::complete::{CompResponse, Completer},
-  util::error::ShResult,
+  util::ShResult,
 };
 
 pub mod complete;
@@ -52,136 +52,7 @@ pub mod term;
 pub mod tests;
 
 pub mod markers {
-  use super::Marker;
-
-  /*
-   * These are invisible Unicode characters used to annotate
-   * strings with various contextual metadata.
-   */
-
-  /* Highlight Markers */
-
-  // token-level (derived from token class)
-  pub const COMMAND: Marker = '\u{e100}';
-  pub const BUILTIN: Marker = '\u{e101}';
-  pub const ARG: Marker = '\u{e102}';
-  pub const KEYWORD: Marker = '\u{e103}';
-  pub const OPERATOR: Marker = '\u{e104}';
-  pub const REDIRECT: Marker = '\u{e105}';
-  pub const COMMENT: Marker = '\u{e106}';
-  pub const ASSIGNMENT: Marker = '\u{e107}';
-  pub const CMD_SEP: Marker = '\u{e108}';
-  pub const CASE_PAT: Marker = '\u{e109}';
-  pub const SUBSH: Marker = '\u{e10a}';
-  pub const SUBSH_END: Marker = '\u{e10b}';
-
-  // sub-token (needs scanning)
-  pub const VAR_SUB: Marker = '\u{e10c}';
-  pub const VAR_SUB_END: Marker = '\u{e10d}';
-  pub const CMD_SUB: Marker = '\u{e10e}';
-  pub const CMD_SUB_END: Marker = '\u{e10f}';
-  pub const PROC_SUB: Marker = '\u{e110}';
-  pub const PROC_SUB_END: Marker = '\u{e111}';
-  pub const STRING_DQ: Marker = '\u{e112}';
-  pub const STRING_DQ_END: Marker = '\u{e113}';
-  pub const STRING_SQ: Marker = '\u{e114}';
-  pub const STRING_SQ_END: Marker = '\u{e115}';
-  pub const ESCAPE: Marker = '\u{e116}';
-  pub const GLOB: Marker = '\u{e117}';
-  pub const HIST_EXP: Marker = '\u{e11c}';
-  pub const HIST_EXP_END: Marker = '\u{e11d}';
-  pub const BACKTICK_SUB: Marker = '\u{e11e}';
-  pub const BACKTICK_SUB_END: Marker = '\u{e11f}';
-
-  // other
-  pub const VISUAL_MODE_START: Marker = '\u{e118}';
-  pub const VISUAL_MODE_END: Marker = '\u{e119}';
-
-  pub const MATCH_START: Marker = '\u{e120}';
-  pub const MATCH_END: Marker = '\u{e121}';
-
-  pub const RESET: Marker = '\u{e11a}';
-
-  pub const NULL: Marker = '\u{e11b}';
-
-  /* Expansion Markers */
-  /// Double quote '"' marker
-  pub const DUB_QUOTE: Marker = '\u{e001}';
-  /// Single quote '\\'' marker
-  pub const SNG_QUOTE: Marker = '\u{e002}';
-  /// Tilde sub marker
-  pub const TILDE_SUB: Marker = '\u{e003}';
-  /// Input process sub marker
-  pub const PROC_SUB_IN: Marker = '\u{e005}';
-  /// Output process sub marker
-  pub const PROC_SUB_OUT: Marker = '\u{e006}';
-
-  pub const HEREDOC_START: Marker = '\u{e00a}';
-  pub const HEREDOC_END: Marker = '\u{e00b}';
-  pub const HEREDOC_BODY: Marker = '\u{e00c}';
-  pub const PARAM_OP: Marker = '\u{e00d}'; // parameter expansion operator (##, %, :-, etc.)
-  pub const PARAM_OP_END: Marker = '\u{e00e}';
-  pub const PARAM_BODY: Marker = '\u{e00f}'; // pattern/value after operator
-  pub const PARAM_BODY_END: Marker = '\u{e010}';
-
-  /// Marker for null expansion
-  /// This is used for when "$@" or "$*" are used in quotes and there are no
-  /// arguments Without this marker, it would be handled like an empty string,
-  /// which breaks some commands
-  pub const NULL_EXPAND: Marker = '\u{e007}';
-
-  /// Explicit marker for argument separation
-  /// This is used to join the arguments given by "$@", and preserves exact
-  /// formatting of the original arguments, including quoting
-  pub const ARG_SEP: Marker = '\u{e008}';
-
-  pub const VI_SEQ_EXP: Marker = '\u{e009}';
-
-  pub const END_MARKERS: [Marker; 9] = [
-    VAR_SUB_END,
-    CMD_SUB_END,
-    PROC_SUB_END,
-    STRING_DQ_END,
-    STRING_SQ_END,
-    SUBSH_END,
-    PARAM_OP_END,
-    PARAM_BODY_END,
-    RESET,
-  ];
-  pub const TOKEN_LEVEL: [Marker; 10] = [
-    SUBSH, COMMAND, BUILTIN, ARG, KEYWORD, OPERATOR, REDIRECT, CMD_SEP, CASE_PAT, ASSIGNMENT,
-  ];
-  pub const SUB_TOKEN: [Marker; 6] = [VAR_SUB, CMD_SUB, PROC_SUB, STRING_DQ, STRING_SQ, GLOB];
-
-  pub const MISC: [Marker; 3] = [ESCAPE, VISUAL_MODE_START, VISUAL_MODE_END];
-
-  pub fn is_marker(c: Marker) -> bool {
-    ('\u{e000}'..'\u{efff}').contains(&c)
-  }
-
-  // Help command formatting markers
-  pub const TAG: Marker = '\u{e180}';
-  pub const REFERENCE: Marker = '\u{e181}';
-  pub const HEADER: Marker = '\u{e182}';
-  pub const CODE: Marker = '\u{e183}';
-  /// angle brackets
-  pub const KEYWORD_1: Marker = '\u{e185}';
-  /// square brackets
-  pub const KEYWORD_2: Marker = '\u{e186}';
-  pub const CODE_BLOCK: Marker = '\u{e187}';
-
-  pub fn is_visual_marker(c: Marker) -> bool {
-    c == VISUAL_MODE_START || c == VISUAL_MODE_END || c == MATCH_START || c == MATCH_END
-  }
-
-  pub fn strip_markers(str: &str) -> String {
-    let mut out = str.to_string();
-    out.retain(|c| !is_marker(c));
-    out
-  }
 }
-type Marker = char;
-
 pub const DEFAULT_PS1: &str =
   "\\e[0m\\n\\e[1;0m\\u\\e[1;36m@\\e[1;31m\\h\\n\\e[1;36m\\W\\e[1;32m/\\n\\e[1;32m\\$\\e[0m ";
 
@@ -394,8 +265,7 @@ pub struct Prompt {
 
 impl Prompt {
   pub fn new() -> Self {
-    let pre_prompt = read_logic(|l| l.get_autocmds(AutoCmdKind::PrePrompt));
-    pre_prompt.exec();
+    autocmd!(PrePrompt);
 
     let Ok(ps1_raw) = std::env::var("PS1") else {
       return Self::default();
@@ -417,8 +287,7 @@ impl Prompt {
     // Restore shell state after prompt expansion, since it may have been modified by command substitutions in the prompt
     state::set_status(saved_status);
 
-    let post_prompt = read_logic(|l| l.get_autocmds(AutoCmdKind::PostPrompt));
-    post_prompt.exec();
+    autocmd!(PostPrompt);
 
     Self {
       ps1_expanded,
@@ -779,8 +648,6 @@ impl ShedLine {
     let finder = self.history_fzf().unwrap();
     match finder.handle_key(key)? {
       SelectorResponse::Accept(cmd) => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnHistorySelect));
-
         let entry_idx = cmd.id().unwrap(); // history entries having an id to unwrap is an invariant.
         self.scroll_history_to(entry_idx);
         if let Some(finder) = self.history_fzf() {
@@ -788,9 +655,10 @@ impl ShedLine {
         }
         self.focused_history().stop_search();
 
-        with_vars([("HIST_ENTRY".into(), cmd.content().to_string())], || {
-          post_cmds.exec();
-        });
+        with_vars(
+          [("HIST_ENTRY".into(), cmd.content().to_string())],
+          || autocmd!(OnHistorySelect)
+        );
 
         write_vars(|v| {
           v.set_var(
@@ -807,8 +675,7 @@ impl ShedLine {
         self.needs_redraw = true;
       }
       SelectorResponse::Dismiss => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnHistoryClose));
-        post_cmds.exec();
+        autocmd!(OnHistoryClose);
 
         self.editor.clear_hint();
         if let Some(finder) = self.history_fzf() {
@@ -841,8 +708,6 @@ impl ShedLine {
     let comp = self.completer.as_mut().unwrap();
     match comp.handle_key(key.clone())? {
       CompResponse::Accept(candidate) => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnCompletionSelect));
-
         let comp = self.completer.as_ref().unwrap();
         let span_start = comp.token_span().0;
         let new_cursor = span_start + candidate.len();
@@ -876,16 +741,13 @@ impl ShedLine {
 
         with_vars(
           [("COMP_CANDIDATE".into(), candidate.content().to_string())],
-          || {
-            post_cmds.exec();
-          },
+          || autocmd!(OnCompletionSelect),
         );
 
         Ok(true)
       }
       CompResponse::Dismiss => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnCompletionCancel));
-        post_cmds.exec();
+        autocmd!(OnCompletionCancel);
 
         self.update_editor_hint();
         if let Some(comp) = self.completer.as_mut() {
@@ -1079,13 +941,10 @@ impl ShedLine {
         self.old_layout = None;
       }
       Ok(Some(line)) => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnCompletionSelect));
         let cand = comp.selected_candidate().unwrap_or_default();
         with_vars(
           [("COMP_CANDIDATE".into(), cand.content().to_string())],
-          || {
-            post_cmds.exec();
-          },
+          || autocmd!(OnCompletionSelect),
         );
 
         let span_start = comp.token_span().0;
@@ -1115,7 +974,6 @@ impl ShedLine {
         // Single candidate, don't store the completer
       }
       Ok(None) => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnCompletionStart));
         let candidates = comp.all_candidates();
         let num_candidates = candidates.len();
         with_vars(
@@ -1124,9 +982,7 @@ impl ShedLine {
             ("MATCHES".into(), Into::<Var>::into(candidates)),
             ("SEARCH_STR".into(), Into::<Var>::into(comp.token())),
           ],
-          || {
-            post_cmds.exec();
-          },
+          || autocmd!(OnCompletionStart)
         );
 
         if comp.is_active() {
@@ -1159,10 +1015,10 @@ impl ShedLine {
     let initial = self.focused_editor().joined();
     match self.focused_history().start_search(&initial) {
       Some(entry) => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnHistorySelect));
-        with_vars([("HIST_ENTRY".into(), entry.clone())], || {
-          post_cmds.exec();
-        });
+        with_vars(
+          [("HIST_ENTRY".into(), entry.clone())],
+          || autocmd!(OnHistorySelect),
+        );
 
         self.focused_editor().set_buffer(entry);
         self.focused_editor().move_cursor_to_end();
@@ -1172,7 +1028,6 @@ impl ShedLine {
         self.editor.clear_hint();
       }
       None => {
-        let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnHistoryOpen));
         let finder = self.history_fzf().unwrap();
         let entries = finder.candidates().to_vec();
         let matches = finder
@@ -1191,9 +1046,7 @@ impl ShedLine {
             ("NUM_MATCHES".into(), Into::<Var>::into(num_matches)),
             ("SEARCH_STR".into(), Into::<Var>::into(initial)),
           ],
-          || {
-            post_cmds.exec();
-          },
+          || autocmd!(OnHistoryOpen),
         );
 
         if self.history_fzf().is_some() {
@@ -1373,7 +1226,7 @@ impl ShedLine {
     }
 
     let before = self.editor.joined();
-    let before_cursor = self.editor.cursor;
+    let before_cursor = self.editor.cursor();
 
     self.exec_cmd(cmd, false)?;
 
@@ -1381,7 +1234,7 @@ impl ShedLine {
       self.replay_keys(keys, false)?;
     }
     let after = self.editor.joined();
-    let after_cursor = self.editor.cursor;
+    let after_cursor = self.editor.cursor();
 
     if before != after {
       self.history.mark_mask_stale();
@@ -1790,8 +1643,8 @@ impl ShedLine {
       self.prompt.get_ps1(),
       &line,
       &new_layout,
-      self.editor.scroll_offset,
-      self.editor.lines.len(),
+      self.editor.scroll_offset(),
+      self.editor.lines().len(),
     )?;
 
     let seq_fits = pending_seq
@@ -1952,8 +1805,8 @@ impl ShedLine {
   }
 
   pub fn swap_mode(&mut self, mode: &mut Box<dyn EditMode>) {
-    let pre_mode_change = read_logic(|l| l.get_autocmds(AutoCmdKind::PreModeChange));
-    pre_mode_change.exec();
+    autocmd!(PreModeChange);
+    defer!(autocmd!(PostModeChange));
 
     std::mem::swap(&mut self.mode, mode);
     self.editor.set_cursor_clamp(self.mode.clamp_cursor());
@@ -1969,9 +1822,6 @@ impl ShedLine {
     if let Some(line) = self.statline.as_mut() {
       line.refresh();
     }
-
-    let post_mode_change = read_logic(|l| l.get_autocmds(AutoCmdKind::PostModeChange));
-    post_mode_change.exec();
   }
 
   fn exec_mode_transition(&mut self, mut cmd: EditCmd, from_replay: bool) -> ShResult<()> {
@@ -2154,16 +2004,12 @@ impl ShedLine {
             self.exec_cmd(cmd.clone(), true)?;
             // After the first command, start merging so all subsequent
             // edits fold into one undo entry (e.g. cw + inserted chars)
-            if i == 0
-              && let Some(edit) = self.editor.undo_stack.last_mut()
-            {
-              edit.start_merge();
+            if i == 0 {
+              self.editor.start_undo_merge();
             }
           }
           // Stop merging at the end of the replay
-          if let Some(edit) = self.editor.undo_stack.last_mut() {
-            edit.stop_merge();
-          }
+          self.editor.stop_undo_merge();
 
           let old_mode_clone: Box<dyn EditMode> = match old_mode {
             ModeReport::Normal => Box::new(ViNormal::new()),

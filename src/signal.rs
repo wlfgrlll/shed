@@ -13,15 +13,10 @@ use nix::{
 };
 
 use crate::{
-  builtin::trap::TrapTarget,
-  jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
-  parse::execute::exec_nonint,
-  sherr,
-  state::{
-    self, AutoCmdKind, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs,
+  autocmd, builtin::trap::TrapTarget, jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term}, parse::execute::exec_nonint, sherr, state::{
+    self, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs,
     write_meta, write_vars,
-  },
-  util::{AutoCmdVecUtils, error::ShResult},
+  }, util::ShResult
 };
 
 static SIGNALS: AtomicU64 = AtomicU64::new(0);
@@ -415,25 +410,23 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
           write_vars(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::NONE))?;
         }
 
-        let post_job_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnJobFinish));
-        let cmds: VecDeque<String> = job.get_cmds().into_iter().map(|s| s.to_string()).collect();
+        let cmds = job.get_cmds().into_iter().map(|s| s.to_string());
         let id = job.tabid().unwrap_or_default().to_string();
-        let status = statuses
-          .last()
-          .map(|s| match s {
-            WtStat::Exited(_, code) => *code,
-            WtStat::Signaled(_, sig, _) => 128 + *sig as i32,
-            _ => 1,
-          })
-          .unwrap_or_default()
-          .to_string();
+        let statuses = statuses.into_iter().map(|s| match s {
+          WtStat::Exited(_, code) => code.to_string(),
+          WtStat::Signaled(_, sig, _) => (128 + sig as i32).to_string(),
+          _ => "1".into(),
+        });
 
-        let cmd_count = cmds.len();
+        let children: Vec<(String,String)> = cmds.zip(statuses).collect();
+        let status = children.last().map(|c| c.1.clone()).unwrap_or_default();
+
+        let cmd_count = children.len();
         // TODO: Add child statuses to exposed variables
         let post_job_vars: HashMap<String, Var> = [
           (
             "CHILDREN".to_string(),
-            Var::new(VarKind::Arr(cmds), VarFlags::NONE),
+            Var::new(VarKind::AssocArr(children), VarFlags::NONE),
           ),
           (
             "CHILD_COUNT".to_string(),
@@ -450,9 +443,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
         ]
         .into();
 
-        with_vars(post_job_vars, || {
-          post_job_cmds.exec();
-        });
+        with_vars(post_job_vars, || autocmd!(OnJobFinish));
 
         if job.notify() {
           let job_complete_msg = job.display(&job_order, JobCmdFlags::PIDS).to_string();

@@ -19,9 +19,9 @@ use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::{FchmodatFlags, fchmodat};
 use nix::unistd::{Pid, isatty, read, write};
+use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::builtin::keymap::KeyMapMatch;
 use crate::builtin::trap::TrapTarget;
 use crate::builtin::{source_builtin_completions, source_builtin_scripts};
 use crate::expand::expand_keymap;
@@ -38,12 +38,11 @@ use crate::signal::{
   GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
 };
 use crate::state::{
-  AutoCmdKind, LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
+  LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
   VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts, read_vars,
   source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
 };
-use crate::util::AutoCmdVecUtils;
-use crate::util::error::{self, ShErrKind, ShResult};
+use crate::util::{ShErrKind, ShResult};
 use clap::Parser;
 use state::write_vars;
 
@@ -57,7 +56,10 @@ pub mod readline;
 pub mod shopt;
 pub mod signal;
 pub mod state;
-pub mod util;
+
+pub(crate) mod util;
+pub(crate) mod keys;
+use keys::KeyMapMatch;
 
 #[cfg(test)]
 pub mod tests;
@@ -238,8 +240,7 @@ fn main() -> ExitCode {
     }
   }
 
-  let on_exit_autocmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnExit));
-  on_exit_autocmds.exec();
+  autocmd!(OnExit);
 
   write_jobs(|j| j.hang_up());
 
@@ -490,7 +491,6 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
 fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShResult<()> {
   let _raw_mode = interactive_setup(args)?;
   state::try_hash();
-  error::clear_color();
 
   let mut readline = match ShedLine::new(Prompt::new()) {
     Ok(rl) => rl,
@@ -534,7 +534,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
   // Main poll loop
   loop {
     state::try_hash();
-    error::clear_color();
+    util::clear_color();
     let _flush_guard = state::FlushGuard; // flushes terminal on drop
 
     poll_fds.clear();
@@ -577,13 +577,12 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
             write_shopts(|o| o.core.auto_hist = opt);
           });
           write_shopts(|o| o.core.auto_hist = false); // don't save screensaver command to history
-          let pre_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnScreensaverExec));
-          pre_cmds.exec();
 
-          let res = handle_readline_event(&mut readline, Ok(prepared))?;
-
-          let post_cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnScreensaverReturn));
-          post_cmds.exec();
+          autocmd!(OnScreensaverExec);
+          let res = {
+            defer!(autocmd!(OnScreensaverReturn));
+            handle_readline_event(&mut readline, Ok(prepared))?
+          };
 
           match res {
             true => return Ok(()),
@@ -705,10 +704,7 @@ fn handle_readline_event(
         .flatten(); // token is used as a stable identifier for the command in the history
 
       let exec_start = Instant::now();
-      let pre_exec = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
-      let post_exec = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
-
-      pre_exec.exec();
+      autocmd!(PreCmd);
 
       let cmd_start = Instant::now();
       write_meta(|m| m.start_timer());
@@ -747,7 +743,7 @@ fn handle_readline_event(
       log::info!("Command executed in {:.2?}", command_run_time);
       let runtime = write_meta(|m| m.stop_timer());
 
-      post_exec.exec();
+      autocmd!(PostCmd);
 
       let was_func_def = write_meta(|m| m.take_last_was_func_def());
       let should_write = read_shopts(|o| o.core.auto_hist)

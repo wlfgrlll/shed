@@ -1,8 +1,9 @@
 use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
-use crate::{
-  getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
+use super::{
+  keys,
+  getopt::{self, Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
   jobs::ChildProc,
   parse::{
     NdFlags, NdRule, Node,
@@ -10,49 +11,57 @@ use crate::{
     lex::{Span, Tk},
   },
   procio::RedirSet,
+  state,
   sherr,
-  state::read_meta,
+  outln,
+  out,
+  errln,
+  err,
   util::{
-    error::{ShErrKind, ShResult},
-    guards::var_ctx_guard,
+    ShErrKind,
+    ShResult,
+    ShResultExt,
+    var_ctx_guard,
     with_status,
   },
 };
 
-pub mod alias;
-pub mod arrops;
-pub mod autocmd;
-pub mod cd;
-pub mod complete;
-pub mod defer;
-pub mod dirstack;
-pub mod echo;
-pub mod eval;
-pub mod exec;
-pub mod fixcmd;
-pub mod flowctl;
-pub mod getopts;
-pub mod hash;
-pub mod help;
-pub mod hist;
-pub mod intro;
-pub mod jobctl;
-pub mod keymap;
-pub mod map;
-pub mod msg;
-pub mod pwd;
-pub mod read;
-pub mod resource;
-pub mod seek;
-pub mod set;
-pub mod shift;
-pub mod shopt;
-pub mod source;
-pub mod stash;
-pub mod test; // [[ ]] thing
-pub mod times;
-pub mod trap;
-pub mod varcmds;
+mod alias;
+mod arrops;
+mod autocmd;
+mod cd;
+mod complete;
+mod defer;
+mod dirstack;
+mod echo;
+mod eval;
+mod exec;
+mod fixcmd;
+mod flowctl;
+mod getopts;
+mod hash;
+mod help;
+mod hist;
+mod intro;
+mod jobctl;
+mod keymap;
+mod map;
+mod msg;
+mod pwd;
+mod read;
+mod resource;
+mod seek;
+mod set;
+mod shift;
+mod shopt;
+mod source;
+mod stash;
+mod test; // [[ ]] thing
+mod times;
+mod trap;
+mod varcmds;
+
+pub(super) use test::double_bracket_test;
 
 /// Embed a completion script directly in the binary.
 ///
@@ -404,8 +413,8 @@ pub trait Builtin: Sync {
         // which cancels execution. Let's catch that here
         let should_propagate = match e.kind() {
           ShErrKind::CleanExit(_) => true, // this one always goes
-          ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => read_meta(|m| m.in_loop()),
-          ShErrKind::FuncReturn(_) => read_meta(|m| m.in_func()),
+          ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => state::read_meta(|m| m.in_loop()),
+          ShErrKind::FuncReturn(_) => state::read_meta(|m| m.in_func()),
           _ => false,
         };
 

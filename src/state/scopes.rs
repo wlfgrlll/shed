@@ -6,7 +6,7 @@ use std::{
   time::{Duration, Instant},
 };
 
-use crate::{builtin::map::MapNode, sherr, util::error::ShResult};
+use crate::{builtin::map::MapNode, sherr, util::ShResult};
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {

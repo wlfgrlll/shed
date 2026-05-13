@@ -1,11 +1,9 @@
 use std::str::FromStr;
 
-use ariadne::Fmt;
-
 use crate::expand::escape::unescape_math;
 use crate::expand::var::expand_raw;
 use crate::state::{VarFlags, VarKind, read_vars, write_vars};
-use crate::util::error::{ShErr, ShResult, next_color};
+use crate::util::{ShErr, ShResult};
 use crate::{match_loop, sherr};
 
 #[derive(Debug, Clone)]
@@ -131,8 +129,7 @@ impl StackVal {
         val.parse::<i64>().map_err(|_| {
           sherr!(
             ParseErr,
-            "Variable '{}' does not contain an integer",
-            name.fg(next_color()),
+            "Variable '{name}' does not contain an integer",
           )
         })
       }
@@ -145,8 +142,7 @@ fn read_var_as_i64(name: &str) -> ShResult<i64> {
   val.parse::<i64>().map_err(|_| {
     sherr!(
       ParseErr,
-      "Variable '{}' does not contain an integer",
-      name.fg(next_color()),
+      "Variable '{name}' does not contain an integer",
     )
   })
 }
@@ -444,8 +440,7 @@ impl ArithTk {
       _ => {
         return Err(sherr!(
           ParseErr,
-          "Unexpected character in arithmetic expression: '{}'",
-          ch.fg(next_color()),
+          "Unexpected character in arithmetic expression: '{ch}'",
         ));
       }
     });

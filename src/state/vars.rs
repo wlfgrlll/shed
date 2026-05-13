@@ -1,4 +1,4 @@
-use super::*;
+use super::{scopes::ScopeStack};
 
 use std::{
   collections::{HashMap, VecDeque},
@@ -10,18 +10,56 @@ use std::{
 
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
-use crate::{
-  builtin::map::MapNode,
+use super::{
   expand::{as_var_val_display, expand_arithmetic, expand_raw},
   parse::lex::{LexFlags, LexStream, Tk},
   procio::stdin_fileno,
   readline::{complete::Candidate, markers},
   sherr,
-  util::{
-    VecDequeExt,
-    error::{ShErr, ShResult},
-  },
+  ShErr, ShResult,
 };
+
+/// Display key/value pairs as '{key}={value}\n'
+///
+/// The 'value' is escaped in such a way that the whole line can be reused as a shell assignment
+pub(crate) fn display_as_vars(vars: impl Iterator<Item = (impl ToString, impl ToString)>) -> String {
+  let mut vars = vars
+    .map(|(k, v)| display_as_var(k, v))
+    .collect::<Vec<String>>();
+  vars.sort();
+  vars.join("\n")
+}
+
+pub(crate) fn display_as_var(name: impl ToString, value: impl ToString) -> String {
+  format!(
+    "{}={}",
+    name.to_string(),
+    as_var_val_display(&value.to_string())
+  )
+}
+
+fn display_env_vars() -> String {
+  display_as_vars(std::env::vars())
+}
+
+fn display_vars_internal(vars: &ScopeStack, filter: Option<VarFlags>) -> String {
+  let vars = vars.flatten_vars().into_iter();
+
+  if let Some(flags) = filter {
+    display_as_vars(vars.filter(|(_, v)| v.flags().contains(flags)))
+  } else {
+    display_as_vars(vars)
+  }
+}
+
+fn display_readonly(vars: &ScopeStack) -> String {
+  display_vars_internal(vars, Some(VarFlags::READONLY))
+}
+
+fn display_local(vars: &ScopeStack) -> String {
+  display_vars_internal(vars, None)
+}
+
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
 pub enum ShellParam {
@@ -94,6 +132,191 @@ impl FromStr for ShellParam {
     }
   }
 }
+
+#[derive(Debug, Clone)]
+pub enum MapNode {
+  DynamicLeaf(String), // eval'd on access
+  StaticLeaf(String),  // static value
+  Array(Vec<MapNode>),
+  Branch(HashMap<BranchKey, MapNode>),
+}
+
+impl Default for MapNode {
+  fn default() -> Self {
+    Self::Branch(HashMap::new())
+  }
+}
+
+impl From<MapNode> for serde_json::Value {
+  fn from(val: MapNode) -> Self {
+    match val {
+      MapNode::Branch(map) => {
+        let val_map = map
+          .into_iter()
+          .map(|(k, v)| (k.into(), v.into()))
+          .collect::<Map<String, Value>>();
+
+        Value::Object(val_map)
+      }
+      MapNode::Array(nodes) => {
+        let arr = nodes.into_iter().map(|node| node.into()).collect();
+        Value::Array(arr)
+      }
+      MapNode::StaticLeaf(leaf) | MapNode::DynamicLeaf(leaf) => Value::String(leaf),
+    }
+  }
+}
+
+impl From<Value> for MapNode {
+  fn from(value: Value) -> Self {
+    match value {
+      Value::Object(map) => {
+        let node_map = map
+          .into_iter()
+          .map(|(k, v)| (k.into(), v.into()))
+          .collect::<HashMap<BranchKey, MapNode>>();
+
+        MapNode::Branch(node_map)
+      }
+      Value::Array(arr) => {
+        let nodes = arr.into_iter().map(|v| v.into()).collect();
+        MapNode::Array(nodes)
+      }
+      Value::String(s) => MapNode::StaticLeaf(s),
+      v => MapNode::StaticLeaf(v.to_string()),
+    }
+  }
+}
+
+impl MapNode {
+  fn get(&self, path: &[String]) -> Option<&MapNode> {
+    match path {
+      [] => Some(self),
+      [key, rest @ ..] => match self {
+        MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => None,
+        MapNode::Array(map_nodes) => {
+          let idx: usize = key.parse().ok()?;
+          map_nodes.get(idx)?.get(rest)
+        }
+        MapNode::Branch(map) => map
+          .get(&BranchKey::Static(key.to_string()))
+          .or_else(|| map.get(&BranchKey::Wild))?
+          .get(rest),
+      },
+    }
+  }
+
+  fn set(&mut self, path: &[String], value: MapNode) {
+    match path {
+      [] => *self = value,
+      [key, rest @ ..] => {
+        if matches!(self, MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_)) {
+          // promote leaf to branch if we still have path left to traverse
+          *self = Self::default();
+        }
+        match self {
+          MapNode::Branch(map) => {
+            let bkey = BranchKey::from(key.to_string());
+            let child = map.entry(bkey).or_insert_with(Self::default);
+            child.set(rest, value);
+          }
+          MapNode::Array(map_nodes) => {
+            let idx: usize = key.parse().expect("expected array index");
+            if idx >= map_nodes.len() {
+              map_nodes.resize(idx + 1, Self::default());
+            }
+            map_nodes[idx].set(rest, value);
+          }
+          _ => unreachable!(),
+        }
+      }
+    }
+  }
+
+  fn remove(&mut self, path: &[String]) -> Option<MapNode> {
+    match path {
+      [] => None,
+      [key] => match self {
+        MapNode::Branch(map) => map.remove(&BranchKey::Static(key.into())),
+        MapNode::Array(nodes) => {
+          let idx: usize = key.parse().ok()?;
+          if idx >= nodes.len() {
+            return None;
+          }
+          Some(nodes.remove(idx))
+        }
+        _ => None,
+      },
+      [key, rest @ ..] => match self {
+        MapNode::Branch(map) => {
+          if let Some(child) = map.get_mut(&BranchKey::Static(key.into())) {
+            child.remove(rest)
+          } else if let Some(child) = map.get_mut(&BranchKey::Wild) {
+            child.remove(rest)
+          } else {
+            None
+          }
+        }
+        MapNode::Array(nodes) => {
+          let idx: usize = key.parse().ok()?;
+          if idx >= nodes.len() {
+            return None;
+          }
+          nodes[idx].remove(rest)
+        }
+        _ => None,
+      },
+    }
+  }
+
+  fn keys(&self) -> Vec<String> {
+    match self {
+      MapNode::Branch(map) => map.keys().map(|k| k.to_string()).collect(),
+      MapNode::Array(nodes) => nodes
+        .iter()
+        .filter_map(|n| n.display(false, false).ok())
+        .collect(),
+      MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => vec![],
+    }
+  }
+
+  fn display(&self, json: bool, pretty: bool) -> ShResult<String> {
+    if json || matches!(self, MapNode::Branch(_)) {
+      let val: Value = self.clone().into();
+      if pretty {
+        match serde_json::to_string_pretty(&val) {
+          Ok(s) => Ok(s),
+          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
+        }
+      } else {
+        match serde_json::to_string(&val) {
+          Ok(s) => Ok(s),
+          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
+        }
+      }
+    } else {
+      match self {
+        MapNode::StaticLeaf(leaf) => Ok(leaf.clone()),
+        MapNode::DynamicLeaf(cmd) => expand_cmd_sub(cmd),
+        MapNode::Array(nodes) => {
+          let mut s = String::new();
+          for node in nodes {
+            let display = node.display(json, pretty)?;
+            if matches!(node, MapNode::Branch(_)) {
+              s.push_str(&format!("'{}'", display));
+            } else {
+              s.push_str(&node.display(json, pretty)?);
+            }
+            s.push('\n');
+          }
+          Ok(s.trim_end_matches('\n').to_string())
+        }
+        _ => unreachable!(),
+      }
+    }
+  }
+}
+
 
 #[derive(Clone, Default, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct VarFlags(u8);
@@ -760,7 +983,10 @@ impl VarTab {
   fn update_arg_params(&mut self) {
     self.set_param(
       ShellParam::AllArgs,
-      &self.sh_argv.clone().to_vec()[1..].join(&markers::ARG_SEP.to_string()),
+      &self.sh_argv.clone()
+      .into_iter()
+      .collect::<Vec<_>>()[1..]
+      .join(&markers::ARG_SEP.to_string()),
     );
     self.set_param(ShellParam::ArgCount, &(self.sh_argv.len() - 1).to_string());
   }

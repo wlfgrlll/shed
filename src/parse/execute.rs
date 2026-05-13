@@ -1,6 +1,5 @@
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
-use ariadne::Fmt;
 use nix::{
   errno::Errno,
   unistd::{ForkResult, Pid, execve, execvpe, fork, setpgid},
@@ -14,8 +13,8 @@ use super::{
   lex::{KEYWORDS, Span, Tk, TkFlags},
 };
 
-use crate::{
-  builtin::{BUILTIN_NAMES, lookup_builtin, test::double_bracket_test, trap::TrapTarget},
+use super::{
+  builtin::{BUILTIN_NAMES, lookup_builtin, trap::TrapTarget},
   errln,
   expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
@@ -28,10 +27,7 @@ use crate::{
     read_vars, with_term, write_logic, write_meta, write_vars,
   },
   util::{
-    error::{ShErr, ShErrKind, ShResult, ShResultExt, next_color},
-    guards::{scope_guard, shared_scope_guard, var_ctx_guard},
-    strops::split_case_pat,
-    with_status,
+    self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, var_ctx_guard, split_case_pat, with_status
   },
 };
 
@@ -306,22 +302,22 @@ impl Dispatcher {
       check_signals()?;
     }
     let result = match node.class {
-      NdRule::List { .. } => self.exec_list(node),
-      NdRule::Conjunction { .. } => self.exec_conjunction(node),
-      NdRule::Pipeline { .. } => self.exec_pipeline(node),
-      NdRule::IfNode { .. } => self.exec_if(node),
-      NdRule::LoopNode { .. } => self.exec_loop(node),
-      NdRule::ForNode { .. } => self.exec_for_arr(node),
-      NdRule::ForArith { .. } => self.exec_for_arith(node),
-      NdRule::CaseNode { .. } => self.exec_case(node),
-      NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
-      NdRule::Subshell { .. } => self.exec_subsh(node),
-      NdRule::FuncDef { .. } => self.exec_func_def(node),
-      NdRule::Arithmetic { .. } => self.exec_arith(node),
-      NdRule::Negate { .. } => self.exec_negated(node),
-      NdRule::Command { .. } => self.dispatch_cmd(node),
-      NdRule::Test { .. } => self.exec_test(node),
-      _ => unreachable!(),
+      NdRule::List {..}        => self.exec_list(node),
+      NdRule::Conjunction {..} => self.exec_conjunction(node),
+      NdRule::Pipeline {..}    => self.exec_pipeline(node),
+      NdRule::IfNode {..}      => self.exec_if(node),
+      NdRule::LoopNode {..}    => self.exec_loop(node),
+      NdRule::ForNode {..}     => self.exec_for_arr(node),
+      NdRule::ForArith {..}    => self.exec_for_arith(node),
+      NdRule::CaseNode {..}    => self.exec_case(node),
+      NdRule::BraceGrp {..}    => self.exec_brc_grp(node),
+      NdRule::Subshell {..}    => self.exec_subsh(node),
+      NdRule::FuncDef {..}     => self.exec_func_def(node),
+      NdRule::Arithmetic {..}  => self.exec_arith(node),
+      NdRule::Negate {..}      => self.exec_negated(node),
+      NdRule::Command {..}     => self.dispatch_cmd(node),
+      NdRule::Test {..}        => self.exec_test(node),
+      _                        => unreachable!(),
     };
 
     if let Err(e) = result {
@@ -432,7 +428,7 @@ impl Dispatcher {
     Ok(())
   }
   pub fn exec_test(&mut self, node: Node) -> ShResult<()> {
-    let test_result = double_bracket_test(node)?;
+    let test_result = super::builtin::double_bracket_test(node)?;
     match test_result {
       true => state::set_status(0),
       false => state::set_status(1),
@@ -489,10 +485,9 @@ impl Dispatcher {
       .get_first_word()
       .unwrap_or_default();
 
-    let func_ctx = func.get_context(format!(
-      "in call to function '{}'",
-      func_name.fg(next_color())
-    ));
+    let func_ctx = util::get_context(format!(
+      "in call to function '{func_name}'",
+    ), func.get_span());
     let NdRule::Command {
       assignments,
       mut argv,

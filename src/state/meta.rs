@@ -28,7 +28,7 @@ use crate::{
     keys::KeyEvent,
   },
   sherr,
-  util::error::{ShErr, ShResult},
+  util::{ShErr, ShResult},
   writefd,
 };
 use itertools::{Itertools, izip};
@@ -1065,22 +1065,22 @@ impl MetaTab {
 
     let version = env!("CARGO_PKG_VERSION");
 
-    use crate::util::ui;
+    use crate::util;
     let mut buf = String::new();
 
     // ╭─ shed v0.xx.x ───────────╮
     let title = format!(
       "{}{} \x1b[1;35mshed\x1b[0m \x1b[90mv{}\x1b[0m ",
-      ui::TOP_LEFT,
-      ui::HOR_LINE,
+      util::TOP_LEFT,
+      util::HOR_LINE,
       version
     );
-    ui::pad_line_into(&mut buf, &title, ui::HOR_LINE, ui::TOP_RIGHT, longest);
+    util::pad_line_into(&mut buf, &title, util::HOR_LINE, util::TOP_RIGHT, longest);
     buf.push('\n');
 
     for line in &content_lines {
-      let row = format!("{} {}", ui::VERT_LINE, line);
-      ui::pad_line_into(&mut buf, &row, " ", ui::VERT_LINE, longest);
+      let row = format!("{} {}", util::VERT_LINE, line);
+      util::pad_line_into(&mut buf, &row, " ", util::VERT_LINE, longest);
       buf.push('\n');
     }
 
@@ -1088,9 +1088,9 @@ impl MetaTab {
     write!(
       buf,
       "{}{}{}",
-      ui::BOT_LEFT,
-      ui::HOR_LINE.repeat(longest.saturating_sub(2)),
-      ui::BOT_RIGHT
+      util::BOT_LEFT,
+      util::HOR_LINE.repeat(longest.saturating_sub(2)),
+      util::BOT_RIGHT
     )
     .unwrap();
 

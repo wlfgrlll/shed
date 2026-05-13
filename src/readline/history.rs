@@ -18,7 +18,7 @@ use crate::{
   },
   sherr,
   state::{self, read_shopts},
-  util::error::ShResult,
+  util::ShResult,
 };
 
 #[derive(Debug, Clone)]

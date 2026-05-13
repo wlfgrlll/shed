@@ -32,7 +32,7 @@ use crate::{
     self, Cols, Rows, TermGuard, Utility, VarFlags, VarKind, read_jobs, read_logic, read_meta,
     read_shopts, read_vars, with_term, write_meta, write_vars,
   },
-  util::{self, error::ShResult, guards::var_ctx_guard, strops::ends_with_unescaped, ui},
+  util::{self, ShResult, var_ctx_guard, ends_with_unescaped},
   write_term,
 };
 
@@ -1559,7 +1559,7 @@ impl FuzzySelector {
     });
 
     let pad = |content: &str, fill: &str, right_border: &str| {
-      ui::pad_line(content, fill, right_border, cols);
+      util::pad_line(content, fill, right_border, cols);
     };
 
     let mut row_map = vec![];
@@ -1582,28 +1582,28 @@ impl FuzzySelector {
     // ╭─ Title ──────────────────╮
     let title_content = format!(
       "\n{}{} \x1b[1m{}\x1b[0m ",
-      ui::TOP_LEFT,
-      ui::HOR_LINE,
+      util::TOP_LEFT,
+      util::HOR_LINE,
       title
     );
-    pad(&title_content, ui::HOR_LINE, ui::TOP_RIGHT);
+    pad(&title_content, util::HOR_LINE, util::TOP_RIGHT);
     rows += 1;
     row_map.push(None);
 
     // │ > query                  │
-    let prompt_content = format!("{} {} {}", ui::VERT_LINE, Self::PROMPT_ARROW, query);
-    pad(&prompt_content, " ", ui::VERT_LINE);
+    let prompt_content = format!("{} {} {}", util::VERT_LINE, Self::PROMPT_ARROW, query);
+    pad(&prompt_content, " ", util::VERT_LINE);
     rows += 1;
 
     // ├──filtered/total──────────┤
     let sep_content = format!(
       "{}{}\x1b[33m{}\x1b[0m/\x1b[33m{}\x1b[0m",
-      ui::TREE_LEFT,
-      ui::HOR_LINE.repeat(2),
+      util::TREE_LEFT,
+      util::HOR_LINE.repeat(2),
       num_filtered,
       num_candidates
     );
-    pad(&sep_content, ui::HOR_LINE, ui::TREE_RIGHT);
+    pad(&sep_content, util::HOR_LINE, util::TREE_RIGHT);
     rows += 1;
 
     // Candidate lines
@@ -1664,21 +1664,21 @@ impl FuzzySelector {
           let num = i + offset + 1;
           format!(
             "{} {}\x1b[33m{num:<min_pad$}\x1b[39m{line}\x1b[0m",
-            ui::VERT_LINE,
+            util::VERT_LINE,
             selector
           )
         } else if number_candidates {
           format!(
             "{} {}{:>min_pad$}{line}\x1b[0m",
-            ui::VERT_LINE,
+            util::VERT_LINE,
             selector,
             ""
           )
         } else {
-          format!("{} {}{line}\x1b[0m", ui::VERT_LINE, selector)
+          format!("{} {}{line}\x1b[0m", util::VERT_LINE, selector)
         };
 
-        pad(&left, " ", ui::VERT_LINE);
+        pad(&left, " ", util::VERT_LINE);
         rows += 1;
         row_map.push(Some(i + offset));
         drew_number = true;
@@ -1689,9 +1689,9 @@ impl FuzzySelector {
     // ╰──────────────────────────╯
     write_term!(
       "{}{}{}",
-      ui::BOT_LEFT,
-      ui::HOR_LINE.repeat(cols.saturating_sub(2)),
-      ui::BOT_RIGHT
+      util::BOT_LEFT,
+      util::HOR_LINE.repeat(cols.saturating_sub(2)),
+      util::BOT_RIGHT
     )
     .unwrap();
     rows += 1;

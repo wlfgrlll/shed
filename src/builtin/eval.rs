@@ -1,7 +1,7 @@
 use crate::{
   parse::execute::exec_nonint,
   state,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Eval;

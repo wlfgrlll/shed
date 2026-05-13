@@ -7,7 +7,7 @@
 macro_rules! write_term {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    $crate::state::with_term(|t| write!(t, $($arg)*))
+    $crate::state::util::with_term(|t| write!(t, $($arg)*))
   }};
 }
 
@@ -24,7 +24,7 @@ macro_rules! flush_term {
   };
   ($($arg:tt)*) => {{
     use std::io::Write;
-    $crate::state::with_term(|t| -> $crate::util::error::ShResult<()> {
+    $crate::state::util::with_term(|t| -> $crate::util::ShResult<()> {
       write!(t, $($arg)*)?;
       t.flush()?;
       Ok(())
@@ -295,26 +295,26 @@ macro_rules! match_loop {
 #[macro_export]
 macro_rules! sherr {
 	($kind:ident($($inner:tt)*)@$span:expr, $($arg:tt)*) => {
-		$crate::util::error::ShErr::at(
-			$crate::util::error::ShErrKind::$kind($($inner)*),
+		$crate::util::ShErr::at(
+			$crate::util::ShErrKind::$kind($($inner)*),
 			$span, format!($($arg)*)
 		)
 	};
 	($kind:ident($($inner:tt)*), $($arg:tt)*) => {
-		$crate::util::error::ShErr::simple(
-			$crate::util::error::ShErrKind::$kind($($inner)*),
+		$crate::util::ShErr::simple(
+			$crate::util::ShErrKind::$kind($($inner)*),
 			format!($($arg)*)
 		)
 	};
 	($kind:ident@$span:expr, $($arg:tt)*) => {
-		$crate::util::error::ShErr::at(
-			$crate::util::error::ShErrKind::$kind,
+		$crate::util::ShErr::at(
+			$crate::util::ShErrKind::$kind,
 			$span, format!($($arg)*)
 		)
 	};
 	($kind:ident, $($arg:tt)*) => {
-		$crate::util::error::ShErr::simple(
-			$crate::util::error::ShErrKind::$kind,
+		$crate::util::ShErr::simple(
+			$crate::util::ShErrKind::$kind,
 			format!($($arg)*)
 		)
 	};
@@ -428,5 +428,21 @@ macro_rules! status_msg {
 macro_rules! system_msg {
   ($($arg:tt)*) => {{
     $crate::state::util::write_meta(|m| m.post_system_message(format!($($arg)*)))
+  }};
+}
+
+/// Execute autocmds
+#[macro_export]
+macro_rules! autocmd {
+  ($kind:ident) => {{
+    let post_cmds = $crate::state::util::read_logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
+    let saved_status = $crate::state::util::get_status();
+    for cmd in post_cmds {
+      let $crate::state::logic::AutoCmd { kind: _, command } = cmd;
+      if let Err(e) = $crate::parse::execute::exec_nonint(command.clone(), Some("autocmd".into())) {
+        e.print_error();
+      }
+    }
+    $crate::state::util::set_status(saved_status);
   }};
 }

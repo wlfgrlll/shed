@@ -5,19 +5,28 @@ use std::{
   str::FromStr,
 };
 
-use ariadne::{Fmt, Label, Span as AriadneSpan};
+use ariadne::{Label, Span as AriadneSpan};
 use bitflags::bitflags;
 use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
 use std::fmt::Display;
 
-use crate::{
+use super::{
+  builtin,
+  errln,
+  expand,
+  jobs,
+  procio,
+  shopt,
+  signal,
   parse::lex::clean_input,
+  util,
+  state,
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
   util::{
-    NodeVecUtils,
-    error::{ShErr, ShResult, last_color, next_color},
-    strops::split_tk,
+    ShErr,
+    ShResult,
+    split_tk,
   },
 };
 
@@ -28,6 +37,29 @@ pub const TEST_UNARY_OPS: [&str; 23] = [
   "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-L", "-k", "-n", "-p", "-r", "-s", "-S", "-t",
   "-u", "-w", "-x", "-z", "-O", "-G", "-N",
 ];
+
+pub trait NodeVecUtils<Node> {
+  fn get_span(&self) -> Option<Span>;
+}
+
+impl NodeVecUtils<Node> for Vec<Node> {
+  fn get_span(&self) -> Option<Span> {
+    if let Some(first_nd) = self.first()
+      && let Some(last_nd) = self.last()
+    {
+      let first_start = first_nd.get_span().range().start;
+      let last_end = last_nd.get_span().range().end;
+      if first_start <= last_end {
+        return Some(Span::new(
+          first_start..last_end,
+          first_nd.get_span().source().content(),
+        ));
+      }
+    }
+    None
+  }
+}
+
 
 /// Try to match a specific parsing rule
 ///
@@ -58,7 +90,7 @@ macro_rules! parse_err {
 	($parser:expr, $tks:expr, $($arg:tt)*) => {
 		parse_err_full(
 			&format!($($arg)*),
-			&crate::util::TkVecUtils::get_span(&$tks).unwrap(),
+			&crate::parse::lex::TkVecUtils::get_span(&$tks).unwrap(),
 			$parser.context.clone(),
 		)
 	};
@@ -257,14 +289,6 @@ impl Node {
     } else {
       None
     }
-  }
-  pub fn get_context(&self, msg: String) -> (SpanSource, Label<Span>) {
-    let color = last_color();
-    let span = self.get_span().clone();
-    (
-      span.clone().source().clone(),
-      Label::new(span).with_color(color).with_message(msg),
-    )
   }
   pub fn walk_tree<F: FnMut(&mut Node)>(&mut self, f: &mut F) {
     f(self);
@@ -999,16 +1023,14 @@ impl ParseStream {
     self.catch_separator(&mut node_tks);
     let mut src = name_tk.span.span_source().clone();
     src.rename(name_raw.clone());
-    let color = next_color();
     // Push a placeholder context so child nodes inherit it
     self.context.push_back((
       src.clone(),
       Label::new(name_tk.span.clone().with_name(name_raw.clone()))
         .with_message(format!(
           "in function '{}' defined here",
-          name_raw.clone().fg(color)
+          name_raw.clone()
         ))
-        .with_color(color),
     ));
 
     let Some(mut compound_cmd) = self.parse_compound()? else {
@@ -1897,7 +1919,6 @@ impl ParseStream {
             assignments_span.source().clone(),
             Label::new(assignments_span)
               .with_message("in variable assignment defined here".to_string())
-              .with_color(next_color()),
           ));
           return Ok(Some(node!(
             self,

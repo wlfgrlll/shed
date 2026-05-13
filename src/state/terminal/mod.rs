@@ -36,7 +36,7 @@ use crate::{
   },
   sherr,
   state::{read_shopts, with_term},
-  util::error::{ShErr, ShErrKind, ShResult},
+  util::{ShErr, ShErrKind, ShResult},
 };
 
 static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {

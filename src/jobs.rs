@@ -18,10 +18,9 @@ use crate::{
   sherr,
   signal::{disable_reaping, enable_reaping},
   state::{
-    self, AutoCmdKind, CmdTimer, read_logic, set_status, with_term, with_vars, write_jobs,
-    write_meta,
+    self, AutoCmdKind, AutoCmdVecUtils, CmdTimer, read_logic, set_status, with_term, with_vars, write_jobs, write_meta
   },
-  util::{AutoCmdVecUtils, error::ShResult},
+  util::ShResult,
 };
 use bitflags::bitflags;
 

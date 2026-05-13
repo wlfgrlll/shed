@@ -9,44 +9,12 @@ use crate::{
   signal::parse_signal,
   state::{read_logic, write_logic},
   util::{
-    error::{ShErr, ShResult, ShResultExt},
+    ShErr,
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub enum TrapTarget {
-  Exit,
-  Error,
-  Return,
-  Signal(Signal),
-}
-
-impl FromStr for TrapTarget {
-  type Err = ShErr;
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    match s {
-      "EXIT" => Ok(TrapTarget::Exit),
-      "RETURN" => Ok(TrapTarget::Return),
-      "ERR" => Ok(TrapTarget::Error),
-      _ => Ok(TrapTarget::Signal(parse_signal(s)?)),
-    }
-  }
-}
-
-impl Display for TrapTarget {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      TrapTarget::Exit => write!(f, "EXIT"),
-      TrapTarget::Return => write!(f, "RETURN"),
-      TrapTarget::Error => write!(f, "ERR"),
-      TrapTarget::Signal(s) => {
-        let name = s.to_string();
-        write!(f, "{}", name.strip_prefix("SIG").unwrap_or(&name))
-      }
-    }
-  }
-}
 
 pub(super) struct Trap;
 impl super::Builtin for Trap {

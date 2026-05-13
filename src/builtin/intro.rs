@@ -1,4 +1,4 @@
-use ariadne::{Fmt, Span};
+use ariadne::Span;
 
 use crate::{
   getopt::{Opt, OptSpec},
@@ -7,7 +7,7 @@ use crate::{
   sherr,
   state::{self, read_logic, read_vars},
   util::{
-    error::{ShResult, next_color},
+    ShResult,
     with_status,
   },
 };
@@ -94,7 +94,7 @@ impl super::Builtin for Type {
       } else {
         sherr!(
           NotFound @ span,
-          "'{}' is not a command, function, or alias", arg.fg(next_color())
+          "'{arg}' is not a command, function, or alias",
         )
         .print_error();
 

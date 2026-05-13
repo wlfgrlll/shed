@@ -11,7 +11,7 @@ use crate::{
   procio::stdout_fileno,
   signal::{disable_reaping, enable_reaping},
   state,
-  util::error::ShResult,
+  util::ShResult,
 };
 
 #[derive(Clone, Default, Debug)]

@@ -10,8 +10,9 @@ use crate::{
   sherr,
   state::{ScopeStack, VarFlags, VarKind, read_logic, read_vars, write_vars},
   util::{
-    error::{ShResult, ShResultExt},
-    strops::split_at_unescaped,
+    ShResult,
+    ShResultExt,
+    split_at_unescaped,
     with_status,
   },
 };
@@ -39,47 +40,6 @@ pub fn prepare_assignment_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
     }
   }
   Ok(args)
-}
-
-/// Display key/value pairs as '{key}={value}\n'
-///
-/// The 'value' is escaped in such a way that the whole line can be reused as a shell assignment
-pub fn display_as_vars(vars: impl Iterator<Item = (impl ToString, impl ToString)>) -> String {
-  let mut vars = vars
-    .map(|(k, v)| display_as_var(k, v))
-    .collect::<Vec<String>>();
-  vars.sort();
-  vars.join("\n")
-}
-
-pub fn display_as_var(name: impl ToString, value: impl ToString) -> String {
-  format!(
-    "{}={}",
-    name.to_string(),
-    as_var_val_display(&value.to_string())
-  )
-}
-
-fn display_env_vars() -> String {
-  display_as_vars(env::vars())
-}
-
-fn display_vars_internal(vars: &ScopeStack, filter: Option<VarFlags>) -> String {
-  let vars = vars.flatten_vars().into_iter();
-
-  if let Some(flags) = filter {
-    display_as_vars(vars.filter(|(_, v)| v.flags().contains(flags)))
-  } else {
-    display_as_vars(vars)
-  }
-}
-
-fn display_readonly(vars: &ScopeStack) -> String {
-  display_vars_internal(vars, Some(VarFlags::READONLY))
-}
-
-fn display_local(vars: &ScopeStack) -> String {
-  display_vars_internal(vars, None)
 }
 
 pub fn split_assignment(arg: String) -> (String, Option<VarKind>) {

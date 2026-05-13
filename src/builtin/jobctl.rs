@@ -1,4 +1,3 @@
-use ariadne::Fmt;
 use nix::{
   sys::signal::{Signal, kill, killpg},
   unistd::{Pid, getpgrp},
@@ -14,7 +13,8 @@ use crate::{
   signal::parse_signal,
   state::{self, read_jobs, write_jobs},
   util::{
-    error::{ShResult, ShResultExt, next_color},
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };
@@ -27,7 +27,7 @@ fn parse_job_id(arg: &str, blame: Span) -> ShResult<usize> {
       if num == 0 {
         Err(sherr!(
           SyntaxErr @ blame,
-          "Invalid job id: {}", arg.fg(next_color()),
+          "Invalid job id: {arg}",
         ))
       } else {
         Ok(num.saturating_sub(1))
@@ -70,7 +70,7 @@ fn parse_job_id(arg: &str, blame: Span) -> ShResult<usize> {
   } else {
     Err(sherr!(
       SyntaxErr @ blame,
-      "Invalid arg: {}", arg.fg(next_color()),
+      "Invalid arg: {arg}",
     ))
   }
 }

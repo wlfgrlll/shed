@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::procio::stdout_fileno;
 use crate::sherr;
-use crate::util::strops::{split_tk, split_tk_at};
+use crate::util::{split_tk, split_tk_at};
 use crate::{
   expand::expand_cmd_sub,
   getopt::{Opt, OptArg, OptSpec, get_opts_from_tokens_raw},
@@ -15,7 +15,7 @@ use crate::{
     lex::{self, LexFlags, LexStream},
   },
   state::{self, read_vars, write_vars},
-  util::error::ShResult,
+  util::ShResult,
 };
 
 /*
@@ -52,190 +52,6 @@ impl Display for BranchKey {
     match self {
       BranchKey::Static(s) => write!(f, "{}", s),
       BranchKey::Wild => write!(f, "%"),
-    }
-  }
-}
-
-#[derive(Debug, Clone)]
-pub enum MapNode {
-  DynamicLeaf(String), // eval'd on access
-  StaticLeaf(String),  // static value
-  Array(Vec<MapNode>),
-  Branch(HashMap<BranchKey, MapNode>),
-}
-
-impl Default for MapNode {
-  fn default() -> Self {
-    Self::Branch(HashMap::new())
-  }
-}
-
-impl From<MapNode> for serde_json::Value {
-  fn from(val: MapNode) -> Self {
-    match val {
-      MapNode::Branch(map) => {
-        let val_map = map
-          .into_iter()
-          .map(|(k, v)| (k.into(), v.into()))
-          .collect::<Map<String, Value>>();
-
-        Value::Object(val_map)
-      }
-      MapNode::Array(nodes) => {
-        let arr = nodes.into_iter().map(|node| node.into()).collect();
-        Value::Array(arr)
-      }
-      MapNode::StaticLeaf(leaf) | MapNode::DynamicLeaf(leaf) => Value::String(leaf),
-    }
-  }
-}
-
-impl From<Value> for MapNode {
-  fn from(value: Value) -> Self {
-    match value {
-      Value::Object(map) => {
-        let node_map = map
-          .into_iter()
-          .map(|(k, v)| (k.into(), v.into()))
-          .collect::<HashMap<BranchKey, MapNode>>();
-
-        MapNode::Branch(node_map)
-      }
-      Value::Array(arr) => {
-        let nodes = arr.into_iter().map(|v| v.into()).collect();
-        MapNode::Array(nodes)
-      }
-      Value::String(s) => MapNode::StaticLeaf(s),
-      v => MapNode::StaticLeaf(v.to_string()),
-    }
-  }
-}
-
-impl MapNode {
-  fn get(&self, path: &[String]) -> Option<&MapNode> {
-    match path {
-      [] => Some(self),
-      [key, rest @ ..] => match self {
-        MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => None,
-        MapNode::Array(map_nodes) => {
-          let idx: usize = key.parse().ok()?;
-          map_nodes.get(idx)?.get(rest)
-        }
-        MapNode::Branch(map) => map
-          .get(&BranchKey::Static(key.to_string()))
-          .or_else(|| map.get(&BranchKey::Wild))?
-          .get(rest),
-      },
-    }
-  }
-
-  fn set(&mut self, path: &[String], value: MapNode) {
-    match path {
-      [] => *self = value,
-      [key, rest @ ..] => {
-        if matches!(self, MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_)) {
-          // promote leaf to branch if we still have path left to traverse
-          *self = Self::default();
-        }
-        match self {
-          MapNode::Branch(map) => {
-            let bkey = BranchKey::from(key.to_string());
-            let child = map.entry(bkey).or_insert_with(Self::default);
-            child.set(rest, value);
-          }
-          MapNode::Array(map_nodes) => {
-            let idx: usize = key.parse().expect("expected array index");
-            if idx >= map_nodes.len() {
-              map_nodes.resize(idx + 1, Self::default());
-            }
-            map_nodes[idx].set(rest, value);
-          }
-          _ => unreachable!(),
-        }
-      }
-    }
-  }
-
-  fn remove(&mut self, path: &[String]) -> Option<MapNode> {
-    match path {
-      [] => None,
-      [key] => match self {
-        MapNode::Branch(map) => map.remove(&BranchKey::Static(key.into())),
-        MapNode::Array(nodes) => {
-          let idx: usize = key.parse().ok()?;
-          if idx >= nodes.len() {
-            return None;
-          }
-          Some(nodes.remove(idx))
-        }
-        _ => None,
-      },
-      [key, rest @ ..] => match self {
-        MapNode::Branch(map) => {
-          if let Some(child) = map.get_mut(&BranchKey::Static(key.into())) {
-            child.remove(rest)
-          } else if let Some(child) = map.get_mut(&BranchKey::Wild) {
-            child.remove(rest)
-          } else {
-            None
-          }
-        }
-        MapNode::Array(nodes) => {
-          let idx: usize = key.parse().ok()?;
-          if idx >= nodes.len() {
-            return None;
-          }
-          nodes[idx].remove(rest)
-        }
-        _ => None,
-      },
-    }
-  }
-
-  fn keys(&self) -> Vec<String> {
-    match self {
-      MapNode::Branch(map) => map.keys().map(|k| k.to_string()).collect(),
-      MapNode::Array(nodes) => nodes
-        .iter()
-        .filter_map(|n| n.display(false, false).ok())
-        .collect(),
-      MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => vec![],
-    }
-  }
-
-  fn display(&self, json: bool, pretty: bool) -> ShResult<String> {
-    if json || matches!(self, MapNode::Branch(_)) {
-      let val: Value = self.clone().into();
-      if pretty {
-        match serde_json::to_string_pretty(&val) {
-          Ok(s) => Ok(s),
-          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
-        }
-      } else {
-        match serde_json::to_string(&val) {
-          Ok(s) => Ok(s),
-          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
-        }
-      }
-    } else {
-      match self {
-        MapNode::StaticLeaf(leaf) => Ok(leaf.clone()),
-        MapNode::DynamicLeaf(cmd) => expand_cmd_sub(cmd),
-        MapNode::Array(nodes) => {
-          let mut s = String::new();
-          for node in nodes {
-            let display = node.display(json, pretty)?;
-            if matches!(node, MapNode::Branch(_)) {
-              s.push_str(&format!("'{}'", display));
-            } else {
-              s.push_str(&node.display(json, pretty)?);
-            }
-            s.push('\n');
-          }
-          Ok(s.trim_end_matches('\n').to_string())
-        }
-        _ => unreachable!(),
-      }
     }
   }
 }
@@ -386,7 +202,7 @@ pub fn map(node: Node) -> ShResult<()> {
       if !has_map {
         return Err(sherr!(ExecFail, "map not found: {}", name));
       }
-      let Some(node) = read_vars(|v| v.get_map(name).and_then(|map| map.get(&path[1..]).cloned()))
+      let Some(node) = super::state::read_vars(|v| v.get_map(name).and_then(|map| map.get(&path[1..]).cloned()))
       else {
         state::set_status(1);
         continue;

@@ -7,7 +7,7 @@ use crate::readline::editcmd::{CmdFlags, Direction, EditCmd, Motion, To, Verb, W
 use crate::readline::history::History;
 use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::readline::linebuf::LineBuf;
-use crate::util::error::{ShErr, ShResult};
+use crate::util::{ShErr, ShResult};
 use crate::{key, motion, verb};
 
 mod emacs;

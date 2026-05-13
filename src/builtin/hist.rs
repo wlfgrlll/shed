@@ -18,7 +18,8 @@ use crate::{
   sherr,
   state::{self, write_meta},
   util::{
-    error::{ShResult, ShResultExt},
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };

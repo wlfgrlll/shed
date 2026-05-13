@@ -1,6 +1,6 @@
 use std::{iter::Peekable, ops::Range, str::Chars};
 
-use crate::{match_loop, readline::markers, util::strops::QuoteState};
+use crate::{match_loop, readline::markers, util::QuoteState};
 
 pub const TAG_SEQ: &str = "\x1b[1;33m"; // bold yellow - searchable tags
 pub const REF_SEQ: &str = "\x1b[4;36m"; // underline cyan - cross-references

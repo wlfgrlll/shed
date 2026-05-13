@@ -1,4 +1,3 @@
-use ariadne::Fmt;
 use nix::sys::{
   resource::{Resource, getrlimit, setrlimit},
   stat::{Mode, umask},
@@ -8,7 +7,7 @@ use crate::{
   getopt::{Opt, OptSpec},
   outln,
   parse::lex::Span,
-  util::error::{ShResult, next_color},
+  util::ShResult,
 };
 use crate::{sherr, util::with_status};
 
@@ -40,8 +39,8 @@ impl super::Builtin for ULimit {
           fds = Some(arg.parse::<u64>().map_err(|_| {
             sherr!(
               ParseErr,
-              "invalid argument for -n: {}",
-              arg.fg(next_color())
+              "invalid argument for -n: {arg}",
+
             )
           })?);
         }
@@ -49,8 +48,8 @@ impl super::Builtin for ULimit {
           procs = Some(arg.parse::<u64>().map_err(|_| {
             sherr!(
               ParseErr,
-              "invalid argument for -u: {}",
-              arg.fg(next_color())
+              "invalid argument for -u: {arg}",
+
             )
           })?);
         }
@@ -58,8 +57,7 @@ impl super::Builtin for ULimit {
           stack = Some(arg.parse::<u64>().map_err(|_| {
             sherr!(
               ParseErr,
-              "invalid argument for -s: {}",
-              arg.fg(next_color())
+              "invalid argument for -s: {arg}",
             )
           })?);
         }
@@ -67,8 +65,7 @@ impl super::Builtin for ULimit {
           core = Some(arg.parse::<u64>().map_err(|_| {
             sherr!(
               ParseErr,
-              "invalid argument for -c: {}",
-              arg.fg(next_color())
+              "invalid argument for -c: {arg}",
             )
           })?);
         }
@@ -76,13 +73,12 @@ impl super::Builtin for ULimit {
           vmem = Some(arg.parse::<u64>().map_err(|_| {
             sherr!(
               ParseErr,
-              "invalid argument for -v: {}",
-              arg.fg(next_color())
+              "invalid argument for -v: {arg}",
             )
           })?);
         }
         o => {
-          return Err(sherr!(ParseErr, "invalid option: {}", o.fg(next_color()),));
+          return Err(sherr!(ParseErr, "invalid option: {o}"));
         }
       }
     }
@@ -212,7 +208,7 @@ fn apply_symbolic(
       _ => {
         return Err(sherr!(
           ParseErr @ span.clone(),
-          "invalid umask 'who' character: {}", ch.fg(next_color()),
+          "invalid umask 'who' character: {ch}",
         ));
       }
     }
@@ -266,10 +262,10 @@ impl super::Builtin for UMask {
       if raw.chars().any(|c| c.is_ascii_digit()) {
         // Numeric mode: umask 022
         let mode_raw = u32::from_str_radix(raw, 8).map_err(
-          |_| sherr!(ParseErr @ span.clone(), "invalid numeric umask: {}", raw.fg(next_color())),
+          |_| sherr!(ParseErr @ span.clone(), "invalid numeric umask: {raw}"),
         )?;
         let mode = Mode::from_bits(mode_raw).ok_or_else(
-          || sherr!(ParseErr @ span.clone(), "invalid umask value: {}", raw.fg(next_color())),
+          || sherr!(ParseErr @ span.clone(), "invalid umask value: {raw}"),
         )?;
         umask(mode);
       } else {
@@ -284,7 +280,7 @@ impl super::Builtin for UMask {
           } else {
             return Err(sherr!(
               ParseErr @ span.clone(),
-              "invalid symbolic umask: {}", part.fg(next_color()),
+              "invalid symbolic umask: {part}",
             ));
           };
           apply_symbolic(&mut old_bits, who, op, parse_rwx(bits), span)?;

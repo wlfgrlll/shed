@@ -65,8 +65,13 @@ behavior without modifying the shell itself.
 
       Special variables:
         `$CHILD_COUNT`    number of commands in the job
-        `$CHILDREN`       array of the command strings in the job
-        `$JOB_STATUS`     exit code of the job (0 if success, otherwise nonzero)
+        `$CHILDREN`       associative array mapping each command string in the
+                          job to its exit status. Statuses are formatted as
+                          plain integers for normal exits (0, 1, ...) and as
+                          `128 + signum` for signaled exits (e.g. 130 for
+                          SIGINT, 143 for SIGTERM).
+        `$JOB_STATUS`     exit code of the last command in the job (same
+                          encoding as values in `$CHILDREN`)
         `$JOB_ID`         the job table ID (positive integer)
 
   2.4 Prompt Events                            *autocmd-prompt-events*

@@ -1,4 +1,4 @@
-use super::*;
+use super::{SHED, logic::AutoCmdKind};
 
 use std::{
   collections::{HashMap, VecDeque},
@@ -6,7 +6,7 @@ use std::{
   io::{Read, Write},
   path::{Path, PathBuf},
   rc::Rc,
-  sync::atomic::Ordering,
+  sync::{Arc, atomic::Ordering},
 };
 
 use nix::{
@@ -14,23 +14,26 @@ use nix::{
   unistd::{User, getuid},
 };
 use rusqlite::Connection;
+use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-  jobs::Job,
+use crate::{autocmd, jobs::Job, state::vars::Var};
+use super::{
+  jobs::JobTab,
+  logic::LogTab,
+  meta::MetaTab,
+  scopes::ScopeStack,
+  terminal::Terminal,
   match_loop,
+  vars::{self, ArrIndex},
   parse::{
     execute::exec_nonint,
     lex::{LexFlags, LexStream},
   },
   sherr,
   shopt::ShOpts,
-  util::{AutoCmdVecUtils, error::ShResult},
+  ShResult,
 };
-
-thread_local! {
-  static SHED: Shed = Shed::new();
-}
 
 /// Parse `arr[idx]` into (name, raw_index_expr). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
@@ -233,18 +236,14 @@ where
 pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
   let dir = dir.as_ref();
   let dir_raw = &dir.display().to_string();
-  let pre_cd = read_logic(|l| l.get_autocmds(AutoCmdKind::PreChangeDir));
-  let post_cd = read_logic(|l| l.get_autocmds(AutoCmdKind::PostChangeDir));
-
+  defer!(super::autocmd!(PostChangeDir));
   let current_dir = std::env::current_dir()?.display().to_string();
   with_vars(
     [
       ("NEW_DIR".into(), dir_raw.as_str()),
       ("OLD_DIR".into(), current_dir.as_str()),
     ],
-    || {
-      pre_cd.exec();
-    },
+    || autocmd!(PreChangeDir)
   );
 
   std::env::set_current_dir(dir)?;

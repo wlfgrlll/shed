@@ -108,16 +108,6 @@ pub fn split_tk_at(tk: &Tk, pat: &str) -> Option<(Tk, Tk)> {
   })
 }
 
-pub fn split_span_at(span: &Span, pat: &str) -> Option<(Span, Span)> {
-  let slice = span.as_str();
-  let base = span.range().start;
-  split_at_unescaped(slice, pat).map(|(start, len)| {
-    let left = Span::new(base..base + start, span.get_source());
-    let right = Span::new(base + start + len..base + slice.len(), span.get_source());
-    (left, right)
-  })
-}
-
 pub fn split_all_with<T, F, B>(slice: &str, segment_fn: F, mut build: B) -> Vec<T>
 where
   F: Fn(&str) -> Option<(usize, usize)>,
@@ -206,10 +196,6 @@ pub fn has_unescaped(slice: &str, pat: &str) -> bool {
   split_at_unescaped(slice, pat).is_some()
 }
 
-pub fn has_any_unescaped(slice: &str, pats: &[&str]) -> bool {
-  pats.iter().any(|&pat| has_unescaped(slice, pat))
-}
-
 pub fn scan_parens(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -> bool {
   scan_delims('(', chars, pos, depth).unwrap()
 }
@@ -218,15 +204,7 @@ pub fn scan_braces(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -
   scan_delims('{', chars, pos, depth).unwrap()
 }
 
-pub fn scan_brackets(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -> bool {
-  scan_delims('[', chars, pos, depth).unwrap()
-}
-
-pub fn scan_angles(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -> bool {
-  scan_delims('<', chars, pos, depth).unwrap()
-}
-
-pub fn scan_delims(
+fn scan_delims(
   opener: char,
   chars: &mut Peekable<Chars>,
   pos: &mut usize,

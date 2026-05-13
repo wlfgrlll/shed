@@ -1,15 +1,13 @@
 use crate::{
-  motion,
   readline::editcmd::{
     Bound, Cmd, Dest, Direction, EditCmd, LineAddr, Motion, TextObj, To, Verb, Word,
   },
   state::write_meta,
   status_msg,
-  util::error::ShResult,
-  verb,
+  util::ShResult,
 };
 
-use super::{CharClass, Grapheme, Line, Lines, MotionKind, Pos, ordered};
+use super::{CharClass, Grapheme, MotionKind, Pos, ordered};
 
 impl super::LineBuf {
   fn find_delim_match(&mut self) -> Option<MotionKind> {
@@ -150,7 +148,7 @@ impl super::LineBuf {
     let mut offset = self.pos_to_byte(self.cursor.pos)?;
     let mut target_byte = None;
 
-    for it in 0..count {
+    for _ in 0..count {
       target_byte = match dir {
         Direction::Forward => re
           .find_at(&buf, offset + 1)
@@ -212,7 +210,7 @@ impl super::LineBuf {
             inclusive: true,
           })
         }
-        Motion::TextObj(text_obj) => this.dispatch_text_obj(*count as u16, text_obj.clone()),
+        Motion::TextObj(text_obj) => this.dispatch_text_obj(text_obj.clone()),
         Motion::EndOfLastWord => {
           let row = this.row() + (count.saturating_sub(1));
           let line = this.line_mut(row);
@@ -525,7 +523,7 @@ impl super::LineBuf {
 
         Motion::RepeatMotion | Motion::RepeatMotionRev => None,
         Motion::Null => None,
-        Motion::Selection(mode) => {
+        Motion::Selection(_) => {
           unreachable!()
         }
       };
@@ -560,7 +558,7 @@ impl super::LineBuf {
           };
           this.set_row(*line);
         }
-        MotionKind::Block { start, end } => unimplemented!(),
+        MotionKind::Block { .. } => unimplemented!(),
       }
       Ok(())
     };
@@ -639,7 +637,7 @@ impl super::LineBuf {
           }
         }
       }
-      MotionKind::Block { start, end } => unimplemented!(),
+      MotionKind::Block { .. } => unimplemented!(),
     }
   }
   fn search_char(&self, dir: &Direction, dest: &Dest, char: &Grapheme, count: usize) -> isize {
@@ -942,10 +940,10 @@ impl super::LineBuf {
       }
     }
   }
-  fn dispatch_text_obj(&mut self, count: u16, obj: TextObj) -> Option<MotionKind> {
+  fn dispatch_text_obj(&mut self, obj: TextObj) -> Option<MotionKind> {
     match obj {
       // text structures
-      TextObj::Word(word, bound) => self.text_obj_word(count, self.cursor.pos, word, bound),
+      TextObj::Word(word, bound) => self.text_obj_word(self.cursor.pos, word, bound),
       TextObj::Sentence(_)
       | TextObj::Paragraph(_)
       | TextObj::WholeSentence(_)
@@ -958,19 +956,18 @@ impl super::LineBuf {
 
       // quote stuff
       TextObj::DoubleQuote(bound) | TextObj::SingleQuote(bound) | TextObj::BacktickQuote(bound) => {
-        self.text_obj_quote(count, obj, bound)
+        self.text_obj_quote(obj, bound)
       }
 
       // delimited blocks
       TextObj::Paren(bound)
       | TextObj::Bracket(bound)
       | TextObj::Brace(bound)
-      | TextObj::Angle(bound) => self.text_obj_delim(count, obj, bound),
+      | TextObj::Angle(bound) => self.text_obj_delim(obj, bound),
     }
   }
   pub(super) fn text_obj_word(
     &mut self,
-    count: u16,
     from: Pos,
     word: Word,
     bound: Bound,
@@ -1119,7 +1116,7 @@ impl super::LineBuf {
       }
     }
   }
-  fn text_obj_quote(&mut self, count: u16, obj: TextObj, bound: Bound) -> Option<MotionKind> {
+  fn text_obj_quote(&mut self, obj: TextObj, bound: Bound) -> Option<MotionKind> {
     let q_ch = match obj {
       TextObj::DoubleQuote(_) => '"',
       TextObj::SingleQuote(_) => '\'',
@@ -1164,7 +1161,7 @@ impl super::LineBuf {
       }
     }
   }
-  fn text_obj_delim(&mut self, count: u16, obj: TextObj, bound: Bound) -> Option<MotionKind> {
+  fn text_obj_delim(&mut self, obj: TextObj, bound: Bound) -> Option<MotionKind> {
     let (opener, closer) = match obj {
       TextObj::Paren(_) => ('(', ')'),
       TextObj::Bracket(_) => ('[', ']'),

@@ -6,7 +6,7 @@ use crate::{
   readline::context::{CtxTk, CtxTkRule, get_context_tokens},
   shopt::ShOptHighlight,
   state::read_shopts,
-  util::ui::{PaletteEntry, style_from_description},
+  util::{PaletteEntry, style_from_description},
 };
 
 pub struct Palette {

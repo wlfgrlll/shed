@@ -15,7 +15,8 @@ use crate::{
   state::{self, ShellParam, get_exec_wrappers, read_meta, read_shopts},
   util::{
     has_unescaped,
-    strops::{QuoteState, split_at_unescaped},
+    QuoteState,
+    split_at_unescaped,
   },
 };
 

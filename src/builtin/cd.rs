@@ -6,8 +6,11 @@ use std::{
 use crate::{
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{self, read_vars},
-  util::{error::ShResult, with_status},
+  state::util::{self, read_vars},
+  util::{
+    ShResult,
+    with_status,
+  },
 };
 
 pub(super) struct Cd;
@@ -42,7 +45,7 @@ impl super::Builtin for Cd {
       }
     } else {
       (
-        PathBuf::from(state::get_home_str().unwrap_or(String::from("/"))),
+        PathBuf::from(util::get_home_str().unwrap_or(String::from("/"))),
         None,
       )
     };
@@ -64,13 +67,13 @@ impl super::Builtin for Cd {
     if !new_dir.is_dir() {
       return Err(sherr!(ExecFail @ span.clone(), "Not a directory"));
     }
-    if let Err(e) = state::change_dir(new_dir) {
+    if let Err(e) = util::change_dir(new_dir) {
       return Err(sherr!(ExecFail @ span.clone(), "Failed to change directory: {e}"));
     }
 
     if print_dir {
       let mut dir = env::current_dir()?.display().to_string();
-      if let Some(home) = state::get_home_str()
+      if let Some(home) = util::get_home_str()
         && let Some(home_dir) = dir.strip_prefix(&home)
       {
         dir = format!("~{home_dir}");
@@ -95,7 +98,7 @@ fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
 
 fn get_old_pwd() -> PathBuf {
   read_vars(|v| v.try_get_var("OLDPWD"))
-    .or_else(|| state::get_home_str().or_else(|| Some(String::from("/"))))
+    .or_else(|| util::get_home_str().or_else(|| Some(String::from("/"))))
     .map(PathBuf::from)
     .unwrap()
 }
@@ -107,7 +110,7 @@ pub mod tests {
 
   use tempfile::TempDir;
 
-  use crate::state::{self, VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{self, vars::{VarFlags, VarKind}, util::{read_vars, write_vars}};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Basic Navigation =====================

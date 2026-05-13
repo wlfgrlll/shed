@@ -12,7 +12,7 @@ use crate::parse::lex::is_hard_sep;
 use crate::readline::markers;
 use crate::sherr;
 use crate::state::{read_shopts, read_vars};
-use crate::util::error::ShResult;
+use crate::util::ShResult;
 
 pub fn expand_raw_inner(
   chars: &mut Peekable<Chars<'_>>,

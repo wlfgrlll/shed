@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
   sherr,
   state::source_file,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Source;

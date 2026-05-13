@@ -5,7 +5,7 @@ use nix::unistd::{Whence, lseek};
 use crate::{
   getopt::{Opt, OptSpec},
   outln, sherr,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Seek;

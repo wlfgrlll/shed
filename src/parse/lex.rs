@@ -14,8 +14,11 @@ use crate::{
   readline::linebuf::Pos,
   sherr,
   util::{
-    error::ShResult,
-    strops::{QuoteState, ends_with_unescaped, scan_braces, scan_parens},
+    ShResult,
+    QuoteState,
+    ends_with_unescaped,
+    scan_braces,
+    scan_parens,
   },
 };
 
@@ -29,6 +32,49 @@ pub const OPENERS: [&str; 6] = ["if", "while", "until", "for", "select", "case"]
 pub const MIDDLES: [&str; 2] = ["elif", "else"];
 
 pub const CLOSERS: [&str; 6] = ["fi", "done", "esac", "}", ")", ";;"];
+
+pub trait TkVecUtils<Tk> {
+  fn get_span(&self) -> Option<Span>;
+  fn debug_tokens(&self);
+  fn split_at_separators(&self) -> Vec<Vec<Tk>>;
+}
+
+impl TkVecUtils<Tk> for Vec<Tk> {
+  fn get_span(&self) -> Option<Span> {
+    if let Some(first_tk) = self.first() {
+      self.last().map(|last_tk| {
+        Span::new(
+          first_tk.span.range().start..last_tk.span.range().end,
+          first_tk.source(),
+        )
+      })
+    } else {
+      None
+    }
+  }
+  fn debug_tokens(&self) {
+    for _token in self {}
+  }
+  fn split_at_separators(&self) -> Vec<Vec<Tk>> {
+    let mut splits = vec![];
+    let mut cur_split = vec![];
+    for tk in self {
+      match tk.class {
+        TkRule::Pipe | TkRule::ErrPipe | TkRule::And | TkRule::Or | TkRule::Bg | TkRule::Sep => {
+          splits.push(std::mem::take(&mut cur_split));
+        }
+        _ => cur_split.push(tk.clone()),
+      }
+    }
+
+    if !cur_split.is_empty() {
+      splits.push(cur_split);
+    }
+
+    splits
+  }
+}
+
 
 pub fn not_marker(tk: &ShResult<Tk>) -> bool {
   tk.is_err()

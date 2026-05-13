@@ -219,7 +219,7 @@ impl Lines {
   }
 
   /// Ensure that the underlying Vec<Line> is not empty
-  pub fn push_empty(&mut self) {
+  fn push_empty(&mut self) {
     if self.is_empty() {
       self.push(Line::default());
     }

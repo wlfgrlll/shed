@@ -27,7 +27,7 @@ use crate::{
   },
   sherr,
   state::{self, read_shopts},
-  util::error::{ShErr, ShErrKind, ShResult},
+  util::{ShErr, ShErrKind, ShResult},
 };
 
 /*

@@ -3,7 +3,7 @@ use nix::sys::resource::{UsageWho, getrusage};
 use crate::{
   outln,
   state::CmdTimer,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Times;

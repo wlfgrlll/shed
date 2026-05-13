@@ -20,8 +20,8 @@ use crate::readline::history::History;
 use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
 use crate::state::CursorStyle;
-use crate::util::TkVecUtils;
-use crate::util::error::ShResult;
+use crate::parse::lex::TkVecUtils;
+use crate::util::ShResult;
 use crate::{status_msg, verb};
 use bitflags::bitflags;
 
@@ -224,7 +224,6 @@ pub enum ExTkRule {
   Comma,
   Offset,
   Mark,
-  Separator,
   Bang,
   NormalSeq,
   Pattern,

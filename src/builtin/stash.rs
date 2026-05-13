@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::{
   getopt::{Opt, OptSpec},
   match_loop, outln, sherr, state,
-  util::error::{ShResult, ShResultExt},
+  util::{ShResult, ShResultExt},
 };
 
 #[derive(Debug)]

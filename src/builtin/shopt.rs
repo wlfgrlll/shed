@@ -3,7 +3,8 @@ use crate::{
   outln,
   state::write_shopts,
   util::{
-    error::{ShResult, ShResultExt},
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };

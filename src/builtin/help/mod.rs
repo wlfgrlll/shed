@@ -18,7 +18,7 @@ use crate::{
   readline::complete::ScoredCandidate,
   sherr,
   state::{with_term, write_meta},
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 use markup::TAG_SEQ;

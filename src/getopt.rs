@@ -1,13 +1,12 @@
 use std::fmt;
 
-use ariadne::Fmt;
 use fmt::Display;
 
 use crate::{
   parse::lex::{Span, Tk},
   sherr,
   shopt::xtrace_print,
-  util::error::{ShResult, next_color},
+  util::ShResult,
 };
 
 pub trait AsOpt {
@@ -198,7 +197,7 @@ pub fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> GetOptR
         return Err(sherr!(
           ParseErr,
           "Unknown option: {}",
-          unknown.to_string().fg(next_color()),
+          unknown.to_string(),
         ));
       }
       non_opts.push((word, span));
@@ -230,7 +229,7 @@ pub fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> GetOptR
                 return Err(sherr!(
                   ParseErr,
                   "Option {} expects exactly {} arguments, but got {}",
-                  opt.to_string().fg(next_color()),
+                  opt.to_string(),
                   n,
                   args.len()
                 ));
@@ -313,7 +312,7 @@ fn sort_tks_raw(
         return Err(sherr!(
           ParseErr,
           "Unknown option: {}",
-          unknown.to_string().fg(next_color()),
+          unknown.to_string(),
         ));
       }
       non_opts.push(token);
@@ -348,7 +347,7 @@ fn sort_tks_raw(
                 return Err(sherr!(
                   ParseErr,
                   "Option {} expects exactly {} arguments, but got {}",
-                  opt.to_string().fg(next_color()),
+                  opt.to_string(),
                   n,
                   args.len()
                 ));

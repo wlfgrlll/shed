@@ -7,7 +7,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
   readline::linebuf::Pos,
   state::{read_shopts, with_term},
-  util::error::ShResult,
+  util::ShResult,
   write_term,
 };
 use crate::{

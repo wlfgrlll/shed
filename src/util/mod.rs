@@ -1,158 +1,57 @@
-pub mod error;
-pub mod guards;
-pub mod macros;
-pub mod strops;
-pub mod ui;
+mod error;
+mod guards;
+mod macros;
+mod strops;
+mod ui;
 
-use std::collections::VecDeque;
 use std::os::fd::BorrowedFd;
-
-use ariadne::Span as AriadneSpan;
-
-use crate::parse::Node;
-use crate::parse::execute::exec_nonint;
-use crate::parse::lex::{Span, Tk, TkRule};
 use crate::state;
-use crate::state::AutoCmd;
-use crate::util::error::ShResult;
-pub use strops::*;
 
-pub trait VecDequeExt<T> {
-  fn to_vec(self) -> Vec<T>;
-}
+pub use ui::{
+  VERT_LINE,
+  HOR_LINE,
+  BOT_LEFT,
+  BOT_RIGHT,
+  TOP_LEFT,
+  TOP_RIGHT,
+  TREE_LEFT,
+  TREE_RIGHT,
+  PaletteEntry,
+  pad_line,
+  pad_line_into,
+  ansi_from_description,
+  style_from_description
+};
 
-pub trait CharDequeUtils {
-  fn to_string(self) -> String;
-  fn ends_with(&self, pat: &str) -> bool;
-  fn starts_with(&self, pat: &str) -> bool;
-}
+pub use guards::{
+  var_ctx_guard,
+  scope_guard,
+  shared_scope_guard,
+};
 
-pub trait TkVecUtils<Tk> {
-  fn get_span(&self) -> Option<Span>;
-  fn debug_tokens(&self);
-  fn split_at_separators(&self) -> Vec<Vec<Tk>>;
-}
+pub use error::{
+  get_context,
+  clear_color,
+  ShResult,
+  ShErr,
+  ShErrKind,
+  ShResultExt
+};
 
-pub trait AutoCmdVecUtils {
-  fn exec(&self);
-}
-
-pub trait NodeVecUtils<Node> {
-  fn get_span(&self) -> Option<Span>;
-}
-
-impl AutoCmdVecUtils for Vec<AutoCmd> {
-  fn exec(&self) {
-    let saved_status = crate::state::get_status();
-    for cmd in self {
-      let AutoCmd { kind: _, command } = cmd;
-      if let Err(e) = exec_nonint(command.clone(), Some("autocmd".into())) {
-        e.print_error();
-      }
-    }
-    crate::state::set_status(saved_status);
-  }
-}
-
-impl<T> VecDequeExt<T> for VecDeque<T> {
-  fn to_vec(self) -> Vec<T> {
-    self.into_iter().collect::<Vec<T>>()
-  }
-}
-
-impl CharDequeUtils for VecDeque<char> {
-  fn to_string(mut self) -> String {
-    let mut result = String::with_capacity(self.len());
-    while let Some(ch) = self.pop_front() {
-      result.push(ch);
-    }
-    result
-  }
-
-  fn ends_with(&self, pat: &str) -> bool {
-    let pat_chars = pat.chars();
-    let self_len = self.len();
-
-    // If pattern is longer than self, return false
-    if pat_chars.clone().count() > self_len {
-      return false;
-    }
-
-    // Compare from the back
-    self
-      .iter()
-      .rev()
-      .zip(pat_chars.rev())
-      .all(|(c1, c2)| c1 == &c2)
-  }
-
-  fn starts_with(&self, pat: &str) -> bool {
-    let pat_chars = pat.chars();
-    let self_len = self.len();
-
-    // If pattern is longer than self, return false
-    if pat_chars.clone().count() > self_len {
-      return false;
-    }
-
-    // Compare from the front
-    self.iter().zip(pat_chars).all(|(c1, c2)| c1 == &c2)
-  }
-}
-
-impl TkVecUtils<Tk> for Vec<Tk> {
-  fn get_span(&self) -> Option<Span> {
-    if let Some(first_tk) = self.first() {
-      self.last().map(|last_tk| {
-        Span::new(
-          first_tk.span.range().start..last_tk.span.range().end,
-          first_tk.source(),
-        )
-      })
-    } else {
-      None
-    }
-  }
-  fn debug_tokens(&self) {
-    for _token in self {}
-  }
-  fn split_at_separators(&self) -> Vec<Vec<Tk>> {
-    let mut splits = vec![];
-    let mut cur_split = vec![];
-    for tk in self {
-      match tk.class {
-        TkRule::Pipe | TkRule::ErrPipe | TkRule::And | TkRule::Or | TkRule::Bg | TkRule::Sep => {
-          splits.push(std::mem::take(&mut cur_split));
-        }
-        _ => cur_split.push(tk.clone()),
-      }
-    }
-
-    if !cur_split.is_empty() {
-      splits.push(cur_split);
-    }
-
-    splits
-  }
-}
-
-impl NodeVecUtils<Node> for Vec<Node> {
-  fn get_span(&self) -> Option<Span> {
-    if let Some(first_nd) = self.first()
-      && let Some(last_nd) = self.last()
-    {
-      let first_start = first_nd.get_span().range().start;
-      let last_end = last_nd.get_span().range().end;
-      if first_start <= last_end {
-        return Some(Span::new(
-          first_start..last_end,
-          first_nd.get_span().source().content(),
-        ));
-      }
-    }
-    None
-  }
-}
+pub use strops::{
+  expand_ansi_c,
+  QuoteState,
+  split_tk,
+  split_tk_at,
+  has_unescaped,
+  ends_with_unescaped,
+  split_at_unescaped,
+  split_case_pat,
+  scan_braces,
+  scan_parens,
+  format_size,
+  format_mode,
+};
 
 pub struct FdWriter<'a>(pub BorrowedFd<'a>);
 

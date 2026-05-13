@@ -8,7 +8,7 @@ use crate::sherr;
 use crate::state::{
   ArrIndex, ScopeStack, VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars,
 };
-use crate::util::error::ShResult;
+use crate::util::ShResult;
 use crate::{match_loop, state};
 
 #[derive(Debug)]

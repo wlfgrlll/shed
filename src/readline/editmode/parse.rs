@@ -15,7 +15,7 @@ use crate::{
 
 /// The result of a single ViParser run
 pub enum ParseResult {
-  Complete(EditCmd),
+  Complete(Box<EditCmd>),
   Pending,
   Invalid,
 }
@@ -28,7 +28,7 @@ pub enum CallbackResult<T> {
 
 impl<T> CallbackResult<T> {
   pub fn complete(cmd: EditCmd) -> Self {
-    CallbackResult::Complete(ParseResult::Complete(cmd))
+    CallbackResult::Complete(ParseResult::Complete(Box::new(cmd)))
   }
   pub const fn pending() -> Self {
     CallbackResult::Complete(ParseResult::Pending)
@@ -112,13 +112,13 @@ impl ViParser {
     };
 
     match (self.validator)(verb.as_ref().map(|v| &v.1), motion.as_ref().map(|m| &m.1)) {
-      CmdState::Complete => P::Complete(EditCmd {
+      CmdState::Complete => P::Complete(Box::new(EditCmd {
         register,
         verb,
         motion,
         raw_seq: pending_seq.to_string(),
         flags: CmdFlags::empty(),
-      }),
+      })),
       CmdState::Pending => P::Pending,
       CmdState::Invalid => P::Invalid,
     }

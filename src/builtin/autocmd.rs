@@ -1,8 +1,9 @@
-use crate::{
+use super::{
   getopt::{Opt, OptSpec},
   sherr,
-  state::{AutoCmd, AutoCmdKind, write_logic},
-  util::{error::ShResult, with_status},
+  state::{logic::{AutoCmd, AutoCmdKind}, util::write_logic},
+  ShResult,
+  with_status,
 };
 
 pub struct AutoCmdOpts {
@@ -34,7 +35,7 @@ impl super::Builtin for AutoCmdBuiltin {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let span = args.span();
     let mut clear = false;
-    let mut argv = args.argv.iter();
+    let mut argv = args.argv.into_iter();
     for opt in args.opts {
       match opt {
         Opt::Short('c') => clear = true,
@@ -42,17 +43,17 @@ impl super::Builtin for AutoCmdBuiltin {
       }
     }
 
-    let Some(autocmd_kind) = argv.next() else {
+    let Some((kind,kind_span)) = argv.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "expected an autocmd kind",
       ));
     };
 
-    let Ok(autocmd_kind) = autocmd_kind.0.parse::<AutoCmdKind>() else {
+    let Ok(autocmd_kind) = kind.parse::<AutoCmdKind>() else {
       return Err(sherr!(
-          ExecFail @ autocmd_kind.1.clone(),
-          "invalid autocmd kind: {}", autocmd_kind.0,
+          ExecFail @ kind_span,
+          "invalid autocmd kind: {kind}",
       ));
     };
 
@@ -61,17 +62,17 @@ impl super::Builtin for AutoCmdBuiltin {
       return with_status(0);
     }
 
-    let Some(autocmd_cmd) = argv.next() else {
+    let Some((autocmd_cmd,_)) = argv.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "expected an autocmd command",
       ));
     };
 
-    let autocmd = AutoCmd {
-      kind: autocmd_kind,
-      command: autocmd_cmd.0.clone(),
-    };
+    let autocmd = AutoCmd::new(
+      autocmd_kind,
+      autocmd_cmd.clone(),
+    );
 
     write_logic(|l| l.insert_autocmd(autocmd));
 
@@ -81,7 +82,7 @@ impl super::Builtin for AutoCmdBuiltin {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, AutoCmdKind, read_logic};
+  use crate::state::{self, logic::AutoCmdKind, util::read_logic};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Registration =====================
@@ -93,7 +94,7 @@ mod tests {
 
     let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
     assert_eq!(cmds.len(), 1);
-    assert_eq!(cmds[0].command, "echo hello");
+    assert_eq!(cmds[0].command(), "echo hello");
   }
 
   #[test]
@@ -103,7 +104,7 @@ mod tests {
 
     let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
     assert_eq!(cmds.len(), 1);
-    assert_eq!(cmds[0].command, "echo done");
+    assert_eq!(cmds[0].command(), "echo done");
   }
 
   #[test]
@@ -114,8 +115,8 @@ mod tests {
 
     let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
     assert_eq!(cmds.len(), 2);
-    assert_eq!(cmds[0].command, "echo first");
-    assert_eq!(cmds[1].command, "echo second");
+    assert_eq!(cmds[0].command(), "echo first");
+    assert_eq!(cmds[1].command(), "echo second");
   }
 
   #[test]

@@ -2,8 +2,8 @@ use crate::{
   builtin::join_raw_args,
   getopt::{Opt, OptSpec},
   outln,
-  state::{read_vars, write_vars},
-  util::{error::ShResult, with_status},
+  state::util::{read_vars, write_vars},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Defer;
@@ -11,7 +11,7 @@ impl super::Builtin for Defer {
   fn opts(&self) -> Vec<crate::getopt::OptSpec> {
     vec![OptSpec::flag('c')]
   }
-  fn execute(&self, args: super::BuiltinArgs) -> crate::util::error::ShResult<()> {
+  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       read_vars(|s| -> ShResult<()> {
         for line in s.cur_scope().display_deferred_cmds().lines() {

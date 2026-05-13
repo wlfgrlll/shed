@@ -21,7 +21,7 @@ use crate::{
   sherr,
   shopt::xtrace_print,
   state::{self},
-  util::error::{ShResult, ShResultExt},
+  util::{ShResult, ShResultExt},
 };
 
 use bitflags::bitflags;

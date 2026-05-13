@@ -5,8 +5,8 @@ use std::str::Chars;
 use crate::expand::util::is_var_name_ch;
 use crate::readline::markers;
 use crate::state::read_vars;
-use crate::util::error::ShResult;
-use crate::util::strops::QuoteState;
+use crate::util::ShResult;
+use crate::util::QuoteState;
 use crate::{match_loop, sherr};
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.

@@ -5,7 +5,7 @@ use crate::{
   getopt::{Opt, OptSpec},
   outln, sherr,
   state::{self, MetaTab, Utility, read_meta, write_meta},
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub struct HashOpts {

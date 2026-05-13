@@ -6,7 +6,7 @@ use crate::{
   outln, sherr,
   state::read_meta,
   status_msg, system_msg,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Msg;

@@ -3,7 +3,7 @@ use nix::{errno::Errno, unistd::execvpe};
 use crate::{
   parse::execute::ExecArgs,
   sherr,
-  util::{error::ShResult, with_status},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Exec;

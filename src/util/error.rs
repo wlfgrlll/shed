@@ -1,4 +1,4 @@
-use ariadne::{Color, Fmt};
+use ariadne::{Color, Fmt, Label, Span as AriadneSpan};
 use ariadne::{Report, ReportKind};
 use nix::errno::Errno;
 use rand::TryRng;
@@ -69,7 +69,15 @@ thread_local! {
   static COLOR_RNG: RefCell<ColorRng> = const { RefCell::new(ColorRng { last_color: None }) };
 }
 
-pub fn next_color() -> Color {
+pub fn get_context(msg: String, span: Span) -> (SpanSource, Label<Span>) {
+  let color = last_color();
+  (
+    span.clone().source().clone(),
+    Label::new(span).with_color(color).with_message(msg),
+  )
+}
+
+fn next_color() -> Color {
   COLOR_RNG.with(|rng| {
     let color = rng.borrow_mut().next().unwrap();
     rng.borrow_mut().last_color = Some(color);
@@ -77,7 +85,7 @@ pub fn next_color() -> Color {
   })
 }
 
-pub fn last_color() -> Color {
+fn last_color() -> Color {
   COLOR_RNG.with(|rng| rng.borrow_mut().last_color())
 }
 
@@ -165,6 +173,7 @@ impl Display for Note {
   }
 }
 
+/// The shell's main error type.
 #[derive(Debug)]
 pub struct ShErr {
   kind: ShErrKind,

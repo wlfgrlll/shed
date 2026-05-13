@@ -1,6 +1,11 @@
 use crate::{
   sherr,
-  util::error::{ShErr, ShErrKind, ShResult, ShResultExt},
+  util::{
+    ShErr,
+    ShErrKind,
+    ShResult,
+    ShResultExt,
+  },
 };
 
 /// A trait for flow control builtins (break, continue, return, exit).

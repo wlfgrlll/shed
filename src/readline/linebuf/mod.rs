@@ -1,44 +1,26 @@
 use std::{
   collections::{HashSet, VecDeque},
   fmt::Display,
-  fs::OpenOptions,
-  io::Write,
   ops::Range,
 };
 
 use ariadne::Span as AriadneSpan;
-use itertools::Either;
-use nix::libc::STDIN_FILENO;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::editcmd::{Anchor, Bound, Dest, Direction, EditCmd, Motion, TextObj, To, Verb, Word};
 use crate::{
-  builtin::stash::{Stash, StashedCmd},
   expand::alias::AliasExpander,
-  match_loop, motion,
-  parse::{
-    execute::{exec_int, exec_nonint},
-    lex::{LexFlags, LexStream, TkFlags, TkRule},
-  },
-  procio::{self, RedirSet, RedirSpec, capture_command},
+  match_loop, parse::
+    lex::{LexFlags, LexStream, TkFlags, TkRule}
+  ,
   readline::{
-    context::{CtxTkRule, get_context_tokens},
-    editcmd::{Cmd, LineAddr, ReadSrc, StashArgs, StashListArg, WriteDest},
-    editmode::SubFlags,
-    history::History,
-    markers,
-    register::RegisterContent,
+    context::{CtxTkRule, get_context_tokens}, editcmd::{EditCmd, Motion, Verb}, history::History, markers
   },
-  sherr,
   state::{
-    AutoCmdKind, VarFlags, VarKind, read_logic, read_shopts, read_vars, with_term, write_meta,
-    write_vars,
+    read_logic, read_shopts, write_meta,
   },
-  status_msg, system_msg,
   util::{
-    AutoCmdVecUtils, error::ShResult, format_size, guards::var_ctx_guard, strops::QuoteState,
+    ShResult, QuoteState,
   },
-  verb,
 };
 
 mod char_class;
@@ -66,35 +48,34 @@ pub(crate) const DEFAULT_VIEWPORT_HEIGHT: usize = 40;
 
 #[derive(Debug, Clone)]
 pub struct LineBuf {
-  pub lines: Lines,
-  pub byte_positions: Option<Vec<(usize, Pos)>>,
-  pub hint: Option<Hint>,
-  pub cursor: Cursor,
+  lines: Lines,
+  byte_positions: Option<Vec<(usize, Pos)>>,
+  hint: Option<Hint>,
+  cursor: Cursor,
 
-  pub select_mode: Option<SelectMode>,
-  pub last_selection: Option<(SelectMode, Pos)>,
+  select_mode: Option<SelectMode>,
+  last_selection: Option<(SelectMode, Pos)>,
 
-  pub last_substitute: Option<EditCmd>,
-  pub last_global: Option<EditCmd>,
-  pub last_search: Option<Motion>,
-  pub pending_search: Option<String>,
+  last_substitute: Option<EditCmd>,
+  last_global: Option<EditCmd>,
+  last_search: Option<Motion>,
+  pending_search: Option<String>,
 
-  pub insert_mode_start_pos: Option<Pos>,
-  pub saved_col: Option<usize>,
-  pub indent_ctx: IndentCtx,
+  insert_mode_start_pos: Option<Pos>,
+  saved_col: Option<usize>,
+  indent_ctx: IndentCtx,
 
-  pub scroll_offset: usize,
+  scroll_offset: usize,
 
-  pub undo_stack: Vec<Edit>,
-  pub redo_stack: Vec<Edit>,
-  pub merging_undos: bool,
+  undo_stack: Vec<Edit>,
+  redo_stack: Vec<Edit>,
+  merging_undos: bool,
 
-  pub kill_ring: KillRing,
-  pub kill_cycle_pos: Option<Pos>,
+  kill_ring: KillRing,
 
-  pub concat_points: VecDeque<Pos>,
-  pub indent_cache: Option<Vec<(usize, usize)>>,
-  pub parse_status: bool,
+  concat_points: VecDeque<Pos>,
+  indent_cache: Option<Vec<(usize, usize)>>,
+  parse_status: bool,
 }
 
 impl Default for LineBuf {
@@ -121,7 +102,6 @@ impl Default for LineBuf {
       redo_stack: vec![],
       merging_undos: false,
       kill_ring: KillRing::new(),
-      kill_cycle_pos: None,
       concat_points: VecDeque::new(),
       indent_cache: None,
       parse_status: true,
@@ -133,6 +113,15 @@ impl Default for LineBuf {
 impl LineBuf {
   pub fn new() -> Self {
     Self::default()
+  }
+  pub fn cursor(&self) -> Pos {
+    self.cursor.pos
+  }
+  pub fn lines(&self) -> &Lines {
+    &self.lines
+  }
+  pub fn scroll_offset(&self) -> usize {
+    self.scroll_offset
   }
   pub fn exec_cmd(&mut self, cmd: EditCmd) -> ShResult<()> {
     let is_char_insert = cmd.verb.as_ref().is_some_and(|v| v.1.is_char_insert());
@@ -246,6 +235,7 @@ impl LineBuf {
 
     res
   }
+
 
   pub fn attempt_inline_expansion(&mut self, history: &History) -> bool {
     let hist_res = self.attempt_history_expansion(history);

@@ -1,14 +1,14 @@
 use std::str::FromStr;
 
-use ariadne::Fmt;
-
 use crate::{
   getopt::{Opt, OptArg, OptSpec},
   parse::lex::Span,
   sherr,
   state::{self, VarFlags, VarKind, read_meta, read_vars, write_meta, write_vars},
   util::{
-    error::{ShErr, ShResult, ShResultExt, next_color},
+    ShErr,
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };
@@ -75,8 +75,7 @@ impl FromStr for GetOptsSpec {
         _ => {
           return Err(sherr!(
             ParseErr,
-            "unexpected character '{}'",
-            ch.fg(next_color()),
+            "unexpected character '{ch}'",
           ));
         }
       }
@@ -195,7 +194,7 @@ fn getopts_inner(
         write_vars(|v| v.set_var(opt_var, VarKind::Str("?".into()), VarFlags::NONE))?;
         sherr!(
           ExecFail @ blame.clone(),
-          "illegal option '-{}'", ch.fg(next_color()),
+          "illegal option '-{ch}'",
         )
         .print_error();
       }
@@ -228,7 +227,7 @@ fn getopts_inner(
           write_vars(|v| v.set_var(opt_var, VarKind::Str("?".into()), VarFlags::NONE))?;
           sherr!(
             ExecFail @ blame.clone(),
-            "option '-{}' requires an argument", ch.fg(next_color()),
+            "option '-{ch}' requires an argument",
           )
           .print_error();
         }

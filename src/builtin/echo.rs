@@ -5,8 +5,9 @@ use crate::{
   out,
   state::read_shopts,
   util::{
-    error::{ShResult, ShResultExt},
-    strops::expand_ansi_c,
+    ShResult,
+    ShResultExt,
+    expand_ansi_c,
     with_status,
   },
 };

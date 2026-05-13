@@ -1,6 +1,5 @@
 use std::{env, path::PathBuf};
 
-use ariadne::Fmt;
 use nix::unistd::write;
 
 use crate::{
@@ -9,9 +8,10 @@ use crate::{
   parse::lex::Span,
   procio::stdout_fileno,
   sherr,
-  state::{change_dir, read_meta, write_meta},
+  state::util::{change_dir, read_meta, write_meta},
   util::{
-    error::{ShResult, ShResultExt, next_color},
+    ShResult,
+    ShResultExt,
     with_status,
   },
 };
@@ -38,7 +38,7 @@ fn parse_dirstack_args(args: &super::BuiltinArgs, cmd: &str) -> ShResult<DirStac
     } else if arg.starts_with('-') {
       return Err(sherr!(
         ExecFail @ args.span(),
-        "{cmd}: invalid option: '{}'", arg.fg(next_color()),
+        "{cmd}: invalid option: '{arg}'",
       ));
     } else {
       if dir.is_some() {
@@ -52,7 +52,7 @@ fn parse_dirstack_args(args: &super::BuiltinArgs, cmd: &str) -> ShResult<DirStac
         return Err(sherr!(
           ExecFail @ args.span(),
           "{cmd}: not a directory: '{}'",
-          target.display().fg(next_color()),
+          target.display(),
         ));
       }
       dir = Some(target);
@@ -221,13 +221,13 @@ impl super::Builtin for Dirs {
         _ if arg.starts_with('-') => {
           return Err(sherr!(
             ExecFail @ blame,
-            "dirs: invalid option: '{}'", arg.fg(next_color()),
+            "dirs: invalid option: '{arg}'",
           ));
         }
         _ => {
           return Err(sherr!(
             ExecFail @ blame,
-            "dirs: unexpected argument: '{}'", arg.fg(next_color()),
+            "dirs: unexpected argument: '{arg}'",
           ));
         }
       }
@@ -348,7 +348,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
     if !ch.is_ascii_digit() {
       return Err(sherr!(
         ExecFail @ blame,
-        "{cmd}: invalid argument: '{}'", arg.fg(next_color()),
+        "{cmd}: invalid argument: '{arg}'",
       ));
     }
   }
@@ -356,7 +356,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
   let n = digits.parse::<usize>().map_err(|e| {
     sherr!(
       ExecFail @ blame,
-      "{cmd}: invalid index: '{}'", e.fg(next_color()),
+      "{cmd}: invalid index: '{e}'",
     )
   })?;
 
@@ -370,7 +370,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
 #[cfg(test)]
 pub mod tests {
   use crate::{
-    state::{self, read_meta},
+    state::{self, util::{read_meta}},
     tests::testutil::{TestGuard, test_input},
   };
   use pretty_assertions::{assert_eq, assert_ne};
