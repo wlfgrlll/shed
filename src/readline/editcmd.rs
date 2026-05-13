@@ -4,13 +4,16 @@ use bitflags::bitflags;
 
 use crate::{
   readline::{
-    editmode::SubFlags,
+    editmode::{ExNode, SubFlags},
     linebuf::{Grapheme, Pos, SelectShape},
   },
   state::read_vars,
 };
 
-use super::register::{RegisterContent, append_register, read_register, write_register};
+use super::{
+  editmode::{self, ExNdRule},
+  register::{RegisterContent, append_register, read_register, write_register},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RegisterName {
@@ -223,6 +226,49 @@ impl EditCmd {
       }
     })
   }
+  pub fn try_get_normal_seq(&self) -> Option<&str> {
+    let Some(Cmd(_, Verb::ExCmd(node))) = self.verb.as_ref() else {
+      return None;
+    };
+    find_normal_seq(node)
+  }
+}
+
+/// Walks an ExNode tree, descending through any nesting Global wrappers,
+/// looking for a Normal leaf. Returns the seq if found.
+fn find_normal_seq(node: &ExNode) -> Option<&str> {
+  match &node.kind {
+    ExNdRule::Normal { seq } => Some(seq),
+    ExNdRule::Global { nested, .. } => find_normal_seq(nested),
+    _ => None,
+  }
+}
+
+impl EditCmd {
+  pub fn is_quit(&self) -> bool {
+    matches!(
+      self.verb.as_ref(),
+      Some(Cmd(
+        _,
+        Verb::ExCmd(ExNode {
+          address: _,
+          kind: ExNdRule::Quit
+        })
+      ))
+    )
+  }
+  pub fn is_shell_cmd(&self) -> bool {
+    matches!(
+      self.verb.as_ref(),
+      Some(Cmd(
+        _,
+        Verb::ExCmd(ExNode {
+          address: _,
+          kind: ExNdRule::Shell(_)
+        })
+      ))
+    )
+  }
   pub fn is_hard_separator(&self) -> bool {
     self.verb.as_ref().is_some_and(|v| {
       let seps = ";\n";
@@ -360,6 +406,7 @@ pub enum Verb {
   NormalMode,
   SearchMode,
   RevSearchMode,
+  ExMode,
   VisualMode,
   VisualModeLine,
   VisualModeBlock, // dont even know if im going to implement this
@@ -376,18 +423,7 @@ pub enum Verb {
   Interrupt,
   PrintPosition,
 
-  // Ex-mode verbs
-  ExMode,
-  ShellCmd(String),
-  Normal(String),
-  Read(ReadSrc),
-  Write(WriteDest),
-  Edit(PathBuf),
-  Stash(StashArgs),
-  Quit,
-  Substitute(String, String, SubFlags),
-  RepeatSubstitute,
-  RepeatGlobal,
+  ExCmd(ExNode),
 }
 
 impl Verb {
@@ -458,6 +494,12 @@ pub enum LineAddr {
   Pattern(String),
   PatternRev(String),
   Mark(char),
+}
+
+impl LineAddr {
+  pub fn all_lines() -> Motion {
+    Motion::LineRange(Self::Number(1), Self::Last)
+  }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -582,7 +624,7 @@ impl Motion {
   }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Anchor {
   After,
   Before,

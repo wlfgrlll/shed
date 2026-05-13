@@ -251,6 +251,7 @@ vi_test! {
   vi_ex_delete_range       : "line1\nline2\nline3"          => ":1,2d\r"             => "line3", 0;
   vi_ex_global_delete      : "echo foo\nls\necho bar"       => ":g/echo/d\r"         => "ls", 0;
   vi_ex_global_sub         : "foo bar\nfoo baz\nkeep"       => ":g/foo/s/foo/X/\r"   => "X bar\nX baz\nkeep", 0;
+  vi_ex_nested_global      : "alpha bravo\nalpha charlie\ndelta bravo\ngamma" => ":g/alpha/g/bravo/normal!dw\r" => "bravo\nalpha charlie\ndelta bravo\ngamma", 0;
   vi_ex_normal_range       : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
   vi_ex_repeat_global      : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
   vi_visual_dot_repeat     : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;

@@ -1250,35 +1250,35 @@ impl Iterator for LexStream {
   fn next(&mut self) -> Option<Self::Item> {
     assert!(self.cursor <= self.source.len());
     // We are at the end of the input
+    if self.flags.contains(LexFlags::STALE) {
+      return None;
+    }
+
     if self.cursor == self.source.len() {
-      if self.flags.contains(LexFlags::STALE) {
-        // We've already returned an EOI token, nothing left to do
-        return None;
-      } else {
-        // Return the EOI token
-        if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
-          let start = self.brc_grp_start.unwrap_or(self.cursor.saturating_sub(1));
-          self.flags |= LexFlags::STALE;
-          return Err(sherr!(
+      // Return the EOI token
+      if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
+        let start = self.brc_grp_start.unwrap_or(self.cursor.saturating_sub(1));
+        self.flags |= LexFlags::STALE;
+        return Err(sherr!(
             ParseErr @ self.get_span(start..self.cursor),
             "Unclosed brace group",
-          ))
-          .into();
-        }
-        if self.in_subsh() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
-          let start = self.subsh_start.unwrap_or(self.cursor.saturating_sub(1));
-          self.flags |= LexFlags::STALE;
-          return Err(sherr!(
+        ))
+        .into();
+      }
+      if self.in_subsh() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
+        let start = self.subsh_start.unwrap_or(self.cursor.saturating_sub(1));
+        self.flags |= LexFlags::STALE;
+        return Err(sherr!(
             ParseErr @ self.get_span(start..self.cursor),
             "Unclosed subshell",
-          ))
-          .into();
-        }
-        let token = self.get_token(self.cursor..self.cursor, TkRule::EOI);
-        self.flags |= LexFlags::STALE;
-        return Some(Ok(token));
+        ))
+        .into();
       }
+      let token = self.get_token(self.cursor..self.cursor, TkRule::EOI);
+      self.flags |= LexFlags::STALE;
+      return Some(Ok(token));
     }
+
     // Return the SOI token
     if self.flags.contains(LexFlags::FRESH) {
       self.flags &= !LexFlags::FRESH;

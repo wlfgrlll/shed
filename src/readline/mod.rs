@@ -1,11 +1,10 @@
 use crate::readline::editmode::{RemoteMode, ViSearch, ViSearchRev};
-use crate::readline::linebuf::{Lines, Pos, ordered};
+use crate::readline::linebuf::{Lines, Pos};
 use crate::readline::register::{RegisterContent, append_register, read_register, write_register};
 use crate::{flush_term, motion, status_msg, verb, write_term};
 use editcmd::{CmdFlags, EditCmd, Motion, RegisterName, Verb};
 use editmode::{CmdReplay, EditMode, ModeReport, ViInsert, ViNormal, ViReplace, ViVisual};
 use history::History;
-use itertools::Either;
 use keys::{KeyCode, KeyEvent, ModKeys};
 use linebuf::LineBuf;
 use nix::poll::PollTimeout;
@@ -1220,39 +1219,10 @@ impl ShedLine {
   }
 
   fn extract_line_nums(&self, cmd: &EditCmd) -> ShResult<Vec<usize>> {
-    Ok(
-      match cmd.motion() {
-        Some(Cmd(_, Motion::LineRange(s, e))) => {
-          let s = self
-            .editor
-            .resolve_line_addr(s)?
-            .unwrap_or(self.editor.row());
-          let e = self
-            .editor
-            .resolve_line_addr(e)?
-            .unwrap_or(self.editor.row());
-          let (s, e) = ordered(s, e);
-          Either::Left(s..=e)
-        }
-        Some(Cmd(_, Motion::Line(addr))) => {
-          let addr = self
-            .editor
-            .resolve_line_addr(addr)?
-            .unwrap_or(self.editor.row());
-          Either::Left(addr..=addr)
-        }
-        Some(Cmd(_, m @ (Motion::Global(con, re) | Motion::NotGlobal(con, re)))) => {
-          let polarity = matches!(m, Motion::Global(_, _));
-          let lines = self.editor.get_matching_lines(con, re, polarity)?;
-          Either::Right(lines.into_iter())
-        }
-        _ => {
-          let row = self.editor.row();
-          Either::Left(row..=row)
-        }
-      }
-      .collect(),
-    )
+    if let Some(Cmd(_, Verb::ExCmd(node))) = cmd.verb() {
+      return self.editor.lines_for_ex_node(node);
+    }
+    Ok(vec![self.editor.row()])
   }
 
   fn submit(&mut self) -> ShResult<Option<ReadlineEvent>> {
@@ -1304,9 +1274,9 @@ impl ShedLine {
       return Ok(Some(LineCmd::ResetWidget));
     }
 
-    if let Some(Cmd(_, Verb::Normal(seq))) = cmd.verb() {
+    if let Some(seq) = cmd.try_get_normal_seq() {
       let line_nums = self.extract_line_nums(&cmd)?;
-      return Ok(Some(LineCmd::NormalSeq(line_nums, seq.clone())));
+      return Ok(Some(LineCmd::NormalSeq(line_nums, seq.to_string())));
     }
 
     if self.should_grab_history(&cmd) {
@@ -1342,7 +1312,7 @@ impl ShedLine {
 
     if cmd.verb_is(Verb::EndOfFile) && self.focused_editor().is_empty() {
       return Ok(Some(LineCmd::EndOfFile));
-    } else if cmd.verb_is(Verb::Quit) {
+    } else if cmd.is_quit() {
       return Ok(Some(LineCmd::Quit));
     } else if cmd.verb_is(Verb::AcceptHint) {
       return Ok(Some(LineCmd::AppendHint));
@@ -2353,7 +2323,7 @@ impl ShedLine {
   }
 
   pub fn fire_editor_command(&mut self, cmd: EditCmd) -> ShResult<()> {
-    let is_shell_cmd = cmd.verb().is_some_and(|v| matches!(v.1, Verb::ShellCmd(_)));
+    let is_shell_cmd = cmd.is_shell_cmd();
     let res = self.editor.exec_cmd(cmd);
 
     if is_shell_cmd {

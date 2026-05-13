@@ -22,7 +22,7 @@ mod verbatim;
 mod visual;
 
 pub use emacs::Emacs;
-pub use ex::{SubFlags, ViEx};
+pub use ex::{AddressRange, ExNdRule, ExNode, SubFlags, ViEx};
 pub use insert::ViInsert;
 pub use normal::ViNormal;
 pub use parse::{ParseResult, ViParser};

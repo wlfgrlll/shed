@@ -1,24 +1,27 @@
 use std::iter::Peekable;
+use std::ops::Range;
 use std::path::PathBuf;
-use std::str::Chars;
+use std::rc::Rc;
+use std::str::CharIndices;
+use std::vec::IntoIter;
 
-use itertools::Itertools;
+use itertools::{Itertools, PeekingNext};
 
-use crate::expand::Expander;
+use crate::key;
 use crate::match_loop;
-use crate::parse::lex::TkFlags;
+use crate::parse::lex::{self, LexFlags, LexStream, Span, Tk};
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
-  Anchor, Cmd, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg,
-  To, Verb, WriteDest,
+  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg, To,
+  Verb, WriteDest,
 };
 use crate::readline::editmode::{EditMode, ModeReport};
 use crate::readline::history::History;
 use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
 use crate::state::CursorStyle;
+use crate::util::TkVecUtils;
 use crate::util::error::ShResult;
-use crate::{key, motion, sherr};
 use crate::{status_msg, verb};
 use bitflags::bitflags;
 
@@ -85,11 +88,20 @@ impl EditMode for ViEx {
       key!('\r') | key!(Enter) => {
         let input = self.pending_cmd.editor.buf.joined();
         let res = match parse_ex_input(&input) {
-          Ok(cmd) => Ok(cmd),
-          Err(e) => {
-            let msg = e.unwrap_or_else(|| format!("Not an editor command: {}", &input));
-            status_msg!("{msg}");
-            Err(sherr!(ParseErr, "{msg}"))
+          ExParseResult::Success(node) => {
+            self.pending_cmd.clear();
+
+            Ok(Some(EditCmd {
+              register: RegisterName::default(),
+              verb: Some(verb!(Verb::ExCmd(node))),
+              motion: None,
+              flags: CmdFlags::EXIT_CUR_MODE,
+              raw_seq: input.clone(),
+            }))
+          }
+          ExParseResult::Error(e) => {
+            status_msg!("{e}");
+            Ok(None)
           }
         };
 
@@ -175,481 +187,886 @@ impl EditMode for ViEx {
   }
 }
 
+fn parse_ex_input(input: &str) -> ExP<ExNode> {
+  let lexer = ExLexer::new(input);
+  let tokens = lexer.lex();
+  let parser = ExParser::new(tokens);
+  parser.parse()
+}
+
+bitflags! {
+  struct ExLexFlags: u32 {
+    const LEX_UNFINISHED = 1 << 0;
+  }
+}
+
+const COMMANDS: &[(&str, ExTkRule)] = &[
+  ("substitute", ExTkRule::Substitute),
+  ("global", ExTkRule::Global),
+  ("normal", ExTkRule::Normal),
+  ("delete", ExTkRule::Delete),
+  ("yank", ExTkRule::Yank),
+  ("put", ExTkRule::Put),
+  ("edit", ExTkRule::Edit),
+  ("read", ExTkRule::Read),
+  ("write", ExTkRule::Write),
+  ("stash", ExTkRule::Stash),
+  ("quit", ExTkRule::Quit),
+  ("help", ExTkRule::Help),
+];
+
 #[derive(Debug, Clone)]
-pub struct CharTracker<'a> {
-  chars: Peekable<Chars<'a>>,
-  pos: usize,
+pub enum ExTkRule {
+  Number,
+  Dot,
+  Dollar,
+  Percent,
+  Comma,
+  Offset,
+  Mark,
+  Separator,
+  Bang,
+  NormalSeq,
+  Pattern,
+  Argument,
+
+  Substitute,
+  Global,
+  Normal,
+  Delete,
+  Yank,
+  Put,
+  Edit,
+  Read,
+  Write,
+  Stash,
+  Quit,
+  Help,
+  Command,
+
+  ShellTk(Tk), // delegate to LexStream after '!' appears
 }
 
-impl<'a> CharTracker<'a> {
-  pub fn new(s: &'a str) -> Self {
+impl ExTkRule {
+  pub fn is_addr(&self) -> bool {
+    matches!(
+      self,
+      ExTkRule::Number
+        | ExTkRule::Dot
+        | ExTkRule::Dollar
+        | ExTkRule::Percent
+        | ExTkRule::Comma
+        | ExTkRule::Offset
+        | ExTkRule::Mark
+        | ExTkRule::Pattern
+    )
+  }
+  pub fn is_command(&self) -> bool {
+    matches!(
+      self,
+      ExTkRule::Substitute
+        | ExTkRule::Global
+        | ExTkRule::Normal
+        | ExTkRule::Delete
+        | ExTkRule::Yank
+        | ExTkRule::Put
+        | ExTkRule::Edit
+        | ExTkRule::Read
+        | ExTkRule::Write
+        | ExTkRule::Stash
+        | ExTkRule::Quit
+        | ExTkRule::Help
+        | ExTkRule::Bang
+        | ExTkRule::Command
+    )
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExTk {
+  class: ExTkRule,
+  span: Span,
+}
+
+impl From<Tk> for ExTk {
+  fn from(value: Tk) -> Self {
+    let span = value.span.clone();
+    ExTk {
+      class: ExTkRule::ShellTk(value),
+      span,
+    }
+  }
+}
+
+pub struct ExLexer<'a> {
+  input: Rc<str>,
+  chars: Peekable<CharIndices<'a>>,
+  tokens: Vec<ExTk>,
+
+  flags: ExLexFlags,
+}
+
+impl<'a> ExLexer<'a> {
+  pub fn new(input: &'a str) -> Self {
     Self {
-      chars: s.chars().peekable(),
-      pos: 0,
+      input: input.into(),
+      chars: input.char_indices().peekable(),
+      tokens: vec![],
+      flags: ExLexFlags::empty(),
     }
   }
-  pub fn peek(&mut self) -> Option<&char> {
-    self.chars.peek()
+  pub fn lex(mut self) -> Vec<ExTk> {
+    if self.chars.peek().is_none() {
+      return self.tokens;
+    }
+
+    self.ignoring_ws(&[Self::parse_address, Self::parse_cmd_name, Self::parse_args]);
+
+    self.tokens
   }
-}
-
-impl Iterator for CharTracker<'_> {
-  type Item = char;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    let ch = self.chars.next()?;
-    self.pos += ch.len_utf8();
-    Some(ch)
+  fn skip_whitespace(&mut self) {
+    self
+      .chars
+      .peeking_take_while(|(_, ch)| ch.is_whitespace())
+      .for_each(drop);
   }
-}
+  fn take_alphabetic(&mut self, start: usize) -> usize {
+    let mut end = start;
+    while let Some(&(i, ch)) = self.chars.peek()
+      && ch.is_ascii_alphabetic()
+    {
+      self.chars.next();
+      end = i + ch.len_utf8();
+    }
+    end
+  }
+  fn consume_digits(&mut self, mut end: usize) -> usize {
+    while let Some(&(i, ch)) = self.chars.peek()
+      && ch.is_ascii_digit()
+    {
+      self.chars.next();
+      end = i + ch.len_utf8();
+    }
+    end
+  }
+  fn consume_pattern(&mut self, mut end: usize, delim: char) -> usize {
+    match_loop!(self.chars.next() => (i,ch) => ch, {
+      '\\' => {
+        let Some(&(j,ch)) = self.chars.peek() else {
+          break
+        };
+        self.chars.next();
+        end = j + ch.len_utf8();
+      }
+      _ if ch == delim => {
+        end = i + ch.len_utf8();
+        return end
+      }
+      _ => end = i + ch.len_utf8(),
+    });
 
-impl<'a> itertools::PeekingNext for CharTracker<'a> {
-  fn peeking_next<F>(&mut self, accept: F) -> Option<Self::Item>
+    self.flags |= ExLexFlags::LEX_UNFINISHED;
+    end
+  }
+  fn peek_pos(&mut self) -> Option<usize> {
+    self.chars.peek().map(|(i, _)| *i)
+  }
+  fn peeking_next<F>(&mut self, accept: F) -> Option<(usize, char)>
   where
-    Self: Sized,
-    F: FnOnce(&Self::Item) -> bool,
+    F: FnOnce(&char) -> bool,
   {
-    let ch = self.chars.peek().copied()?;
-    accept(&ch).then(|| self.next()).flatten()
+    let &(_, ch) = self.chars.peek()?;
+    accept(&ch).then(|| self.chars.next()).flatten()
   }
-}
+  fn get_span(&self, range: Range<usize>) -> Option<Span> {
+    self.input.get(range.clone())?;
 
-pub fn parse_ex_input(raw: &str) -> Result<Option<EditCmd>, Option<String>> {
-  let raw = raw.trim();
-  if raw.is_empty() {
-    return Ok(None);
+    Some(Span::new(range, self.input.clone()))
   }
-  let mut chars = CharTracker::new(raw);
-  let mut motion = parse_ex_address(&mut chars)?.map(|m| motion!(m));
-  log::debug!("Parsed motion: {:?}", motion);
-  let verb = {
-    if chars.peek() == Some(&'g') {
-      let mut cmd_name = String::new();
-      while let Some(ch) = chars.peek() {
-        if ch.is_alphanumeric() {
-          cmd_name.push(*ch);
-          chars.next();
-        } else {
-          break;
+  fn is_addr_opener(ch: &(usize, char)) -> bool {
+    let ch = ch.1;
+    ch.is_ascii_digit() || ".$+-'/?".contains(ch)
+  }
+  fn get_token(&self, range: Range<usize>, rule: ExTkRule) -> Option<ExTk> {
+    let span = self.get_span(range)?;
+    Some(ExTk { class: rule, span })
+  }
+  fn get_pattern_token(&self, range: Range<usize>) -> Option<ExTk> {
+    // strip delimiter chars
+    let span = self.get_span(range.start + 1..range.end.saturating_sub(1))?;
+    Some(ExTk {
+      class: ExTkRule::Pattern,
+      span,
+    })
+  }
+  /// Lets us skip whitespace between every individual parsing step.
+  ///
+  /// Takes a function pointer array and calls self.skip_whitespace() between
+  /// function call.
+  ///
+  /// Panics if `funcs` is empty.
+  fn ignoring_ws<T>(&mut self, funcs: &[fn(&mut Self) -> T]) -> T {
+    debug_assert!(!funcs.is_empty());
+    self.skip_whitespace();
+    let mut res = None;
+    for f in funcs {
+      res = Some(f(self));
+      self.skip_whitespace();
+    }
+
+    // if funcs is not empty, this is safe
+    // and funcs is not empty as per the assertion above
+    res.unwrap()
+  }
+  fn command(&self) -> Option<&ExTk> {
+    self
+      .tokens
+      .iter()
+      .rev()
+      .find(|tk| tk.class.is_command() && !matches!(tk.class, ExTkRule::Bang))
+      .or_else(|| {
+        self
+          .tokens
+          .iter()
+          .rev()
+          .find(|tk| matches!(tk.class, ExTkRule::Bang))
+      })
+  }
+  fn parse_substitute_arg(&mut self) {
+    let Some((start, first)) = self.chars.peeking_next(|(_, ch)| !ch.is_alphanumeric()) else {
+      return;
+    };
+    let delim = first;
+
+    let end_before = self.consume_pattern(start, delim);
+    let Some(before) = self.get_pattern_token(start..end_before) else {
+      return;
+    };
+    self.tokens.push(before);
+
+    if self.chars.peek().is_none() {
+      return;
+    }
+
+    let end_after = self.consume_pattern(end_before, delim);
+    let Some(after) = self.get_pattern_token(end_before.saturating_sub(1)..end_after) else {
+      return;
+    };
+    self.tokens.push(after);
+
+    if self.chars.peek().is_none() {
+      return;
+    }
+
+    let end_flags = self.take_alphabetic(end_after);
+    let Some(flags) = self.get_token(end_after..end_flags, ExTkRule::Argument) else {
+      return;
+    };
+    self.tokens.push(flags);
+  }
+  fn parse_global_arg(&mut self) {
+    let Some((start, first)) = self.chars.peeking_next(|(_, ch)| !ch.is_alphanumeric()) else {
+      return;
+    };
+    let delim = first;
+
+    let end_before = self.consume_pattern(start, delim);
+    let Some(before) = self.get_pattern_token(start..end_before) else {
+      return;
+    };
+    self.tokens.push(before);
+
+    if self.chars.peek().is_none() {
+      return;
+    }
+
+    // recursively parse the command
+    self.ignoring_ws(&[Self::parse_address, Self::parse_cmd_name, Self::parse_args])
+  }
+  fn parse_normal_seq(&mut self) {
+    // everything after this is parsed as a single literal arg
+    let Some((start, ch)) = self.chars.next() else {
+      return;
+    };
+    let mut end = start + ch.len_utf8();
+    while let Some((i, ch)) = self.chars.next() {
+      end = i + ch.len_utf8();
+    }
+    if let Some(tk) = self.get_token(start..end, ExTkRule::NormalSeq) {
+      self.tokens.push(tk);
+    }
+  }
+  fn parse_args(&mut self) {
+    let Some(cmd) = self.command() else { return };
+
+    match cmd.class {
+      ExTkRule::Substitute => self.parse_substitute_arg(),
+      ExTkRule::Global => self.parse_global_arg(),
+      ExTkRule::Normal => self.parse_normal_seq(),
+      ExTkRule::Bang => self.parse_shell_cmd(),
+      _ => {
+        // Some command like 'edit' or 'write' or something that just expects words
+        // These are subject to shell expansion, so we use LexStream for these
+        let Some(start_pos) = self.peek_pos() else {
+          return;
+        };
+        let rest = self.chars.by_ref().map(|(_, ch)| ch).collect::<String>();
+        let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
+          .filter_map(Result::ok)
+          .filter_map(|tk| tk.filter_meta().then_some(tk))
+          .map(ExTk::from);
+
+        for mut tk in stream {
+          let inner = tk.span.range();
+          tk.span = Span::new(
+            (inner.start + start_pos)..(inner.end + start_pos),
+            self.input.clone(),
+          );
+          self.tokens.push(tk);
         }
       }
-      if !"global".starts_with(&cmd_name) {
-        return Err(None);
+    }
+  }
+  fn classify_cmd(name: &str) -> ExTkRule {
+    if name.is_empty() {
+      return ExTkRule::Command;
+    }
+    for (full, rule) in COMMANDS {
+      if full.starts_with(name) {
+        return (*rule).clone();
       }
-      let Some(result) = parse_global(&mut chars, motion.as_ref().map(|mcmd| &mcmd.1))? else {
-        return Ok(None);
+    }
+    ExTkRule::Command
+  }
+  fn parse_cmd_name(&mut self) {
+    let Some(&(start, first)) = self.chars.peek() else {
+      return;
+    };
+    if !first.is_ascii_alphabetic() && first != '!' {
+      return;
+    }
+
+    let mut end = start;
+    match_loop!(self.chars.peek() => &(i,ch) => ch, {
+      '!' => {
+        let cmd_name = &self.input[start..i];
+        let cmd_rule = Self::classify_cmd(cmd_name);
+
+        if end > start {
+          let Some(tk) = self.get_token(start..end, cmd_rule) else { return };
+          self.tokens.push(tk);
+        }
+
+        let Some(tk) = self.get_token(i..i+1, ExTkRule::Bang) else { return };
+        self.tokens.push(tk);
+        self.chars.next();
+
+        return
+      }
+      _ if ch.is_ascii_alphabetic() || ch == '_' => {
+        self.chars.next();
+        end = i + ch.len_utf8();
+      }
+      _ => break
+    });
+
+    let cmd_name = &self.input[start..end];
+    let cmd_rule = Self::classify_cmd(cmd_name);
+
+    let Some(tk) = self.get_token(start..end, cmd_rule) else {
+      return;
+    };
+    self.tokens.push(tk);
+  }
+  fn parse_shell_cmd(&mut self) {
+    let Some(start_pos) = self.peek_pos() else {
+      return;
+    };
+    let mut rest = String::new();
+    while let Some((_, ch)) = self.chars.next() {
+      rest.push(ch)
+    }
+
+    let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
+      .filter_map(Result::ok)
+      .filter_map(|tk| tk.filter_meta().then_some(tk))
+      .map(ExTk::from);
+
+    for mut tk in stream {
+      // The inner LexStream's span points into `rest`; rebuild against the
+      // outer input with absolute byte offsets.
+      let inner = tk.span.range();
+      tk.span = Span::new(
+        (inner.start + start_pos)..(inner.end + start_pos),
+        self.input.clone(),
+      );
+      self.tokens.push(tk);
+    }
+  }
+  fn parse_address(&mut self) {
+    if let Some((i, _)) = self.chars.peeking_next(|&(_, ch)| ch == '%')
+      && let Some(tk) = self.get_token(i..i + 1, ExTkRule::Percent)
+    {
+      self.tokens.push(tk);
+      return;
+    }
+    if !self.parse_one_addr() {
+      return;
+    }
+
+    self.ignoring_ws(&[|this| {
+      let Some((i, _)) = this.peeking_next(|c| *c == ',') else {
+        return;
       };
-      motion = Some(motion!(result.0));
-      Some(Cmd(1, result.1))
+      let Some(tk) = this.get_token(i..i + 1, ExTkRule::Comma) else {
+        return;
+      };
+      this.tokens.push(tk);
+    }]);
+
+    self.parse_one_addr();
+  }
+  fn parse_one_addr(&mut self) -> bool {
+    let Some((start, first)) = self.chars.peeking_next(Self::is_addr_opener) else {
+      return false;
+    };
+
+    let (end, rule) = match first {
+      '.' => (start + 1, ExTkRule::Dot),
+      '$' => (start + 1, ExTkRule::Dollar),
+      '0'..='9' => {
+        let end = self.consume_digits(start + 1);
+        (end, ExTkRule::Number)
+      }
+      '+' | '-' => {
+        let end = self.consume_digits(start + 1);
+        (end, ExTkRule::Offset)
+      }
+      '\'' => {
+        let Some((i, c)) = self.chars.next() else {
+          self.flags |= ExLexFlags::LEX_UNFINISHED;
+          return false;
+        };
+        (i + c.len_utf8(), ExTkRule::Mark)
+      }
+      '/' | '?' => {
+        let end = self.consume_pattern(start + 1, first);
+        (end, ExTkRule::Pattern)
+      }
+      _ => return false, // unreachable probably
+    };
+
+    if matches!(rule, ExTkRule::Pattern) {
+      if let Some(tk) = self.get_pattern_token(start..end) {
+        self.tokens.push(tk);
+        true
+      } else {
+        false
+      }
     } else {
-      parse_ex_command(&mut chars)?.map(|v| verb!(v))
-    }
-  };
-  if motion.is_none() && !matches!(verb, Some(Cmd(_, Verb::Write(_) | Verb::ShellCmd(_)))) {
-    motion = Some(motion!(Motion::Line(LineAddr::Current)))
-  }
-
-  Ok(Some(EditCmd {
-    register: RegisterName::default(),
-    verb,
-    motion,
-    raw_seq: raw.to_string(),
-    flags: CmdFlags::EXIT_CUR_MODE | CmdFlags::IS_EX_CMD,
-  }))
-}
-
-pub fn parse_ex_address(chars: &mut CharTracker<'_>) -> Result<Option<Motion>, Option<String>> {
-  if chars.peek() == Some(&'%') {
-    chars.next();
-    return Ok(Some(Motion::LineRange(LineAddr::Number(1), LineAddr::Last)));
-  }
-
-  let mut chars_clone = chars.clone();
-  let Some(start) = parse_one_addr(&mut chars_clone)? else {
-    return Ok(None);
-  };
-  *chars = chars_clone.clone();
-
-  if let Some(&',') = chars.peek()
-    && let Some(end) = {
-      chars_clone.next();
-      parse_one_addr(&mut chars_clone)?
-    }
-  {
-    *chars = chars_clone;
-    Ok(Some(Motion::LineRange(start, end)))
-  } else {
-    *chars = chars_clone;
-    Ok(Some(Motion::Line(start)))
-  }
-}
-
-pub fn parse_one_addr(chars: &mut CharTracker<'_>) -> Result<Option<LineAddr>, Option<String>> {
-  let Some(first) = chars.next() else {
-    return Ok(None);
-  };
-  match first {
-    '0'..='9' => {
-      let mut digits = String::new();
-      digits.push(first);
-      digits.extend(chars.peeking_take_while(|c| c.is_ascii_digit()));
-
-      let number = digits.parse::<usize>().map_err(|_| None)?;
-
-      Ok(Some(LineAddr::Number(number)))
-    }
-    '\'' => {
-      let Some(ch) = chars.next() else {
-        return Err(Some("Expected mark name after ' in ex address".into()));
-      };
-      if !ch.is_ascii_lowercase() && !"<>[]^.'`".contains(ch) {
-        return Err(Some(format!("Invalid mark name in ex address: {ch}")));
+      if let Some(tk) = self.get_token(start..end, rule) {
+        self.tokens.push(tk);
+        true
+      } else {
+        false
       }
-      Ok(Some(LineAddr::Mark(ch)))
     }
-    '+' | '-' => {
-      let mut digits = String::new();
-      digits.push(first);
-      digits.extend(chars.peeking_take_while(|c| c.is_ascii_digit()));
+  }
+}
 
-      let number = digits.parse::<isize>().map_err(|_| None)?;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExNdRule {
+  Delete,
+  Yank,
+  Put(Anchor),
+  Quit,
 
-      Ok(Some(LineAddr::Offset(number)))
+  Edit(Box<[PathBuf]>),
+  Read(ReadSrc),
+  Write(WriteDest),
+
+  Substitute {
+    pat: String,
+    repl: String,
+    flags: SubFlags,
+  },
+  Global {
+    negated: bool,
+    pat: String,
+    nested: Box<ExNode>,
+  },
+  RepeatSubstitute,
+  RepeatGlobal,
+
+  Normal {
+    seq: String,
+  },
+  Shell(String),
+
+  Stash(StashArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddressRange {
+  Single(LineAddr),
+  Range(LineAddr, LineAddr),
+}
+
+impl AddressRange {
+  pub const fn all_lines() -> Self {
+    Self::Range(LineAddr::Number(1), LineAddr::Last)
+  }
+  pub fn as_motion(&self) -> Motion {
+    match self {
+      AddressRange::Single(line) => Motion::Line(line.clone()),
+      AddressRange::Range(s, e) => Motion::LineRange(s.clone(), e.clone()),
     }
-    '/' | '?' => {
-      let mut pattern = String::new();
-      while let Some(ch) = chars.next() {
+  }
+}
+
+impl Default for AddressRange {
+  fn default() -> Self {
+    Self::Single(LineAddr::Current)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExNode {
+  pub address: Option<AddressRange>,
+  pub kind: ExNdRule,
+}
+
+pub enum ExParseResult<T> {
+  Success(T),
+  Error(String),
+}
+use ExParseResult as ExP;
+
+enum ExInnerParseResult<T> {
+  Done(ExParseResult<T>),
+  NoMatch,
+}
+use ExInnerParseResult as ExR;
+
+impl<T> ExInnerParseResult<T> {
+  pub fn success(value: T) -> Self {
+    ExInnerParseResult::Done(ExP::Success(value))
+  }
+  pub fn error(msg: String) -> Self {
+    ExInnerParseResult::Done(ExP::Error(msg))
+  }
+}
+
+enum ExInnerPartialParseResult<T, P> {
+  Full(T),
+  Partial(P),
+}
+use ExInnerPartialParseResult as ExPR;
+
+#[derive(Debug, Clone)]
+pub struct ExParser {
+  tokens: Peekable<IntoIter<ExTk>>,
+}
+
+impl ExParser {
+  pub fn new(tokens: Vec<ExTk>) -> Self {
+    let tokens = tokens.into_iter().peekable();
+    Self { tokens }
+  }
+  pub fn parse(mut self) -> ExP<ExNode> {
+    let address = match self.parse_address() {
+      ExR::Done(ExP::Success(addr)) => Some(addr),
+      ExR::Done(ExP::Error(msg)) => return ExP::Error(msg),
+      ExR::NoMatch => None,
+    };
+
+    let kind = match self.parse_command() {
+      ExR::Done(ExP::Success(cmd)) => cmd,
+      ExR::Done(ExP::Error(msg)) => return ExP::Error(msg),
+      ExR::NoMatch => return ExP::Error("expected command".into()),
+    };
+
+    ExP::Success(ExNode { address, kind })
+  }
+
+  fn parse_address(&mut self) -> ExR<AddressRange> {
+    let Some(tk) = self.tokens.peeking_next(|tk| tk.class.is_addr()) else {
+      return ExR::NoMatch;
+    };
+
+    let resolved = match Self::parse_one_address(&tk) {
+      ExPR::Partial(addr) => addr,
+      ExPR::Full(motion) => return ExR::success(motion),
+    };
+
+    if self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Comma))
+      .is_none()
+    {
+      return ExR::success(AddressRange::Single(resolved));
+    };
+
+    let Some(end_tk) = self.tokens.peeking_next(|tk| tk.class.is_addr()) else {
+      return ExR::error("expected second address after ','".into());
+    };
+
+    let resolved_end = match Self::parse_one_address(&end_tk) {
+      ExPR::Partial(addr) => addr,
+      ExPR::Full(motion) => return ExR::success(motion),
+    };
+
+    ExR::success(AddressRange::Range(resolved, resolved_end))
+  }
+  fn parse_one_address(tk: &ExTk) -> ExPR<AddressRange, LineAddr> {
+    match tk.class {
+      ExTkRule::Number => {
+        let addr = tk.span.as_str().parse::<usize>().unwrap_or(1);
+        ExPR::Partial(LineAddr::Number(addr))
+      }
+      ExTkRule::Dot => ExPR::Partial(LineAddr::Current),
+      ExTkRule::Dollar => ExPR::Partial(LineAddr::Last),
+      ExTkRule::Percent => ExPR::Full(AddressRange::all_lines()),
+      ExTkRule::Offset => {
+        let s = tk
+          .span
+          .as_str()
+          .strip_prefix("+")
+          .unwrap_or(tk.span.as_str());
+
+        let offset = s.parse::<isize>().unwrap_or(1);
+        ExPR::Partial(LineAddr::Offset(offset))
+      }
+      ExTkRule::Mark => {
+        let mark_name = tk.span.as_str().chars().nth(1).unwrap();
+
+        ExPR::Partial(LineAddr::Mark(mark_name))
+      }
+      _ => unreachable!(),
+    }
+  }
+  fn parse_command(&mut self) -> ExR<ExNdRule> {
+    let Some(tk) = self.tokens.peeking_next(|tk| tk.class.is_command()) else {
+      return ExR::NoMatch;
+    };
+
+    match &tk.class {
+      ExTkRule::Read | ExTkRule::Write => self.parse_read_write(&tk.class),
+      ExTkRule::Substitute => self.parse_substitute(),
+      ExTkRule::Global => self.parse_global(),
+      ExTkRule::Normal => self.parse_normal(),
+      ExTkRule::Edit => self.parse_edit(),
+      ExTkRule::Stash => self.parse_stash(),
+      ExTkRule::Help => self.parse_help(),
+      ExTkRule::Bang => self.parse_shell(),
+      ExTkRule::Delete => ExR::success(ExNdRule::Delete),
+      ExTkRule::Yank => ExR::success(ExNdRule::Yank),
+      ExTkRule::Put => ExR::success(ExNdRule::Put(Anchor::After)),
+      ExTkRule::Quit => ExR::success(ExNdRule::Quit),
+      ExTkRule::Command => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
+      _ => unreachable!(),
+    }
+  }
+  fn parse_shell(&mut self) -> ExR<ExNdRule> {
+    let mut args = vec![];
+    while let Some(arg) = self.tokens.next() {
+      // wrap in Tk so we can use get_span()
+      args.push(Tk::new(lex::TkRule::Str, arg.span));
+    }
+    let args_raw = args
+      .get_span() // extract total span of arg tokens
+      .map(|s| s.as_str().to_string())
+      .unwrap_or_default();
+
+    ExR::success(ExNdRule::Shell(args_raw))
+  }
+  fn parse_help(&mut self) -> ExR<ExNdRule> {
+    let mut args = vec![];
+    while let Some(arg) = self.tokens.next() {
+      args.push(Tk::new(lex::TkRule::Str, arg.span));
+    }
+    let args_raw = args
+      .get_span() // extract total span of arg tokens
+      .map(|s| s.as_str().to_string());
+
+    let cmd = if let Some(args) = args_raw {
+      ["help", &args].join(" ")
+    } else {
+      "help".to_string()
+    };
+
+    ExR::success(ExNdRule::Shell(cmd))
+  }
+  fn parse_normal(&mut self) -> ExR<ExNdRule> {
+    self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang));
+
+    let Some(tk) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::NormalSeq))
+    else {
+      return ExR::error("expected normal command sequence after 'normal'".into());
+    };
+
+    let seq = tk.span.as_str().to_string();
+    ExR::success(ExNdRule::Normal { seq })
+  }
+  fn parse_stash(&mut self) -> ExR<ExNdRule> {
+    let arg_names = ["pop", "drop", "apply", "insert", "swap", "list"];
+    let arg = self.tokens.next().map(|tk| tk.span.as_str().to_string());
+    if arg.is_none() {
+      return ExR::success(ExNdRule::Stash(StashArgs::Push(None)));
+    } else if !arg_names
+      .iter()
+      .any(|name| name.starts_with(arg.as_ref().unwrap()))
+    {
+      return ExR::success(ExNdRule::Stash(StashArgs::Push(arg)));
+    }
+
+    let name = self.tokens.next().map(|tk| tk.span.as_str().to_string());
+    let arg = arg.unwrap();
+    match arg.as_str() {
+      _ if arg.starts_with("pop") => ExR::success(ExNdRule::Stash(StashArgs::Pop(name))),
+      _ if arg.starts_with("drop") => ExR::success(ExNdRule::Stash(StashArgs::Drop(name))),
+      _ if arg.starts_with("apply") => ExR::success(ExNdRule::Stash(StashArgs::Apply(name))),
+      _ if arg.starts_with("insert") => ExR::success(ExNdRule::Stash(StashArgs::Insert(name))),
+      _ if arg.starts_with("swap") => ExR::success(ExNdRule::Stash(StashArgs::Swap(name))),
+      _ if arg.starts_with("list") => {
+        let target = name
+          .map(|n| match n.as_str() {
+            _ if "stack".starts_with(n.trim()) => Ok(Some(StashListArg::Stack)),
+            _ if "named".starts_with(n.trim()) => Ok(Some(StashListArg::Named)),
+            _ => Err(ExR::error(format!("invalid stash list argument: {}", n))),
+          })
+          .transpose();
+        let target = match target {
+          Ok(t) => t,
+          Err(e) => return e,
+        };
+
+        ExR::success(ExNdRule::Stash(StashArgs::List(target.flatten())))
+      }
+      _ => ExR::error(format!("invalid stash argument: {}", arg)),
+    }
+  }
+  fn parse_substitute(&mut self) -> ExR<ExNdRule> {
+    let Some(pat) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+    else {
+      // Bare `:s` with no arguments — repeat the last substitute
+      return ExR::success(ExNdRule::RepeatSubstitute);
+    };
+    let Some(repl) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+    else {
+      return ExR::error("expected replacement argument for substitute command".into());
+    };
+    let flags_tk = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Argument));
+    let pat = pat.span.as_str().to_string();
+    let repl = repl.span.as_str().to_string();
+
+    let mut flags = SubFlags::empty();
+    if let Some(flags_tk) = flags_tk {
+      let flags_str = flags_tk.span.as_str();
+      for ch in flags_str.chars() {
         match ch {
-          '\\' => {
-            pattern.push('\\');
-            if let Some(esc_ch) = chars.next() {
-              pattern.push(esc_ch)
-            }
-          }
-          _ if ch == first => break,
-          _ => pattern.push(ch),
-        }
-      }
-      match first {
-        '/' => Ok(Some(LineAddr::Pattern(pattern))),
-        '?' => Ok(Some(LineAddr::PatternRev(pattern))),
-        _ => unreachable!(),
-      }
-    }
-    '.' => Ok(Some(LineAddr::Current)),
-    '$' => Ok(Some(LineAddr::Last)),
-    _ => Ok(None),
-  }
-}
-
-/// Unescape shell command arguments
-fn unescape_shell_cmd(cmd: &str) -> String {
-  let mut result = String::new();
-  let mut chars = cmd.chars().peekable();
-
-  match_loop!(chars.next() => ch, {
-    '\\' => {
-      if let Some(&'"') = chars.peek() {
-        chars.next();
-        result.push('"');
-      } else {
-        result.push(ch);
-      }
-    }
-    _ => result.push(ch),
-  });
-
-  result
-}
-
-pub fn parse_ex_command_name(chars: &mut CharTracker<'_>) -> String {
-  log::debug!(
-    "Parsing ex command from: {}",
-    chars.clone().collect::<String>()
-  );
-  let mut cmd_name = String::new();
-
-  match_loop!(chars.peek() => ch, {
-    '!' if cmd_name.is_empty() || cmd_name == "normal" => {
-      cmd_name.push(*ch);
-      chars.next();
-      break
-    }
-    _ if ch.is_alphanumeric() => {
-      cmd_name.push(*ch);
-      chars.next();
-    }
-    _ => break,
-  });
-
-  cmd_name
-}
-
-pub fn parse_ex_command(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  log::debug!(
-    "Parsing ex command from: {}",
-    chars.clone().collect::<String>()
-  );
-  let cmd_name = parse_ex_command_name(chars);
-
-  if cmd_name.is_empty() {
-    return Ok(None);
-  }
-  match cmd_name.as_str() {
-    "!" => {
-      let cmd = chars.collect::<String>();
-      let cmd = unescape_shell_cmd(&cmd);
-      Ok(Some(Verb::ShellCmd(cmd)))
-    }
-    _ if "help".starts_with(&cmd_name) => {
-      let cmd = "help ".to_string() + chars.collect::<String>().trim();
-      log::debug!("Parsed help command: {}", cmd);
-      Ok(Some(Verb::ShellCmd(cmd)))
-    }
-    _ if cmd_name.starts_with("normal!") => parse_normal(chars),
-    _ if "delete".starts_with(&cmd_name) => Ok(Some(Verb::Delete)),
-    _ if "yank".starts_with(&cmd_name) => Ok(Some(Verb::Yank)),
-    _ if "put".starts_with(&cmd_name) => Ok(Some(Verb::Put(Anchor::After))),
-    _ if "quit".starts_with(&cmd_name) => Ok(Some(Verb::Quit)),
-    _ if "read".starts_with(&cmd_name) => parse_read(chars),
-    _ if "write".starts_with(&cmd_name) => parse_write(chars),
-    _ if "edit".starts_with(&cmd_name) => parse_edit(chars),
-    _ if "substitute".starts_with(&cmd_name) => parse_substitute(chars),
-    _ if "stash".starts_with(&cmd_name) => parse_stash(chars),
-    _ => Err(None),
-  }
-}
-
-pub fn parse_normal(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-
-  let seq: String = chars.collect();
-  Ok(Some(Verb::Normal(seq)))
-}
-
-pub fn parse_stash(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-  let arg_names = ["pop", "drop", "apply", "insert", "swap", "list"];
-
-  let mut arg = String::new();
-  while chars.peek().is_some_and(|c| c.is_ascii_alphabetic()) {
-    arg.push(chars.next().unwrap());
-  }
-
-  if arg.is_empty() {
-    return Ok(Some(Verb::Stash(StashArgs::Push(None))));
-  } else if !arg_names.iter().any(|name| name.starts_with(arg.as_str())) {
-    return Ok(Some(Verb::Stash(StashArgs::Push(Some(arg)))));
-  }
-
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-  let mut name = String::new();
-
-  while chars.peek().is_some_and(|c| !c.is_whitespace()) {
-    name.push(chars.next().unwrap());
-  }
-
-  let name = (!name.is_empty()).then_some(name);
-  match arg.as_str() {
-    _ if "pop".starts_with(arg.as_str()) => Ok(Some(Verb::Stash(StashArgs::Pop(name)))),
-    _ if "drop".starts_with(arg.as_str()) => Ok(Some(Verb::Stash(StashArgs::Drop(name)))),
-    _ if "apply".starts_with(arg.as_str()) => Ok(Some(Verb::Stash(StashArgs::Apply(name)))),
-    _ if "insert".starts_with(arg.as_str()) => Ok(Some(Verb::Stash(StashArgs::Insert(name)))),
-    _ if "swap".starts_with(arg.as_str()) => Ok(Some(Verb::Stash(StashArgs::Swap(name)))),
-    _ if "list".starts_with(arg.as_str()) => {
-      let target = name
-        .map(|n| match n.as_str() {
-          _ if "stack".starts_with(n.trim()) => Ok(Some(StashListArg::Stack)),
-          _ if "named".starts_with(n.trim()) => Ok(Some(StashListArg::Named)),
-          _ => Err(Some(format!("Invalid stash list target: {}", n))),
-        })
-        .transpose()?
-        .flatten();
-
-      Ok(Some(Verb::Stash(StashArgs::List(target))))
-    }
-    _ => Err(Some(format!("Unknown stash command: {}", arg))),
-  }
-}
-
-pub fn parse_edit(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-
-  let arg: String = chars.collect();
-  if arg.trim().is_empty() {
-    return Err(Some("Expected file path after ':edit'".into()));
-  }
-  let arg_path = get_path(arg.trim())?;
-  Ok(Some(Verb::Edit(arg_path)))
-}
-
-pub fn parse_read(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-
-  let is_shell_read = if chars.peek() == Some(&'!') {
-    chars.next();
-    true
-  } else {
-    false
-  };
-  let arg: String = chars.collect();
-
-  if arg.trim().is_empty() {
-    return Err(Some(
-      "Expected file path or shell command after ':r'".into(),
-    ));
-  }
-
-  if is_shell_read {
-    Ok(Some(Verb::Read(ReadSrc::Cmd(arg))))
-  } else {
-    let arg_path = get_path(arg.trim())?;
-    Ok(Some(Verb::Read(ReadSrc::File(arg_path))))
-  }
-}
-
-fn get_path(path: &str) -> Result<PathBuf, Option<String>> {
-  log::debug!("Expanding path: {}", path);
-  let expanded = Expander::from_raw(path, TkFlags::empty())
-    .map_err(|e| Some(format!("Error expanding path: {}", e)))?
-    .expand()
-    .map_err(|e| Some(format!("Error expanding path: {}", e)))?
-    .join(" ");
-  log::debug!("Expanded path: {}", expanded);
-  Ok(PathBuf::from(&expanded))
-}
-
-pub fn parse_write(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop);
-
-  let is_shell_write = chars.peek() == Some(&'!');
-  if is_shell_write {
-    chars.next(); // consume '!'
-    let arg: String = chars.collect();
-    return Ok(Some(Verb::Write(WriteDest::Cmd(arg))));
-  }
-
-  // Check for >>
-  let mut append_check = chars.clone();
-  let is_file_append = append_check.next() == Some('>') && append_check.next() == Some('>');
-  if is_file_append {
-    *chars = append_check;
-  }
-
-  let arg: String = chars.collect();
-  let arg_path = get_path(arg.trim())?;
-
-  let dest = if is_file_append {
-    WriteDest::FileAppend(arg_path)
-  } else {
-    WriteDest::File(arg_path)
-  };
-
-  Ok(Some(Verb::Write(dest)))
-}
-
-pub fn parse_global(
-  chars: &mut CharTracker<'_>,
-  constraint: Option<&Motion>,
-) -> Result<Option<(Motion, Verb)>, Option<String>> {
-  let is_negated = if chars.peek() == Some(&'!') {
-    chars.next();
-    true
-  } else {
-    false
-  };
-
-  chars
-    .peeking_take_while(|c| c.is_whitespace())
-    .for_each(drop); // Ignore whitespace
-
-  let Some(delimiter) = chars.next() else {
-    return Ok(Some((Motion::Null, Verb::RepeatGlobal)));
-  };
-  if delimiter.is_alphanumeric() {
-    return Err(None);
-  }
-  let global_pat = parse_pattern(chars, delimiter)?;
-  let Some(command) = parse_ex_command(chars)? else {
-    return Err(Some("Expected a command after global pattern".into()));
-  };
-  let constraint = Box::new(
-    constraint
-      .cloned()
-      .unwrap_or(Motion::LineRange(LineAddr::Number(1), LineAddr::Last)),
-  );
-  if is_negated {
-    Ok(Some((Motion::NotGlobal(constraint, global_pat), command)))
-  } else {
-    Ok(Some((Motion::Global(constraint, global_pat), command)))
-  }
-}
-
-pub fn parse_substitute(chars: &mut CharTracker<'_>) -> Result<Option<Verb>, Option<String>> {
-  while chars.peek().is_some_and(|c| c.is_whitespace()) {
-    chars.next();
-  } // Ignore whitespace
-
-  let Some(delimiter) = chars.next() else {
-    return Ok(Some(Verb::RepeatSubstitute));
-  };
-  if delimiter.is_alphanumeric() {
-    return Err(None);
-  }
-  let old_pat = parse_pattern(chars, delimiter)?;
-  let new_pat = parse_pattern(chars, delimiter)?;
-  let mut flags = SubFlags::empty();
-  match_loop!(chars.next() => ch, {
-    'g' => flags |= SubFlags::GLOBAL,
-    'i' => flags |= SubFlags::IGNORE_CASE,
-    'I' => flags |= SubFlags::NO_IGNORE_CASE,
-    'n' => flags |= SubFlags::SHOW_COUNT,
-    _ => return Err(None),
-  });
-  Ok(Some(Verb::Substitute(old_pat, new_pat, flags)))
-}
-
-pub fn parse_pattern(
-  chars: &mut CharTracker<'_>,
-  delimiter: char,
-) -> Result<String, Option<String>> {
-  let mut pat = String::new();
-  let mut closed = false;
-  match_loop!(chars.next() => ch, {
-    '\\' => {
-      if chars.peek().is_some_and(|c| *c == delimiter) {
-        // We escaped the delimiter, so we consume the escape char and continue
-        pat.push(chars.next().unwrap());
-        continue;
-      } else {
-        // The escape char is probably for the regex in the pattern
-        pat.push(ch);
-        if let Some(esc_ch) = chars.next() {
-          pat.push(esc_ch)
+          'g' => flags |= SubFlags::GLOBAL,
+          'c' => flags |= SubFlags::CONFIRM,
+          'i' => flags |= SubFlags::IGNORE_CASE,
+          'I' => flags |= SubFlags::NO_IGNORE_CASE,
+          'n' => flags |= SubFlags::SHOW_COUNT,
+          'p' => flags |= SubFlags::PRINT_RESULT,
+          '#' => flags |= SubFlags::PRINT_NUMBERED,
+          'l' => flags |= SubFlags::PRINT_LEFT_ALIGN,
+          _ => return ExR::error(format!("invalid substitute flag: {}", ch)),
         }
       }
     }
-    _ if ch == delimiter => {
-      closed = true;
-      break;
+
+    ExR::success(ExNdRule::Substitute { pat, repl, flags })
+  }
+  fn parse_global(&mut self) -> ExR<ExNdRule> {
+    let negated = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
+      .is_some();
+    let Some(pat) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+    else {
+      // Bare `:g` with no arguments — repeat the last global
+      return ExR::success(ExNdRule::RepeatGlobal);
+    };
+
+    // drain tokens into this
+    let mut rest = vec![];
+    while let Some(tk) = self.tokens.next() {
+      rest.push(tk);
     }
-    _ => pat.push(ch),
-  });
-  if !closed {
-    Err(Some("Unclosed pattern in ex command".into()))
-  } else {
-    Ok(pat)
+
+    let nested_parser = ExParser::new(rest);
+    let sub_node = match nested_parser.parse() {
+      ExP::Success(cmd) => cmd,
+      ExP::Error(msg) => return ExR::error(msg),
+    };
+
+    ExR::success(ExNdRule::Global {
+      negated,
+      pat: pat.span.as_str().to_string(),
+      nested: Box::new(sub_node),
+    })
+  }
+  fn parse_edit(&mut self) -> ExR<ExNdRule> {
+    let mut args = vec![];
+    while let Some(arg) = self.tokens.next() {
+      let path = PathBuf::from(arg.span.as_str().to_string());
+      args.push(path);
+    }
+    let args = args.into_boxed_slice();
+
+    ExR::success(ExNdRule::Edit(args))
+  }
+  fn parse_read_write(&mut self, rule: &ExTkRule) -> ExR<ExNdRule> {
+    let is_read = matches!(rule, ExTkRule::Read);
+    let is_shell_arg = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
+      .is_some();
+
+    if is_shell_arg {
+      let mut args = vec![];
+      for tk in &mut self.tokens {
+        args.push(Tk::new(lex::TkRule::Str, tk.span.clone()));
+      }
+      let args_raw = args
+        .get_span() // extract total span of arg tokens
+        .map(|s| s.as_str().to_string())
+        .unwrap_or_default();
+
+      if is_read {
+        ExR::success(ExNdRule::Read(ReadSrc::Cmd(args_raw)))
+      } else {
+        ExR::success(ExNdRule::Write(WriteDest::Cmd(args_raw)))
+      }
+    } else {
+      let Some(arg) = self.tokens.next() else {
+        return ExR::error(format!(
+          "expected {} argument for read command",
+          if is_shell_arg { "shell" } else { "file" }
+        ));
+      };
+      let arg = arg.span.as_str();
+
+      if is_read {
+        ExR::success(ExNdRule::Read(ReadSrc::File(PathBuf::from(arg))))
+      } else {
+        ExR::success(ExNdRule::Write(WriteDest::File(PathBuf::from(arg))))
+      }
+    }
   }
 }
