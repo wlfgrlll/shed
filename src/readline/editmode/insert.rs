@@ -1,9 +1,12 @@
-use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word};
-use crate::readline::editmode::ViNormal;
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::{CursorStyle, VarFlags, VarKind, write_vars};
-use crate::{key, motion, verb};
+use super::{
+  CmdReplay, Direction, E, EditCmd, EditMode, K, M, ModeReport, Motion, To, Verb, ViNormal, Word,
+  common_cmds,
+  editcmd::Cmd,
+  key, motion,
+  state::Shed,
+  state::{terminal::CursorStyle, vars::VarFlags, vars::VarKind},
+  verb,
+};
 
 #[derive(Default, Debug)]
 pub struct ViInsert {
@@ -57,11 +60,11 @@ impl EditMode for ViInsert {
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     if let Some(mut normal) = self.normal.take() {
       if matches!(key, key!(Esc)) {
-        write_vars(|v| {
+        Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
             VarKind::Str("INSERT".into()),
-            VarFlags::NONE,
+            VarFlags::empty(),
           )
         })
         .ok();
@@ -73,11 +76,11 @@ impl EditMode for ViInsert {
         return None;
       };
 
-      write_vars(|v| {
+      Shed::vars_mut(|v| {
         v.set_var(
           "SHED_EDIT_MODE",
           VarKind::Str("INSERT".into()),
-          VarFlags::NONE,
+          VarFlags::empty(),
         )
       })
       .ok();
@@ -110,23 +113,33 @@ impl EditMode for ViInsert {
       key!(Ctrl + 'o') => {
         let mode = ViNormal::new();
         self.normal = Some(mode);
-        write_vars(|v| {
+        Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
             VarKind::Str("(insert)".into()),
-            VarFlags::NONE,
+            VarFlags::empty(),
           )
         })
         .ok();
         None
       }
       key!(Ctrl + 'w') => {
-        self.pending_cmd.set_verb(verb!(Verb::Delete));
-        self.pending_cmd.set_motion(motion!(Motion::WordMotion(
-          To::Start,
-          Word::Normal,
-          Direction::Backward
-        )));
+        let (verb, motion) = if self.ctrl_w_is_undo() {
+          (verb!(Verb::Undo), None)
+        } else {
+          (
+            verb!(Verb::Delete),
+            Some(motion!(Motion::WordMotion(
+              To::Start,
+              Word::Normal,
+              Direction::Backward
+            ))),
+          )
+        };
+        self.pending_cmd.set_verb(verb);
+        if let Some(motion) = motion {
+          self.pending_cmd.set_motion(motion);
+        }
         self.register_and_return()
       }
       key!(Ctrl + 'v') => {
@@ -138,11 +151,6 @@ impl EditMode for ViInsert {
         self
           .pending_cmd
           .set_motion(motion!(Motion::BackwardCharForced));
-        self.register_and_return()
-      }
-
-      E(K::BackTab, M::NONE) => {
-        self.pending_cmd.set_verb(verb!(Verb::CompleteBackward));
         self.register_and_return()
       }
 
@@ -179,14 +187,8 @@ impl EditMode for ViInsert {
   fn pending_seq(&self) -> Option<String> {
     self.normal.as_ref().and_then(|n| n.pending_seq())
   }
-  fn move_cursor_on_undo(&self) -> bool {
-    self.normal.is_none()
-  }
   fn clamp_cursor(&self) -> bool {
     self.normal.is_some()
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    Some(To::End)
   }
   fn report_mode(&self) -> ModeReport {
     if self.normal.is_some() {

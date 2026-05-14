@@ -6,7 +6,7 @@ use crate::procio::{
   RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string,
 };
 use crate::sherr;
-use crate::state::{self, with_term, write_meta};
+use crate::state::{self, util::with_term, util::write_meta};
 use crate::util::{ShErrKind, ShResult};
 
 use nix::errno::Errno;
@@ -81,7 +81,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
         e.print_error();
         unsafe { nix::libc::_exit(1) };
       }
-      let status = state::get_status();
+      let status = state::util::get_status();
       unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
@@ -102,7 +102,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
       match status {
         WtStat::Exited(_, code) => {
-          state::set_status(code);
+          state::util::set_status(code);
           Ok(output.trim_end_matches('\n').to_string())
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),

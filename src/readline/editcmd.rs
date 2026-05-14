@@ -5,7 +5,7 @@ use crate::{
     editmode::ExNode,
     linebuf::{Grapheme, Pos, SelectShape},
   },
-  state::read_vars,
+  state::Shed,
 };
 
 use super::{
@@ -14,14 +14,13 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub struct RegisterName {
+pub(super) struct RegisterName {
   name: Option<char>,
-  count: usize,
   append: bool,
 }
 
 impl RegisterName {
-  pub fn new(name: Option<char>, count: Option<usize>) -> Self {
+  pub fn new(name: Option<char>) -> Self {
     let Some(ch) = name else {
       return Self::default();
     };
@@ -30,18 +29,11 @@ impl RegisterName {
     let name = ch.to_ascii_lowercase();
     Self {
       name: Some(name),
-      count: count.unwrap_or(1),
       append,
     }
   }
   pub fn name(&self) -> Option<char> {
     self.name
-  }
-  pub fn is_append(&self) -> bool {
-    self.append
-  }
-  pub fn count(&self) -> usize {
-    self.count
   }
   pub fn write_to_register(&self, buf: RegisterContent) {
     if self.append {
@@ -59,7 +51,6 @@ impl Default for RegisterName {
   fn default() -> Self {
     Self {
       name: None,
-      count: 1,
       append: false,
     }
   }
@@ -67,7 +58,7 @@ impl Default for RegisterName {
 
 impl From<char> for RegisterName {
   fn from(value: char) -> Self {
-    Self::new(Some(value), None)
+    Self::new(Some(value))
   }
 }
 
@@ -87,7 +78,7 @@ bitflags! {
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct EditCmd {
+pub(super) struct EditCmd {
   pub register: RegisterName,
   pub verb: Option<Cmd<Verb>>,
   pub motion: Option<Cmd<Motion>>,
@@ -162,9 +153,6 @@ impl EditCmd {
   pub fn verb_count(&self) -> usize {
     self.verb.as_ref().map(|v| v.0).unwrap_or(1)
   }
-  pub fn motion_count(&self) -> usize {
-    self.motion.as_ref().map(|m| m.0).unwrap_or(1)
-  }
   pub fn normalize_counts(&mut self) {
     let Some(verb) = self.verb.as_mut() else {
       return;
@@ -214,7 +202,7 @@ impl EditCmd {
   }
   pub fn is_separator_insert(&self) -> bool {
     self.verb.as_ref().is_some_and(|v| {
-      let mut ifs = read_vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
+      let mut ifs = Shed::vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
       ifs.push(';');
       match &v.1 {
         Verb::AcceptLineOrNewline => true,
@@ -267,17 +255,6 @@ impl EditCmd {
       ))
     )
   }
-  pub fn is_hard_separator(&self) -> bool {
-    self.verb.as_ref().is_some_and(|v| {
-      let seps = ";\n";
-      match &v.1 {
-        Verb::AcceptLineOrNewline => true,
-        Verb::InsertChar(ch) => seps.contains(*ch),
-        Verb::Insert(s) => s.len() == 1 && seps.contains(s.chars().next().unwrap()),
-        _ => false,
-      }
-    })
-  }
   pub fn is_submit_action(&self) -> bool {
     self
       .verb
@@ -290,14 +267,6 @@ impl EditCmd {
       .verb
       .as_ref()
       .is_some_and(|v| matches!(v.1, Verb::Undo | Verb::Redo))
-  }
-  pub fn is_inplace_edit(&self) -> bool {
-    self.verb.as_ref().is_some_and(|v| {
-      matches!(
-        v.1,
-        Verb::ReplaceCharInplace(_, _) | Verb::ToggleCaseInplace(_)
-      )
-    }) && self.motion.is_none()
   }
   pub fn is_line_motion(&self) -> bool {
     self
@@ -390,7 +359,6 @@ pub enum Verb {
   ToLower,
   ToUpper,
   Complete,
-  CompleteBackward,
   RecordMacro,
   PlayMacro,
   Undo,
@@ -407,7 +375,6 @@ pub enum Verb {
   ExMode,
   VisualMode,
   VisualModeLine,
-  VisualModeBlock, // dont even know if im going to implement this
   VisualModeSelectLast,
   SwapVisualAnchor,
   JoinLines,
@@ -494,12 +461,7 @@ pub enum LineAddr {
   Mark(char),
 }
 
-impl LineAddr {
-  pub fn all_lines() -> Motion {
-    Motion::LineRange(Self::Number(1), Self::Last)
-  }
-}
-
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Motion {
   WholeLine,
@@ -516,7 +478,6 @@ pub enum Motion {
   ForwardCharForced,
   LineUp,
   LineDown,
-  WholeBuffer,
   StartOfBuffer,
   EndOfBuffer,
   ToColumn,
@@ -524,7 +485,6 @@ pub enum Motion {
   HalfScreenDown,
   HalfScreenUp,
   ToBrace(Direction),
-  ToBracket(Direction),
   ToParen(Direction),
   CharRange(Pos, Pos),
   LineRange(LineAddr, LineAddr),
@@ -537,47 +497,9 @@ pub enum Motion {
   RepeatMotion,
   RepeatMotionRev,
   Null,
-  // Ex-mode motions
-  Global(Box<Motion>, String),
-  NotGlobal(Box<Motion>, String),
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum MotionBehavior {
-  Exclusive,
-  Inclusive,
-  Linewise,
 }
 
 impl Motion {
-  pub fn behavior(&self) -> MotionBehavior {
-    if self.is_linewise() {
-      MotionBehavior::Linewise
-    } else if self.is_exclusive() {
-      MotionBehavior::Exclusive
-    } else {
-      MotionBehavior::Inclusive
-    }
-  }
-  pub fn is_exclusive(&self) -> bool {
-    matches!(
-      &self,
-      Self::StartOfLine
-        | Self::StartOfFirstWord
-        | Self::ToColumn
-        | Self::TextObj(TextObj::Sentence(_))
-        | Self::TextObj(TextObj::Paragraph(_))
-        | Self::CharSearch(Direction::Backward, _, _)
-        | Self::WordMotion(To::Start, _, _)
-        | Self::ToBrace(_)
-        | Self::ToBracket(_)
-        | Self::ToParen(_)
-        | Self::CharRange(_, _)
-    )
-  }
-  pub fn is_linewise(&self) -> bool {
-    matches!(self, Self::WholeLine | Self::LineUp | Self::LineDown)
-  }
   /// Builds a Motion::WordMotion from the given characters
   /// takes a slice because of the 'ge' case.
   /// Only works for w, W, b, B, e, and E, and 'ge'
@@ -656,12 +578,6 @@ pub enum TextObj {
   Brace(Bound),
   /// `i<`, `a<`
   Angle(Bound),
-
-  /// `it`, `at` - HTML/XML tags
-  Tag(Bound),
-
-  /// Custom user-defined objects maybe?
-  Custom(char),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -686,7 +602,6 @@ pub enum Direction {
 pub enum Dest {
   On,
   Before,
-  After,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

@@ -1,8 +1,8 @@
 use super::{
+  ShResult,
   getopt::{Opt, OptSpec},
   sherr,
-  state::write_logic,
-  ShResult,
+  state::util::write_logic,
   with_status,
 };
 
@@ -90,13 +90,9 @@ impl super::Builtin for KeyMapBuiltin {
 mod tests {
   use crate::{
     expand::expand_keymap,
-    state::{self, read_logic},
+    keys::{KeyMap, KeyMapFlags, KeyMapMatch},
+    state::{self, util::read_logic},
     tests::testutil::{TestGuard, test_input},
-    keys::{
-      KeyMap,
-      KeyMapFlags,
-      KeyMapMatch,
-    },
   };
 
   // ===================== KeyMap::compare =====================
@@ -179,7 +175,7 @@ mod tests {
   fn keymap_status_zero() {
     let _g = TestGuard::new();
     test_input("keymap -n jk '<ESC>'").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== Error cases =====================
@@ -188,13 +184,13 @@ mod tests {
   fn keymap_missing_keys() {
     let _g = TestGuard::new();
     test_input("keymap -n").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn keymap_missing_action() {
     let _g = TestGuard::new();
     test_input("keymap -n jk").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

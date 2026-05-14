@@ -8,9 +8,11 @@ use crate::{
     StyledHelp,
     markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   },
+  keys::KeyEvent,
   procio::stdout_fileno,
-  readline::{SimpleEditor, editcmd::Direction, keys::KeyEvent, term::calc_str_width},
-  state::with_term,
+  readline::{Direction, SimpleEditor},
+  state::terminal::calc_str_width,
+  state::util::with_term,
   util::ShResult,
   write_term,
 };
@@ -235,7 +237,7 @@ impl HelpPager {
   }
 
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<PagerEvent> {
-    use crate::readline::keys::KeyCode as K;
+    use crate::keys::KeyCode as K;
 
     let KeyEvent(code, _mods) = &key;
 

@@ -1,19 +1,9 @@
-use std::{fmt::Display, str::FromStr};
-
-use nix::sys::signal::Signal;
-
-use crate::{
+use super::{
   errln,
   expand::as_var_val_display,
   outln,
-  signal::parse_signal,
-  state::{read_logic, write_logic},
-  util::{
-    ShErr,
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  state::{logic::TrapTarget, util::read_logic, util::write_logic},
+  util::{ShResult, ShResultExt, with_status},
 };
 
 pub(super) struct Trap;
@@ -57,8 +47,8 @@ impl super::Builtin for Trap {
 
 #[cfg(test)]
 mod tests {
-  use super::TrapTarget;
-  use crate::state::{self, read_logic};
+  use crate::state::logic::TrapTarget;
+  use crate::state::{self, util::read_logic};
   use crate::tests::testutil::{TestGuard, test_input};
   use nix::sys::signal::Signal;
   use std::str::FromStr;
@@ -180,14 +170,14 @@ mod tests {
     let _g = TestGuard::new();
     // Single arg prints usage and sets status 1
     test_input("trap 'echo hi'").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
   fn trap_invalid_signal() {
     let _g = TestGuard::new();
     test_input("trap 'echo hi' BOGUS").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -196,6 +186,6 @@ mod tests {
   fn trap_status_zero() {
     let _g = TestGuard::new();
     test_input("trap 'echo bye' EXIT").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

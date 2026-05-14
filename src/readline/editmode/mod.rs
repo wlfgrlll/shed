@@ -1,14 +1,16 @@
 use std::fmt::{self, Display};
 use std::str::FromStr;
 
-use unicode_segmentation::UnicodeSegmentation;
-
-use crate::readline::editcmd::{CmdFlags, Direction, EditCmd, Motion, To, Verb, Word};
-use crate::readline::history::History;
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::readline::linebuf::LineBuf;
-use crate::util::{ShErr, ShResult};
-use crate::{key, motion, verb};
+use super::{
+  KeyCode as K, KeyEvent as E, ModKeys as M, ShResult,
+  editcmd::{self, CmdFlags, Direction, EditCmd, Motion, To, Verb, Word},
+  history::History,
+  key,
+  linebuf::LineBuf,
+  motion, state,
+  util::ShErr,
+  verb,
+};
 
 mod emacs;
 mod ex;
@@ -21,16 +23,16 @@ mod search;
 mod verbatim;
 mod visual;
 
-pub use emacs::Emacs;
-pub use ex::{AddressRange, ExNdRule, ExNode, SubFlags, ViEx};
-pub use insert::ViInsert;
-pub use normal::ViNormal;
-pub use parse::{ParseResult, ViParser};
-pub use remote::RemoteMode;
-pub use replace::ViReplace;
-pub use search::{ViSearch, ViSearchRev};
-pub use verbatim::ViVerbatim;
-pub use visual::ViVisual;
+pub(super) use emacs::Emacs;
+pub(super) use ex::{AddressRange, ExNdRule, ExNode, SubFlags, ViEx};
+pub(super) use insert::ViInsert;
+pub(super) use normal::ViNormal;
+pub(super) use parse::{ParseResult, ViParser};
+pub(super) use remote::RemoteMode;
+pub(super) use replace::ViReplace;
+pub(super) use search::{ViSearch, ViSearchRev};
+pub(super) use verbatim::ViVerbatim;
+pub(super) use visual::ViVisual;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeReport {
@@ -44,11 +46,10 @@ pub enum ModeReport {
   Remote,
   Search,
   RevSearch,
-  Unknown,
 }
 
 impl ModeReport {
-  pub fn as_edit_mode(&self) -> Box<dyn EditMode> {
+  pub(super) fn as_edit_mode(&self) -> Box<dyn EditMode> {
     match self {
       ModeReport::Insert => Box::new(ViInsert::new()) as Box<dyn EditMode>,
       ModeReport::Normal => Box::new(ViNormal::new()) as Box<dyn EditMode>,
@@ -60,7 +61,6 @@ impl ModeReport {
       ModeReport::Remote => Box::new(RemoteMode) as Box<dyn EditMode>,
       ModeReport::Search => Box::new(ViSearch::new(1)) as Box<dyn EditMode>,
       ModeReport::RevSearch => Box::new(ViSearchRev::new(1)) as Box<dyn EditMode>,
-      ModeReport::Unknown => unimplemented!(),
     }
   }
 }
@@ -77,7 +77,6 @@ impl Display for ModeReport {
       Self::Emacs => write!(f, "EMACS"),
       Self::Remote => write!(f, "REMOTE"),
       Self::Search | Self::RevSearch => write!(f, "SEARCH"),
-      Self::Unknown => write!(f, "UNKNOWN"),
     }
   }
 }
@@ -101,31 +100,24 @@ impl FromStr for ModeReport {
 }
 
 #[derive(Debug, Clone)]
-pub enum CmdReplay {
+pub(super) enum CmdReplay {
   ModeReplay { cmds: Vec<EditCmd>, repeat: u16 },
-  Single(EditCmd),
-  Motion(Motion),
+  Single(Box<EditCmd>),
 }
 
 impl CmdReplay {
   pub fn mode(cmds: Vec<EditCmd>, repeat: u16) -> Self {
     Self::ModeReplay { cmds, repeat }
   }
-  pub fn single(cmd: EditCmd) -> Self {
-    Self::Single(cmd)
-  }
-  pub fn motion(motion: Motion) -> Self {
-    Self::Motion(motion)
-  }
 }
 
-pub enum CmdState {
+pub(super) enum CmdState {
   Pending,
   Complete,
   Invalid,
 }
 
-pub trait EditMode {
+pub(super) trait EditMode {
   fn handle_key_fallible(&mut self, key: E) -> ShResult<Option<EditCmd>> {
     Ok(self.handle_key(key))
   }
@@ -146,21 +138,8 @@ pub trait EditMode {
   fn is_input_mode(&self) -> bool {
     false
   }
-  fn move_cursor_on_undo(&self) -> bool;
   fn clamp_cursor(&self) -> bool;
-  fn hist_scroll_start_pos(&self) -> Option<To>;
   fn report_mode(&self) -> ModeReport;
-  fn cmds_from_raw(&mut self, raw: &str) -> Vec<EditCmd> {
-    let mut cmds = vec![];
-    for ch in raw.graphemes(true) {
-      let key = E::new(ch, M::NONE);
-      let Some(cmd) = self.handle_key(key) else {
-        continue;
-      };
-      cmds.push(cmd)
-    }
-    cmds
-  }
 }
 
 pub fn common_cmds(key: E) -> Option<EditCmd> {

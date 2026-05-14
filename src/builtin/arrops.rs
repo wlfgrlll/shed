@@ -1,12 +1,11 @@
 use std::collections::VecDeque;
 
 use super::{
-  BuiltinArgs,
+  BuiltinArgs, ShResult, Shed,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{vars::{VarFlags, VarKind}, util::write_vars},
-  ShResult,
-  ShResultExt,
+  state::vars::{VarFlags, VarKind},
+  util::ShResultExt,
   with_status,
 };
 
@@ -38,7 +37,7 @@ trait ArrOp {
     let name = argv.next().unwrap().0;
 
     for (val, span) in argv {
-      write_vars(|v| {
+      Shed::vars_mut(|v| {
         if let Ok(arr) = v.get_arr_mut(&name) {
           match end {
             End::Front => arr.push_front(val),
@@ -46,7 +45,11 @@ trait ArrOp {
           }
           Ok(())
         } else {
-          v.set_var(&name, VarKind::Arr(VecDeque::from([val])), VarFlags::NONE)
+          v.set_var(
+            &name,
+            VarKind::Arr(VecDeque::from([val])),
+            VarFlags::empty(),
+          )
         }
       })
       .blame(span)?;
@@ -87,7 +90,7 @@ trait ArrOp {
           End::Front => arr.pop_front(),
           End::Back => arr.pop_back(),
         };
-        let Some(popped_val) = write_vars(|v| v.get_arr_mut(&arg).ok().and_then(pop)) else {
+        let Some(popped_val) = Shed::vars_mut(|v| v.get_arr_mut(&arg).ok().and_then(pop)) else {
           return with_status(1);
         };
         popped.push_back(popped_val);
@@ -97,9 +100,9 @@ trait ArrOp {
     if let Some(var) = var {
       if popped.len() == 1 {
         let val = popped.pop_back().unwrap();
-        write_vars(|v| v.set_var(var, VarKind::Str(val), VarFlags::NONE))?;
+        Shed::vars_mut(|v| v.set_var(var, VarKind::Str(val), VarFlags::empty()))?;
       } else {
-        write_vars(|v| v.set_var(var, VarKind::Arr(popped), VarFlags::NONE))?;
+        Shed::vars_mut(|v| v.set_var(var, VarKind::Arr(popped), VarFlags::empty()))?;
       }
     } else {
       for val in popped {
@@ -218,7 +221,7 @@ impl super::Builtin for Rotate {
     }
 
     for (arg, _) in &args.argv {
-      write_vars(|v| -> ShResult<()> {
+      Shed::vars_mut(|v| -> ShResult<()> {
         let arr = v.get_arr_mut(arg).promote_err(args.span())?;
         if reverse {
           arr.rotate_right(count.min(arr.len()));
@@ -235,17 +238,22 @@ impl super::Builtin for Rotate {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, vars::{VarFlags, VarKind}, util::{read_vars, write_vars}};
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::{
+    state::{
+      self, Shed,
+      vars::{VarFlags, VarKind},
+    },
+    tests::testutil::{TestGuard, test_input},
+  };
   use std::collections::VecDeque;
 
   fn set_arr(name: &str, elems: &[&str]) {
     let arr = VecDeque::from_iter(elems.iter().map(|s| s.to_string()));
-    write_vars(|v| v.set_var(name, VarKind::Arr(arr), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var(name, VarKind::Arr(arr), VarFlags::empty())).unwrap();
   }
 
   fn get_arr(name: &str) -> Vec<String> {
-    read_vars(|v| v.try_get_arr_elems(name)).unwrap()
+    Shed::vars(|v| v.try_get_arr_elems(name)).unwrap()
   }
 
   // ===================== push =====================
@@ -280,7 +288,7 @@ mod tests {
   fn push_no_array_name() {
     let _guard = TestGuard::new();
     test_input("push").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== fpush =====================
@@ -342,7 +350,7 @@ mod tests {
     set_arr("arr", &["x", "y", "z"]);
 
     test_input("pop -v result arr").unwrap();
-    let val = read_vars(|v| v.get_var("result"));
+    let val = Shed::vars(|v| v.get_var("result"));
     assert_eq!(val, "z");
     assert_eq!(get_arr("arr"), vec!["x", "y"]);
   }
@@ -353,7 +361,7 @@ mod tests {
     set_arr("arr", &[]);
 
     test_input("pop arr").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -361,7 +369,7 @@ mod tests {
     let _guard = TestGuard::new();
 
     test_input("pop nosucharray").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   // ===================== fpop =====================
@@ -394,7 +402,7 @@ mod tests {
     set_arr("arr", &["first", "second"]);
 
     test_input("fpop -v result arr").unwrap();
-    let val = read_vars(|v| v.get_var("result"));
+    let val = Shed::vars(|v| v.get_var("result"));
     assert_eq!(val, "first");
     assert_eq!(get_arr("arr"), vec!["second"]);
   }
@@ -488,10 +496,10 @@ mod tests {
     set_arr("arr", &["x", "y"]);
 
     test_input("pop arr").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
     test_input("pop arr").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
     test_input("pop arr").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 }

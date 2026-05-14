@@ -11,12 +11,8 @@ use crate::{
   parse::lex::Span,
   sherr,
   signal::parse_signal,
-  state::{self, read_jobs, write_jobs},
-  util::{
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  state::{self, Shed},
+  util::{ShResult, ShResultExt, with_status},
 };
 
 fn parse_job_id(arg: &str, blame: Span) -> ShResult<usize> {
@@ -33,7 +29,7 @@ fn parse_job_id(arg: &str, blame: Span) -> ShResult<usize> {
         Ok(num.saturating_sub(1))
       }
     } else {
-      let result = write_jobs(|j| {
+      let result = Shed::jobs_mut(|j| {
         let query_result = j.query(JobID::Command(arg.into()));
         query_result.map(|job| job.tabid().unwrap())
       });
@@ -46,7 +42,7 @@ fn parse_job_id(arg: &str, blame: Span) -> ShResult<usize> {
       }
     }
   } else if arg.chars().all(|ch| ch.is_ascii_digit()) {
-    let result = write_jobs(|j| {
+    let result = Shed::jobs_mut(|j| {
       let pgid_query_result = j.query(JobID::Pgid(Pid::from_raw(arg.parse::<i32>().unwrap())));
       if let Some(job) = pgid_query_result {
         return Some(job.tabid().unwrap());
@@ -98,7 +94,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
   let span = args.span();
   let mut argv = args.argv.into_iter();
 
-  let curr_job_id = if let Some(id) = read_jobs(|j| j.curr_job()) {
+  let curr_job_id = if let Some(id) = Shed::jobs(|j| j.curr_job()) {
     id
   } else {
     return Err(sherr!(ExecFail @ span, "No jobs found"));
@@ -109,7 +105,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
     None => curr_job_id,
   };
 
-  let Some(mut job) = write_jobs(|j| j.remove_job(JobID::TableID(tabid))) else {
+  let Some(mut job) = Shed::jobs_mut(|j| j.remove_job(JobID::TableID(tabid))) else {
     return Err(sherr!(
       ExecFail @ span,
       "Job id `{tabid}' not found"
@@ -120,12 +116,12 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
 
   match behavior {
     JobBehavior::Foregound => {
-      write_jobs(|j| j.new_fg(job))?;
+      Shed::jobs_mut(|j| j.new_fg(job))?;
     }
     JobBehavior::Background => {
-      let job_order = read_jobs(|j| j.order().to_vec());
+      let job_order = Shed::jobs(|j| j.order().to_vec());
       out!("{}", job.display(&job_order, JobCmdFlags::PIDS));
-      write_jobs(|j| j.insert_job(job, true))?;
+      Shed::jobs_mut(|j| j.insert_job(job, true))?;
     }
   }
 
@@ -161,7 +157,7 @@ impl super::Builtin for Jobs {
       }
     }
 
-    write_jobs(|j| j.print_jobs(flags))?;
+    Shed::jobs_mut(|j| j.print_jobs(flags))?;
     with_status(0)
   }
 }
@@ -170,7 +166,7 @@ pub(super) struct Wait;
 impl super::Builtin for Wait {
   fn execute(&self, args: BuiltinArgs) -> ShResult<()> {
     let span = args.span();
-    if read_jobs(|j| j.curr_job().is_none()) {
+    if Shed::jobs(|j| j.curr_job().is_none()) {
       return Err(sherr!(ExecFail @ span, "wait: No jobs found"));
     }
     let argv = args
@@ -187,7 +183,7 @@ impl super::Builtin for Wait {
       .promote_err(span.clone())?;
 
     if argv.is_empty() {
-      write_jobs(|j| j.wait_all_bg()).promote_err(span)?;
+      Shed::jobs_mut(|j| j.wait_all_bg()).promote_err(span)?;
     } else {
       for arg in argv {
         wait_bg(arg).promote_err(span.clone())?;
@@ -210,7 +206,7 @@ impl super::Builtin for Disown {
     let mut nohup = false;
     let mut disown_all = false;
 
-    let Some(id) = read_jobs(|j| j.curr_job()) else {
+    let Some(id) = Shed::jobs(|j| j.curr_job()) else {
       return Err(sherr!(
           ExecFail @ span,
           "disown: No jobs to disown",
@@ -238,10 +234,10 @@ impl super::Builtin for Disown {
     }
 
     if disown_all {
-      write_jobs(|j| j.disown_all(nohup))?;
+      Shed::jobs_mut(|j| j.disown_all(nohup))?;
     } else {
       for id in ids {
-        write_jobs(|j| j.disown(JobID::TableID(id), nohup))?;
+        Shed::jobs_mut(|j| j.disown(JobID::TableID(id), nohup))?;
       }
     }
 
@@ -281,7 +277,7 @@ fn list_all_signals() -> ShResult<()> {
       sig.strip_prefix("SIG").unwrap_or(&sig).to_string()
     })
     .collect::<Vec<_>>()
-    .join(&state::get_separator());
+    .join(&state::util::get_separator());
   outln!("{signals}");
   Ok(())
 }
@@ -306,7 +302,7 @@ fn send_signal(target: &KillTarget, sig: Signal, verbose: bool, blame: &Span) ->
       format!("broadcasting {sig} to all processes")
     }
     KillTarget::Job(job_id) => {
-      write_jobs(|j| {
+      Shed::jobs_mut(|j| {
         if let Some(job) = j.query_mut(job_id.clone()) {
           job.killpg(sig)
         } else {

@@ -36,46 +36,39 @@ impl super::Builtin for ULimit {
     for o in args.opts {
       match o {
         Opt::ShortWithArg('n', arg) => {
-          fds = Some(arg.parse::<u64>().map_err(|_| {
-            sherr!(
-              ParseErr,
-              "invalid argument for -n: {arg}",
-
-            )
-          })?);
+          fds = Some(
+            arg
+              .parse::<u64>()
+              .map_err(|_| sherr!(ParseErr, "invalid argument for -n: {arg}",))?,
+          );
         }
         Opt::ShortWithArg('u', arg) => {
-          procs = Some(arg.parse::<u64>().map_err(|_| {
-            sherr!(
-              ParseErr,
-              "invalid argument for -u: {arg}",
-
-            )
-          })?);
+          procs = Some(
+            arg
+              .parse::<u64>()
+              .map_err(|_| sherr!(ParseErr, "invalid argument for -u: {arg}",))?,
+          );
         }
         Opt::ShortWithArg('s', arg) => {
-          stack = Some(arg.parse::<u64>().map_err(|_| {
-            sherr!(
-              ParseErr,
-              "invalid argument for -s: {arg}",
-            )
-          })?);
+          stack = Some(
+            arg
+              .parse::<u64>()
+              .map_err(|_| sherr!(ParseErr, "invalid argument for -s: {arg}",))?,
+          );
         }
         Opt::ShortWithArg('c', arg) => {
-          core = Some(arg.parse::<u64>().map_err(|_| {
-            sherr!(
-              ParseErr,
-              "invalid argument for -c: {arg}",
-            )
-          })?);
+          core = Some(
+            arg
+              .parse::<u64>()
+              .map_err(|_| sherr!(ParseErr, "invalid argument for -c: {arg}",))?,
+          );
         }
         Opt::ShortWithArg('v', arg) => {
-          vmem = Some(arg.parse::<u64>().map_err(|_| {
-            sherr!(
-              ParseErr,
-              "invalid argument for -v: {arg}",
-            )
-          })?);
+          vmem = Some(
+            arg
+              .parse::<u64>()
+              .map_err(|_| sherr!(ParseErr, "invalid argument for -v: {arg}",))?,
+          );
         }
         o => {
           return Err(sherr!(ParseErr, "invalid option: {o}"));
@@ -261,12 +254,10 @@ impl super::Builtin for UMask {
 
       if raw.chars().any(|c| c.is_ascii_digit()) {
         // Numeric mode: umask 022
-        let mode_raw = u32::from_str_radix(raw, 8).map_err(
-          |_| sherr!(ParseErr @ span.clone(), "invalid numeric umask: {raw}"),
-        )?;
-        let mode = Mode::from_bits(mode_raw).ok_or_else(
-          || sherr!(ParseErr @ span.clone(), "invalid umask value: {raw}"),
-        )?;
+        let mode_raw = u32::from_str_radix(raw, 8)
+          .map_err(|_| sherr!(ParseErr @ span.clone(), "invalid numeric umask: {raw}"))?;
+        let mode = Mode::from_bits(mode_raw)
+          .ok_or_else(|| sherr!(ParseErr @ span.clone(), "invalid umask value: {raw}"))?;
         umask(mode);
       } else {
         // Symbolic mode: umask u=rwx,g=rx,o=
@@ -320,21 +311,21 @@ mod tests {
   fn ulimit_invalid_flag() {
     let _g = TestGuard::new();
     test_input("ulimit -z 100").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn ulimit_non_numeric_value() {
     let _g = TestGuard::new();
     test_input("ulimit -n abc").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn ulimit_status_zero() {
     let _g = TestGuard::new();
     test_input("ulimit -c 0").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== umask =====================
@@ -451,21 +442,21 @@ mod tests {
   fn umask_invalid_octal() {
     let _g = TestGuard::new();
     test_input("umask 999").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn umask_too_many_args() {
     let _g = TestGuard::new();
     test_input("umask 022 077").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn umask_invalid_who() {
     let _g = TestGuard::new();
     test_input("umask z=rwx").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -474,6 +465,6 @@ mod tests {
     with_umask(0o022, || {
       test_input("umask").unwrap();
     });
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

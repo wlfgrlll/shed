@@ -2,10 +2,10 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 use super::{CmdReplay, CmdState, EditMode, ModeReport, ParseResult, ViParser, common_cmds};
-use crate::readline::editcmd::{Anchor, Cmd, CmdFlags, EditCmd, Motion, RegisterName, To, Verb};
+use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
+use crate::readline::editcmd::{Anchor, Cmd, CmdFlags, EditCmd, Motion, RegisterName, Verb};
 use crate::readline::editmode::parse::CallbackResult;
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::CursorStyle;
+use crate::state::terminal::CursorStyle;
 use crate::{key, motion, verb};
 
 #[derive(Debug)]
@@ -13,7 +13,6 @@ pub struct ViVisual {
   pending_seq: String,
   parser: ViParser,
   cmds: Vec<EditCmd>,
-  pending_flags: CmdFlags,
   repeat_count: u16,
 }
 
@@ -23,22 +22,14 @@ impl ViVisual {
       pending_seq: String::new(),
       parser: Self::parser(),
       cmds: vec![],
-      pending_flags: CmdFlags::empty(),
       repeat_count: 0,
     }
-  }
-  pub fn with_count(mut self, repeat_count: u16) -> Self {
-    self.repeat_count = repeat_count;
-    self
   }
   pub fn clear_cmd(&mut self) {
     self.pending_seq = String::new();
   }
   pub fn take_cmd(&mut self) -> String {
     std::mem::take(&mut self.pending_seq)
-  }
-  pub fn take_flags(&mut self) -> CmdFlags {
-    std::mem::take(&mut self.pending_flags)
   }
   pub fn register_cmd(&mut self, cmd: &EditCmd) {
     self.cmds.push(cmd.clone());
@@ -76,11 +67,6 @@ impl ViVisual {
     } else {
       None
     }
-  }
-  /// End the parse and clear the pending sequence
-  pub fn quit_parse(&mut self) -> Option<EditCmd> {
-    self.clear_cmd();
-    None
   }
   fn parser() -> ViParser {
     ViParser::new(None, Some(Self::parse_verb), Self::validate_combination)
@@ -451,16 +437,8 @@ impl EditMode for ViVisual {
     Some(self.pending_seq.clone())
   }
 
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
-
   fn clamp_cursor(&self) -> bool {
     true
-  }
-
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    None
   }
 
   fn report_mode(&self) -> ModeReport {

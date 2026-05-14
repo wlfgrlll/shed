@@ -4,7 +4,7 @@ use crate::{
   key,
   parse::lex::Span,
   readline::{Prompt, ShedLine},
-  state::{with_term, write_logic, write_shopts},
+  state::{util::with_term, util::write_logic, util::write_shopts},
   tests::testutil::TestGuard,
 };
 

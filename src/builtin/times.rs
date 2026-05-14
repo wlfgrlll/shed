@@ -2,7 +2,7 @@ use nix::sys::resource::{UsageWho, getrusage};
 
 use crate::{
   outln,
-  state::CmdTimer,
+  state::meta::CmdTimer,
   util::{ShResult, with_status},
 };
 

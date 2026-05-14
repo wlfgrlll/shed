@@ -2,25 +2,25 @@ mod alias;
 mod arithmetic;
 mod brace;
 mod escape;
+pub(super) mod markers;
 mod param;
 mod prompt;
 mod subshell;
 mod util;
 mod var;
-pub(super) mod markers;
 
-pub(super) use alias::{expand_aliases, expand_keymap, parse_key_alias};
+pub(super) use alias::{expand_alias_with_pos, expand_aliases, expand_keymap};
 pub(super) use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
-pub(super) use escape::{as_var_val_display, escape_str, unescape_heredoc, unescape_math, unescape_str};
-pub(super) use param::{ParamExp, parse_param_exp, parse_pos_len, perform_param_expansion};
-pub(super) use prompt::{PromptTk, expand_prompt, format_cmd_runtime};
-pub(super) use subshell::{expand_cmd_sub, expand_proc_sub};
-pub(super) use util::{expand_case_pattern, glob_to_regex, is_var_name_ch};
-pub(super) use var::{expand_glob, expand_raw, expand_var};
+pub(super) use escape::{
+  as_var_val_display, escape_glob, escape_str, read_hex, read_octal, read_stty_escape,
+  unescape_heredoc, unescape_str,
+};
 use markers::strip_markers;
+pub(super) use prompt::expand_prompt;
+pub(super) use util::{expand_case_pattern, glob_to_regex};
+pub(super) use var::{expand_glob, expand_raw, expand_raw_inner};
 
 use super::{
-  expand::var::expand_raw_inner,
   match_loop,
   parse::lex::{Tk, TkFlags, TkRule},
   state::{self, util::read_shopts},
@@ -278,7 +278,10 @@ mod tests {
   use super::*;
   use std::collections::VecDeque;
 
-  use crate::state::{vars::{ArrIndex, VarFlags, VarKind}, util::{read_vars, write_vars}};
+  use crate::state::{
+    Shed,
+    vars::{ArrIndex, VarFlags, VarKind},
+  };
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Word Splitting (TestGuard) =====================
@@ -408,64 +411,64 @@ mod tests {
   #[test]
   fn array_index_first() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
 
-    let val = read_vars(|v| v.index_var("arr", ArrIndex::Literal(0))).unwrap();
+    let val = Shed::vars(|v| v.index_var("arr", ArrIndex::Literal(0))).unwrap();
     assert_eq!(val, "a");
   }
 
   #[test]
   fn array_index_second() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::arr_from_vec(vec!["x".into(), "y".into(), "z".into()]),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
 
-    let val = read_vars(|v| v.index_var("arr", ArrIndex::Literal(1))).unwrap();
+    let val = Shed::vars(|v| v.index_var("arr", ArrIndex::Literal(1))).unwrap();
     assert_eq!(val, "y");
   }
 
   #[test]
   fn array_all_elems() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
 
-    let elems = read_vars(|v| v.try_get_arr_elems("arr")).unwrap();
+    let elems = Shed::vars(|v| v.try_get_arr_elems("arr")).unwrap();
     assert_eq!(elems, vec!["a", "b", "c"]);
   }
 
   #[test]
   fn array_elem_count() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
 
-    let elems = read_vars(|v| v.try_get_arr_elems("arr")).unwrap();
+    let elems = Shed::vars(|v| v.try_get_arr_elems("arr")).unwrap();
     assert_eq!(elems.len(), 3);
   }
 
@@ -474,11 +477,11 @@ mod tests {
   #[test]
   fn index_simple() {
     let guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::Arr(VecDeque::from(["foo".into(), "bar".into(), "biz".into()])),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
@@ -492,19 +495,19 @@ mod tests {
   #[test]
   fn index_cursed() {
     let guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "arr",
         VarKind::Arr(VecDeque::from(["foo".into(), "bar".into(), "biz".into()])),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "i",
         VarKind::Arr(VecDeque::from(["0".into(), "1".into(), "2".into()])),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();

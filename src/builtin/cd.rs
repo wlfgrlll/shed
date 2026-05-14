@@ -3,14 +3,12 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use crate::{
+use super::{
+  ShResult, Shed,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::util::{self, read_vars},
-  util::{
-    ShResult,
-    with_status,
-  },
+  state::util,
+  with_status,
 };
 
 pub(super) struct Cd;
@@ -87,7 +85,7 @@ impl super::Builtin for Cd {
 }
 
 fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
-  let path = read_vars(|v| v.get_var("CDPATH"));
+  let path = Shed::vars(|v| v.get_var("CDPATH"));
   let mut paths = path
     .split(':')
     .filter(|p| !p.trim().is_empty())
@@ -97,7 +95,7 @@ fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
 }
 
 fn get_old_pwd() -> PathBuf {
-  read_vars(|v| v.try_get_var("OLDPWD"))
+  Shed::vars(|v| v.try_get_var("OLDPWD"))
     .or_else(|| util::get_home_str().or_else(|| Some(String::from("/"))))
     .map(PathBuf::from)
     .unwrap()
@@ -110,8 +108,13 @@ pub mod tests {
 
   use tempfile::TempDir;
 
-  use crate::state::{self, vars::{VarFlags, VarKind}, util::{read_vars, write_vars}};
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::{
+    state::{
+      self, Shed,
+      vars::{VarFlags, VarKind},
+    },
+    tests::testutil::{TestGuard, test_input},
+  };
 
   // ===================== Basic Navigation =====================
 
@@ -170,7 +173,7 @@ pub mod tests {
 
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== Error Cases =====================
@@ -179,7 +182,7 @@ pub mod tests {
   fn cd_nonexistent_dir_fails() {
     let _g = TestGuard::new();
     test_input("cd /nonexistent_path_that_does_not_exist_xyz").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -190,7 +193,7 @@ pub mod tests {
     fs::write(&file_path, "hello").unwrap();
 
     test_input(format!("cd {}", file_path.display())).ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== Multiple cd =====================
@@ -267,7 +270,7 @@ pub mod tests {
     test_input(format!("cd {}", dir_a.path().display())).unwrap();
     test_input(format!("cd {}", dir_b.path().display())).unwrap();
 
-    let oldpwd = read_vars(|v| v.get_var("OLDPWD"));
+    let oldpwd = Shed::vars(|v| v.get_var("OLDPWD"));
     assert_eq!(oldpwd, dir_a.path().display().to_string());
   }
 
@@ -278,7 +281,7 @@ pub mod tests {
 
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
-    let pwd = read_vars(|v| v.get_var("PWD"));
+    let pwd = Shed::vars(|v| v.get_var("PWD"));
     assert_eq!(pwd, env::current_dir().unwrap().display().to_string());
   }
 
@@ -326,7 +329,7 @@ pub mod tests {
     let target = base.path().join("mydir");
     fs::create_dir(&target).unwrap();
 
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
         VarKind::Str(base.path().display().to_string()),
@@ -347,7 +350,7 @@ pub mod tests {
     let target = base.path().join("realdir");
     fs::create_dir(&target).unwrap();
 
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
         VarKind::Str(format!("/nonexistent_cdpath_xyz:{}", base.path().display())),
@@ -367,7 +370,7 @@ pub mod tests {
     let target = TempDir::new().unwrap();
     let decoy = TempDir::new().unwrap();
 
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
         VarKind::Str(decoy.path().display().to_string()),
@@ -394,7 +397,7 @@ pub mod tests {
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
     let decoy = TempDir::new().unwrap();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
         VarKind::Str(decoy.path().display().to_string()),

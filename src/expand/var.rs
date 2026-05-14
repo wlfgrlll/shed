@@ -5,13 +5,13 @@ use nix::unistd::{Uid, User};
 
 use crate::expand::PARAMETERS;
 use crate::expand::escape::escape_str;
+use crate::expand::markers;
 use crate::expand::param::perform_param_expansion;
 use crate::expand::subshell::{expand_cmd_sub, expand_proc_sub};
 use crate::match_loop;
 use crate::parse::lex::is_hard_sep;
-use crate::readline::markers;
 use crate::sherr;
-use crate::state::{read_shopts, read_vars};
+use crate::state::{Shed, util::read_shopts};
 use crate::util::ShResult;
 
 pub fn expand_raw_inner(
@@ -160,7 +160,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     ch if var_name.is_empty() && (PARAMETERS.contains(&ch) || ch.is_ascii_digit()) => {
       chars.next();
       let parameter = ch.to_string();
-      let val = read_vars(|v| v.get_var(&parameter));
+      let val = Shed::vars(|v| v.get_var(&parameter));
 
       if (ch == '@' || ch == '*') && val.is_empty() {
         return Ok(markers::NULL_EXPAND.to_string());
@@ -169,7 +169,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       return Ok(val);
     }
     ch if is_hard_sep(ch) || !(ch.is_alphanumeric() || ch == '_') => {
-      let val = read_vars(|v| v.try_get_var(&var_name));
+      let val = Shed::vars(|v| v.try_get_var(&var_name));
       if val.is_none() && read_shopts(|o| o.set.nounset) {
         return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
       }
@@ -181,7 +181,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     }
   });
   if !var_name.is_empty() {
-    let val = read_vars(|v| v.try_get_var(&var_name));
+    let val = Shed::vars(|v| v.try_get_var(&var_name));
     if val.is_none() && read_shopts(|o| o.set.nounset) {
       return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
     }
@@ -189,22 +189,6 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
   } else {
     Ok(String::new())
   }
-}
-
-pub fn escape_glob(raw: &str, use_markers: bool) -> String {
-  let esc_ch = if use_markers { markers::ESCAPE } else { '\\' };
-  let mut out = String::new();
-  let mut chars = raw.chars();
-  match_loop!(chars.next() => ch, {
-    _ if ch == esc_ch => {
-      if let Some(nch) = chars.next() {
-        out.push_str(&glob::Pattern::escape(&nch.to_string()));
-      }
-    }
-    _ => out.push(ch),
-  });
-
-  out
 }
 
 pub fn restore_glob_prefix(pattern: &str, mut result: String) -> String {
@@ -223,7 +207,7 @@ pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
   if !raw.contains(['*', '?', '[']) || read_shopts(|o| o.set.noglob) {
     return Ok(vec![raw.to_string()]);
   }
-  let escaped = escape_glob(raw, true);
+  let escaped = super::escape_glob(raw, true);
 
   let opts = glob::MatchOptions {
     require_literal_leading_dot: !read_shopts(|s| s.core.dotglob),
@@ -245,9 +229,10 @@ pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  use super::super::escape_glob;
   use crate::expand::escape::unescape_str;
-  use crate::state::{VarFlags, VarKind, write_vars};
+  use crate::expand::{expand_glob, expand_raw, markers};
+  use crate::state::{Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::TestGuard;
 
   // ===================== Variable Expansion (TestGuard) =====================
@@ -255,7 +240,8 @@ mod tests {
   #[test]
   fn var_expansion_basic() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("MYVAR", VarKind::Str("hello".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("MYVAR", VarKind::Str("hello".into()), VarFlags::empty()))
+      .unwrap();
 
     let raw = unescape_str("$MYVAR");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
@@ -265,7 +251,7 @@ mod tests {
   #[test]
   fn var_expansion_braced() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("FOO", VarKind::Str("bar".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("FOO", VarKind::Str("bar".into()), VarFlags::empty())).unwrap();
 
     let raw = unescape_str("${FOO}");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
@@ -284,8 +270,8 @@ mod tests {
   #[test]
   fn var_expansion_concatenated() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("A", VarKind::Str("hello".into()), VarFlags::NONE)).unwrap();
-    write_vars(|v| v.set_var("B", VarKind::Str("world".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("A", VarKind::Str("hello".into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("B", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
 
     let raw = unescape_str("${A}_${B}");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
@@ -361,7 +347,7 @@ mod tests {
   #[test]
   fn escape_glob_with_marker_form() {
     // use_markers=true reads the ESCAPE marker char, not literal `\`.
-    use crate::readline::markers;
+    use crate::expand::markers;
     let input = format!("foo{}*", markers::ESCAPE);
     assert_eq!(escape_glob(&input, true), "foo[*]");
   }
@@ -392,7 +378,7 @@ mod tests {
     let result = result.expect("expand_glob should succeed").join(" ");
     // Glob expansion should match `my file.txt`. Result is escape-marker-
     // wrapped post-glob; check via strip_markers.
-    use crate::readline::markers::strip_markers;
+    use crate::expand::markers::strip_markers;
     let stripped = strip_markers(&result);
     assert!(
       stripped.contains("my file.txt"),

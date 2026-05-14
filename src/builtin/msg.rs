@@ -4,7 +4,7 @@ use crate::{
   builtin::join_raw_args,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::read_meta,
+  state::util::read_meta,
   status_msg, system_msg,
   util::{ShResult, with_status},
 };

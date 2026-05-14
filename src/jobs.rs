@@ -13,12 +13,15 @@ use nix::{
 use scopeguard::defer;
 use yansi::Color;
 
-use crate::{
+use super::{
   procio::stderr_fileno,
   sherr,
   signal::{disable_reaping, enable_reaping},
   state::{
-    self, AutoCmdKind, AutoCmdVecUtils, CmdTimer, read_logic, set_status, with_term, with_vars, write_jobs, write_meta
+    self, Shed,
+    logic::AutoCmdKind,
+    meta::CmdTimer,
+    util::{read_logic, set_status, with_term, with_vars, write_meta},
   },
   util::ShResult,
 };
@@ -352,7 +355,7 @@ impl Job {
     for child in self.children.iter_mut() {
       if child.pid == Pid::this() {
         // TODO: figure out some way to get the exit code of builtins
-        let code = state::get_status();
+        let code = state::util::get_status();
         stats.push(WtStat::Exited(child.pid, code));
         child.timer.stop()?;
         timers.push(child.timer.clone());
@@ -502,11 +505,11 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
           Err(e) => return Err(e.into()),
         }
       };
-      write_jobs(|j| j.update_by_id(id, stat))?;
+      Shed::jobs_mut(|j| j.update_by_id(id, stat))?;
       set_status(code_from_status(&stat).unwrap_or(0));
     }
     _ => {
-      let Some(mut job) = write_jobs(|j| j.remove_job(id.clone())) else {
+      let Some(mut job) = Shed::jobs_mut(|j| j.remove_job(id.clone())) else {
         return Err(sherr!(ExecFail, "wait: No such job with id {:?}", id,));
       };
       let (statuses, timers) = job.wait_pgrp()?;
@@ -534,10 +537,10 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
         }
       }
 
-      state::set_pipe_status(&statuses)?;
+      state::util::set_pipe_status(&statuses)?;
 
       if was_stopped {
-        write_jobs(|j| j.insert_job(job, false))?;
+        Shed::jobs_mut(|j| j.insert_job(job, false))?;
       }
       set_status(code);
     }
@@ -549,10 +552,10 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
 /// Either fires on-time-report autocmds with context variables,
 /// or falls back to formatting with TIMEFORMAT.
 fn report_timer(timer: &CmdTimer) -> ShResult<()> {
-  let autocmds = read_logic(|l| l.get_autocmds(AutoCmdKind::OnTimeReport));
+  let has_autocmds = read_logic(|l| !l.get_autocmds(AutoCmdKind::OnTimeReport).is_empty());
 
-  if autocmds.is_empty() {
-    let fmt_str = state::get_time_fmt();
+  if !has_autocmds {
+    let fmt_str = state::util::get_time_fmt();
     let report = timer.format_report(&fmt_str)?;
     let stderr = stderr_fileno();
     write(stderr, format!("{report}\n").as_bytes()).ok();
@@ -577,7 +580,7 @@ fn report_timer(timer: &CmdTimer) -> ShResult<()> {
       ("TIME_RSS".into(), timer.max_rss()?.to_string()),
       ("TIME_CMD".into(), timer.command().to_string()),
     ];
-    with_vars(vars, || autocmds.exec());
+    with_vars(vars, || crate::autocmd!(OnTimeReport));
   }
   Ok(())
 }
@@ -596,7 +599,7 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
   defer! {
     enable_reaping();
   }
-  let (statuses, timers) = write_jobs(|j| j.new_fg(job))?;
+  let (statuses, timers) = Shed::jobs_mut(|j| j.new_fg(job))?;
 
   // Report time info after the write_jobs borrow is released
   for timer in &timers {
@@ -610,7 +613,7 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
     match status {
       WtStat::Stopped(_, _) => {
         was_stopped = true;
-        write_jobs(|j| j.fg_to_bg(*status))?;
+        Shed::jobs_mut(|j| j.fg_to_bg(*status))?;
       }
       WtStat::Signaled(_, sig, _) => {
         if *sig == Signal::SIGINT {
@@ -620,17 +623,17 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
           kill(getpid(), Signal::SIGINT)?;
         } else if *sig == Signal::SIGTSTP {
           was_stopped = true;
-          write_jobs(|j| j.fg_to_bg(*status))?;
+          Shed::jobs_mut(|j| j.fg_to_bg(*status))?;
         }
       }
       _ => { /* Do nothing */ }
     }
   }
-  state::set_pipe_status(&statuses)?;
+  state::util::set_pipe_status(&statuses)?;
 
   // If job wasn't stopped (moved to bg), clear the fg slot
   if !was_stopped {
-    let job = write_jobs(|j| j.take_fg());
+    let job = Shed::jobs_mut(|j| j.take_fg());
 
     if interactive {
       write_meta(|m| m.set_last_job(job));
@@ -648,7 +651,7 @@ pub fn dispatch_job(mut job: Job, is_bg: bool, interactive: bool) -> ShResult<()
     job.set_notify(true);
   }
   if is_bg {
-    write_jobs(|j| j.insert_job(job, !interactive))?;
+    Shed::jobs_mut(|j| j.insert_job(job, !interactive))?;
   } else {
     wait_fg(job, interactive)?;
   }

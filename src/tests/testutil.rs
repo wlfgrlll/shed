@@ -29,13 +29,13 @@ macro_rules! assert_output {
 macro_rules! assert_status_eq {
   ($expected_status:expr) => {
     {
-      assert_eq!(state::get_status(), $expected_status);
+      assert_eq!(state::util::get_status(), $expected_status);
     }
 
   };
   ($expected_status:expr, $($args:tt)+) => {
     {
-      assert_eq!(state::get_status(), $expected_status, $($args)+);
+      assert_eq!(state::util::get_status(), $expected_status, $($args)+);
     }
   }
 }
@@ -44,13 +44,13 @@ macro_rules! assert_status_eq {
 macro_rules! assert_status_ne {
   ($expected_status:expr) => {
     {
-      assert_ne!(state::get_status(), $expected_status);
+      assert_ne!(state::util::get_status(), $expected_status);
     }
 
   };
   ($expected_status:expr, $($args:tt)+) => {
     {
-      assert_ne!(state::get_status(), $expected_status, $($args)+);
+      assert_ne!(state::util::get_status(), $expected_status, $($args)+);
     }
   }
 }
@@ -59,8 +59,8 @@ use crate::{
   expand::expand_aliases,
   parse::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
   procio::{RedirGuard, RedirSet, RedirSpec, RedirType},
-  readline::register::{restore_registers, save_registers},
-  state::{self, MetaTab, with_term},
+  readline::{restore_registers, save_registers},
+  state::{self, meta::MetaTab, util::with_term},
   util::ShResult,
 };
 
@@ -154,7 +154,7 @@ impl TestGuard {
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();
     state::util::save_state();
-    state::try_hash();
+    state::util::try_hash();
     save_registers();
     Self {
       _redir_guard,

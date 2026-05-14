@@ -1,6 +1,5 @@
-use crate::{
-  parse::execute::exec_nonint,
-  state,
+use super::{
+  exec_nonint, state,
   util::{ShResult, with_status},
 };
 
@@ -10,7 +9,7 @@ impl super::Builtin for Eval {
     if args.argv.is_empty() {
       return with_status(0);
     }
-    let sep = state::get_separator();
+    let sep = state::util::get_separator();
     let command = args
       .argv
       .into_iter()
@@ -24,7 +23,7 @@ impl super::Builtin for Eval {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Basic =====================
@@ -41,14 +40,14 @@ mod tests {
   fn eval_no_args_succeeds() {
     let _g = TestGuard::new();
     test_input("eval").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn eval_status_zero() {
     let _g = TestGuard::new();
     test_input("eval true").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== Joins args =====================
@@ -67,8 +66,14 @@ mod tests {
   #[test]
   fn eval_expands_variable() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("CMD", VarKind::Str("echo evaluated".into()), VarFlags::NONE))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "CMD",
+        VarKind::Str("echo evaluated".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
     test_input("eval $CMD").unwrap();
     let out = guard.read_output();
@@ -79,7 +84,7 @@ mod tests {
   fn eval_sets_variable() {
     let _g = TestGuard::new();
     test_input("eval x=42").unwrap();
-    let val = read_vars(|v| v.get_var("x"));
+    let val = Shed::vars(|v| v.get_var("x"));
     assert_eq!(val, "42");
   }
 
@@ -106,6 +111,6 @@ mod tests {
   fn eval_propagates_failure_status() {
     let _g = TestGuard::new();
     let _ = test_input("eval false");
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

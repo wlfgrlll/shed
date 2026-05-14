@@ -1,26 +1,19 @@
-use std::{
-  collections::{HashSet, VecDeque},
-  fmt::Display,
-  ops::Range,
-};
+use std::{collections::VecDeque, fmt::Display, ops::Range};
 
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-  expand::alias::AliasExpander,
-  match_loop, parse::
-    lex::{LexFlags, LexStream, TkFlags, TkRule}
-  ,
+  expand::{expand_alias_with_pos, markers},
+  match_loop,
+  parse::lex::{LexFlags, LexStream, TkFlags, TkRule},
   readline::{
-    context::{CtxTkRule, get_context_tokens}, editcmd::{EditCmd, Motion, Verb}, history::History, markers
+    context::{CtxTkRule, get_context_tokens},
+    editcmd::{EditCmd, Motion, Verb},
+    history::History,
   },
-  state::{
-    read_logic, read_shopts, write_meta,
-  },
-  util::{
-    ShResult, QuoteState,
-  },
+  state::util::{read_logic, read_shopts, write_meta},
+  util::{QuoteState, ShResult, ordered},
 };
 
 mod char_class;
@@ -35,14 +28,14 @@ mod types;
 mod util;
 mod verb;
 
-pub use char_class::{CharClass, Delim};
+pub use char_class::CharClass;
 pub use edit::{Edit, IndentCtx};
 pub use hint::Hint;
 pub use killring::KillRing;
 pub use pos::{Cursor, MotionKind, Pos, SignedPos};
 pub use select::{SelectMode, SelectShape};
-pub use types::{Grapheme, Line, Lines, to_graphemes};
-pub use util::{ordered, rot13, rot13_char, toggle_case_char};
+pub use types::{Grapheme, Line, Lines};
+pub use util::{rot13_char, toggle_case_char};
 
 pub(crate) const DEFAULT_VIEWPORT_HEIGHT: usize = 40;
 
@@ -123,7 +116,7 @@ impl LineBuf {
   pub fn scroll_offset(&self) -> usize {
     self.scroll_offset
   }
-  pub fn exec_cmd(&mut self, cmd: EditCmd) -> ShResult<()> {
+  pub(super) fn exec_cmd(&mut self, cmd: EditCmd) -> ShResult<()> {
     let is_char_insert = cmd.verb.as_ref().is_some_and(|v| v.1.is_char_insert());
     let is_kill = cmd.verb.as_ref().is_some_and(|v| v.1 == Verb::Kill);
     let is_killring_op = cmd
@@ -236,7 +229,6 @@ impl LineBuf {
     res
   }
 
-
   pub fn attempt_inline_expansion(&mut self, history: &History) -> bool {
     let hist_res = self.attempt_history_expansion(history);
     let alias_res = self.attempt_alias_expansion();
@@ -246,8 +238,7 @@ impl LineBuf {
 
   pub fn attempt_alias_expansion_all(&mut self) -> bool {
     let raw = self.joined();
-    let mut seen = HashSet::new();
-    let (result, first_pos) = AliasExpander::new(raw.clone(), &mut seen).expand();
+    let (result, first_pos) = expand_alias_with_pos(raw);
     if first_pos.is_some() {
       self.lines = Lines::to_lines(result);
       true

@@ -1,12 +1,5 @@
 use super::{Grapheme, Lines, Pos};
 
-pub enum Delim {
-  Paren,
-  Brace,
-  Bracket,
-  Angle,
-}
-
 #[derive(Default, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum CharClass {
   #[default]
@@ -19,13 +12,6 @@ pub enum CharClass {
 impl CharClass {
   pub fn is_other_class(&self, other: &CharClass) -> bool {
     !self.eq(other)
-  }
-  pub fn is_other_class_not_ws(&self, other: &CharClass) -> bool {
-    if self.is_ws() || other.is_ws() {
-      false
-    } else {
-      self.is_other_class(other)
-    }
   }
   pub fn is_other_class_or_ws(&self, other: &CharClass) -> bool {
     if self.is_ws() || other.is_ws() {

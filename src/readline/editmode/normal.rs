@@ -2,9 +2,9 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 use super::{CmdReplay, CmdState, EditMode, ModeReport, ParseResult, ViParser, common_cmds};
-use crate::readline::editcmd::{CmdFlags, EditCmd, Motion, RegisterName, TextObj, To, Verb};
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::CursorStyle;
+use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
+use crate::readline::editcmd::{CmdFlags, EditCmd, Motion, RegisterName, TextObj, Verb};
+use crate::state::terminal::CursorStyle;
 use crate::{key, motion, verb};
 
 #[derive(Debug)]
@@ -228,14 +228,8 @@ impl EditMode for ViNormal {
     Some(self.pending_seq.clone())
   }
 
-  fn move_cursor_on_undo(&self) -> bool {
-    false
-  }
   fn clamp_cursor(&self) -> bool {
     true
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    None
   }
   fn report_mode(&self) -> ModeReport {
     ModeReport::Normal

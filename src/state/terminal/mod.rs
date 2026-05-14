@@ -17,6 +17,7 @@ use itertools::Itertools;
 use nix::{
   errno::Errno,
   fcntl::{FcntlArg, OFlag, fcntl, open},
+  libc,
   poll::{PollFd, PollFlags, PollTimeout, poll},
   sys::{
     signal::{SigSet, SigmaskHow, Signal, kill, killpg, pthread_sigmask},
@@ -25,19 +26,194 @@ use nix::{
   },
   unistd::{Pid, getpgrp, isatty, read, tcsetpgrp, write},
 };
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use vte::Perform;
 
 use crate::{
+  keys::{KeyCode, KeyEvent, ModKeys},
   procio::move_high,
-  readline::{
-    keys::{KeyCode, KeyEvent, ModKeys},
-    linebuf::Pos,
-    term::get_win_size,
-  },
+  readline::Pos,
   sherr,
-  state::{read_shopts, with_term},
+  state::util::{read_shopts, with_term},
   util::{ShErr, ShErrKind, ShResult},
 };
+
+pub fn calc_str_width(s: &str) -> usize {
+  let mut esc_seq = 0;
+  s.graphemes(true).map(|g| width(g, &mut esc_seq)).sum()
+}
+
+pub fn truncate_visual(s: &str, max_width: usize) -> String {
+  let mut out = String::new();
+  let mut visible = 0;
+  let mut esc_seq = 0u8;
+  let mut wrote_anything_visible = false;
+
+  for g in s.graphemes(true) {
+    let w = width(g, &mut esc_seq);
+    if esc_seq == 0 && visible + w > max_width {
+      break;
+    }
+    out.push_str(g);
+    visible += w;
+    if w > 0 {
+      wrote_anything_visible = true;
+    }
+  }
+
+  if wrote_anything_visible {
+    out.push_str("\x1b[0m");
+  }
+  out
+}
+
+pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
+  if calc_str_width(s) <= max_width {
+    return s.to_string();
+  }
+  if max_width <= 3 {
+    // Not enough room even for the ellipsis itself; just hard-truncate.
+    return truncate_visual(s, max_width);
+  }
+  let mut out = truncate_visual(s, max_width - 3);
+  out.push_str("...");
+  out
+}
+
+// Big credit to rustyline for this
+pub(crate) fn width(s: &str, esc_seq: &mut u8) -> usize {
+  if *esc_seq == 1 {
+    if s == "[" {
+      // CSI
+      *esc_seq = 2;
+    } else {
+      // two-character sequence
+      *esc_seq = 0;
+    }
+    0
+  } else if *esc_seq == 2 {
+    if s == ";" || (s.as_bytes()[0] >= b'0' && s.as_bytes()[0] <= b'9') {
+      /*} else if s == "m" {
+      // last
+       *esc_seq = 0;*/
+    } else {
+      // not supported
+      *esc_seq = 0;
+    }
+
+    0
+  } else if s == "\x1b" {
+    *esc_seq = 1;
+    0
+  } else if s == "\n" {
+    0
+  } else {
+    get_width_calculator().width(s)
+  }
+}
+
+pub(crate) trait WidthCalculator: Send + Sync {
+  fn width(&self, text: &str) -> usize;
+}
+
+static WIDTH_CALC: std::sync::OnceLock<Box<dyn WidthCalculator>> = std::sync::OnceLock::new();
+
+pub(crate) fn get_width_calculator() -> &'static dyn WidthCalculator {
+  WIDTH_CALC.get_or_init(width_calculator).as_ref()
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct UnicodeWidth;
+
+impl WidthCalculator for UnicodeWidth {
+  fn width(&self, text: &str) -> usize {
+    text.width()
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WcWidth;
+
+impl WcWidth {
+  pub fn cwidth(&self, ch: char) -> usize {
+    ch.width().unwrap()
+  }
+}
+
+impl WidthCalculator for WcWidth {
+  fn width(&self, text: &str) -> usize {
+    let mut width = 0;
+    for ch in text.chars() {
+      width += self.cwidth(ch)
+    }
+    width
+  }
+}
+
+const ZWJ: char = '\u{200D}';
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NoZwj;
+
+impl WidthCalculator for NoZwj {
+  fn width(&self, text: &str) -> usize {
+    if text.contains(ZWJ) {
+      // ZWJ sequence renders as a single glyph on supported terminals
+      2
+    } else {
+      UnicodeWidth.width(text)
+    }
+  }
+}
+
+pub(crate) fn width_calculator() -> Box<dyn WidthCalculator> {
+  match env::var("TERM_PROGRAM").as_deref() {
+    Ok("Apple_Terminal") => Box::new(UnicodeWidth),
+    Ok("iTerm.app") => Box::new(UnicodeWidth),
+    Ok("WezTerm") => Box::new(UnicodeWidth),
+    Err(std::env::VarError::NotPresent) => match std::env::var("TERM").as_deref() {
+      Ok("xterm-kitty") => Box::new(NoZwj),
+      _ => Box::new(WcWidth),
+    },
+    _ => Box::new(WcWidth),
+  }
+}
+
+pub(crate) type Row = u16;
+pub(crate) type Col = u16;
+
+// I'd like to thank rustyline for this idea
+nix::ioctl_read_bad!(win_size, libc::TIOCGWINSZ, libc::winsize);
+
+pub(crate) fn get_win_size(fd: RawFd) -> (Col, Row) {
+  use std::mem::zeroed;
+
+  if cfg!(test) {
+    return (80, 24);
+  }
+
+  unsafe {
+    let mut size: libc::winsize = zeroed();
+    match win_size(fd, &mut size) {
+      Ok(0) => {
+        /* rustyline code says:
+         In linux pseudo-terminals are created with dimensions of
+         zero. If host application didn't initialize the correct
+         size before start we treat zero size as 80 columns and
+         infinite rows
+        */
+        let cols = if size.ws_col == 0 { 80 } else { size.ws_col };
+        let rows = if size.ws_row == 0 {
+          u16::MAX
+        } else {
+          size.ws_row
+        };
+        (cols, rows)
+      }
+      _ => (80, 24),
+    }
+  }
+}
 
 static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
   let fd = open("/dev/tty", OFlag::O_RDWR, Mode::empty()).ok()?;
@@ -47,16 +223,19 @@ static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
 });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rows(pub usize);
+pub(crate) struct Rows(pub(crate) usize);
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Cols(pub usize);
+pub(crate) struct Cols(pub(crate) usize);
 
 #[derive(Debug, Clone)]
-pub enum TermEvent {
+pub(crate) enum TermEvent {
   Key(KeyEvent),
   CursorPos(Rows, Cols),
-  KittyKbdFlags(usize),
-  Capabilities { name: String, value: Option<String> },
+  KittyKbdFlags,
+  Capabilities {
+    name: String,
+    _value: Option<String>,
+  },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -107,9 +286,9 @@ impl EventParser {
     let Some(name) = Self::decode_hex(name_hex) else {
       return;
     };
-    let value = value_hex.and_then(Self::decode_hex);
+    let _value = value_hex.and_then(Self::decode_hex);
 
-    self.push(TermEvent::Capabilities { name, value });
+    self.push(TermEvent::Capabilities { name, _value });
   }
 
   pub fn decode_hex(hex: &str) -> Option<String> {
@@ -347,8 +526,7 @@ impl Perform for EventParser {
       }
       ([b'?'], 'u') => {
         // capabilities response
-        let cap_num = params.first().copied().unwrap_or(0) as usize;
-        TermEvent::KittyKbdFlags(cap_num)
+        TermEvent::KittyKbdFlags
       }
       // SGR mouse: CSI < button;x;y M/m (ignore mouse events for now)
       ([b'<'], dir @ ('M' | 'm')) => {
@@ -393,7 +571,7 @@ impl Perform for EventParser {
   }
 }
 
-pub struct PollReader {
+pub(crate) struct PollReader {
   parser: vte::Parser,
   collector: EventParser,
   byte_buf: VecDeque<u8>,
@@ -570,7 +748,7 @@ impl Default for PollReader {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum CursorStyle {
+pub(crate) enum CursorStyle {
   #[default]
   Default,
   Block(bool),
@@ -593,7 +771,7 @@ impl Display for CursorStyle {
 ///
 /// Creating one of these will guarantee that the Terminal writes its buffered input
 /// when the scope ends. Used mainly in the interactive loop
-pub struct FlushGuard;
+pub(crate) struct FlushGuard;
 impl Drop for FlushGuard {
   fn drop(&mut self) {
     with_term(|t| t.flush()).ok();
@@ -602,7 +780,7 @@ impl Drop for FlushGuard {
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-  pub struct TermCap: u32 {
+  pub(crate) struct TermCap: u32 {
     const TRUECOLOR = 1<<0;
     const KITTY_KBD_PROTO = 1<<1;
     const SGR_MOUSE = 1<<2;
@@ -618,7 +796,7 @@ bitflags! {
 
 /// An abstraction over the terminal that manages terminal attributes, and I/O.
 #[derive(Debug)]
-pub struct Terminal {
+pub(crate) struct Terminal {
   tty: Option<RawFd>,
   reader: PollReader,
   input_buf: String,
@@ -684,13 +862,40 @@ impl Terminal {
   pub const CURSOR_HIDE: &str = "\x1b[?25l";
   pub const CURSOR_SHOW: &str = "\x1b[?25h";
   pub const CURSOR_QUERY: &str = "\x1b[6n";
-  pub const CLEAR_SCREEN: &str = "\x1b[2J\x1b[H";
   pub const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1003h\x1b[?1006h";
   pub const MOUSE_OFF: &str = "\x1b[?1003l\x1b[?1000l\x1b[?1006l";
   pub const SCROLL_REGION_RESET: &str = "\x1b[r";
   pub const CURSOR_SAVE: &str = "\x1b7";
   pub const CURSOR_RESTORE: &str = "\x1b8";
   pub const ROW_CLEAR: &str = "\x1b[2K";
+  pub const OSC_PROMPT_START: &str = "\x1b]133;A\x07";
+  pub const OSC_PROMPT_END: &str = "\x1b]133;B\x07";
+  pub const OSC_EXEC_START: &str = "\x1b]133;C\x07";
+  pub fn osc_exec_end(code: i32) -> String {
+    format!("\x1b]133;D;{code}\x07")
+  }
+
+  pub fn emit_osc_prompt_start(&mut self) -> ShResult<()> {
+    write!(self, "{}", Self::OSC_PROMPT_START)?;
+
+    Ok(())
+  }
+
+  pub fn emit_osc_prompt_end(&mut self) -> ShResult<()> {
+    write!(self, "{}", Self::OSC_PROMPT_END)?;
+    Ok(())
+  }
+
+  pub fn emit_osc_exec_start(&mut self) -> ShResult<()> {
+    write!(self, "{}", Self::OSC_EXEC_START)?;
+    Ok(())
+  }
+
+  pub fn emit_osc_exec_end(&mut self, code: i32) -> ShResult<()> {
+    write!(self, "{}", Self::osc_exec_end(code))?;
+    Ok(())
+  }
+
   fn toggle_attr(
     buf: &mut String,
     switch: &mut bool,
@@ -823,7 +1028,7 @@ impl Terminal {
       if self.poll(timeout)? > 0 {
         self.reader.read(tty)?;
         while let Some(event) = self.reader.read_event()? {
-          if let TermEvent::Capabilities { name, value: _ } = event {
+          if let TermEvent::Capabilities { name, _value: _ } = event {
             for (cap, flag) in &queries {
               if name == *cap {
                 caps.insert(*flag);
@@ -857,30 +1062,11 @@ impl Terminal {
     Snapshot::new(guard)
   }
 
-  pub fn yield_terminal(&mut self) -> Snapshot {
+  pub fn yield_terminal(&mut self) -> TermGuard {
     let guard = TermGuard::new().with_scroll_region(self.scroll_region);
     self.reset_scroll_region().ok();
     self.flush().ok(); // ensure the reset reaches the terminal before exec
-    Snapshot::new(guard)
-  }
-
-  pub fn raw_mode(&self) -> bool {
-    self.raw_mode
-  }
-  pub fn bracketed_paste(&self) -> bool {
-    self.bracketed_paste
-  }
-  pub fn kitty_kbd_proto(&self) -> bool {
-    self.kitty_kbd_proto
-  }
-  pub fn alt_buffer(&self) -> bool {
-    self.alt_buffer
-  }
-  pub fn cursor_style(&self) -> CursorStyle {
-    self.cursor_style
-  }
-  pub fn cursor_visible(&self) -> bool {
-    self.cursor_visible
+    guard.activate()
   }
 
   pub fn scroll_up(&mut self, lines: usize) -> ShResult<()> {
@@ -892,6 +1078,10 @@ impl Terminal {
   }
 
   pub fn load_state(&mut self, guard: &TermGuard) -> ShResult<()> {
+    let Some(_tty) = self.tty() else {
+      return Ok(());
+    };
+
     if let Some(depth) = guard.termios_depth() {
       while self.termios_stack.len() > depth {
         self.pop_termios()?;
@@ -979,7 +1169,7 @@ impl Terminal {
     self.reader.read(tty)?;
 
     while let Some(event) = self.reader.read_event()? {
-      if let TermEvent::KittyKbdFlags(_) = event {
+      if let TermEvent::KittyKbdFlags = event {
         return Ok(Some(event));
       }
     }
@@ -1083,10 +1273,6 @@ impl Terminal {
     self.t_rows
   }
 
-  pub fn t_size(&self) -> (usize, usize) {
-    (self.t_cols, self.t_rows)
-  }
-
   pub fn buf_ends_with_newline(&self) -> bool {
     self.input_buf.ends_with('\n')
   }
@@ -1162,11 +1348,6 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn fd_is_tty(&self, other: RawFd) -> bool {
-    let Some(tty) = self.tty() else { return false };
-    other == tty.as_raw_fd()
-  }
-
   pub fn read(&mut self) -> ShResult<usize> {
     let Some(tty) = self.tty() else { return Ok(0) };
     self.reader.read(tty)
@@ -1178,10 +1359,6 @@ impl Terminal {
       keys.push(key);
     }
     Ok(keys)
-  }
-
-  pub fn feed_bytes(&mut self, bytes: &[u8]) {
-    self.reader.feed_bytes(bytes);
   }
 
   pub fn cooked_mode_guard(&mut self) -> ShResult<TermGuard> {
@@ -1272,9 +1449,6 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn is_raw(&self) -> bool {
-    self.raw_mode
-  }
   pub fn write_direct(&mut self, buf: &str) -> ShResult<()> {
     let Some(tty) = self.tty() else {
       return Ok(());
@@ -1446,19 +1620,14 @@ impl Terminal {
     self.tty = fd;
     self.test_mode = fd.is_some();
   }
-}
-
-impl Default for Terminal {
-  fn default() -> Self {
-    Self::new()
+  #[cfg(test)]
+  pub fn feed_bytes(&mut self, bytes: &[u8]) {
+    self.reader.feed_bytes(bytes);
   }
-}
 
-impl Terminal {
-  /// Reset terminal state for a clean shell exit. Called explicitly from
-  /// the shutdown path because `thread_local!` destructors do not run for
-  /// the main thread on normal program exit.
   pub fn reset_for_exit(&mut self) {
+    let Some(_tty) = self.tty() else { return };
+
     self.reset_scroll_region().ok();
     self.toggle_bracketed_paste(false).ok();
     self.toggle_kitty_proto(false).ok();
@@ -1471,6 +1640,12 @@ impl Terminal {
     while !self.termios_stack.is_empty() {
       self.pop_termios().ok();
     }
+  }
+}
+
+impl Default for Terminal {
+  fn default() -> Self {
+    Self::new()
   }
 }
 

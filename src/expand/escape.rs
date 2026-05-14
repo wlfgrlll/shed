@@ -2,11 +2,11 @@ use std::iter::Peekable;
 use std::ops::Range;
 use std::str::Chars;
 
+use crate::expand::markers;
 use crate::expand::util::is_var_name_ch;
-use crate::readline::markers;
-use crate::state::read_vars;
-use crate::util::ShResult;
+use crate::state::Shed;
 use crate::util::QuoteState;
+use crate::util::ShResult;
 use crate::{match_loop, sherr};
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.
@@ -53,6 +53,22 @@ pub(super) fn markers_to_glob_escapes(s: &str) -> String {
   out
 }
 
+pub fn escape_glob(raw: &str, use_markers: bool) -> String {
+  let esc_ch = if use_markers { markers::ESCAPE } else { '\\' };
+  let mut out = String::new();
+  let mut chars = raw.chars();
+  match_loop!(chars.next() => ch, {
+    _ if ch == esc_ch => {
+      if let Some(nch) = chars.next() {
+        out.push_str(&glob::Pattern::escape(&nch.to_string()));
+      }
+    }
+    _ => out.push(ch),
+  });
+
+  out
+}
+
 /// Push `c` to `out` as a literal glob character, using a bracket expression
 /// to escape glob metas since `glob::Pattern` doesn't recognize `\x` escapes.
 fn push_glob_literal(out: &mut String, c: char) {
@@ -78,8 +94,8 @@ pub fn unescape_str(raw: &str) -> String {
   let mut result = String::new();
   let mut last_was_word_break = false;
   let word_breaks =
-    read_vars(|v| v.try_get_var("COMP_WORDBREAKS")).unwrap_or("\"'><=;|&(: ".into());
-  let ifs = read_vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
+    Shed::vars(|v| v.try_get_var("COMP_WORDBREAKS")).unwrap_or("\"'><=;|&(: ".into());
+  let ifs = Shed::vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
   let word_breaks = format!("{word_breaks}{ifs}");
   let mut first_char = true;
 

@@ -30,26 +30,11 @@ impl KillRing {
       self.kills.pop_front();
     }
   }
-  pub fn push_front(&mut self, kill: Lines) {
-    if kill.is_empty() || (kill.len() == 1 && kill[0].is_empty()) {
-      return;
-    }
-    self.kills.push_front(kill);
-    if self.kills.len() > MAX_KILL_RING {
-      self.kills.pop_back();
-    }
-  }
-  pub fn pop_back(&mut self) -> Option<Lines> {
-    self.kills.pop_back()
-  }
   pub fn pop_front(&mut self) -> Option<Lines> {
     self.kills.pop_front()
   }
   pub fn len(&self) -> usize {
     self.kills.len()
-  }
-  pub fn is_empty(&self) -> bool {
-    self.kills.is_empty()
   }
   pub fn next_idx(&mut self) -> usize {
     let idx = match self.selected {

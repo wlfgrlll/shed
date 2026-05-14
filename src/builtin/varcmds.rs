@@ -1,20 +1,17 @@
-use std::env;
-
 use std::collections::VecDeque;
 
 use crate::{
-  expand::{as_var_val_display, expand_arithmetic},
+  expand::expand_arithmetic,
   getopt::{Opt, OptSpec, get_opts_from_tokens_raw},
   outln,
   parse::lex::{Span, Tk},
   sherr,
-  state::{ScopeStack, VarFlags, VarKind, read_logic, read_vars, write_vars},
-  util::{
-    ShResult,
-    ShResultExt,
-    split_at_unescaped,
-    with_status,
+  state::{
+    Shed,
+    util::read_logic,
+    vars::{VarFlags, VarKind, display_as_var, display_env_vars, display_local, display_readonly},
   },
+  util::{ShResult, ShResultExt, split_at_unescaped, with_status},
 };
 
 /// Like `prepare_argv` but preserves raw token text for `name=(...)` array
@@ -112,7 +109,7 @@ fn apply_var_decl(opts: &[Opt], argv: Vec<(String, Span)>, base_flags: VarFlags)
       (DeclareKind::Assoc, Some(v)) => VarKind::assoc_arr_from_raw(v).promote_err(span.clone())?,
       (DeclareKind::Assoc, None) => VarKind::AssocArr(Vec::new()),
     };
-    write_vars(|v| v.set_var(&name, val, flags)).promote_err(span)?;
+    Shed::vars_mut(|v| v.set_var(&name, val, flags)).promote_err(span)?;
   }
 
   with_status(0)
@@ -157,12 +154,12 @@ impl super::Builtin for Declare {
 
     if args.argv.is_empty() {
       // Bare `declare` prints all variables in declare-style format.
-      let output = read_vars(display_local);
+      let output = Shed::vars(display_local);
       outln!("{output}");
       return with_status(0);
     }
 
-    apply_var_decl(&args.opts, args.argv, VarFlags::NONE)
+    apply_var_decl(&args.opts, args.argv, VarFlags::empty())
   }
 }
 
@@ -170,11 +167,11 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
   match mode {
     IntrospectMode::Vars => {
       if argv.is_empty() {
-        let output = read_vars(display_local);
+        let output = Shed::vars(display_local);
         outln!("{output}");
       } else {
         for (name, span) in argv {
-          let val = read_vars(|v| v.try_get_var(name));
+          let val = Shed::vars(|v| v.try_get_var(name));
           match val {
             Some(v) => outln!("{}", display_as_var(name, v)),
             None => {
@@ -238,7 +235,7 @@ impl super::Builtin for Readonly {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       // Display the local variables
-      let vars = read_vars(display_readonly);
+      let vars = Shed::vars(display_readonly);
       outln!("{vars}");
 
       return with_status(0);
@@ -246,7 +243,7 @@ impl super::Builtin for Readonly {
 
     for (arg, span) in args.argv {
       let (var, val) = split_assignment(arg);
-      write_vars(|v| {
+      Shed::vars_mut(|v| {
         v.set_var(&var, val.unwrap_or_default(), VarFlags::READONLY)
           .promote_err(span)
       })?;
@@ -260,13 +257,13 @@ pub(super) struct Unset;
 impl super::Builtin for Unset {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     for (arg, span) in args.argv {
-      if !read_vars(|v| v.var_exists(&arg)) {
+      if !Shed::vars(|v| v.var_exists(&arg)) {
         return Err(sherr!(
             ExecFail @ span,
             "unset: No such variable '{arg}'",
         ));
       }
-      write_vars(|v| v.unset_var(&arg))?;
+      Shed::vars_mut(|v| v.unset_var(&arg))?;
     }
 
     with_status(0)
@@ -293,10 +290,10 @@ impl super::Builtin for Export {
     for (arg, span) in args.argv {
       let (var, val) = split_assignment(arg);
       if let Some(val) = val {
-        write_vars(|v| v.set_var(&var, val, VarFlags::EXPORT)).promote_err(span)?;
+        Shed::vars_mut(|v| v.set_var(&var, val, VarFlags::EXPORT)).promote_err(span)?;
       } else {
         // Export an existing variable, if any
-        write_vars(|v| v.export_var(&var));
+        Shed::vars_mut(|v| v.export_var(&var));
       }
     }
 
@@ -325,7 +322,7 @@ impl super::Builtin for Local {
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      let vars = read_vars(display_local);
+      let vars = Shed::vars(display_local);
       outln!("{vars}");
       return with_status(0);
     }
@@ -336,7 +333,7 @@ impl super::Builtin for Local {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, VarFlags, read_vars};
+  use crate::state::{self, Shed, vars::VarFlags};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== readonly =====================
@@ -345,7 +342,7 @@ mod tests {
   fn readonly_sets_flag() {
     let _g = TestGuard::new();
     test_input("readonly myvar").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("myvar"));
+    let flags = Shed::vars(|v| v.get_var_flags("myvar"));
     assert!(flags.unwrap().contains(VarFlags::READONLY));
   }
 
@@ -353,8 +350,8 @@ mod tests {
   fn readonly_with_value() {
     let _g = TestGuard::new();
     test_input("readonly myvar=hello").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "hello");
-    let flags = read_vars(|v| v.get_var_flags("myvar"));
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
+    let flags = Shed::vars(|v| v.get_var_flags("myvar"));
     assert!(flags.unwrap().contains(VarFlags::READONLY));
   }
 
@@ -363,7 +360,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("readonly myvar=hello").unwrap();
     test_input("myvar=world").ok();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
   }
 
   #[test]
@@ -379,15 +376,15 @@ mod tests {
   fn readonly_multiple() {
     let _g = TestGuard::new();
     test_input("readonly a=1 b=2").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "1");
-    assert_eq!(read_vars(|v| v.get_var("b")), "2");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "1");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "2");
     assert!(
-      read_vars(|v| v.get_var_flags("a"))
+      Shed::vars(|v| v.get_var_flags("a"))
         .unwrap()
         .contains(VarFlags::READONLY)
     );
     assert!(
-      read_vars(|v| v.get_var_flags("b"))
+      Shed::vars(|v| v.get_var_flags("b"))
         .unwrap()
         .contains(VarFlags::READONLY)
     );
@@ -397,7 +394,7 @@ mod tests {
   fn readonly_status_zero() {
     let _g = TestGuard::new();
     test_input("readonly x=1").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== unset =====================
@@ -406,9 +403,9 @@ mod tests {
   fn unset_removes_variable() {
     let _g = TestGuard::new();
     test_input("myvar=hello").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
     test_input("unset myvar").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "");
   }
 
   #[test]
@@ -417,15 +414,15 @@ mod tests {
     test_input("a=1").unwrap();
     test_input("b=2").unwrap();
     test_input("unset a b").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "");
-    assert_eq!(read_vars(|v| v.get_var("b")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "");
   }
 
   #[test]
   fn unset_nonexistent_fails() {
     let _g = TestGuard::new();
     test_input("unset __no_such_var__").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -433,8 +430,8 @@ mod tests {
     let _g = TestGuard::new();
     test_input("readonly myvar=protected").unwrap();
     test_input("unset myvar").ok();
-    assert_ne!(state::get_status(), 0);
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "protected");
+    assert_ne!(state::util::get_status(), 0);
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "protected");
   }
 
   #[test]
@@ -442,7 +439,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("x=1").unwrap();
     test_input("unset x").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== export =====================
@@ -451,7 +448,7 @@ mod tests {
   fn export_with_value() {
     let _g = TestGuard::new();
     test_input("export SHED_TEST_VAR=hello_export").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("SHED_TEST_VAR")), "hello_export");
+    assert_eq!(Shed::vars(|v| v.get_var("SHED_TEST_VAR")), "hello_export");
     assert_eq!(std::env::var("SHED_TEST_VAR").unwrap(), "hello_export");
     unsafe { std::env::remove_var("SHED_TEST_VAR") };
   }
@@ -469,7 +466,7 @@ mod tests {
   fn export_sets_flag() {
     let _g = TestGuard::new();
     test_input("export SHED_TEST_VAR3=flagged").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("SHED_TEST_VAR3"));
+    let flags = Shed::vars(|v| v.get_var_flags("SHED_TEST_VAR3"));
     assert!(flags.unwrap().contains(VarFlags::EXPORT));
     unsafe { std::env::remove_var("SHED_TEST_VAR3") };
   }
@@ -496,7 +493,7 @@ mod tests {
   fn export_status_zero() {
     let _g = TestGuard::new();
     test_input("export SHED_ST=1").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
     unsafe { std::env::remove_var("SHED_ST") };
   }
 
@@ -506,14 +503,14 @@ mod tests {
   fn local_sets_variable() {
     let _g = TestGuard::new();
     test_input("local mylocal=hello").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("mylocal")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("mylocal")), "hello");
   }
 
   #[test]
   fn local_sets_flag() {
     let _g = TestGuard::new();
     test_input("local mylocal=val").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("mylocal"));
+    let flags = Shed::vars(|v| v.get_var_flags("mylocal"));
     assert!(flags.unwrap().contains(VarFlags::LOCAL));
   }
 
@@ -521,9 +518,9 @@ mod tests {
   fn local_empty_value() {
     let _g = TestGuard::new();
     test_input("local mylocal").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("mylocal")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("mylocal")), "");
     assert!(
-      read_vars(|v| v.get_var_flags("mylocal"))
+      Shed::vars(|v| v.get_var_flags("mylocal"))
         .unwrap()
         .contains(VarFlags::LOCAL)
     );
@@ -542,15 +539,15 @@ mod tests {
   fn local_multiple() {
     let _g = TestGuard::new();
     test_input("local x=10 y=20").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("x")), "10");
-    assert_eq!(read_vars(|v| v.get_var("y")), "20");
+    assert_eq!(Shed::vars(|v| v.get_var("x")), "10");
+    assert_eq!(Shed::vars(|v| v.get_var("y")), "20");
   }
 
   #[test]
   fn local_status_zero() {
     let _g = TestGuard::new();
     test_input("local z=1").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== array literal assignments =====================
@@ -606,7 +603,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("readonly arr=(1 2 3)").unwrap();
     test_input("echo \"${arr[1]}\"").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("arr"));
+    let flags = Shed::vars(|v| v.get_var_flags("arr"));
     assert!(
       flags.unwrap().contains(VarFlags::READONLY),
       "readonly arr=(...) should set READONLY"
@@ -736,7 +733,7 @@ mod tests {
   fn declare_plain_assignment() {
     let _g = TestGuard::new();
     test_input("declare foo=hello").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("foo")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("foo")), "hello");
   }
 
   #[test]
@@ -744,15 +741,15 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare foo").unwrap();
     // Declared but empty.
-    assert_eq!(read_vars(|v| v.get_var("foo")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("foo")), "");
   }
 
   #[test]
   fn declare_r_sets_readonly_flag() {
     let _g = TestGuard::new();
     test_input("declare -r myvar=42").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "42");
-    let flags = read_vars(|v| v.get_var_flags("myvar"));
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "42");
+    let flags = Shed::vars(|v| v.get_var_flags("myvar"));
     assert!(flags.unwrap().contains(VarFlags::READONLY));
   }
 
@@ -760,7 +757,7 @@ mod tests {
   fn declare_x_sets_export_flag() {
     let _g = TestGuard::new();
     test_input("declare -x exported=yes").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("exported"));
+    let flags = Shed::vars(|v| v.get_var_flags("exported"));
     assert!(flags.unwrap().contains(VarFlags::EXPORT));
   }
 
@@ -768,7 +765,7 @@ mod tests {
   fn declare_rx_combined_flags() {
     let _g = TestGuard::new();
     test_input("declare -rx both=val").unwrap();
-    let flags = read_vars(|v| v.get_var_flags("both")).unwrap();
+    let flags = Shed::vars(|v| v.get_var_flags("both")).unwrap();
     assert!(flags.contains(VarFlags::READONLY));
     assert!(flags.contains(VarFlags::EXPORT));
   }
@@ -777,14 +774,14 @@ mod tests {
   fn declare_i_evaluates_arithmetic() {
     let _g = TestGuard::new();
     test_input("declare -i n=5+3").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("n")), "8");
+    assert_eq!(Shed::vars(|v| v.get_var("n")), "8");
   }
 
   #[test]
   fn declare_i_no_value_is_zero() {
     let _g = TestGuard::new();
     test_input("declare -i n").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("n")), "0");
+    assert_eq!(Shed::vars(|v| v.get_var("n")), "0");
   }
 
   #[test]
@@ -812,7 +809,7 @@ mod tests {
     let _ = test_input("declare -p nonexistent_var");
     // exec_nonint catches the error and propagates via exit status
     // rather than returning Err, so check the status.
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -821,7 +818,7 @@ mod tests {
     // declare -a with no `=...` produces an empty array.
     test_input("declare -a empty").unwrap();
     // A bare element access on an empty array should be empty.
-    assert_eq!(read_vars(|v| v.get_var("empty[0]")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("empty[0]")), "");
   }
 
   #[test]
@@ -878,16 +875,26 @@ mod tests {
   fn declare_assoc_empty() {
     let _g = TestGuard::new();
     test_input("declare -A mymap").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("mymap")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("mymap")), "");
   }
 
   #[test]
   fn declare_assoc_with_values() {
     let _g = TestGuard::new();
     test_input("declare -A mymap=([foo]=bar [biz]=baz)").unwrap();
-    let val = read_vars(|v| v.index_var("mymap", crate::state::ArrIndex::Key("foo".to_string())));
+    let val = Shed::vars(|v| {
+      v.index_var(
+        "mymap",
+        crate::state::vars::ArrIndex::Key("foo".to_string()),
+      )
+    });
     assert_eq!(val.unwrap(), "bar");
-    let val2 = read_vars(|v| v.index_var("mymap", crate::state::ArrIndex::Key("biz".to_string())));
+    let val2 = Shed::vars(|v| {
+      v.index_var(
+        "mymap",
+        crate::state::vars::ArrIndex::Key("biz".to_string()),
+      )
+    });
     assert_eq!(val2.unwrap(), "baz");
   }
 
@@ -928,7 +935,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A aa=([a]=1 [b]=2 [c]=3)").unwrap();
     test_input("declare -i count=${#aa[@]}").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("count")), "3");
+    assert_eq!(Shed::vars(|v| v.get_var("count")), "3");
   }
 
   #[test]
@@ -978,7 +985,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("foo() { local -A m=([k]=v); }").unwrap();
     test_input("foo").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("m")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("m")), "");
   }
 
   #[test]
@@ -1086,6 +1093,6 @@ mod tests {
     test_input("foo() { local arr=(); for c in x; do arr+=(\"$c\"); done; }").unwrap();
     test_input("foo").unwrap();
     // arr was local to foo; should not exist at top level.
-    assert_eq!(read_vars(|v| v.get_var("arr")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("arr")), "");
   }
 }

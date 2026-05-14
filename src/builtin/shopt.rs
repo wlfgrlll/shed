@@ -1,12 +1,8 @@
 use crate::{
   getopt::{Opt, OptSpec},
   outln,
-  state::write_shopts,
-  util::{
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  state::util::write_shopts,
+  util::{ShResult, ShResultExt, with_status},
 };
 
 pub(super) struct Shopt;
@@ -45,7 +41,7 @@ impl super::Builtin for Shopt {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, read_shopts};
+  use crate::state::{self, util::read_shopts};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Display =====================
@@ -116,21 +112,21 @@ mod tests {
   fn shopt_invalid_category() {
     let _g = TestGuard::new();
     test_input("shopt bogus.dotglob").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn shopt_invalid_option() {
     let _g = TestGuard::new();
     test_input("shopt core.nonexistent").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn shopt_invalid_value() {
     let _g = TestGuard::new();
     test_input("shopt core.dotglob=notabool").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -139,6 +135,6 @@ mod tests {
   fn shopt_status_zero() {
     let _g = TestGuard::new();
     test_input("shopt core.autocd=true").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

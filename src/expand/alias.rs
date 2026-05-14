@@ -1,10 +1,10 @@
 use std::collections::{HashSet, VecDeque};
 
+use crate::keys::{KeyCode, KeyEvent, ModKeys};
 use crate::parse::lex::{LexFlags, LexStream, Tk, TkFlags};
-use crate::readline::keys::{KeyCode, KeyEvent, ModKeys};
-use crate::state::{read_logic, read_shopts};
+use crate::state::{util::read_logic, util::read_shopts};
 
-pub struct AliasExpander<'a> {
+struct AliasExpander<'a> {
   input: String,
   tokens: VecDeque<Tk>,
   expanded: &'a mut HashSet<String>,
@@ -85,6 +85,11 @@ impl<'a> AliasExpander<'a> {
 pub fn expand_aliases(input: String) -> String {
   let mut seen = HashSet::new();
   AliasExpander::new(input, &mut seen).expand().0
+}
+
+pub fn expand_alias_with_pos(input: String) -> (String, Option<usize>) {
+  let mut seen = HashSet::new();
+  AliasExpander::new(input, &mut seen).expand()
 }
 
 pub fn expand_keymap(s: &str) -> Vec<KeyEvent> {
@@ -173,7 +178,7 @@ pub fn parse_key_alias(alias: &str) -> Option<KeyEvent> {
 mod tests {
   use super::*;
   use crate::parse::lex::Span;
-  use crate::state::write_logic;
+  use crate::state::util::write_logic;
   use crate::tests::testutil::TestGuard;
 
   // ===================== parse_key_alias =====================

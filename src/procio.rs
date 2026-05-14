@@ -26,7 +26,7 @@ use crate::{
     lex::{Span, Tk, TkFlags},
   },
   sherr,
-  state::{self, read_shopts},
+  state::{self, util::read_shopts},
   util::{ShErr, ShErrKind, ShResult},
 };
 
@@ -735,7 +735,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
         e.print_error();
         unsafe { nix::libc::_exit(1) };
       }
-      let status = state::get_status();
+      let status = state::util::get_status();
       unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
@@ -763,7 +763,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
 
       match status {
         WtStat::Exited(_, code) => {
-          state::set_status(code);
+          state::util::set_status(code);
           Ok(captured)
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),
@@ -945,12 +945,12 @@ pub mod tests {
     test_input("false | cat").unwrap();
 
     // Pipeline exit status is the last command
-    let status = crate::state::get_status();
+    let status = crate::state::util::get_status();
     assert_eq!(status, 0);
 
     test_input("cat < /dev/null | false").unwrap();
 
-    let status = crate::state::get_status();
+    let status = crate::state::util::get_status();
     assert_ne!(status, 0);
   }
 

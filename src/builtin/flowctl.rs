@@ -1,11 +1,6 @@
-use crate::{
+use super::{
   sherr,
-  util::{
-    ShErr,
-    ShErrKind,
-    ShResult,
-    ShResultExt,
-  },
+  util::{ShErr, ShErrKind, ShResult, ShResultExt},
 };
 
 /// A trait for flow control builtins (break, continue, return, exit).
@@ -121,14 +116,14 @@ mod tests {
   fn break_outside_loop_errors() {
     let _g = TestGuard::new();
     test_input("break").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn break_non_numeric_errors() {
     let _g = TestGuard::new();
     test_input("for i in 1; do break abc; done").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== continue =====================
@@ -146,7 +141,7 @@ mod tests {
   fn continue_outside_loop_errors() {
     let _g = TestGuard::new();
     test_input("continue").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== return =====================
@@ -165,14 +160,14 @@ mod tests {
     let _g = TestGuard::new();
     test_input("f() { return 42; }").unwrap();
     test_input("f").unwrap();
-    assert_eq!(state::get_status(), 42);
+    assert_eq!(state::util::get_status(), 42);
   }
 
   #[test]
   fn return_outside_function_errors() {
     let _g = TestGuard::new();
     test_input("return").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== exit =====================
@@ -181,20 +176,20 @@ mod tests {
   fn exit_returns_clean_exit() {
     let _g = TestGuard::new();
     test_input("exit 0").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn exit_with_code() {
     let _g = TestGuard::new();
     test_input("exit 5").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn exit_non_numeric_errors() {
     let _g = TestGuard::new();
     test_input("exit abc").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

@@ -20,14 +20,17 @@ use crate::{
   builtin::BUILTIN_NAMES,
   expand::{expand_keymap, glob_to_regex},
   jobs::Job,
+  keys::KeyEvent,
   match_loop,
   procio::MIN_INTERNAL_FD,
-  readline::{
-    LineData,
-    complete::{Candidate, CompSpec},
-    keys::KeyEvent,
-  },
+  readline::{Candidate, CompSpec, LineData},
   sherr,
+  state::{
+    Shed,
+    logic::AutoCmdKind,
+    util::{query_db, write_logic, write_meta},
+    vars::{VarFlags, VarKind},
+  },
   util::{ShErr, ShResult},
   writefd,
 };
@@ -35,7 +38,7 @@ use itertools::{Itertools, izip};
 use nix::{
   errno::Errno,
   fcntl::{FcntlArg, fcntl},
-  poll::{PollFd, PollTimeout},
+  poll::PollTimeout,
   sys::{
     resource::{Usage, UsageWho, getrusage},
     stat::{FchmodatFlags, Mode, fchmodat},
@@ -216,7 +219,7 @@ impl FromStr for SocketRequest {
                     "Missing variable value in 'query var set' request",
                   ));
                 };
-                let mut flags = VarFlags::NONE;
+                let mut flags = VarFlags::empty();
                 while let Some(flag) = args.next() {
                   match flag.to_lowercase().as_str() {
                     "export" => flags |= VarFlags::EXPORT,
@@ -339,7 +342,7 @@ impl ShedSocket {
     format!("{runtime_dir}/shed/{pid}.sock")
   }
   pub fn mode() -> Mode {
-    read_vars(|v| v.get_var("SHED_SOCK_MODE"))
+    Shed::vars(|v| v.get_var("SHED_SOCK_MODE"))
       .parse::<u32>()
       .ok()
       .and_then(Mode::from_bits)
@@ -375,7 +378,7 @@ impl ShedSocket {
     let listener = unsafe { UnixListener::from_raw_fd(high_fd) };
     listener.set_nonblocking(true).ok();
 
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "SHED_SOCK",
         VarKind::Str(sock_path.clone()),
@@ -1148,46 +1151,8 @@ impl MetaTab {
   pub fn cached_utils(&self) -> impl Iterator<Item = Rc<Utility>> {
     self.util_cache.iter().cloned()
   }
-  pub fn cached_cmds(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|util| matches!(util.kind(), UtilKind::Command(_)))
-      .cloned()
-  }
-  pub fn cached_files(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|util| matches!(util.kind(), UtilKind::File(_)))
-      .cloned()
-  }
-  pub fn cached_aliases(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|util| matches!(util.kind(), UtilKind::Alias))
-      .cloned()
-  }
-  pub fn cached_functions(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|util| matches!(util.kind(), UtilKind::Function))
-      .cloned()
-  }
-  pub fn cached_builtins(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|util| matches!(util.kind(), UtilKind::Builtin))
-      .cloned()
-  }
   pub fn comp_specs(&self) -> &HashMap<String, Box<dyn CompSpec>> {
     &self.comp_specs
-  }
-  pub fn comp_specs_mut(&mut self) -> &mut HashMap<String, Box<dyn CompSpec>> {
-    &mut self.comp_specs
   }
   pub fn get_comp_spec(&self, cmd: &str) -> Option<Box<dyn CompSpec>> {
     self.comp_specs.get(cmd).cloned()
@@ -1209,17 +1174,6 @@ impl MetaTab {
       .iter()
       .find(|util| util.name() == cmd && matches!(util.kind(), UtilKind::Command(_)))
       .cloned()
-  }
-  pub fn get_cached_util(&self, util: &str) -> Option<Rc<Utility>> {
-    self
-      .util_cache
-      .iter()
-      .filter(|u| u.name() == util)
-      .min_by_key(|u| u.kind().clone())
-      .cloned()
-  }
-  pub fn last_was_func_def(&self) -> bool {
-    self.last_was_func_def
   }
   pub fn set_last_was_func_def(&mut self, was_func_def: bool) {
     self.last_was_func_def = was_func_def;
@@ -1300,12 +1254,6 @@ impl MetaTab {
   }
   pub fn get_socket(&self) -> Option<Arc<ShedSocket>> {
     self.socket.as_ref().cloned()
-  }
-  pub fn get_socket_pollfd(&self) -> Option<PollFd<'_>> {
-    self
-      .socket
-      .as_ref()
-      .map(|sock| PollFd::new(sock.as_fd(), nix::poll::PollFlags::POLLIN))
   }
   pub fn read_socket(&mut self) -> ShResult<Vec<(UnixStream, SocketRequest)>> {
     let mut requests = vec![];
@@ -1493,7 +1441,7 @@ impl MetaTab {
   }
   pub fn rehash_internals(&mut self) {
     write_logic(|l| {
-      if !l.dirty {
+      if !l.dirty() {
         return;
       }
       self.clear_cached_aliases();
@@ -1509,7 +1457,7 @@ impl MetaTab {
         let util = Utility::alias(alias.to_string());
         self.cache_util(util.into());
       }
-      l.dirty = false;
+      l.set_dirty(false);
     });
 
     for cmd in BUILTIN_NAMES {
@@ -1574,37 +1522,17 @@ impl MetaTab {
     self.status_msg_hist.push_back((time, msg.clone()));
     Some(msg)
   }
-  pub fn status_msg_pending(&self) -> bool {
-    !self.status_msg.is_empty()
-  }
   pub fn status_msg_history(&self) -> &VecDeque<(SystemTime, String)> {
     &self.status_msg_hist
   }
   pub fn system_msg_history(&self) -> &VecDeque<(SystemTime, String)> {
     &self.system_msg_hist
   }
-  pub fn dir_stack_top(&self) -> Option<&PathBuf> {
-    self.dir_stack.front()
-  }
   pub fn push_dir(&mut self, path: PathBuf) {
     self.dir_stack.push_front(path);
   }
   pub fn pop_dir(&mut self) -> Option<PathBuf> {
     self.dir_stack.pop_front()
-  }
-  pub fn remove_dir(&mut self, idx: i32) -> Option<PathBuf> {
-    if idx < 0 {
-      let neg_idx = (self.dir_stack.len() - 1).saturating_sub((-idx) as usize);
-      self.dir_stack.remove(neg_idx)
-    } else {
-      self.dir_stack.remove((idx - 1) as usize)
-    }
-  }
-  pub fn rotate_dirs_fwd(&mut self, steps: usize) {
-    self.dir_stack.rotate_left(steps);
-  }
-  pub fn rotate_dirs_bkwd(&mut self, steps: usize) {
-    self.dir_stack.rotate_right(steps);
   }
   pub fn dirs(&self) -> &VecDeque<PathBuf> {
     &self.dir_stack

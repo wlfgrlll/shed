@@ -402,7 +402,7 @@ impl ViParser {
           return C::pending();
         };
         let register: RegisterName = if reg == '@' {
-          RegisterName::new(None, None)
+          RegisterName::new(None)
         } else {
           reg.into()
         };
@@ -414,7 +414,7 @@ impl ViParser {
         })
       }
       'Q' => C::complete(EditCmd {
-        register: RegisterName::new(None, None),
+        register: RegisterName::new(None),
         verb: Some(verb!(count, Verb::PlayMacro)),
         ..Default::default()
       }),
@@ -555,7 +555,7 @@ impl ViParser {
   }
   fn reg_parse(chars: &mut Peekable<Chars<'_>>) -> RegisterName {
     let chars_clone = chars.clone();
-    let count = Self::parse_count(chars);
+    let _count = Self::parse_count(chars);
 
     let Some('"') = chars.peek() else {
       *chars = chars_clone;
@@ -567,7 +567,7 @@ impl ViParser {
       return RegisterName::default();
     };
     match reg_name {
-      'a'..='z' | 'A'..='Z' => RegisterName::new(Some(reg_name), count),
+      'a'..='z' | 'A'..='Z' => RegisterName::new(Some(reg_name)),
       _ => RegisterName::default(),
     }
   }

@@ -6,7 +6,9 @@ use std::{
   time::{Duration, Instant},
 };
 
-use crate::{builtin::map::MapNode, sherr, util::ShResult};
+use super::util::{read_meta, read_shopts};
+use super::vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab};
+use crate::{sherr, util::ShResult};
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
@@ -65,15 +67,6 @@ impl ScopeStack {
     }
 
     self.cur_scope().sh_argv()
-  }
-  pub fn sh_argv_mut(&mut self) -> &mut VecDeque<String> {
-    let len = self.scopes.len();
-    let idx = self
-      .scopes
-      .iter()
-      .rposition(|s| !s.sh_argv().is_empty())
-      .unwrap_or(len - 1);
-    self.scopes[idx].sh_argv_mut()
   }
   pub fn sh_argv_scope_mut(&mut self) -> &mut VarTab {
     let idx = self
@@ -158,10 +151,10 @@ impl ScopeStack {
   pub fn update_var(&mut self, var_name: &str, val: VarKind) -> ShResult<()> {
     for scope in self.scopes.iter_mut().rev() {
       if scope.var_exists(var_name) {
-        return scope.set_var(var_name, val, VarFlags::NONE);
+        return scope.set_var(var_name, val, VarFlags::empty());
       }
     }
-    self.set_var_global(var_name, val, VarFlags::NONE)
+    self.set_var_global(var_name, val, VarFlags::empty())
   }
 
   /// Indexed counterpart to `update_var`: writes a single element of an
@@ -341,7 +334,7 @@ impl ScopeStack {
           VarKind::Arr(items) => {
             match idx {
               ArrIndex::AllSplit => {
-                let arg_sep = crate::readline::markers::ARG_SEP.to_string();
+                let arg_sep = crate::expand::markers::ARG_SEP.to_string();
                 let start = slice_start.unwrap_or(0);
                 let end = start + slice_len.unwrap_or(items.len().saturating_sub(start));
                 let sliced = &items
@@ -411,7 +404,7 @@ impl ScopeStack {
           }
           VarKind::AssocArr(items) => match idx {
             ArrIndex::AllSplit => {
-              let arg_sep = crate::readline::markers::ARG_SEP.to_string();
+              let arg_sep = crate::expand::markers::ARG_SEP.to_string();
               let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
               return Ok(values.join(&arg_sep));
             }
@@ -465,7 +458,7 @@ impl ScopeStack {
                 .unwrap_or(' ')
                 .to_string()
             } else {
-              crate::readline::markers::ARG_SEP.to_string()
+              crate::expand::markers::ARG_SEP.to_string()
             };
             return Ok(indices.join(&sep));
           }
@@ -480,7 +473,7 @@ impl ScopeStack {
                 .unwrap_or(' ')
                 .to_string()
             } else {
-              crate::readline::markers::ARG_SEP.to_string()
+              crate::expand::markers::ARG_SEP.to_string()
             };
             return Ok(keys.join(&sep));
           }
@@ -493,37 +486,6 @@ impl ScopeStack {
     Ok("".into())
   }
 
-  pub fn remove_map(&mut self, map_name: &str) -> Option<MapNode> {
-    for scope in self.scopes.iter_mut().rev() {
-      if scope.get_map(map_name).is_some() {
-        return scope.remove_map(map_name);
-      }
-    }
-    None
-  }
-  pub fn get_map(&self, map_name: &str) -> Option<&MapNode> {
-    for scope in self.scopes.iter().rev() {
-      if let Some(map) = scope.get_map(map_name) {
-        return Some(map);
-      }
-    }
-    None
-  }
-  pub fn get_map_mut(&mut self, map_name: &str) -> Option<&mut MapNode> {
-    for scope in self.scopes.iter_mut().rev() {
-      if let Some(map) = scope.get_map_mut(map_name) {
-        return Some(map);
-      }
-    }
-    None
-  }
-  pub fn set_map(&mut self, map_name: &str, map: MapNode, local: bool) {
-    if local && let Some(scope) = self.scopes.last_mut() {
-      scope.set_map(map_name, map);
-    } else if let Some(scope) = self.scopes.first_mut() {
-      scope.set_map(map_name, map);
-    }
-  }
   pub fn try_get_var(&self, var_name: &str) -> Option<String> {
     if let Some(magic) = self.get_magic_var(var_name) {
       Some(magic)
@@ -589,12 +551,7 @@ impl ScopeStack {
     }
     vars
   }
-  pub fn is_local_var(&self, var_name: &str) -> bool {
-    self.scopes.last().is_some_and(|s| {
-      s.get_var_flags(var_name)
-        .is_some_and(|flags| flags.contains(VarFlags::LOCAL))
-    })
-  }
+  #[cfg(test)]
   pub fn get_var_flags(&self, var_name: &str) -> Option<VarFlags> {
     for scope in self.scopes.iter().rev() {
       if scope.var_exists(var_name) {

@@ -1,14 +1,15 @@
 use crate::{
-  key, motion,
+  key,
+  keys::KeyEvent,
+  motion,
   readline::{
     SimpleEditor,
-    editcmd::{CmdFlags, Direction, EditCmd, Motion, To},
+    editcmd::{CmdFlags, Direction, EditCmd, Motion},
     editmode::{CmdReplay, EditMode, ModeReport},
     history::History,
-    keys::KeyEvent,
     linebuf::LineBuf,
   },
-  state::CursorStyle,
+  state::terminal::CursorStyle,
   status_msg,
 };
 
@@ -192,14 +193,8 @@ impl<S: SearchMode> EditMode for S {
   fn pending_cursor(&self) -> Option<usize> {
     self.query_cursor()
   }
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
   fn clamp_cursor(&self) -> bool {
     false
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    None
   }
   fn report_mode(&self) -> ModeReport {
     self.report_search_mode()

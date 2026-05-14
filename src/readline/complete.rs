@@ -14,25 +14,25 @@ use crate::{
     complete::{CompFlags, CompOptFlags, CompOpts},
   },
   expand::{
-    escape::{as_var_val_display, escape_str_bounded},
+    as_var_val_display, escape_glob, escape_str, expand_raw_inner, markers::strip_markers,
     unescape_str,
-    var::{escape_glob, expand_raw_inner},
   },
   key,
+  keys::{KeyCode as C, KeyEvent as K},
   parse::{execute::exec_nonint, lex::Span},
   readline::{
     context::{CtxTk, CtxTkRule, get_context_tokens},
     editmode::{EditMode, ViInsert},
-    keys::{KeyCode as C, KeyEvent as K},
     linebuf::LineBuf,
-    markers::strip_markers,
-    term::calc_str_width,
   },
   state::{
-    self, Cols, Rows, TermGuard, Utility, VarFlags, VarKind, read_jobs, read_logic, read_meta,
-    read_shopts, read_vars, with_term, write_meta, write_vars,
+    self, Shed,
+    meta::Utility,
+    terminal::{Cols, Rows, TermGuard, calc_str_width},
+    util::{read_logic, read_meta, read_shopts, with_term, write_meta},
+    vars::{VarFlags, VarKind},
   },
-  util::{self, ShResult, var_ctx_guard, ends_with_unescaped},
+  util::{self, ShResult, ends_with_unescaped, var_ctx_guard},
   write_term,
 };
 
@@ -208,9 +208,7 @@ impl CompStrat {
       CtxTkRule::Comment
       | CtxTkRule::Subshell
       | CtxTkRule::Arithmetic
-      | CtxTkRule::BraceGroup
       | CtxTkRule::VarSub
-      | CtxTkRule::CasePattern
       | CtxTkRule::HistExp
       | CtxTkRule::Escape
       | CtxTkRule::Separator
@@ -226,8 +224,7 @@ impl CompStrat {
       | CtxTkRule::HereDoc
       | CtxTkRule::HereDocStart
       | CtxTkRule::HereDocBody
-      | CtxTkRule::HereDocEnd
-      | CtxTkRule::Null => Self::Null,
+      | CtxTkRule::HereDocEnd => Self::Null,
     };
     // VarSub/ParamName get a narrowed span (`${name`) so trailing param
     // expansion bits (`:-default`, `}`, etc.) are preserved on replace.
@@ -277,7 +274,7 @@ impl CompStrat {
 
       // After a closed structural construct, semantically nothing follows
       // until a separator, suggest one.
-      CtxTkRule::Subshell | CtxTkRule::BraceGroup | CtxTkRule::Arithmetic => Self::Separator,
+      CtxTkRule::Subshell | CtxTkRule::Arithmetic => Self::Separator,
 
       // Past a comment / heredoc / odd internal-only class, no completion.
       CtxTkRule::Comment
@@ -285,7 +282,6 @@ impl CompStrat {
       | CtxTkRule::HereDocStart
       | CtxTkRule::HereDocBody
       | CtxTkRule::HereDocEnd
-      | CtxTkRule::CasePattern
       | CtxTkRule::HistExp
       | CtxTkRule::Escape
       | CtxTkRule::ArithOp
@@ -297,8 +293,7 @@ impl CompStrat {
       | CtxTkRule::ParamOp
       | CtxTkRule::ParamArg
       | CtxTkRule::AssignmentLeft
-      | CtxTkRule::AssignmentOp
-      | CtxTkRule::Null => Self::Null,
+      | CtxTkRule::AssignmentOp => Self::Null,
     }
   }
 }
@@ -516,7 +511,7 @@ pub fn complete_aliases(start: &str) -> Vec<Candidate> {
 
 pub fn complete_jobs(start: &str) -> Vec<Candidate> {
   if let Some(prefix) = start.strip_prefix('%') {
-    read_jobs(|j| {
+    Shed::jobs(|j| {
       j.jobs()
         .iter()
         .filter_map(|j| j.as_ref())
@@ -533,7 +528,7 @@ pub fn complete_jobs(start: &str) -> Vec<Candidate> {
         .collect()
     })
   } else {
-    read_jobs(|j| {
+    Shed::jobs(|j| {
       j.jobs()
         .iter()
         .filter_map(|j| j.as_ref())
@@ -557,17 +552,17 @@ pub fn complete_users(start: &str) -> Vec<Candidate> {
 }
 
 pub fn complete_vars(start: &str) -> Vec<Candidate> {
-  if !read_vars(|v| v.get_var(start)).is_empty() {
+  if !Shed::vars(|v| v.get_var(start)).is_empty() {
     return vec![];
   }
   // if we are here, we have a variable substitution that isn't complete
   // so let's try to complete it
-  read_vars(|v| {
+  Shed::vars(|v| {
     v.flatten_vars()
       .keys()
       .filter(|k| k.starts_with(start) && *k != start)
       .map(|s| {
-        if let Some(val) = read_vars(|v| v.try_get_var(s)) {
+        if let Some(val) = Shed::vars(|v| v.try_get_var(s)) {
           Candidate::from(s).with_desc(val)
         } else {
           Candidate::from(s)
@@ -578,17 +573,17 @@ pub fn complete_vars(start: &str) -> Vec<Candidate> {
 }
 
 pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
-  if !read_vars(|v| v.get_var(raw)).is_empty() {
+  if !Shed::vars(|v| v.get_var(raw)).is_empty() {
     return vec![];
   }
   // if we are here, we have a variable substitution that isn't complete
   // so let's try to complete it
-  read_vars(|v| {
+  Shed::vars(|v| {
     v.flatten_vars()
       .keys()
       .filter(|k| k.starts_with(raw) && *k != raw)
       .map(|k| {
-        if let Some(val) = read_vars(|v| v.try_get_var(k)) {
+        if let Some(val) = Shed::vars(|v| v.try_get_var(k)) {
           Candidate::from(k.to_string()).with_desc(val)
         } else {
           Candidate::from(k.to_string())
@@ -672,10 +667,10 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
           let middle = after_prefix
             .strip_suffix(&unescaped_post)
             .unwrap_or(after_prefix);
-          let middle_escaped = escape_str_bounded(middle, false, None);
+          let middle_escaped = escape_str(middle, false);
           format!("{prefix}{middle_escaped}{postfix}")
         }
-        None => escape_str_bounded(&raw, false, None),
+        None => escape_str(&raw, false),
       };
 
       // glob strips this, we have to add it back
@@ -765,6 +760,7 @@ pub struct BashCompSpec {
   pub source: String,
 }
 
+#[allow(dead_code)]
 impl BashCompSpec {
   pub fn new() -> Self {
     Self::default()
@@ -862,26 +858,32 @@ impl BashCompSpec {
     } = ctx;
 
     let raw_words = words.iter().clone().map(|tk| tk.to_string()).collect();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "COMP_WORDS",
         VarKind::arr_from_vec(raw_words),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })?;
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "COMP_CWORD",
         VarKind::Str(cword.to_string()),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })?;
-    write_vars(|v| v.set_var("COMP_LINE", VarKind::Str(line.to_string()), VarFlags::NONE))?;
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "COMP_LINE",
+        VarKind::Str(line.to_string()),
+        VarFlags::empty(),
+      )
+    })?;
+    Shed::vars_mut(|v| {
       v.set_var(
         "COMP_POINT",
         VarKind::Str(cursor_pos.to_string()),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })?;
 
@@ -907,7 +909,7 @@ impl BashCompSpec {
     );
     exec_nonint(input, Some("comp_function".into()))?;
 
-    let comp_reply: Vec<Candidate> = read_vars(|v| v.get_arr_elems("COMPREPLY"))
+    let comp_reply: Vec<Candidate> = Shed::vars(|v| v.get_arr_elems("COMPREPLY"))
       .into_iter()
       .map(Candidate::from)
       .collect();
@@ -1359,14 +1361,6 @@ impl FuzzySelector {
 
   pub fn filtered(&self) -> &[ScoredCandidate] {
     &self.filtered
-  }
-
-  pub fn filtered_len(&self) -> usize {
-    self.filtered.len()
-  }
-
-  pub fn candidates_len(&self) -> usize {
-    self.candidates.len()
   }
 
   pub fn activate(&mut self, candidates: Vec<Candidate>) {
@@ -1917,15 +1911,6 @@ impl Completer for SimpleCompleter {
 }
 
 impl SimpleCompleter {
-  pub fn new() -> Self {
-    Self::default()
-  }
-
-  pub fn slice_line(line: &str, cursor_pos: usize) -> (&str, &str) {
-    let (before_cursor, after_cursor) = line.split_at(cursor_pos);
-    (before_cursor, after_cursor)
-  }
-
   pub fn cycle_completion(&mut self, direction: i32) -> String {
     if self.candidates.is_empty() {
       return self.original_input.clone();
@@ -2095,7 +2080,11 @@ impl SimpleCompleter {
         CompResult::from_candidates(complete_commands(&prefix, leaf_cursor_pos))
       }
       CompStrat::Files { path } => {
-        CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+        if self.dirs_only {
+          CompResult::from_candidates(complete_dirs(&path, leaf_cursor_pos))
+        } else {
+          CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+        }
       }
       CompStrat::Separator => CompResult::Single {
         result: Candidate::from(";"),
@@ -2117,7 +2106,7 @@ impl SimpleCompleter {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
-            if flags.contains(CompOptFlags::DIRNAMES) {
+            if flags.contains(CompOptFlags::DIRNAMES) || self.dirs_only {
               CompResult::from_candidates(complete_dirs(&path, leaf_cursor_pos))
             } else if flags.contains(CompOptFlags::DEFAULT) {
               CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
@@ -2150,7 +2139,7 @@ mod tests {
   use super::*;
   use crate::{
     readline::{Prompt, ShedLine},
-    state::{VarFlags, VarKind, write_vars},
+    state::{Shed, vars::VarFlags, vars::VarKind},
     tests::testutil::TestGuard,
   };
   fn test_vi(initial: &str) -> (ShedLine, TestGuard) {
@@ -2245,7 +2234,7 @@ mod tests {
   #[test]
   fn wordbreak_equals_default() {
     let _g = TestGuard::new();
-    let mut comp = SimpleCompleter::new();
+    let mut comp = SimpleCompleter::default();
 
     let line = "cmd --foo=bar".to_string();
     let cursor = line.len();
@@ -2264,10 +2253,16 @@ mod tests {
   #[test]
   fn wordbreak_colon_when_set() {
     let _g = TestGuard::new();
-    write_vars(|v| v.set_var("COMP_WORDBREAKS", VarKind::Str("=:".into()), VarFlags::NONE))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "COMP_WORDBREAKS",
+        VarKind::Str("=:".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
-    let mut comp = SimpleCompleter::new();
+    let mut comp = SimpleCompleter::default();
     let line = "scp host:foo".to_string();
     let cursor = line.len();
     let _ = comp.get_candidates(line.clone(), cursor);
@@ -2285,10 +2280,16 @@ mod tests {
   #[test]
   fn wordbreak_rightmost_wins() {
     let _g = TestGuard::new();
-    write_vars(|v| v.set_var("COMP_WORDBREAKS", VarKind::Str("=:".into()), VarFlags::NONE))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "COMP_WORDBREAKS",
+        VarKind::Str("=:".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
-    let mut comp = SimpleCompleter::new();
+    let mut comp = SimpleCompleter::default();
     let line = "cmd --opt=host:val".to_string();
     let cursor = line.len();
     let _ = comp.get_candidates(line.clone(), cursor);
@@ -2472,8 +2473,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::with_term(|t| t.feed_bytes(b"echo hello\t"));
-    let keys = crate::state::with_term(|t| t.drain_keys()).unwrap();
+    crate::state::util::with_term(|t| t.feed_bytes(b"echo hello\t"));
+    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2495,8 +2496,8 @@ mod tests {
     std::env::set_current_dir(&tmp).unwrap();
 
     // User types "echo my\ " with the space already escaped
-    crate::state::with_term(|t| t.feed_bytes(b"echo my\\ \t"));
-    let keys = crate::state::with_term(|t| t.drain_keys()).unwrap();
+    crate::state::util::with_term(|t| t.feed_bytes(b"echo my\\ \t"));
+    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2656,8 +2657,8 @@ mod tests {
     std::env::set_current_dir(&tmp).unwrap();
 
     // Type "echo unique_shed_test" then press Tab
-    crate::state::with_term(|t| t.feed_bytes(b"echo unique_shed_test\t"));
-    let keys = crate::state::with_term(|t| t.drain_keys()).unwrap();
+    crate::state::util::with_term(|t| t.feed_bytes(b"echo unique_shed_test\t"));
+    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2677,8 +2678,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::with_term(|t| t.feed_bytes(b"cd mysub\t"));
-    let keys = crate::state::with_term(|t| t.drain_keys()).unwrap();
+    crate::state::util::with_term(|t| t.feed_bytes(b"cd mysub\t"));
+    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2699,8 +2700,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::with_term(|t| t.feed_bytes(b"cmd --opt=eqf\t"));
-    let keys = crate::state::with_term(|t| t.drain_keys()).unwrap();
+    crate::state::util::with_term(|t| t.feed_bytes(b"cmd --opt=eqf\t"));
+    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2764,8 +2765,7 @@ mod tests {
   // they contain spaces, quotes, $, ;, etc. These tests exercise the same
   // formatting path that exec_comp_func uses.
 
-  use crate::expand::escape::as_var_val_display;
-  use crate::state::read_vars;
+  use crate::expand::as_var_val_display;
   use crate::tests::testutil::test_input;
 
   fn run_comp_func_with_args(cmd: &str, cword: &str, pword: &str) -> (String, String, String) {
@@ -2778,9 +2778,9 @@ mod tests {
     );
     test_input(input).unwrap();
     (
-      read_vars(|v| v.get_var("CAP1")),
-      read_vars(|v| v.get_var("CAP2")),
-      read_vars(|v| v.get_var("CAP3")),
+      Shed::vars(|v| v.get_var("CAP1")),
+      Shed::vars(|v| v.get_var("CAP2")),
+      Shed::vars(|v| v.get_var("CAP3")),
     )
   }
 

@@ -2,41 +2,32 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use super::{
-  keys,
+  Shed, errln, expand,
   getopt::{self, Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
   jobs::ChildProc,
+  keys, match_loop, out, outln,
   parse::{
-    NdFlags, NdRule, Node,
+    self, NdFlags, NdRule, Node,
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
     lex::{Span, Tk},
   },
+  procio,
   procio::RedirSet,
-  state,
-  sherr,
-  outln,
-  out,
-  errln,
-  err,
-  util::{
-    ShErrKind,
-    ShResult,
-    ShResultExt,
-    var_ctx_guard,
-    with_status,
-  },
+  readline, sherr, shopt as shopt_internal, signal, state,
+  util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
 };
 
 mod alias;
 mod arrops;
 mod autocmd;
 mod cd;
-mod complete;
+pub(super) mod complete;
 mod defer;
 mod dirstack;
 mod echo;
 mod eval;
 mod exec;
-mod fixcmd;
+pub(super) mod fixcmd;
 mod flowctl;
 mod getopts;
 mod hash;
@@ -45,7 +36,6 @@ mod hist;
 mod intro;
 mod jobctl;
 mod keymap;
-mod map;
 mod msg;
 mod pwd;
 mod read;
@@ -55,7 +45,7 @@ mod set;
 mod shift;
 mod shopt;
 mod source;
-mod stash;
+pub(super) mod stash;
 mod test; // [[ ]] thing
 mod times;
 mod trap;
@@ -413,8 +403,10 @@ pub trait Builtin: Sync {
         // which cancels execution. Let's catch that here
         let should_propagate = match e.kind() {
           ShErrKind::CleanExit(_) => true, // this one always goes
-          ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => state::read_meta(|m| m.in_loop()),
-          ShErrKind::FuncReturn(_) => state::read_meta(|m| m.in_func()),
+          ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
+            state::util::read_meta(|m| m.in_loop())
+          }
+          ShErrKind::FuncReturn(_) => state::util::read_meta(|m| m.in_func()),
           _ => false,
         };
 
@@ -577,7 +569,7 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input("true").unwrap();
 
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -585,7 +577,7 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input("false").unwrap();
 
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -593,6 +585,6 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input(":").unwrap();
 
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

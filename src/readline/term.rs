@@ -1,62 +1,17 @@
-use std::{env, fmt::Debug, fmt::Write as FmtWrite, os::fd::RawFd};
+use std::{env, fmt::Debug, fmt::Write as FmtWrite};
 
-use nix::libc::{self};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::{
-  readline::linebuf::Pos,
-  state::{read_shopts, with_term},
+use super::{
+  linebuf::Pos,
+  sherr,
+  state::{
+    terminal::width,
+    util::{read_meta, read_shopts, with_term, write_meta},
+  },
   util::ShResult,
   write_term,
 };
-use crate::{
-  sherr,
-  state::{read_meta, write_meta},
-};
-
-pub const OSC_PROMPT_START: &str = "\x1b]133;A\x07";
-pub const OSC_PROMPT_END: &str = "\x1b]133;B\x07";
-pub const OSC_EXEC_START: &str = "\x1b]133;C\x07";
-pub fn osc_exec_end(code: i32) -> String {
-  format!("\x1b]133;D;{code}\x07")
-}
-
-pub type Row = u16;
-pub type Col = u16;
-
-// I'd like to thank rustyline for this idea
-nix::ioctl_read_bad!(win_size, libc::TIOCGWINSZ, libc::winsize);
-
-pub fn get_win_size(fd: RawFd) -> (Col, Row) {
-  use std::mem::zeroed;
-
-  if cfg!(test) {
-    return (80, 24);
-  }
-
-  unsafe {
-    let mut size: libc::winsize = zeroed();
-    match win_size(fd, &mut size) {
-      Ok(0) => {
-        /* rustyline code says:
-         In linux pseudo-terminals are created with dimensions of
-         zero. If host application didn't initialize the correct
-         size before start we treat zero size as 80 columns and
-         infinite rows
-        */
-        let cols = if size.ws_col == 0 { 80 } else { size.ws_col };
-        let rows = if size.ws_row == 0 {
-          u16::MAX
-        } else {
-          size.ws_row
-        };
-        (cols, rows)
-      }
-      _ => (80, 24),
-    }
-  }
-}
 
 pub fn enumerate_lines(
   s: &str,
@@ -117,93 +72,6 @@ pub fn enumerate_lines(
     })
 }
 
-pub fn calc_str_width(s: &str) -> usize {
-  let mut esc_seq = 0;
-  s.graphemes(true).map(|g| width(g, &mut esc_seq)).sum()
-}
-
-pub fn truncate_visual(s: &str, max_width: usize) -> String {
-  let mut out = String::new();
-  let mut visible = 0;
-  let mut esc_seq = 0u8;
-  let mut wrote_anything_visible = false;
-
-  for g in s.graphemes(true) {
-    let w = width(g, &mut esc_seq);
-    if esc_seq == 0 && visible + w > max_width {
-      break;
-    }
-    out.push_str(g);
-    visible += w;
-    if w > 0 {
-      wrote_anything_visible = true;
-    }
-  }
-
-  if wrote_anything_visible {
-    out.push_str("\x1b[0m");
-  }
-  out
-}
-
-pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
-  if calc_str_width(s) <= max_width {
-    return s.to_string();
-  }
-  if max_width <= 3 {
-    // Not enough room even for the ellipsis itself; just hard-truncate.
-    return truncate_visual(s, max_width);
-  }
-  let mut out = truncate_visual(s, max_width - 3);
-  out.push_str("...");
-  out
-}
-
-// Big credit to rustyline for this
-fn width(s: &str, esc_seq: &mut u8) -> usize {
-  if *esc_seq == 1 {
-    if s == "[" {
-      // CSI
-      *esc_seq = 2;
-    } else {
-      // two-character sequence
-      *esc_seq = 0;
-    }
-    0
-  } else if *esc_seq == 2 {
-    if s == ";" || (s.as_bytes()[0] >= b'0' && s.as_bytes()[0] <= b'9') {
-      /*} else if s == "m" {
-      // last
-       *esc_seq = 0;*/
-    } else {
-      // not supported
-      *esc_seq = 0;
-    }
-
-    0
-  } else if s == "\x1b" {
-    *esc_seq = 1;
-    0
-  } else if s == "\n" {
-    0
-  } else {
-    get_width_calculator().width(s)
-  }
-}
-
-pub fn width_calculator() -> Box<dyn WidthCalculator> {
-  match env::var("TERM_PROGRAM").as_deref() {
-    Ok("Apple_Terminal") => Box::new(UnicodeWidth),
-    Ok("iTerm.app") => Box::new(UnicodeWidth),
-    Ok("WezTerm") => Box::new(UnicodeWidth),
-    Err(std::env::VarError::NotPresent) => match std::env::var("TERM").as_deref() {
-      Ok("xterm-kitty") => Box::new(NoZwj),
-      _ => Box::new(WcWidth),
-    },
-    _ => Box::new(WcWidth),
-  }
-}
-
 /// Replace tabs with `tab_stop` number of spaces.
 ///
 /// Used for rendering the line editor content in a way that respects the user's `tab_width` shell option.
@@ -228,63 +96,6 @@ fn expand_tabs(s: &str, left_margin: usize, tab_stop: usize) -> String {
     }
   }
   out
-}
-
-pub fn append_digit(left: u32, right: u32) -> u32 {
-  left.saturating_mul(10).saturating_add(right)
-}
-
-pub trait WidthCalculator: Send + Sync {
-  fn width(&self, text: &str) -> usize;
-}
-
-static WIDTH_CALC: std::sync::OnceLock<Box<dyn WidthCalculator>> = std::sync::OnceLock::new();
-
-pub fn get_width_calculator() -> &'static dyn WidthCalculator {
-  WIDTH_CALC.get_or_init(width_calculator).as_ref()
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct UnicodeWidth;
-
-impl WidthCalculator for UnicodeWidth {
-  fn width(&self, text: &str) -> usize {
-    text.width()
-  }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct WcWidth;
-
-impl WcWidth {
-  pub fn cwidth(&self, ch: char) -> usize {
-    ch.width().unwrap()
-  }
-}
-
-impl WidthCalculator for WcWidth {
-  fn width(&self, text: &str) -> usize {
-    let mut width = 0;
-    for ch in text.chars() {
-      width += self.cwidth(ch)
-    }
-    width
-  }
-}
-
-const ZWJ: char = '\u{200D}';
-#[derive(Clone, Copy, Debug)]
-pub struct NoZwj;
-
-impl WidthCalculator for NoZwj {
-  fn width(&self, text: &str) -> usize {
-    if text.contains(ZWJ) {
-      // ZWJ sequence renders as a single glyph on supported terminals
-      2
-    } else {
-      UnicodeWidth.width(text)
-    }
-  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,7 +202,7 @@ pub fn redraw(
     write_term!("{system_msg}").ok();
   }
 
-  write_term!("{OSC_PROMPT_START}").ok();
+  with_term(|t| t.emit_osc_prompt_start()).ok();
   if let Ok(prefix) = env::var("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
@@ -399,7 +210,8 @@ pub fn redraw(
   if let Ok(suffix) = env::var("SHELL_PROMPT_SUFFIX") {
     write_term!("{suffix}").ok();
   }
-  write_term!("{OSC_PROMPT_END}").ok();
+  with_term(|t| t.emit_osc_prompt_end()).ok();
+
   let t_cols = with_term(|t| t.t_cols());
 
   let tab_width = read_shopts(|o| o.line.tab_width);

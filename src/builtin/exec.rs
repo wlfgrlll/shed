@@ -1,6 +1,6 @@
 use nix::{errno::Errno, unistd::execvpe};
 
-use crate::{
+use super::{
   parse::execute::ExecArgs,
   sherr,
   util::{ShResult, with_status},
@@ -39,7 +39,7 @@ mod tests {
   fn exec_no_args_succeeds() {
     let _g = TestGuard::new();
     test_input("exec").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -48,6 +48,6 @@ mod tests {
     test_input(
       "exec _____________no_such_______command_xyz_____________hopefully______this_doesnt______exist_____somewhere_in___your______PATH__________________",
     ).ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

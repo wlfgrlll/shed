@@ -17,7 +17,7 @@ use crate::{
     linebuf::{Hint, LineBuf, Lines},
   },
   sherr,
-  state::{self, read_shopts},
+  state::{self, util::read_shopts},
   util::ShResult,
 };
 
@@ -51,12 +51,6 @@ impl Default for HistEntry {
 }
 
 impl HistEntry {
-  pub fn runtime(&self) -> Duration {
-    self.runtime
-  }
-  pub fn timestamp(&self) -> SystemTime {
-    self.timestamp
-  }
   pub fn command(&self) -> &str {
     &self.command
   }
@@ -143,7 +137,7 @@ impl History {
     let table_name = hist.table.clone();
     std::thread::spawn(move || {
       do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
-        let Some(conn) = state::open_db_conn().ok() else {
+        let Some(conn) = state::util::open_db_conn().ok() else {
           return;
         };
         conn.execute_batch("PRAGMA journal_mode=WAL").ok();
@@ -317,7 +311,7 @@ impl History {
 
     std::thread::spawn(move || {
       do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
-        let Some(conn) = state::open_db_conn().ok() else {
+        let Some(conn) = state::util::open_db_conn().ok() else {
           return;
         };
         conn.execute_batch("PRAGMA journal_mode=WAL").ok();
@@ -719,14 +713,6 @@ impl History {
     self.max_size = size
   }
 
-  pub fn masked_entries(&self) -> &[HistEntry] {
-    &self.search_mask
-  }
-
-  pub fn cursor_entry(&self) -> Option<&HistEntry> {
-    self.search_mask.get(self.cursor)
-  }
-
   pub fn at_pending(&self) -> bool {
     self.cursor >= self.search_mask.len()
   }
@@ -736,11 +722,9 @@ impl History {
     self.virt_cursor = self.cursor;
   }
 
-  pub fn hint_entry(&self) -> Option<&HistEntry> {
-    if self.no_matches {
-      return None;
-    };
-    self.search_mask.last()
+  #[cfg(test)]
+  pub fn masked_entries(&self) -> &[HistEntry] {
+    &self.search_mask
   }
 
   /// Get a hint by scanning the in-memory cache. No database access.
@@ -774,7 +758,7 @@ impl History {
 
     std::thread::spawn(move || {
       do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
-        let Some(conn) = state::open_db_conn().ok() else {
+        let Some(conn) = state::util::open_db_conn().ok() else {
           return;
         };
         conn.execute_batch("PRAGMA journal_mode=WAL").ok();

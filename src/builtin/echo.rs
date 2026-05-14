@@ -1,15 +1,12 @@
-use crate::{
-  builtin::Builtin,
+use super::{
+  Builtin, ShResult,
   expand::expand_prompt,
   getopt::{Opt, OptSpec},
   out,
-  state::read_shopts,
-  util::{
-    ShResult,
-    ShResultExt,
-    expand_ansi_c,
-    with_status,
-  },
+  state::util::read_shopts,
+  util::ShResultExt,
+  util::expand_ansi_c,
+  with_status,
 };
 use bitflags::bitflags;
 
@@ -77,7 +74,7 @@ impl Builtin for Echo {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, write_shopts};
+  use crate::state::{self, util::write_shopts};
   use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
@@ -108,7 +105,7 @@ mod tests {
   fn echo_status_zero() {
     let _g = TestGuard::new();
     test_input("echo hello").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== Integration: -n flag =====================

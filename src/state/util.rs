@@ -1,4 +1,4 @@
-use super::{SHED, logic::AutoCmdKind};
+use super::{SHED, Shed};
 
 use std::{
   collections::{HashMap, VecDeque},
@@ -17,23 +17,21 @@ use rusqlite::Connection;
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{autocmd, jobs::Job, state::vars::Var};
 use super::{
-  jobs::JobTab,
+  ShResult, autocmd,
   logic::LogTab,
-  meta::MetaTab,
-  scopes::ScopeStack,
-  terminal::Terminal,
   match_loop,
-  vars::{self, ArrIndex},
+  meta::{MetaTab, UtilKind, Utility},
   parse::{
     execute::exec_nonint,
     lex::{LexFlags, LexStream},
   },
   sherr,
   shopt::ShOpts,
-  ShResult,
+  terminal::Terminal,
+  vars::{ArrIndex, VarFlags, VarKind},
 };
+use crate::{jobs::Job, state::vars::Var};
 
 /// Parse `arr[idx]` into (name, raw_index_expr). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
@@ -101,34 +99,10 @@ pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<Arr
  * Each one accesses a different part of the shared state (the "Shed" struct),
  * and they take a closure that operates on that part of the state.
  *
- * The main footgun associated with using these is re-entrancy.
- * For instance, If you call write_vars() in a place that can be accessed
- * by write_vars(), (e.g. in the Var table), the shell will crash with a borrow error.
- * Let's not do that!
  *
  * With these, we can access shell state anywhere without threading a state object through every function.
  * However, we must be mindful of what the callstack looks like when we call them, to avoid re-entrancy issues.
  */
-
-/// Read from the job table
-pub fn read_jobs<T, F: FnOnce(&JobTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&shed.jobs.borrow()))
-}
-
-/// Write to the job table
-pub fn write_jobs<T, F: FnOnce(&mut JobTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&mut shed.jobs.borrow_mut()))
-}
-
-/// Read from the var scope stack
-pub fn read_vars<T, F: FnOnce(&ScopeStack) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&shed.var_scopes.borrow()))
-}
-
-/// Write to the variable table
-pub fn write_vars<T, F: FnOnce(&mut ScopeStack) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&mut shed.var_scopes.borrow_mut()))
-}
 
 pub fn read_meta<T, F: FnOnce(&MetaTab) -> T>(f: F) -> T {
   SHED.with(|shed| f(&shed.meta.borrow()))
@@ -199,36 +173,22 @@ pub fn query_db<T, F: FnOnce(Arc<Connection>) -> ShResult<T>>(f: F) -> ShResult<
   })
 }
 
-pub fn descend_scope(argv: Option<Vec<String>>) {
-  write_vars(|v| v.descend(argv));
-}
-pub fn ascend_scope() {
-  write_vars(|v| v.ascend());
-}
-
-/// This function is used internally and ideally never sees user input
-///
-/// It will panic if you give it an invalid path.
-pub fn get_shopt(path: &str) -> String {
-  read_shopts(|s| s.get(path)).unwrap().unwrap()
-}
-
 pub fn with_vars<F, H, V, T>(vars: H, f: F) -> T
 where
   F: FnOnce() -> T,
   H: Into<HashMap<String, V>>,
   V: Into<Var>,
 {
-  let snapshot = read_vars(|v| v.clone());
+  let snapshot = Shed::vars(|v| v.clone());
   let vars = vars.into();
   for (name, val) in vars {
     let val = val.into();
     let kind = val.kind().clone();
     let flags = val.flags();
-    write_vars(|v| v.set_var(&name, kind, flags).unwrap());
+    Shed::vars_mut(|v| v.set_var(&name, kind, flags).unwrap());
   }
   let _guard = scopeguard::guard(snapshot, |snap| {
-    write_vars(|v| *v = snap);
+    Shed::vars_mut(|v| *v = snap);
   });
   f()
 }
@@ -243,30 +203,20 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
       ("NEW_DIR".into(), dir_raw.as_str()),
       ("OLD_DIR".into(), current_dir.as_str()),
     ],
-    || autocmd!(PreChangeDir)
+    || autocmd!(PreChangeDir),
   );
 
   std::env::set_current_dir(dir)?;
 
   let new_dir_resolved = std::env::current_dir()?.display().to_string();
-  write_vars(|v| {
+  Shed::vars_mut(|v| {
     v.set_var(
       "OLDPWD",
       VarKind::Str(current_dir.clone()),
       VarFlags::EXPORT,
     )
   })?;
-  write_vars(|v| v.set_var("PWD", VarKind::Str(new_dir_resolved), VarFlags::EXPORT))?;
-
-  with_vars(
-    [
-      ("NEW_DIR".into(), dir_raw.as_str()),
-      ("OLD_DIR".into(), current_dir.as_str()),
-    ],
-    || {
-      post_cd.exec();
-    },
-  );
+  Shed::vars_mut(|v| v.set_var("PWD", VarKind::Str(new_dir_resolved), VarFlags::EXPORT))?;
 
   Ok(())
 }
@@ -314,7 +264,7 @@ pub fn set_pipe_status(stats: &[WtStat]) -> ShResult<()> {
       .map(|s| s.to_string())
       .collect::<VecDeque<String>>();
 
-    write_vars(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::NONE))?;
+    Shed::vars_mut(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::empty()))?;
   }
   Ok(())
 }
@@ -368,32 +318,6 @@ pub fn try_hash() {
   } else {
     write_meta(|m| m.clear_cache());
   }
-}
-
-pub fn runtime_files() -> Vec<PathBuf> {
-  let mut files = vec![];
-
-  if let Some(home) = get_home() {
-    files.push(home.join(".shedrc"));
-    files.push(home.join(".shed_profile"));
-    files.push(home.join(".shedenv"));
-  }
-
-  if let Ok(path) = std::env::var("SHED_RC") {
-    files.push(PathBuf::from(path));
-  }
-  if let Ok(path) = std::env::var("SHED_PROFILE") {
-    files.push(PathBuf::from(path));
-  }
-  if let Ok(path) = std::env::var("SHED_ENV") {
-    files.push(PathBuf::from(path));
-  }
-
-  files.push(PathBuf::from("/etc/shed/shedrc"));
-  files.push(PathBuf::from("/etc/shed/shed_profile"));
-  files.push(PathBuf::from("/etc/shed/shedenv"));
-
-  files
 }
 
 pub fn rc_file_path() -> Option<PathBuf> {
@@ -520,13 +444,17 @@ pub fn set_ver_info() -> ShResult<()> {
     ("os".into(), os.into()),
   ];
 
-  write_vars(|v| {
+  Shed::vars_mut(|v| {
     v.set_var(
       "SHED_VERSION",
       VarKind::Str(version.into()),
       VarFlags::EXPORT,
     )?;
-    v.set_var("SHED_VER_INFO", VarKind::AssocArr(ver_info), VarFlags::NONE)
+    v.set_var(
+      "SHED_VER_INFO",
+      VarKind::AssocArr(ver_info),
+      VarFlags::empty(),
+    )
   })?;
 
   Ok(())
@@ -538,7 +466,7 @@ pub fn set_sh_lvl() -> ShResult<()> {
   if let Ok(var) = std::env::var("SHLVL")
     && let Ok(lvl) = var.parse::<u32>()
   {
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "SHLVL",
         VarKind::Str((lvl + 1).to_string()),
@@ -546,38 +474,10 @@ pub fn set_sh_lvl() -> ShResult<()> {
       )
     })?;
   } else {
-    write_vars(|v| v.set_var("SHLVL", VarKind::Str("1".into()), VarFlags::EXPORT))?;
+    Shed::vars_mut(|v| v.set_var("SHLVL", VarKind::Str("1".into()), VarFlags::EXPORT))?;
   }
 
   Ok(())
-}
-
-#[track_caller]
-pub fn get_home_unchecked() -> PathBuf {
-  if let Some(home) = get_home() {
-    home
-  } else {
-    let caller = std::panic::Location::caller();
-    panic!(
-      "get_home_unchecked: could not determine home directory (called from {}:{})",
-      caller.file(),
-      caller.line()
-    )
-  }
-}
-
-#[track_caller]
-pub fn get_home_str_unchecked() -> String {
-  if let Some(home) = get_home() {
-    home.to_string_lossy().to_string()
-  } else {
-    let caller = std::panic::Location::caller();
-    panic!(
-      "get_home_str_unchecked: could not determine home directory (called from {}:{})",
-      caller.file(),
-      caller.line()
-    )
-  }
 }
 
 /// Get a clone of the shared database connection, if available.
@@ -670,7 +570,7 @@ pub fn get_exec_wrappers() -> Vec<String> {
 
   // lets users define their own exec wrappers for the highlighter if they want
   // for instance, my personal config has a wrapper function called 'invoke'
-  let user_wrappers = read_vars(|v| v.get_arr_elems("SHED_EXEC_WRAPPERS"));
+  let user_wrappers = Shed::vars(|v| v.get_arr_elems("SHED_EXEC_WRAPPERS"));
   wrappers.extend(user_wrappers);
 
   wrappers

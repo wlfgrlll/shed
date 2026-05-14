@@ -1,7 +1,7 @@
 use crate::expand::expand_raw;
 use crate::match_loop;
-use crate::util::ShResult;
 use crate::util::QuoteState;
+use crate::util::ShResult;
 
 /// Check if a string contains valid brace expansion patterns.
 /// Returns true if there's a valid {a,b} or {1..5} pattern at the outermost

@@ -9,13 +9,13 @@ use std::{
 };
 
 use super::{
+  keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
+  parse::{Node, lex::Span},
   signal::parse_signal,
-  parse::{Node, execute, lex::Span},
-  keys::{KeyMap, KeyMapFlags, KeyMapMatch, KeyEvent}
 };
 
 #[derive(Clone, Debug)]
-pub(super) struct ShAlias {
+pub(crate) struct ShAlias {
   body: String,
   source: Span,
 }
@@ -114,9 +114,6 @@ impl AutoCmd {
   pub fn new(kind: AutoCmdKind, command: String) -> Self {
     Self { kind, command }
   }
-  pub fn kind(&self) -> AutoCmdKind {
-    self.kind
-  }
   pub fn command(&self) -> &str {
     &self.command
   }
@@ -156,12 +153,11 @@ impl Display for TrapTarget {
   }
 }
 
-
 /// The logic table for the shell
 ///
 /// Contains aliases and functions
 #[derive(Default, Clone, Debug)]
-pub(super) struct LogTab {
+pub(crate) struct LogTab {
   functions: HashMap<String, ShFunc>,
   aliases: HashMap<String, ShAlias>,
   dirty: bool, // flips on alias/function insertion. used for signaling function/alias caching.
@@ -178,11 +174,8 @@ impl LogTab {
   pub fn dirty(&self) -> bool {
     self.dirty
   }
-  pub fn autocmds(&self) -> &HashMap<AutoCmdKind, Vec<AutoCmd>> {
-    &self.autocmds
-  }
-  pub fn autocmds_mut(&mut self) -> &mut HashMap<AutoCmdKind, Vec<AutoCmd>> {
-    &mut self.autocmds
+  pub fn set_dirty(&mut self, dirty: bool) {
+    self.dirty = dirty;
   }
   pub fn insert_autocmd(&mut self, cmd: AutoCmd) {
     let entry = self.autocmds.entry(cmd.kind).or_default();
@@ -197,12 +190,6 @@ impl LogTab {
   }
   pub fn clear_autocmds(&mut self, kind: AutoCmdKind) {
     self.autocmds.remove(&kind);
-  }
-  pub fn keymaps(&self) -> &Vec<KeyMap> {
-    &self.keymaps
-  }
-  pub fn keymaps_mut(&mut self) -> &mut Vec<KeyMap> {
-    &mut self.keymaps
   }
   pub fn insert_keymap(&mut self, keymap: KeyMap) {
     for map in self.keymaps.iter_mut() {
@@ -229,10 +216,6 @@ impl LogTab {
     self.functions.insert(name.into(), src);
     self.dirty = true;
   }
-  pub fn remove_func(&mut self, name: &str) {
-    self.functions.remove(name);
-    self.dirty = true;
-  }
   pub fn insert_trap(&mut self, target: TrapTarget, command: String) {
     self.traps.insert(target, command);
   }
@@ -255,13 +238,9 @@ impl LogTab {
     &self.aliases
   }
   pub fn insert_alias(&mut self, name: &str, body: &str, source: Span) {
-    self.aliases.insert(
-      name.into(),
-      ShAlias {
-        body: body.into(),
-        source,
-      },
-    );
+    self
+      .aliases
+      .insert(name.into(), ShAlias::new(body.into(), source));
     self.dirty = true;
   }
   pub fn get_alias(&self, name: &str) -> Option<ShAlias> {
@@ -270,11 +249,5 @@ impl LogTab {
   pub fn remove_alias(&mut self, name: &str) {
     self.aliases.remove(name);
     self.dirty = true;
-  }
-  pub fn clear_aliases(&mut self) {
-    self.aliases.clear()
-  }
-  pub fn clear_functions(&mut self) {
-    self.functions.clear()
   }
 }

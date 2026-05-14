@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use crate::expand::subshell::expand_cmd_sub;
 use crate::match_loop;
 use crate::state;
-use crate::state::read_shopts;
-use crate::state::read_vars;
-use crate::state::{read_jobs, read_logic, write_meta};
+use crate::state::Shed;
+use crate::state::util::read_shopts;
+use crate::state::{util::read_logic, util::write_meta};
 use crate::status_msg;
 use crate::util::ShResult;
 use crate::util::ansi_from_description;
@@ -21,10 +21,6 @@ pub enum PromptTk {
   Function(String), // Expands to the output of any defined shell function
   RuntimeMillis,
   RuntimeFormatted,
-  Dquote,
-  Squote,
-  Return,
-  Newline,
   Pwd,
   PwdShort,
   Hostname,
@@ -35,7 +31,7 @@ pub enum PromptTk {
   JobCount,
 }
 
-pub fn format_cmd_runtime(dur: std::time::Duration) -> String {
+fn format_cmd_runtime(dur: std::time::Duration) -> String {
   const ETERNITY: u128 = f32::INFINITY as u128;
   let mut micros = dur.as_micros();
   let mut millis = 0;
@@ -396,16 +392,16 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::Pwd => {
-      let mut pwd = read_vars(|v| v.get_var("PWD"));
-      let home = state::get_home_str().unwrap_or_default();
+      let mut pwd = Shed::vars(|v| v.get_var("PWD"));
+      let home = state::util::get_home_str().unwrap_or_default();
       if pwd.starts_with(&home) {
         pwd = pwd.replacen(&home, "~", 1);
       }
       result.push_str(&pwd);
     }
     PromptTk::PwdShort => {
-      let mut pwd = read_vars(|v| v.get_var("PWD"));
-      let home = state::get_home_str().unwrap_or_default();
+      let mut pwd = Shed::vars(|v| v.get_var("PWD"));
+      let home = state::util::get_home_str().unwrap_or_default();
       if pwd.starts_with(&home) {
         pwd = pwd.replacen(&home, "~", 1);
       }
@@ -448,7 +444,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::JobCount => {
-      let count = read_jobs(|j| {
+      let count = Shed::jobs(|j| {
         j.jobs()
           .iter()
           .filter(|j| {
@@ -471,10 +467,6 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       let output = expand_cmd_sub(&f)?;
       result.push_str(&output);
     }
-    PromptTk::Newline => result.push('\n'),
-    PromptTk::Dquote => result.push('"'),
-    PromptTk::Squote => result.push('\''),
-    PromptTk::Return => result.push('\r'),
   });
 
   Ok(result)

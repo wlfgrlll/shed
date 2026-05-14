@@ -1,11 +1,11 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
+use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::readline::editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word};
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::CursorStyle;
+use crate::state::terminal::CursorStyle;
 use crate::{key, motion, verb};
 
 #[derive(Default, Clone, Debug)]
-pub struct Emacs {
+pub(crate) struct Emacs {
   pending_cmd: Option<EditCmd>,
 }
 
@@ -42,7 +42,7 @@ impl Emacs {
       });
     }
   }
-  pub fn take_cmd(&mut self) -> Option<EditCmd> {
+  fn take_cmd(&mut self) -> Option<EditCmd> {
     self.pending_cmd.take()
   }
 }
@@ -68,10 +68,6 @@ impl EditMode for Emacs {
       key!(Backspace) => {
         self.set_verb(verb!(Verb::Delete));
         self.set_motion(motion!(Motion::BackwardCharForced));
-        self.take_cmd()
-      }
-      key!(BackTab) => {
-        self.set_verb(verb!(Verb::CompleteBackward));
         self.take_cmd()
       }
       key!(Tab) | key!(Ctrl + 'i') => {
@@ -229,14 +225,8 @@ impl EditMode for Emacs {
   fn pending_seq(&self) -> Option<String> {
     None
   }
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
   fn clamp_cursor(&self) -> bool {
     false
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    Some(To::End)
   }
   fn report_mode(&self) -> ModeReport {
     ModeReport::Emacs

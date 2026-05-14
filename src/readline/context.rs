@@ -5,19 +5,14 @@ use std::{
 use bitflags::bitflags;
 
 use crate::{
-  expand::{unescape_str, var::expand_raw_inner},
+  expand::{expand_raw_inner, markers::strip_markers, unescape_str},
   match_loop,
   parse::{
     execute::{in_cd_path, is_in_path},
     lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
   },
-  readline::{linebuf::Delim, markers::strip_markers},
-  state::{self, ShellParam, get_exec_wrappers, read_meta, read_shopts},
-  util::{
-    has_unescaped,
-    QuoteState,
-    split_at_unescaped,
-  },
+  state::{self, util::get_exec_wrappers, util::read_meta, util::read_shopts, vars::ShellParam},
+  util::{QuoteState, has_unescaped, split_at_unescaped},
 };
 
 /*
@@ -246,7 +241,6 @@ pub enum CtxTkRule {
   VarSub,
   Comment,
   Glob,
-  CasePattern,
   HistExp,
   Escape,
   Tilde,
@@ -273,12 +267,10 @@ pub enum CtxTkRule {
 
   Operator,
   Redirect,
-  BraceGroup,
   HereDoc,
   HereDocStart,
   HereDocBody,
   HereDocEnd,
-  Null,
 }
 
 /// A token with richer contextual data than `Tk`
@@ -455,13 +447,6 @@ impl CtxTk {
     )
   }
 
-  pub fn split_at_checked(&self, at: usize) -> Option<(CtxTk, CtxTk)> {
-    if !self.can_split_at(at) {
-      return None;
-    }
-    Some(self.clone().split_at(at))
-  }
-
   /// Get the position of the cursor relative to the start of this token, if it falls within the token's span
   ///
   /// Returns None if the cursor is outside the token's span
@@ -476,10 +461,6 @@ impl CtxTk {
     let cursor_pos = self.relative_cursor_pos(at)?;
 
     self.span().as_str().split_at_checked(cursor_pos)
-  }
-
-  pub fn is_argument(&self) -> bool {
-    matches!(self.class(), CtxTkRule::Argument | CtxTkRule::ArgumentFile)
   }
 
   pub fn prefix_from(&self, at: usize) -> Option<&str> {
@@ -511,19 +492,6 @@ impl CtxTk {
     }
 
     nodes
-  }
-  pub fn get_leaf(&self, cursor_pos: usize) -> Option<&CtxTk> {
-    if !self.range_inclusive().contains(&cursor_pos) {
-      return None;
-    }
-
-    for token in &self.sub_tokens {
-      if let Some(tk) = token.get_leaf(cursor_pos) {
-        return Some(tk);
-      }
-    }
-
-    Some(self) // cursor is in our span, so..
   }
 
   pub fn find_nodes<F: Fn(&CtxTk) -> bool>(&self, pred: F) -> Vec<&CtxTk> {
@@ -704,7 +672,7 @@ fn check_path_exists(path: &str) -> bool {
 /// This allows for styling filenames in tokens like `--foo=/path/to/bar`
 /// And also allows the completer to get more fine-grained context
 fn subdivide_argument(mut tk: CtxTk) -> Vec<CtxTk> {
-  let wordbreaks = state::get_comp_wordbreaks();
+  let wordbreaks = state::util::get_comp_wordbreaks();
   let mut tokens = vec![];
 
   let push_token = |tks: &mut Vec<CtxTk>, mut tk: CtxTk| {
@@ -1660,15 +1628,16 @@ fn lex_backtick(chars: &mut Peekable<CharIndices>) -> (bool, usize) {
 }
 
 fn lex_subshell(chars: &mut Peekable<CharIndices>) -> (bool, usize) {
-  lex_delim(chars, Delim::Paren)
+  lex_delim(chars, '(')
 }
 
-fn lex_delim(chars: &mut Peekable<CharIndices>, delim: Delim) -> (bool, usize) {
-  let (opener, closer) = match delim {
-    Delim::Paren => ('(', ')'),
-    Delim::Brace => ('{', '}'),
-    Delim::Bracket => ('[', ']'),
-    Delim::Angle => ('<', '>'),
+fn lex_delim(chars: &mut Peekable<CharIndices>, opener: char) -> (bool, usize) {
+  let closer = match opener {
+    '(' => ')',
+    '{' => '}',
+    '[' => ']',
+    '<' => '>',
+    _ => unreachable!(),
   };
   let mut qt_state = QuoteState::default();
   let mut consumed = 0;

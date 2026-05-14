@@ -1,28 +1,31 @@
-use super::{scopes::ScopeStack};
+use super::scopes::ScopeStack;
 
 use std::{
   collections::{HashMap, VecDeque},
   fmt::{self, Display},
-  ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign},
   path::PathBuf,
   str::FromStr,
 };
 
+use bitflags::bitflags;
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
-use super::{
-  expand::{as_var_val_display, expand_arithmetic, expand_raw},
-  parse::lex::{LexFlags, LexStream, Tk},
-  procio::stdin_fileno,
-  readline::{complete::Candidate, markers},
+use super::util::get_separator;
+use crate::expand::{as_var_val_display, expand_arithmetic, expand_raw, markers};
+use crate::parse::lex::{LexFlags, LexStream, Tk};
+use crate::procio::stdin_fileno;
+use crate::readline::Candidate;
+use crate::{
   sherr,
-  ShErr, ShResult,
+  util::{ShErr, ShResult},
 };
 
 /// Display key/value pairs as '{key}={value}\n'
 ///
 /// The 'value' is escaped in such a way that the whole line can be reused as a shell assignment
-pub(crate) fn display_as_vars(vars: impl Iterator<Item = (impl ToString, impl ToString)>) -> String {
+pub(crate) fn display_as_vars(
+  vars: impl Iterator<Item = (impl ToString, impl ToString)>,
+) -> String {
   let mut vars = vars
     .map(|(k, v)| display_as_var(k, v))
     .collect::<Vec<String>>();
@@ -38,7 +41,7 @@ pub(crate) fn display_as_var(name: impl ToString, value: impl ToString) -> Strin
   )
 }
 
-fn display_env_vars() -> String {
+pub(crate) fn display_env_vars() -> String {
   display_as_vars(std::env::vars())
 }
 
@@ -52,14 +55,13 @@ fn display_vars_internal(vars: &ScopeStack, filter: Option<VarFlags>) -> String 
   }
 }
 
-fn display_readonly(vars: &ScopeStack) -> String {
+pub(crate) fn display_readonly(vars: &ScopeStack) -> String {
   display_vars_internal(vars, Some(VarFlags::READONLY))
 }
 
-fn display_local(vars: &ScopeStack) -> String {
+pub(crate) fn display_local(vars: &ScopeStack) -> String {
   display_vars_internal(vars, None)
 }
-
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
 pub enum ShellParam {
@@ -133,253 +135,12 @@ impl FromStr for ShellParam {
   }
 }
 
-#[derive(Debug, Clone)]
-pub enum MapNode {
-  DynamicLeaf(String), // eval'd on access
-  StaticLeaf(String),  // static value
-  Array(Vec<MapNode>),
-  Branch(HashMap<BranchKey, MapNode>),
-}
-
-impl Default for MapNode {
-  fn default() -> Self {
-    Self::Branch(HashMap::new())
-  }
-}
-
-impl From<MapNode> for serde_json::Value {
-  fn from(val: MapNode) -> Self {
-    match val {
-      MapNode::Branch(map) => {
-        let val_map = map
-          .into_iter()
-          .map(|(k, v)| (k.into(), v.into()))
-          .collect::<Map<String, Value>>();
-
-        Value::Object(val_map)
-      }
-      MapNode::Array(nodes) => {
-        let arr = nodes.into_iter().map(|node| node.into()).collect();
-        Value::Array(arr)
-      }
-      MapNode::StaticLeaf(leaf) | MapNode::DynamicLeaf(leaf) => Value::String(leaf),
-    }
-  }
-}
-
-impl From<Value> for MapNode {
-  fn from(value: Value) -> Self {
-    match value {
-      Value::Object(map) => {
-        let node_map = map
-          .into_iter()
-          .map(|(k, v)| (k.into(), v.into()))
-          .collect::<HashMap<BranchKey, MapNode>>();
-
-        MapNode::Branch(node_map)
-      }
-      Value::Array(arr) => {
-        let nodes = arr.into_iter().map(|v| v.into()).collect();
-        MapNode::Array(nodes)
-      }
-      Value::String(s) => MapNode::StaticLeaf(s),
-      v => MapNode::StaticLeaf(v.to_string()),
-    }
-  }
-}
-
-impl MapNode {
-  fn get(&self, path: &[String]) -> Option<&MapNode> {
-    match path {
-      [] => Some(self),
-      [key, rest @ ..] => match self {
-        MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => None,
-        MapNode::Array(map_nodes) => {
-          let idx: usize = key.parse().ok()?;
-          map_nodes.get(idx)?.get(rest)
-        }
-        MapNode::Branch(map) => map
-          .get(&BranchKey::Static(key.to_string()))
-          .or_else(|| map.get(&BranchKey::Wild))?
-          .get(rest),
-      },
-    }
-  }
-
-  fn set(&mut self, path: &[String], value: MapNode) {
-    match path {
-      [] => *self = value,
-      [key, rest @ ..] => {
-        if matches!(self, MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_)) {
-          // promote leaf to branch if we still have path left to traverse
-          *self = Self::default();
-        }
-        match self {
-          MapNode::Branch(map) => {
-            let bkey = BranchKey::from(key.to_string());
-            let child = map.entry(bkey).or_insert_with(Self::default);
-            child.set(rest, value);
-          }
-          MapNode::Array(map_nodes) => {
-            let idx: usize = key.parse().expect("expected array index");
-            if idx >= map_nodes.len() {
-              map_nodes.resize(idx + 1, Self::default());
-            }
-            map_nodes[idx].set(rest, value);
-          }
-          _ => unreachable!(),
-        }
-      }
-    }
-  }
-
-  fn remove(&mut self, path: &[String]) -> Option<MapNode> {
-    match path {
-      [] => None,
-      [key] => match self {
-        MapNode::Branch(map) => map.remove(&BranchKey::Static(key.into())),
-        MapNode::Array(nodes) => {
-          let idx: usize = key.parse().ok()?;
-          if idx >= nodes.len() {
-            return None;
-          }
-          Some(nodes.remove(idx))
-        }
-        _ => None,
-      },
-      [key, rest @ ..] => match self {
-        MapNode::Branch(map) => {
-          if let Some(child) = map.get_mut(&BranchKey::Static(key.into())) {
-            child.remove(rest)
-          } else if let Some(child) = map.get_mut(&BranchKey::Wild) {
-            child.remove(rest)
-          } else {
-            None
-          }
-        }
-        MapNode::Array(nodes) => {
-          let idx: usize = key.parse().ok()?;
-          if idx >= nodes.len() {
-            return None;
-          }
-          nodes[idx].remove(rest)
-        }
-        _ => None,
-      },
-    }
-  }
-
-  fn keys(&self) -> Vec<String> {
-    match self {
-      MapNode::Branch(map) => map.keys().map(|k| k.to_string()).collect(),
-      MapNode::Array(nodes) => nodes
-        .iter()
-        .filter_map(|n| n.display(false, false).ok())
-        .collect(),
-      MapNode::StaticLeaf(_) | MapNode::DynamicLeaf(_) => vec![],
-    }
-  }
-
-  fn display(&self, json: bool, pretty: bool) -> ShResult<String> {
-    if json || matches!(self, MapNode::Branch(_)) {
-      let val: Value = self.clone().into();
-      if pretty {
-        match serde_json::to_string_pretty(&val) {
-          Ok(s) => Ok(s),
-          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
-        }
-      } else {
-        match serde_json::to_string(&val) {
-          Ok(s) => Ok(s),
-          Err(e) => Err(sherr!(InternalErr, "failed to serialize map: {e}")),
-        }
-      }
-    } else {
-      match self {
-        MapNode::StaticLeaf(leaf) => Ok(leaf.clone()),
-        MapNode::DynamicLeaf(cmd) => expand_cmd_sub(cmd),
-        MapNode::Array(nodes) => {
-          let mut s = String::new();
-          for node in nodes {
-            let display = node.display(json, pretty)?;
-            if matches!(node, MapNode::Branch(_)) {
-              s.push_str(&format!("'{}'", display));
-            } else {
-              s.push_str(&node.display(json, pretty)?);
-            }
-            s.push('\n');
-          }
-          Ok(s.trim_end_matches('\n').to_string())
-        }
-        _ => unreachable!(),
-      }
-    }
-  }
-}
-
-
-#[derive(Clone, Default, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct VarFlags(u8);
-
-impl VarFlags {
-  pub const NONE: Self = Self(0);
-  pub const EXPORT: Self = Self(1 << 0);
-  pub const LOCAL: Self = Self(1 << 1);
-  pub const READONLY: Self = Self(1 << 2);
-}
-
-impl BitOr for VarFlags {
-  type Output = Self;
-  fn bitor(self, rhs: Self) -> Self::Output {
-    Self(self.0 | rhs.0)
-  }
-}
-
-impl BitOrAssign for VarFlags {
-  fn bitor_assign(&mut self, rhs: Self) {
-    self.0 |= rhs.0;
-  }
-}
-
-impl BitAnd for VarFlags {
-  type Output = Self;
-  fn bitand(self, rhs: Self) -> Self::Output {
-    Self(self.0 & rhs.0)
-  }
-}
-
-impl BitAndAssign for VarFlags {
-  fn bitand_assign(&mut self, rhs: Self) {
-    self.0 &= rhs.0;
-  }
-}
-
-impl VarFlags {
-  pub fn contains(&self, flag: Self) -> bool {
-    (self.0 & flag.0) == flag.0
-  }
-  pub fn intersects(&self, flag: Self) -> bool {
-    (self.0 & flag.0) != 0
-  }
-  pub fn is_empty(&self) -> bool {
-    self.0 == 0
-  }
-
-  pub fn insert(&mut self, flag: Self) {
-    self.0 |= flag.0;
-  }
-  pub fn remove(&mut self, flag: Self) {
-    self.0 &= !flag.0;
-  }
-  pub fn toggle(&mut self, flag: Self) {
-    self.0 ^= flag.0;
-  }
-  pub fn set(&mut self, flag: Self, value: bool) {
-    if value {
-      self.insert(flag);
-    } else {
-      self.remove(flag);
-    }
+bitflags! {
+  #[derive(Clone, Default, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+  pub struct VarFlags: u32 {
+    const EXPORT = 1 << 0;
+    const LOCAL = 1 << 1;
+    const READONLY = 1 << 2;
   }
 }
 
@@ -387,7 +148,6 @@ impl VarFlags {
 pub enum ArrIndex {
   Literal(usize),
   FromBack(usize),
-  Slice(usize, Option<usize>),
   ArgCount,
   AllJoined,
   AllSplit,
@@ -404,7 +164,7 @@ impl ArrIndex {
   /// the allow_side_effects parameter controls whether or not mutating parameter
   /// expansions and command substitutions will be evaluated.
   pub fn parse(s: &str, allow_side_effects: bool) -> ShResult<Self> {
-    let s = crate::expand::var::expand_raw_inner(&mut s.chars().peekable(), allow_side_effects)?;
+    let s = crate::expand::expand_raw_inner(&mut s.chars().peekable(), allow_side_effects)?;
     match s.as_str() {
       "@" => Ok(Self::AllSplit),
       "*" => Ok(Self::AllJoined),
@@ -467,7 +227,7 @@ fn top_level_colon(s: &str) -> Option<usize> {
 
 /// A parsed variable name, optionally with an array index and slice.
 /// Index expansion happens at construction time, so it's safe
-/// to use inside `read_vars`/`write_vars` closures without
+/// to use inside `Shed::vars`/`write_vars` closures without
 /// causing re-entrant borrows.
 #[derive(Clone, Debug)]
 pub struct VarName {
@@ -550,16 +310,6 @@ impl VarName {
     })
   }
 
-  /// Create a VarName from a plain name with no index (no expansion needed)
-  pub fn plain(name: impl Into<String>) -> Self {
-    Self {
-      name: name.into(),
-      index: None,
-      slice_start: None,
-      slice_len: None,
-    }
-  }
-
   pub fn name(&self) -> &str {
     &self.name
   }
@@ -632,15 +382,6 @@ impl VarKind {
 
   pub fn parse(raw: &str) -> Self {
     Self::arr_from_raw(raw).unwrap_or_else(|_| Self::Str(raw.to_string()))
-  }
-
-  pub fn parse_tk(tk: Tk) -> Self {
-    let raw = tk.as_str();
-    Self::parse(raw)
-  }
-
-  pub fn empty() -> Self {
-    Self::Str(String::new())
   }
 
   pub fn arr_from_vec(vec: Vec<String>) -> Self {
@@ -765,12 +506,6 @@ impl Var {
   pub fn flags(&self) -> VarFlags {
     self.flags
   }
-  pub fn as_shell_arg(&self) -> String {
-    match &self.kind {
-      VarKind::Arr(_) => format!("( {} )", self),
-      _ => self.to_string(),
-    }
-  }
 }
 
 impl Display for Var {
@@ -781,7 +516,7 @@ impl Display for Var {
 
 impl From<Vec<String>> for Var {
   fn from(value: Vec<String>) -> Self {
-    Self::new(VarKind::Arr(value.into()), VarFlags::NONE)
+    Self::new(VarKind::Arr(value.into()), VarFlags::empty())
   }
 }
 
@@ -791,7 +526,7 @@ impl From<Vec<Candidate>> for Var {
       .into_iter()
       .map(|c| c.content().to_string())
       .collect::<Vec<_>>();
-    Self::new(VarKind::Arr(as_strs.into()), VarFlags::NONE)
+    Self::new(VarKind::Arr(as_strs.into()), VarFlags::empty())
   }
 }
 
@@ -799,7 +534,7 @@ impl From<&[String]> for Var {
   fn from(value: &[String]) -> Self {
     let mut new = VecDeque::new();
     new.extend(value.iter().cloned());
-    Self::new(VarKind::Arr(new), VarFlags::NONE)
+    Self::new(VarKind::Arr(new), VarFlags::empty())
   }
 }
 
@@ -807,7 +542,7 @@ macro_rules! impl_var_from {
     ($($t:ty),*) => {
 			$(impl From<$t> for Var {
 				fn from(value: $t) -> Self {
-					Self::new(VarKind::Str(value.to_string()), VarFlags::NONE)
+					Self::new(VarKind::Str(value.to_string()), VarFlags::empty())
 				}
 			})*
     };
@@ -824,7 +559,6 @@ pub struct VarTab {
   sh_argv: VecDeque<String>, /* Using a VecDeque makes the implementation of `shift` straightforward */
 
   deferred_cmds: Vec<String>,
-  maps: HashMap<String, MapNode>,
 }
 
 impl VarTab {
@@ -834,7 +568,6 @@ impl VarTab {
       params: HashMap::new(),
       sh_argv: VecDeque::new(),
       deferred_cmds: Vec::new(),
-      maps: HashMap::new(),
     }
   }
   pub fn new() -> Self {
@@ -845,7 +578,6 @@ impl VarTab {
       params,
       sh_argv: VecDeque::new(),
       deferred_cmds: Vec::new(),
-      maps: HashMap::new(),
     };
     var_tab.init_sh_argv();
     var_tab
@@ -941,16 +673,6 @@ impl VarTab {
       self.bpush_arg(arg);
     }
   }
-  pub fn update_exports(&mut self) {
-    for var_name in self.vars.keys() {
-      let var = self.vars.get(var_name).unwrap();
-      if var.flags.contains(VarFlags::EXPORT) {
-        unsafe { std::env::set_var(var_name, var.to_string()) };
-      } else {
-        unsafe { std::env::set_var(var_name, "") };
-      }
-    }
-  }
   pub fn defer_cmd(&mut self, cmd: String) {
     self.deferred_cmds.push(cmd);
   }
@@ -983,17 +705,10 @@ impl VarTab {
   fn update_arg_params(&mut self) {
     self.set_param(
       ShellParam::AllArgs,
-      &self.sh_argv.clone()
-      .into_iter()
-      .collect::<Vec<_>>()[1..]
-      .join(&markers::ARG_SEP.to_string()),
+      &self.sh_argv.clone().into_iter().collect::<Vec<_>>()[1..]
+        .join(&markers::ARG_SEP.to_string()),
     );
     self.set_param(ShellParam::ArgCount, &(self.sh_argv.len() - 1).to_string());
-  }
-  /// Push an arg to the front of the arg deque
-  pub fn fpush_arg(&mut self, arg: String) {
-    self.sh_argv.push_front(arg);
-    self.update_arg_params();
   }
   /// Push an arg to the back of the arg deque
   pub fn bpush_arg(&mut self, arg: String) {
@@ -1006,41 +721,11 @@ impl VarTab {
     self.update_arg_params();
     arg
   }
-  /// Pop an arg from the back of the arg deque
-  pub fn bpop_arg(&mut self) -> Option<String> {
-    let arg = self.sh_argv.pop_back();
-    self.update_arg_params();
-    arg
-  }
-  pub fn set_map(&mut self, map_name: &str, map: MapNode) {
-    self.maps.insert(map_name.to_string(), map);
-  }
-  pub fn remove_map(&mut self, map_name: &str) -> Option<MapNode> {
-    self.maps.remove(map_name)
-  }
-  pub fn get_map(&self, map_name: &str) -> Option<&MapNode> {
-    self.maps.get(map_name)
-  }
-  pub fn get_map_mut(&mut self, map_name: &str) -> Option<&mut MapNode> {
-    self.maps.get_mut(map_name)
-  }
-  pub fn maps(&self) -> &HashMap<String, MapNode> {
-    &self.maps
-  }
-  pub fn maps_mut(&mut self) -> &mut HashMap<String, MapNode> {
-    &mut self.maps
-  }
   pub fn vars(&self) -> &HashMap<String, Var> {
     &self.vars
   }
   pub fn vars_mut(&mut self) -> &mut HashMap<String, Var> {
     &mut self.vars
-  }
-  pub fn params(&self) -> &HashMap<ShellParam, String> {
-    &self.params
-  }
-  pub fn params_mut(&mut self) -> &mut HashMap<ShellParam, String> {
-    &mut self.params
   }
   pub fn export_var(&mut self, var_name: &str) {
     if let Some(var) = self.vars.get_mut(var_name) {
@@ -1061,12 +746,10 @@ impl VarTab {
       std::env::var(var).unwrap_or_default()
     }
   }
-  pub fn get_var_meta(&self, var: &str) -> Var {
-    self.try_get_var_meta(var).unwrap_or_default()
-  }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {
     self.vars.get(var).cloned()
   }
+  #[cfg(test)]
   pub fn get_var_flags(&self, var_name: &str) -> Option<VarFlags> {
     self.vars.get(var_name).map(|var| var.flags)
   }
@@ -1168,9 +851,6 @@ impl VarTab {
       self.vars.insert(var_name.to_string(), var);
     }
     Ok(())
-  }
-  pub fn map_exists(&self, map_name: &str) -> bool {
-    self.maps.contains_key(map_name)
   }
   pub fn var_exists(&self, var_name: &str) -> bool {
     if let Ok(param) = var_name.parse::<ShellParam>() {

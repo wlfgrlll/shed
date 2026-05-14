@@ -1,19 +1,12 @@
 use std::{env, path::PathBuf};
 
-use nix::unistd::write;
-
-use crate::{
+use super::{
+  ShResult, Span,
   getopt::{Opt, OptSpec},
-  out,
-  parse::lex::Span,
-  procio::stdout_fileno,
-  sherr,
+  out, outln, sherr,
   state::util::{change_dir, read_meta, write_meta},
-  util::{
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  util::ShResultExt,
+  with_status,
 };
 
 fn is_index_arg(arg: &str) -> bool {
@@ -318,9 +311,7 @@ fn print_dirs() -> ShResult<()> {
     .collect::<Vec<_>>()
     .join(" ");
 
-  let stdout = stdout_fileno();
-  write(stdout, all_dirs.as_bytes())?;
-  write(stdout, b"\n")?;
+  outln!("{all_dirs}");
 
   Ok(())
 }
@@ -370,7 +361,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
 #[cfg(test)]
 pub mod tests {
   use crate::{
-    state::{self, util::{read_meta}},
+    state::{self, util::read_meta},
     tests::testutil::{TestGuard, test_input},
   };
   use pretty_assertions::{assert_eq, assert_ne};
@@ -427,7 +418,7 @@ pub mod tests {
     let _g = TestGuard::new();
 
     test_input("popd").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -561,6 +552,6 @@ pub mod tests {
     let _g = TestGuard::new();
 
     test_input("pushd /nonexistent_dir_12345").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

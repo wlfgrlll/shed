@@ -5,11 +5,8 @@ use crate::{
   outln,
   parse::lex::KEYWORDS,
   sherr,
-  state::{self, read_logic, read_vars},
-  util::{
-    ShResult,
-    with_status,
-  },
+  state::{self, Shed, util::read_logic},
+  util::{ShResult, with_status},
 };
 
 pub(super) struct Type;
@@ -22,12 +19,12 @@ impl super::Builtin for Type {
     let short = args.opts.contains(&Opt::Short('s'));
 
     for (arg, span) in args.argv {
-      if let Some(util) = state::which_util(&arg) {
+      if let Some(util) = state::util::which_util(&arg) {
         match util.kind() {
-          state::UtilKind::Alias => {
+          state::meta::UtilKind::Alias => {
             let alias = read_logic(|v| v.get_alias(&arg)).unwrap();
-            let (line, col) = alias.source.line_and_col();
-            let name = alias.source.source().name();
+            let (line, col) = alias.source().line_and_col();
+            let name = alias.source().source().name();
             if short {
               outln!("alias");
             } else {
@@ -35,11 +32,11 @@ impl super::Builtin for Type {
                 "{arg} is an alias for '{alias_body}' defined at {name}:{ln}:{co}",
                 ln = line + 1,
                 co = col + 1,
-                alias_body = alias.body,
+                alias_body = alias.body(),
               );
             }
           }
-          state::UtilKind::Function => {
+          state::meta::UtilKind::Function => {
             let func = read_logic(|v| v.get_func(&arg)).unwrap();
             let (line, col) = func.source.line_and_col();
             let name = func.source.source().name();
@@ -54,14 +51,14 @@ impl super::Builtin for Type {
               );
             }
           }
-          state::UtilKind::Builtin => {
+          state::meta::UtilKind::Builtin => {
             if short {
               outln!("builtin");
             } else {
               outln!("{arg} is a shell builtin");
             }
           }
-          state::UtilKind::Command(path_buf) | state::UtilKind::File(path_buf) => {
+          state::meta::UtilKind::Command(path_buf) | state::meta::UtilKind::File(path_buf) => {
             if short {
               outln!("external");
             } else {
@@ -75,20 +72,20 @@ impl super::Builtin for Type {
         } else {
           outln!("{arg} is a shell keyword");
         }
-      } else if let Some(var) = read_vars(|v| v.try_get_var_meta(arg.as_str())) {
+      } else if let Some(var) = Shed::vars(|v| v.try_get_var_meta(arg.as_str())) {
         if short {
           match var.kind() {
-            state::VarKind::Str(_) => outln!("string"),
-            state::VarKind::Int(_) => outln!("integer"),
-            state::VarKind::Arr(_) => outln!("array"),
-            state::VarKind::AssocArr(_) => outln!("assoc_array"),
+            state::vars::VarKind::Str(_) => outln!("string"),
+            state::vars::VarKind::Int(_) => outln!("integer"),
+            state::vars::VarKind::Arr(_) => outln!("array"),
+            state::vars::VarKind::AssocArr(_) => outln!("assoc_array"),
           }
         } else {
           match var.kind() {
-            state::VarKind::Str(_) => outln!("{arg} is a string variable"),
-            state::VarKind::Int(_) => outln!("{arg} is an integer variable"),
-            state::VarKind::Arr(_) => outln!("{arg} is an array variable"),
-            state::VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
+            state::vars::VarKind::Str(_) => outln!("{arg} is a string variable"),
+            state::vars::VarKind::Int(_) => outln!("{arg} is an integer variable"),
+            state::vars::VarKind::Arr(_) => outln!("{arg} is an array variable"),
+            state::vars::VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
           }
         }
       } else {
@@ -203,7 +200,7 @@ mod tests {
     let _g = TestGuard::new();
     let result = test_input("type __hopefully____not_______a____command__");
     assert!(result.is_ok());
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   // ===================== Priority order =====================
@@ -238,6 +235,6 @@ mod tests {
   fn type_status_zero_on_found() {
     let _g = TestGuard::new();
     test_input("type echo").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

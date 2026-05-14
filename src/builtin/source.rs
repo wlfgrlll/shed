@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
   sherr,
-  state::source_file,
+  state::util::source_file,
   util::{ShResult, with_status},
 };
 
@@ -35,7 +35,7 @@ impl super::Builtin for Source {
 pub mod tests {
   use std::io::Write;
 
-  use crate::state::{self, read_logic, read_vars};
+  use crate::state::{self, Shed, util::read_logic};
   use crate::tests::testutil::{TestGuard, test_input};
   use tempfile::{NamedTempFile, TempDir};
 
@@ -47,7 +47,7 @@ pub mod tests {
     file.write_all(b"some_var=some_val").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    let var = read_vars(|v| v.get_var("some_var"));
+    let var = Shed::vars(|v| v.get_var("some_var"));
     assert_eq!(var, "some_val".to_string());
   }
 
@@ -59,9 +59,9 @@ pub mod tests {
     file.write_all(b"x=1\ny=2\nz=3").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    assert_eq!(read_vars(|v| v.get_var("x")), "1");
-    assert_eq!(read_vars(|v| v.get_var("y")), "2");
-    assert_eq!(read_vars(|v| v.get_var("z")), "3");
+    assert_eq!(Shed::vars(|v| v.get_var("x")), "1");
+    assert_eq!(Shed::vars(|v| v.get_var("y")), "2");
+    assert_eq!(Shed::vars(|v| v.get_var("z")), "3");
   }
 
   #[test]
@@ -111,8 +111,8 @@ pub mod tests {
     file2.write_all(b"b=from_file2").unwrap();
 
     test_input(format!("source {path1} {path2}")).unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "from_file1");
-    assert_eq!(read_vars(|v| v.get_var("b")), "from_file2");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "from_file1");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "from_file2");
   }
 
   // ===================== Dot syntax =====================
@@ -125,7 +125,7 @@ pub mod tests {
     file.write_all(b"dot_var=dot_val").unwrap();
 
     test_input(format!(". {path}")).unwrap();
-    assert_eq!(read_vars(|v| v.get_var("dot_var")), "dot_val");
+    assert_eq!(Shed::vars(|v| v.get_var("dot_var")), "dot_val");
   }
 
   // ===================== Error cases =====================
@@ -134,7 +134,7 @@ pub mod tests {
   fn source_nonexistent_file() {
     let _g = TestGuard::new();
     test_input("source /tmp/__no_such_file_xyz__").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -142,7 +142,7 @@ pub mod tests {
     let _g = TestGuard::new();
     let dir = TempDir::new().unwrap();
     test_input(format!("source {}", dir.path().display())).ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -155,6 +155,6 @@ pub mod tests {
     file.write_all(b"true").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

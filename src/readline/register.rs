@@ -2,10 +2,7 @@ use std::{fmt::Display, sync::Mutex};
 
 use itertools::Itertools;
 
-use crate::{
-  expand::expand_keymap,
-  readline::{keys::KeyEvent, linebuf::Line},
-};
+use crate::{expand::expand_keymap, keys::KeyEvent, readline::linebuf::Line};
 
 pub static REGISTERS: Mutex<Registers> = Mutex::new(Registers::new());
 
@@ -27,19 +24,19 @@ pub fn restore_registers() {
   *saved = None;
 }
 
-pub fn read_register(ch: Option<char>) -> Option<RegisterContent> {
+pub(super) fn read_register(ch: Option<char>) -> Option<RegisterContent> {
   let lock = REGISTERS.lock().unwrap();
   lock.get_reg(ch).map(|r| r.content().clone())
 }
 
-pub fn write_register(ch: Option<char>, buf: RegisterContent) {
+pub(super) fn write_register(ch: Option<char>, buf: RegisterContent) {
   let mut lock = REGISTERS.lock().unwrap();
   if let Some(r) = lock.get_reg_mut(ch) {
     r.write(buf)
   }
 }
 
-pub fn append_register(ch: Option<char>, buf: RegisterContent) {
+pub(super) fn append_register(ch: Option<char>, buf: RegisterContent) {
   let mut lock = REGISTERS.lock().unwrap();
   if let Some(r) = lock.get_reg_mut(ch) {
     r.append(buf)
@@ -47,7 +44,7 @@ pub fn append_register(ch: Option<char>, buf: RegisterContent) {
 }
 
 #[derive(Default, Clone, Debug)]
-pub enum RegisterContent {
+pub(super) enum RegisterContent {
   Span(Vec<Line>),
   Line(Vec<Line>),
   Block(Vec<Line>),
@@ -77,40 +74,6 @@ impl Display for RegisterContent {
       }
       Self::Empty => write!(f, ""),
     }
-  }
-}
-
-impl RegisterContent {
-  pub fn clear(&mut self) {
-    *self = Self::Empty
-  }
-  pub fn len(&self) -> usize {
-    match self {
-      Self::Span(s) | Self::Line(s) | Self::Block(s) => s.len(),
-      Self::Macro(keys) => keys.len(),
-      Self::Empty => 0,
-    }
-  }
-  pub fn is_empty(&self) -> bool {
-    match self {
-      Self::Span(s) => s.is_empty(),
-      Self::Line(s) => s.is_empty(),
-      Self::Block(s) => s.is_empty(),
-      Self::Macro(keys) => keys.is_empty(),
-      Self::Empty => true,
-    }
-  }
-  pub fn is_block(&self) -> bool {
-    matches!(self, Self::Block(_))
-  }
-  pub fn is_line(&self) -> bool {
-    matches!(self, Self::Line(_))
-  }
-  pub fn is_span(&self) -> bool {
-    matches!(self, Self::Span(_))
-  }
-  pub fn char_count(&self) -> usize {
-    self.to_string().chars().count()
   }
 }
 
@@ -313,14 +276,5 @@ impl Register {
       // both Empty cases handled above
       (C::Empty, _) | (_, C::Empty) => unreachable!(),
     }
-  }
-  pub fn clear(&mut self) {
-    self.content.clear()
-  }
-  pub fn is_line(&self) -> bool {
-    self.content.is_line()
-  }
-  pub fn is_span(&self) -> bool {
-    self.content.is_span()
   }
 }

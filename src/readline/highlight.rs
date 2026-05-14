@@ -5,7 +5,7 @@ use yansi::Paint;
 use crate::{
   readline::context::{CtxTk, CtxTkRule, get_context_tokens},
   shopt::ShOptHighlight,
-  state::read_shopts,
+  state::util::read_shopts,
   util::{PaletteEntry, style_from_description},
 };
 
@@ -107,7 +107,6 @@ impl Palette {
       CtxTkRule::VarSub => self.variable,
       CtxTkRule::Comment => self.comment,
       CtxTkRule::Glob => self.glob,
-      CtxTkRule::CasePattern => self.glob,
       CtxTkRule::HistExp => self.variable,
       CtxTkRule::Escape => self.operator,
       CtxTkRule::Tilde => self.operator,
@@ -129,12 +128,10 @@ impl Palette {
       CtxTkRule::AssignmentRight => self.argument,
       CtxTkRule::Operator => self.operator,
       CtxTkRule::Redirect => self.operator,
-      CtxTkRule::BraceGroup => self.keyword,
       CtxTkRule::HereDoc => self.string,
       CtxTkRule::HereDocStart => self.operator,
       CtxTkRule::HereDocBody => self.string,
       CtxTkRule::HereDocEnd => self.operator,
-      CtxTkRule::Null => PaletteEntry::new(),
     }
   }
 }

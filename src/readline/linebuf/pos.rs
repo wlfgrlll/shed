@@ -128,10 +128,6 @@ pub enum MotionKind {
     end: usize,
     inclusive: bool,
   },
-  /// A list of lines, not necessarily contiguous. Used for things like line addresses in ex mode commands
-  Lines {
-    lines: Vec<usize>,
-  },
   Block {
     start: Pos,
     end: Pos,

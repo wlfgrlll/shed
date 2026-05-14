@@ -1,4 +1,4 @@
-use crate::state::{CursorStyle, with_term};
+use crate::state::{terminal::CursorStyle, util::with_term};
 
 /*
  * These two structs get their own module because the public API is the only way
@@ -116,9 +116,6 @@ impl TermGuard {
     self.scroll_region = Some(scroll_region);
     self
   }
-  pub fn raw_mode(&self) -> Option<bool> {
-    self.raw_mode
-  }
   pub fn bracketed_paste(&self) -> Option<bool> {
     self.bracketed_paste
   }
@@ -179,14 +176,14 @@ impl Drop for TermGuard {
 /// Terminal::save_state() returns this.
 ///
 /// The point is to make it so that returning an inactive TermGuard is impossible.
-pub struct Snapshot(TermGuard);
+pub(super) struct Snapshot(TermGuard);
 impl Snapshot {
-  pub fn new(mut guard: TermGuard) -> Self {
+  pub(super) fn new(mut guard: TermGuard) -> Self {
     guard.active = false; // enforce this invariant
     Self(guard)
   }
   /// Set the inner guard to active and return it. This should be the only way to ever get an active TermGuard
-  pub fn activate(self) -> TermGuard {
+  pub(super) fn activate(self) -> TermGuard {
     self.0.activate()
   }
 }

@@ -15,9 +15,9 @@ use crate::{
   getopt::{Opt, OptSpec},
   outln,
   parse::lex::Span,
-  readline::complete::ScoredCandidate,
+  readline::ScoredCandidate,
   sherr,
-  state::{with_term, write_meta},
+  state::{util::with_term, util::write_meta},
   util::{ShResult, with_status},
 };
 

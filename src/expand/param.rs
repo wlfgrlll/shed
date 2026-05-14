@@ -6,14 +6,14 @@ use crate::expand::var::expand_raw_inner;
 use crate::parse::lex::TkFlags;
 use crate::sherr;
 use crate::state::{
-  ArrIndex, ScopeStack, VarFlags, VarKind, VarName, read_shopts, read_vars, write_vars,
+  Shed, scopes::ScopeStack, util::read_shopts, vars::ArrIndex, vars::VarFlags, vars::VarKind,
+  vars::VarName,
 };
 use crate::util::ShResult;
 use crate::{match_loop, state};
 
 #[derive(Debug)]
 pub enum ParamExp {
-  Len,                               // #var_name
   ToUpperFirst,                      // ^var_name
   ToUpperAll,                        // ^^var_name
   ToLowerFirst,                      // ,var_name
@@ -166,10 +166,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     let parsed = VarName::parse(var_spec, allow_side_effects)?;
     if let Some(idx) = parsed.index() {
       match idx {
-        crate::state::ArrIndex::AllSplit
-        | crate::state::ArrIndex::AllJoined
-        | crate::state::ArrIndex::ArgCount => {
-          let var = read_vars(|v| v.get_var_meta(parsed.name()));
+        crate::state::vars::ArrIndex::AllSplit
+        | crate::state::vars::ArrIndex::AllJoined
+        | crate::state::vars::ArrIndex::ArgCount => {
+          let var = Shed::vars(|v| v.get_var_meta(parsed.name()));
           return Ok(
             match var.kind() {
               VarKind::Arr(items) => items.len(),
@@ -180,12 +180,12 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           );
         }
         _ => {
-          let val = read_vars(|v| v.index_var(parsed.name(), idx.clone()))?;
+          let val = Shed::vars(|v| v.index_var(parsed.name(), idx.clone()))?;
           return Ok(val.len().to_string());
         }
       }
     } else {
-      let var = read_vars(|v| v.get_var_meta(var_spec));
+      let var = Shed::vars(|v| v.get_var_meta(var_spec));
       return Ok(
         match var.kind() {
           VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
@@ -240,9 +240,9 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
   let mut parsed = VarName::parse(&var_name, allow_side_effects)?;
 
   if matches!(parsed.index(), Some(ArrIndex::Raw(_))) {
-    // Brief read_vars to grab just the kind (cloned), then the borrow
+    // Brief Shed::vars to grab just the kind (cloned), then the borrow
     // releases before we do any expansion work.
-    let kind = read_vars(|v| v.try_get_var_kind(parsed.name()));
+    let kind = Shed::vars(|v| v.try_get_var_kind(parsed.name()));
     if let Some(kind) = kind {
       let resolved = parsed.index().unwrap().clone().resolve_for(&kind)?;
       parsed.set_index(resolved);
@@ -255,23 +255,22 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     // this allows scripts to do stuff like "while foo=${foo#bar}" or just generally check
     // whether a parameter expansion did anything without needing verbose checks like [[ "$foo" != "${foo#bar}" ]]
     if old != new {
-      state::set_status(0);
+      state::util::set_status(0);
     } else {
-      state::set_status(1);
+      state::util::set_status(1);
     }
   };
 
   if let Ok(expansion) = parse_param_exp(&rest, allow_side_effects) {
     match expansion {
-      ParamExp::Len => unreachable!(),
       ParamExp::ToUpperAll => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let new = value.to_uppercase();
         compare(&value, &new);
         Ok(new)
       }
       ParamExp::ToUpperFirst => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let mut chars = value.chars();
         let first = chars
           .next()
@@ -283,13 +282,13 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         Ok(new)
       }
       ParamExp::ToLowerAll => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let new = value.to_lowercase();
         compare(&value, &new);
         Ok(new)
       }
       ParamExp::ToLowerFirst => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let mut chars = value.chars();
         let first = chars
           .next()
@@ -299,25 +298,27 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         compare(&value, &new);
         Ok(new)
       }
-      ParamExp::DefaultUnsetOrNull(default) => match read_vars(try_get).filter(|v| !v.is_empty()) {
-        Some(val) => Ok(val),
-        None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
-      },
-      ParamExp::DefaultUnset(default) => match read_vars(try_get) {
+      ParamExp::DefaultUnsetOrNull(default) => {
+        match Shed::vars(try_get).filter(|v| !v.is_empty()) {
+          Some(val) => Ok(val),
+          None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
+        }
+      }
+      ParamExp::DefaultUnset(default) => match Shed::vars(try_get) {
         Some(val) => Ok(val),
         None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
       },
       ParamExp::SetDefaultUnsetOrNull(default) => {
-        match read_vars(try_get).filter(|v| !v.is_empty()) {
+        match Shed::vars(try_get).filter(|v| !v.is_empty()) {
           Some(val) => Ok(val),
           None => {
             let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
             if allow_side_effects {
-              write_vars(|v| {
+              Shed::vars_mut(|v| {
                 v.set_var(
                   parsed.name(),
                   VarKind::Str(expanded.clone()),
-                  VarFlags::NONE,
+                  VarFlags::empty(),
                 )
               })?;
             }
@@ -325,31 +326,31 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           }
         }
       }
-      ParamExp::SetDefaultUnset(default) => match read_vars(try_get) {
+      ParamExp::SetDefaultUnset(default) => match Shed::vars(try_get) {
         Some(val) => Ok(val),
         None => {
           let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
           if allow_side_effects {
-            write_vars(|v| {
+            Shed::vars_mut(|v| {
               v.set_var(
                 parsed.name(),
                 VarKind::Str(expanded.clone()),
-                VarFlags::NONE,
+                VarFlags::empty(),
               )
             })?;
           }
           Ok(expanded)
         }
       },
-      ParamExp::AltSetNotNull(alt) => match read_vars(try_get).filter(|v| !v.is_empty()) {
+      ParamExp::AltSetNotNull(alt) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
         Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
         None => Ok("".into()),
       },
-      ParamExp::AltNotNull(alt) => match read_vars(try_get) {
+      ParamExp::AltNotNull(alt) => match Shed::vars(try_get) {
         Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
         None => Ok("".into()),
       },
-      ParamExp::ErrUnsetOrNull(err) => match read_vars(try_get).filter(|v| !v.is_empty()) {
+      ParamExp::ErrUnsetOrNull(err) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
         None => {
           if !allow_side_effects {
@@ -359,7 +360,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           Err(sherr!(ExecFail, "{expanded}"))
         }
       },
-      ParamExp::ErrUnset(err) => match read_vars(try_get) {
+      ParamExp::ErrUnset(err) => match Shed::vars(try_get) {
         Some(val) => Ok(val),
         None => {
           if !allow_side_effects {
@@ -370,28 +371,28 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         }
       },
       ParamExp::SliceOpen(pos) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         if let Some(substr) = value.get(pos..) {
-          state::set_status(0);
+          state::util::set_status(0);
           Ok(substr.to_string())
         } else {
-          state::set_status(1);
+          state::util::set_status(1);
           Ok(value)
         }
       }
       ParamExp::SliceClosed(pos, len) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let end = pos.saturating_add(len);
         if let Some(substr) = value.get(pos..end) {
-          state::set_status(0);
+          state::util::set_status(0);
           Ok(substr.to_string())
         } else {
-          state::set_status(1);
+          state::util::set_status(1);
           Ok(value)
         }
       }
       ParamExp::RemShortestPrefix(prefix) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -399,15 +400,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in 0..=value.len() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(value[i..].to_string());
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value)
       }
       ParamExp::RemLongestPrefix(prefix) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -415,15 +416,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(value[i..].to_string());
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value) // no match
       }
       ParamExp::RemShortestSuffix(suffix) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded = Expander::from_raw(&suffix, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -431,15 +432,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(value[..i].to_string());
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value)
       }
       ParamExp::RemLongestSuffix(suffix) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -447,15 +448,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in 0..=value.len() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(value[..i].to_string());
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value)
       }
       ParamExp::ReplaceFirstMatch(search, replace) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -468,15 +469,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let before = &value[..mat.start()];
           let after = &value[mat.end()..];
           let result = format!("{}{}{}", before, expanded_replace, after);
-          state::set_status(0);
+          state::util::set_status(0);
           Ok(result)
         } else {
-          state::set_status(1);
+          state::util::set_status(1);
           Ok(value)
         }
       }
       ParamExp::ReplaceAllMatches(search, replace) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -499,7 +500,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         Ok(result)
       }
       ParamExp::ReplacePrefix(search, replace) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -510,15 +511,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(format!("{}{}", expanded_replace, &value[i..]));
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value)
       }
       ParamExp::ReplaceSuffix(search, replace) => {
-        let value = read_vars(get);
+        let value = Shed::vars(get);
         let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
           .no_glob()
           .expand_for_glob()?;
@@ -529,15 +530,15 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::set_status(0);
+            state::util::set_status(0);
             return Ok(format!("{}{}", &value[..i], expanded_replace));
           }
         }
-        state::set_status(1);
+        state::util::set_status(1);
         Ok(value)
       }
       ParamExp::VarNamesWithPrefix(prefix) => {
-        let flat = read_vars(|v| v.flatten_vars());
+        let flat = Shed::vars(|v| v.flatten_vars());
         let match_vars: Vec<_> = flat
           .keys()
           .filter(|var| var.starts_with(&prefix))
@@ -553,16 +554,16 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
             &inner
           };
           let joined = inner.contains("[*]");
-          read_vars(|v| v.get_array_keys(var_name, joined))
+          Shed::vars(|v| v.get_array_keys(var_name, joined))
         } else {
           let inner_name = VarName::parse(&inner, allow_side_effects)?;
-          let value = read_vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
-          Ok(read_vars(|v| v.get_var(&value)))
+          let value = Shed::vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
+          Ok(Shed::vars(|v| v.get_var(&value)))
         }
       }
     }
   } else {
-    let var = read_vars(try_get);
+    let var = Shed::vars(try_get);
     if var.is_none() && read_shopts(|o| o.set.nounset) {
       return Err(sherr!(NotFound, "Variable '{}' is not set", parsed.name()));
     }
@@ -573,7 +574,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::state::{VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   fn test_param_parse(val: &str) -> ParamExp {
@@ -724,7 +725,7 @@ mod tests {
   #[test]
   fn param_default_unset_or_null_null() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::empty())).unwrap();
 
     let result = test_param_expansion("EMPTY:-fallback").unwrap();
     assert_eq!(result, "fallback");
@@ -733,7 +734,7 @@ mod tests {
   #[test]
   fn param_default_unset_or_null_set() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::empty())).unwrap();
 
     let result = test_param_expansion("SET:-fallback").unwrap();
     assert_eq!(result, "value");
@@ -742,7 +743,7 @@ mod tests {
   #[test]
   fn param_default_unset_only() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::empty())).unwrap();
 
     // ${EMPTY-fallback} - EMPTY is set (even if null), so returns null
     let result = test_param_expansion("EMPTY-fallback").unwrap();
@@ -752,7 +753,7 @@ mod tests {
   #[test]
   fn param_alt_set_not_null() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SET", VarKind::Str("value".into()), VarFlags::empty())).unwrap();
 
     let result = test_param_expansion("SET:+alt").unwrap();
     assert_eq!(result, "alt");
@@ -777,7 +778,7 @@ mod tests {
   #[test]
   fn param_length() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("STR", VarKind::Str("hello".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("STR", VarKind::Str("hello".into()), VarFlags::empty())).unwrap();
 
     let result = test_param_expansion("#STR").unwrap();
     assert_eq!(result, "5");
@@ -786,7 +787,8 @@ mod tests {
   #[test]
   fn param_substr() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("STR:6").unwrap();
     assert_eq!(result, "world");
@@ -795,7 +797,8 @@ mod tests {
   #[test]
   fn param_substr_len() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("STR", VarKind::Str("hello world".into()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("STR:0:5").unwrap();
     assert_eq!(result, "hello");
@@ -804,11 +807,11 @@ mod tests {
   #[test]
   fn param_remove_shortest_prefix() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "PATH",
         VarKind::Str("/usr/local/bin".into()),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
@@ -820,11 +823,11 @@ mod tests {
   #[test]
   fn param_remove_longest_prefix() {
     let _guard = TestGuard::new();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "PATH",
         VarKind::Str("/usr/local/bin".into()),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })
     .unwrap();
@@ -836,7 +839,14 @@ mod tests {
   #[test]
   fn param_remove_shortest_suffix() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("FILE", VarKind::Str("file.tar.gz".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "FILE",
+        VarKind::Str("file.tar.gz".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
     let result = test_param_expansion("FILE%.*").unwrap();
     assert_eq!(result, "file.tar");
@@ -845,7 +855,14 @@ mod tests {
   #[test]
   fn param_remove_longest_suffix() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("FILE", VarKind::Str("file.tar.gz".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "FILE",
+        VarKind::Str("file.tar.gz".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
     let result = test_param_expansion("FILE%%.*").unwrap();
     assert_eq!(result, "file");
@@ -854,7 +871,8 @@ mod tests {
   #[test]
   fn param_replace_first() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("STR/hello/world").unwrap();
     assert_eq!(result, "world hello");
@@ -863,7 +881,8 @@ mod tests {
   #[test]
   fn param_replace_all() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("STR", VarKind::Str("hello hello".into()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("STR//hello/world").unwrap();
     assert_eq!(result, "world world");
@@ -872,8 +891,9 @@ mod tests {
   #[test]
   fn param_indirect() {
     let _guard = TestGuard::new();
-    write_vars(|v| v.set_var("REF", VarKind::Str("TARGET".into()), VarFlags::NONE)).unwrap();
-    write_vars(|v| v.set_var("TARGET", VarKind::Str("value".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("REF", VarKind::Str("TARGET".into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("TARGET", VarKind::Str("value".into()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("!REF").unwrap();
     assert_eq!(result, "value");
@@ -887,7 +907,7 @@ mod tests {
     assert_eq!(result, "assigned");
 
     // Verify it was actually set
-    let val = read_vars(|v| v.get_var("NEWVAR"));
+    let val = Shed::vars(|v| v.get_var("NEWVAR"));
     assert_eq!(val, "assigned");
   }
 
@@ -896,7 +916,8 @@ mod tests {
   #[test]
   fn param_exp_prefix_removal_escaped() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("branch", VarKind::Str("## main".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("branch", VarKind::Str("## main".into()), VarFlags::empty()))
+      .unwrap();
 
     test_input("echo \"${branch#\\#\\# }\"").unwrap();
 
@@ -907,7 +928,14 @@ mod tests {
   #[test]
   fn param_exp_suffix_removal_escaped() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("val", VarKind::Str("hello world!!".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "val",
+        VarKind::Str("hello world!!".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
     test_input("echo \"${val%\\!\\!}\"").unwrap();
 
@@ -918,7 +946,7 @@ mod tests {
   #[test]
   fn param_exp_quoted_glob_meta_is_literal() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::empty())).unwrap();
 
     // "*" makes the asterisk literal — strips the literal "*r" suffix.
     test_input("echo ${foo%\"*\"r}").unwrap();
@@ -929,7 +957,7 @@ mod tests {
   #[test]
   fn param_exp_unquoted_glob_meta_is_wildcard() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::empty())).unwrap();
 
     // unquoted *r is a glob — shortest match is just "r".
     test_input("echo ${foo%*r}").unwrap();
@@ -940,7 +968,7 @@ mod tests {
   #[test]
   fn param_exp_backslash_glob_meta_is_literal() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::empty())).unwrap();
 
     test_input("echo ${foo%\\*r}").unwrap();
     let out = guard.read_output();
@@ -950,7 +978,7 @@ mod tests {
   #[test]
   fn param_exp_single_quoted_glob_meta_is_literal() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("foo", VarKind::Str("ba*r".into()), VarFlags::empty())).unwrap();
 
     test_input("echo ${foo%'*'r}").unwrap();
     let out = guard.read_output();
@@ -963,7 +991,7 @@ mod tests {
   // $? = 0; no-ops set $? = 1. Lets you write `while foo=${foo#bar}; ...`.
 
   fn set_var(name: &str, val: &str) {
-    write_vars(|v| v.set_var(name, VarKind::Str(val.into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())).unwrap();
   }
 
   /// Run the assignment with status zeroed first, then read the resulting
@@ -972,7 +1000,7 @@ mod tests {
   fn assignment_status(assignment: &str) -> i32 {
     test_input("true").unwrap();
     test_input(assignment).unwrap();
-    crate::state::get_status()
+    crate::state::util::get_status()
   }
 
   // ----- prefix removal -----

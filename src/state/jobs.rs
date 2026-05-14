@@ -1,5 +1,3 @@
-use super::*;
-
 use nix::{
   sys::{signal::Signal, wait::WaitStatus as WtStat},
   unistd::write,
@@ -7,10 +5,11 @@ use nix::{
 use scopeguard::defer;
 
 use crate::{
-  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term, wait_fg},
+  Shed,
+  jobs::{Job, JobCmdFlags, JobID, code_from_status, take_term},
   procio::stdout_fileno,
   signal::{disable_reaping, enable_reaping},
-  state,
+  state::{self, meta::CmdTimer, util::write_meta, vars::ShellParam},
   util::ShResult,
 };
 
@@ -51,19 +50,6 @@ impl JobTab {
       .find(|&&id| self.jobs.get(id).is_some_and(|slot| slot.is_some()))
       .copied()
   }
-  pub fn prev_job(&self) -> Option<usize> {
-    // Find the second most recent valid job
-    let mut found_curr = false;
-    for &id in self.order.iter().rev() {
-      if self.jobs.get(id).is_some_and(|slot| slot.is_some()) {
-        if found_curr {
-          return Some(id);
-        }
-        found_curr = true;
-      }
-    }
-    None
-  }
   fn prune_jobs(&mut self) {
     while let Some(job) = self.jobs.last() {
       if job.is_none() || job.as_ref().unwrap().is_done() {
@@ -94,7 +80,7 @@ impl JobTab {
     }
 
     if let Some(pid) = last_pid {
-      write_vars(|v| v.set_param(ShellParam::LastJob, &pid.to_string()))
+      Shed::vars_mut(|v| v.set_param(ShellParam::LastJob, &pid.to_string()))
     }
 
     Ok(tab_pos)
@@ -192,13 +178,6 @@ impl JobTab {
     }
     Ok(())
   }
-  pub fn bg_to_fg(&mut self, id: JobID) -> ShResult<()> {
-    let job = self.remove_job(id);
-    if let Some(job) = job {
-      wait_fg(job, true)?;
-    }
-    Ok(())
-  }
   pub fn wait_all_bg(&mut self) -> ShResult<()> {
     disable_reaping();
     defer! {
@@ -210,7 +189,7 @@ impl JobTab {
       let (statuses, _) = job.wait_pgrp()?;
       code = statuses.last().and_then(code_from_status).unwrap_or(0);
     }
-    state::set_status(code);
+    state::util::set_status(code);
     Ok(())
   }
   pub fn remove_job(&mut self, id: JobID) -> Option<Job> {

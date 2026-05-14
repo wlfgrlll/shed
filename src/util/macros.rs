@@ -20,7 +20,7 @@ macro_rules! write_term {
 macro_rules! flush_term {
   () => {
     use std::io::Write;
-    $crate::state::with_term(|t| t.flush())
+    $crate::state::util::with_term(|t| t.flush())
   };
   ($($arg:tt)*) => {{
     use std::io::Write;
@@ -87,9 +87,9 @@ macro_rules! key {
     key!(Ctrl + Shift + Alt + $key)
   };
   (Ctrl + Shift + Alt + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::CTRL_SHIFT_ALT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::$key,
+      $crate::keys::ModKeys::CTRL_SHIFT_ALT,
     )
   };
 
@@ -97,54 +97,39 @@ macro_rules! key {
     key!(Ctrl + Shift + $key)
   };
   (Ctrl + Shift + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::CTRL_SHIFT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::$key,
+      $crate::keys::ModKeys::CTRL_SHIFT,
     )
   };
   (Alt + Ctrl + $key:ident) => {
     key!(Ctrl + Alt + $key)
   };
   (Ctrl + Alt + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::CTRL_ALT,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::$key, $crate::keys::ModKeys::CTRL_ALT)
   };
   (Alt + Shift + $key:ident) => {
     key!(Shift + Alt + $key)
   };
   (Shift + Alt + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::SHIFT_ALT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::$key,
+      $crate::keys::ModKeys::SHIFT_ALT,
     )
   };
 
   (Ctrl + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::CTRL,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::$key, $crate::keys::ModKeys::CTRL)
   };
   (Shift + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::SHIFT,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::$key, $crate::keys::ModKeys::SHIFT)
   };
   (Alt + $key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::ALT,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::$key, $crate::keys::ModKeys::ALT)
   };
 
   ($key:ident) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::$key,
-      $crate::readline::keys::ModKeys::NONE,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::$key, $crate::keys::ModKeys::NONE)
   };
 
   (Shift + Ctrl + Alt + $ch:literal) => {
@@ -163,9 +148,9 @@ macro_rules! key {
     key!(Ctrl + Shift + Alt + $ch)
   };
   (Ctrl + Shift + Alt + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::CTRL_SHIFT_ALT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::CTRL_SHIFT_ALT,
     )
   };
 
@@ -173,53 +158,50 @@ macro_rules! key {
     key!(Ctrl + Shift + $ch)
   };
   (Ctrl + Shift + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::CTRL_SHIFT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::CTRL_SHIFT,
     )
   };
   (Alt + Ctrl + $ch:literal) => {
     key!(Ctrl + Alt + $ch)
   };
   (Ctrl + Alt + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::CTRL_ALT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::CTRL_ALT,
     )
   };
   (Alt + Shift + $ch:literal) => {
     key!(Shift + Alt + $ch)
   };
   (Shift + Alt + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::SHIFT_ALT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::SHIFT_ALT,
     )
   };
 
   (Ctrl + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::CTRL,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::CTRL,
     )
   };
   (Shift + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::SHIFT,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::SHIFT,
     )
   };
   (Alt + $ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::ALT,
-    )
+    $crate::keys::KeyEvent($crate::keys::KeyCode::Char($ch), $crate::keys::ModKeys::ALT)
   };
 
   ($ch:literal) => {
-    $crate::readline::keys::KeyEvent(
-      $crate::readline::keys::KeyCode::Char($ch),
-      $crate::readline::keys::ModKeys::NONE,
+    $crate::keys::KeyEvent(
+      $crate::keys::KeyCode::Char($ch),
+      $crate::keys::ModKeys::NONE,
     )
   };
 }
@@ -435,11 +417,13 @@ macro_rules! system_msg {
 #[macro_export]
 macro_rules! autocmd {
   ($kind:ident) => {{
-    let post_cmds = $crate::state::util::read_logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
+    let post_cmds =
+      $crate::state::util::read_logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
     let saved_status = $crate::state::util::get_status();
     for cmd in post_cmds {
-      let $crate::state::logic::AutoCmd { kind: _, command } = cmd;
-      if let Err(e) = $crate::parse::execute::exec_nonint(command.clone(), Some("autocmd".into())) {
+      if let Err(e) =
+        $crate::parse::execute::exec_nonint(cmd.command().to_string(), Some("autocmd".into()))
+      {
         e.print_error();
       }
     }

@@ -1,42 +1,12 @@
 use std::rc::Rc;
 
-use crate::{
+use super::{
   expand::as_var_val_display,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{self, MetaTab, Utility, read_meta, write_meta},
+  state::{self, meta::MetaTab, meta::Utility, util::read_meta, util::write_meta},
   util::{ShResult, with_status},
 };
-
-pub struct HashOpts {
-  clear: bool,
-  refresh: bool,
-}
-
-impl HashOpts {
-  pub fn from_opts(opts: &[Opt]) -> ShResult<Self> {
-    let mut new = Self {
-      clear: false,
-      refresh: false,
-    };
-
-    for opt in opts {
-      match opt {
-        Opt::Long(s) if s == "refresh" => {
-          new.refresh = true;
-        }
-        Opt::Short('r') => {
-          new.clear = true;
-        }
-        _ => {
-          return Err(sherr!(ParseErr, "Invalid hash option: {opt:?}"));
-        }
-      }
-    }
-
-    Ok(new)
-  }
-}
 
 pub(super) struct Hash;
 impl super::Builtin for Hash {

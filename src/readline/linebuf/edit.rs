@@ -12,12 +12,6 @@ pub struct Edit {
 }
 
 impl Edit {
-  pub fn start_merge(&mut self) {
-    self.merging = true
-  }
-  pub fn stop_merge(&mut self) {
-    self.merging = false
-  }
   pub fn is_empty(&self) -> bool {
     self.old == self.new
   }

@@ -14,7 +14,7 @@ use super::{
 };
 
 use super::{
-  builtin::{BUILTIN_NAMES, lookup_builtin, trap::TrapTarget},
+  builtin::{BUILTIN_NAMES, lookup_builtin},
   errln,
   expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
@@ -22,12 +22,15 @@ use super::{
   sherr,
   shopt::xtrace_print,
   signal::{check_signals, signals_pending},
+  state::logic::TrapTarget,
   state::{
-    self, ShFunc, ShellParam, Var, VarFlags, VarKind, read_logic, read_meta, read_shopts,
-    read_vars, with_term, write_logic, write_meta, write_vars,
+    self, Shed, logic::ShFunc, util::read_logic, util::read_meta, util::read_shopts,
+    util::with_term, util::write_logic, util::write_meta, vars::ShellParam, vars::Var,
+    vars::VarFlags, vars::VarKind,
   },
   util::{
-    self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, var_ctx_guard, split_case_pat, with_status
+    self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, split_case_pat,
+    var_ctx_guard, with_status,
   },
 };
 
@@ -41,7 +44,7 @@ pub fn in_cd_path(name: Tk) -> bool {
   if Path::new(&name).is_dir() {
     return true;
   }
-  let cd_path = read_vars(|v| v.get_var("CDPATH"));
+  let cd_path = Shed::vars(|v| v.get_var("CDPATH"));
   let entries = cd_path.split(':');
   for entry in entries {
     let full_path = Path::new(entry).join(&name);
@@ -142,7 +145,7 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
   let _guard = with_term(|t| t.interactive_guard(false));
   let name = args.first().cloned().unwrap_or("<shed -c>".into());
 
-  write_vars(|v| {
+  Shed::vars_mut(|v| {
     v.set_param(ShellParam::ShellName, &name); // $0
     let scope = v.cur_scope_mut();
     scope.sh_argv_mut().clear();
@@ -302,22 +305,22 @@ impl Dispatcher {
       check_signals()?;
     }
     let result = match node.class {
-      NdRule::List {..}        => self.exec_list(node),
-      NdRule::Conjunction {..} => self.exec_conjunction(node),
-      NdRule::Pipeline {..}    => self.exec_pipeline(node),
-      NdRule::IfNode {..}      => self.exec_if(node),
-      NdRule::LoopNode {..}    => self.exec_loop(node),
-      NdRule::ForNode {..}     => self.exec_for_arr(node),
-      NdRule::ForArith {..}    => self.exec_for_arith(node),
-      NdRule::CaseNode {..}    => self.exec_case(node),
-      NdRule::BraceGrp {..}    => self.exec_brc_grp(node),
-      NdRule::Subshell {..}    => self.exec_subsh(node),
-      NdRule::FuncDef {..}     => self.exec_func_def(node),
-      NdRule::Arithmetic {..}  => self.exec_arith(node),
-      NdRule::Negate {..}      => self.exec_negated(node),
-      NdRule::Command {..}     => self.dispatch_cmd(node),
-      NdRule::Test {..}        => self.exec_test(node),
-      _                        => unreachable!(),
+      NdRule::List { .. } => self.exec_list(node),
+      NdRule::Conjunction { .. } => self.exec_conjunction(node),
+      NdRule::Pipeline { .. } => self.exec_pipeline(node),
+      NdRule::IfNode { .. } => self.exec_if(node),
+      NdRule::LoopNode { .. } => self.exec_loop(node),
+      NdRule::ForNode { .. } => self.exec_for_arr(node),
+      NdRule::ForArith { .. } => self.exec_for_arith(node),
+      NdRule::CaseNode { .. } => self.exec_case(node),
+      NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
+      NdRule::Subshell { .. } => self.exec_subsh(node),
+      NdRule::FuncDef { .. } => self.exec_func_def(node),
+      NdRule::Arithmetic { .. } => self.exec_arith(node),
+      NdRule::Negate { .. } => self.exec_negated(node),
+      NdRule::Command { .. } => self.dispatch_cmd(node),
+      NdRule::Test { .. } => self.exec_test(node),
+      _ => unreachable!(),
     };
 
     if let Err(e) = result {
@@ -346,11 +349,11 @@ impl Dispatcher {
     }
 
     let (line, _) = node.get_span().clone().line_and_col();
-    write_vars(|v| {
+    Shed::vars_mut(|v| {
       v.set_var(
         "LINENO",
         VarKind::Str((line + 1).to_string()),
-        VarFlags::NONE,
+        VarFlags::empty(),
       )
     })?;
 
@@ -394,8 +397,8 @@ impl Dispatcher {
       unreachable!()
     };
     self.dispatch_node(*cmd)?;
-    let status = state::get_status();
-    state::set_status_from_bool(status != 0);
+    let status = state::util::get_status();
+    state::util::set_status_from_bool(status != 0);
 
     Ok(())
   }
@@ -418,7 +421,7 @@ impl Dispatcher {
         self.dispatch_node(*cmd)?;
       }
 
-      let status = state::get_status();
+      let status = state::util::get_status();
       skip = match operator {
         ConjunctOp::And => status != 0,
         ConjunctOp::Or => status == 0,
@@ -430,8 +433,8 @@ impl Dispatcher {
   pub fn exec_test(&mut self, node: Node) -> ShResult<()> {
     let test_result = super::builtin::double_bracket_test(node)?;
     match test_result {
-      true => state::set_status(0),
-      false => state::set_status(1),
+      true => state::util::set_status(0),
+      false => state::util::set_status(1),
     }
     Ok(())
   }
@@ -463,7 +466,7 @@ impl Dispatcher {
       });
     }
 
-    state::set_status(0);
+    state::util::set_status(0);
     Ok(())
   }
   fn exec_arith(&mut self, arith: Node) -> ShResult<()> {
@@ -472,7 +475,7 @@ impl Dispatcher {
     };
     let result = expand_arithmetic_wrapped(body.as_str())?;
     let val: f64 = result.parse().unwrap_or(0.0);
-    state::set_status_from_bool(val != 0.0);
+    state::util::set_status_from_bool(val != 0.0);
     Ok(())
   }
   fn exec_func(&mut self, func: Node) -> ShResult<()> {
@@ -485,9 +488,10 @@ impl Dispatcher {
       .get_first_word()
       .unwrap_or_default();
 
-    let func_ctx = util::get_context(format!(
-      "in call to function '{func_name}'",
-    ), func.get_span());
+    let func_ctx = util::get_context(
+      format!("in call to function '{func_name}'",),
+      func.get_span(),
+    );
     let NdRule::Command {
       assignments,
       mut argv,
@@ -525,11 +529,11 @@ impl Dispatcher {
     if let Some(ref mut func_body) = read_logic(|l| l.get_func(&name)) {
       defer! {
         if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Return)) {
-          let saved_status = state::get_status();
+          let saved_status = state::util::get_status();
           if let Err(e) = exec_nonint(trap, Some("trap RETURN".into())) {
             e.print_error();
           }
-          state::set_status(saved_status);
+          state::util::set_status(saved_status);
         }
       }
 
@@ -543,7 +547,7 @@ impl Dispatcher {
         Ok(()) => Ok(()),
         Err(e) => match e.kind() {
           ShErrKind::FuncReturn(code) => {
-            state::set_status(*code);
+            state::util::set_status(*code);
             Ok(())
           }
           ShErrKind::ErrInterrupt => {
@@ -710,28 +714,28 @@ impl Dispatcher {
       let CondNode { cond, body } = cond_node;
       'outer: loop {
         if let Err(e) = s.dispatch_node(*cond.clone()) {
-          state::set_status(1);
+          state::util::set_status(1);
           return Err(e);
         }
 
-        let status = state::get_status();
+        let status = state::util::get_status();
         if keep_going(kind, status) {
           let _guard = shared_scope_guard();
           if let Err(e) = s.dispatch_node(*(body.clone())) {
             match e.kind() {
               ShErrKind::LoopBreak(code) => {
-                state::set_status(*code);
+                state::util::set_status(*code);
                 break 'outer;
               }
               ShErrKind::LoopContinue(code) => {
-                state::set_status(*code);
+                state::util::set_status(*code);
                 continue 'outer;
               }
               _ => return Err(e),
             }
           }
         } else {
-          state::set_status(0);
+          state::util::set_status(0);
           break;
         }
       }
@@ -761,12 +765,12 @@ impl Dispatcher {
       'outer: loop {
         if let Some(cond_node) = cond.clone() {
           if let Err(e) = s.dispatch_node(*cond_node) {
-            state::set_status(1);
+            state::util::set_status(1);
             return Err(e);
           }
-          let status = state::get_status();
+          let status = state::util::get_status();
           if status != 0 {
-            state::set_status(0);
+            state::util::set_status(0);
             break;
           }
         }
@@ -775,11 +779,11 @@ impl Dispatcher {
         if let Err(e) = s.dispatch_node(*(body.clone())) {
           match e.kind() {
             ShErrKind::LoopBreak(code) => {
-              state::set_status(*code);
+              state::util::set_status(*code);
               break 'outer;
             }
             ShErrKind::LoopContinue(code) => {
-              state::set_status(*code);
+              state::util::set_status(*code);
               continue 'outer;
             }
             _ => return Err(e),
@@ -789,7 +793,7 @@ impl Dispatcher {
         if let Some(step_node) = step.clone()
           && let Err(e) = s.dispatch_node(*step_node)
         {
-          state::set_status(1);
+          state::util::set_status(1);
           return Err(e);
         }
       }
@@ -832,11 +836,11 @@ impl Dispatcher {
           .zip(chunk.iter().chain(std::iter::repeat(&empty)));
 
         for (var, val) in chunk_iter {
-          write_vars(|v| {
+          Shed::vars_mut(|v| {
             v.set_var(
               &var.to_string(),
               VarKind::Str(val.to_string()),
-              VarFlags::NONE,
+              VarFlags::empty(),
             )
           })?;
           for_guard.insert(var.to_string());
@@ -847,11 +851,11 @@ impl Dispatcher {
         if let Err(e) = s.dispatch_node(*(body.clone())) {
           match e.kind() {
             ShErrKind::LoopBreak(code) => {
-              state::set_status(*code);
+              state::util::set_status(*code);
               break 'outer;
             }
             ShErrKind::LoopContinue(code) => {
-              state::set_status(*code);
+              state::util::set_status(*code);
               continue 'outer;
             }
             _ => return Err(e),
@@ -883,12 +887,12 @@ impl Dispatcher {
           let _guard = shared_scope_guard();
 
           if let Err(e) = s.dispatch_node(*cond) {
-            state::set_status(1);
+            state::util::set_status(1);
             return Err(e);
           }
         }
 
-        match state::get_status() {
+        match state::util::get_status() {
           0 => {
             matched = true;
             let _guard = shared_scope_guard();
@@ -904,7 +908,7 @@ impl Dispatcher {
           let _guard = shared_scope_guard();
           s.dispatch_node(*body)?;
         } else {
-          state::set_status(0);
+          state::util::set_status(0);
         }
       }
 
@@ -1037,9 +1041,9 @@ impl Dispatcher {
       Ok(())
     } else {
       if let Err(e) = builtin.setup_builtin(cmd, self) {
-        let code = state::get_status();
+        let code = state::util::get_status();
         if code == 0 {
-          state::set_status(1);
+          state::util::set_status(1);
         }
         Err(e)
       } else {
@@ -1111,7 +1115,7 @@ impl Dispatcher {
       let span = exec_args.cmd.1;
       let cmd_raw = cmd.to_str().unwrap_or_default();
 
-      let Err(e) = if let Some(path) = state::lookup_cmd(cmd_raw) {
+      let Err(e) = if let Some(path) = state::util::lookup_cmd(cmd_raw) {
         let path_bytes = path.as_os_str().to_str().unwrap_or_default().as_bytes();
         let c_path = CString::new(path_bytes).unwrap_or_default();
         execve(&c_path, &exec_args.argv, &exec_args.envp)
@@ -1187,7 +1191,7 @@ impl Dispatcher {
         crate::signal::reset_signals(self.fg_job);
         let _guard = with_term(|t| t.interactive_guard(false));
         f(self);
-        unsafe { nix::libc::_exit(state::get_status()) }
+        unsafe { nix::libc::_exit(state::util::get_status()) }
       }
       ForkResult::Parent { child } => {
         let job = self.job_stack.curr_job_mut().unwrap();
@@ -1211,7 +1215,7 @@ impl Dispatcher {
     let mut new_env_vars = vec![];
     let mut flags = match behavior {
       AssignBehavior::Export => VarFlags::EXPORT,
-      AssignBehavior::Set => VarFlags::NONE,
+      AssignBehavior::Set => VarFlags::empty(),
     };
     if read_shopts(|o| o.set.allexport) {
       flags = VarFlags::EXPORT;
@@ -1223,40 +1227,40 @@ impl Dispatcher {
       let NdRule::Assignment { kind, var, val } = assign.class else {
         unreachable!()
       };
-      let old_status = state::get_status();
+      let old_status = state::util::get_status();
       let var_name = var.span.as_str();
       let val = if is_arr {
         VarKind::arr_from_tk(val)?
       } else {
         VarKind::Str(val.expand()?.get_words().join(" "))
       };
-      let param_expansion_failed = state::get_status() != 0;
+      let param_expansion_failed = state::util::get_status() != 0;
 
       // Parse and expand array index BEFORE entering write_vars borrow
-      let indexed = state::parse_arr_bracket(var_name)
-        .map(|(name, idx_raw)| state::expand_arr_index(&idx_raw, true).map(|idx| (name, idx)))
+      let indexed = state::util::parse_arr_bracket(var_name)
+        .map(|(name, idx_raw)| state::util::expand_arr_index(&idx_raw, true).map(|idx| (name, idx)))
         .transpose()?;
 
       match kind {
         AssignKind::Eq => {
           if let Some((name, idx)) = indexed {
-            write_vars(|v| v.set_var_indexed(&name, idx, val.to_string(), flags))?;
+            Shed::vars_mut(|v| v.set_var_indexed(&name, idx, val.to_string(), flags))?;
           } else {
-            write_vars(|v| v.set_var(var_name, val.clone(), flags))?;
+            Shed::vars_mut(|v| v.set_var(var_name, val.clone(), flags))?;
           }
         }
         op
         @ (AssignKind::PlusEq | AssignKind::MinusEq | AssignKind::MultEq | AssignKind::DivEq) => {
           let mut var = if let Some((name, idx)) = &indexed {
-            read_vars(|v| v.index_var(name, idx.clone()))?.into()
+            Shed::vars(|v| v.index_var(name, idx.clone()))?.into()
           } else {
-            read_vars(|v| v.try_get_var_meta(var_name)).unwrap_or_else(|| {
+            Shed::vars(|v| v.try_get_var_meta(var_name)).unwrap_or_else(|| {
               let kind = if is_arr {
                 VarKind::Arr(VecDeque::new())
               } else {
                 VarKind::Str(String::new())
               };
-              Var::new(kind, VarFlags::NONE)
+              Var::new(kind, VarFlags::empty())
             })
           };
 
@@ -1346,17 +1350,17 @@ impl Dispatcher {
           }
 
           if let Some((name, idx)) = indexed {
-            write_vars(|v| v.update_var_indexed(&name, idx, var.to_string()))?;
+            Shed::vars_mut(|v| v.update_var_indexed(&name, idx, var.to_string()))?;
           } else {
-            write_vars(|v| v.update_var(var_name, var.kind().clone()))?;
+            Shed::vars_mut(|v| v.update_var(var_name, var.kind().clone()))?;
           }
         }
       }
 
       if param_expansion_failed {
-        state::set_status(1);
+        state::util::set_status(1);
       } else {
-        state::set_status(old_status);
+        state::util::set_status(old_status);
       }
 
       if matches!(behavior, AssignBehavior::Export) {
@@ -1409,11 +1413,11 @@ pub fn runs_inline(cmd: &Node) -> bool {
 }
 
 pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShResult<()> {
-  if state::get_status() != 0 && !flags.contains(NdFlags::NOT_ERR) {
+  if state::util::get_status() != 0 && !flags.contains(NdFlags::NOT_ERR) {
     if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Error)) {
-      let saved_status = state::get_status();
+      let saved_status = state::util::get_status();
       exec_nonint(trap, Some("trap ERR".into()))?;
-      state::set_status(saved_status);
+      state::util::set_status(saved_status);
     }
     if read_shopts(|o| o.set.errexit) {
       if let Some(mut e) = err {
@@ -1446,35 +1450,35 @@ mod tests {
   fn while_loop_status_zero_after_completion() {
     let _g = TestGuard::new();
     test_input("while false; do :; done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn while_loop_status_zero_after_iterations() {
     let _g = TestGuard::new();
     test_input("X=0; while [[ $X -lt 3 ]]; do X=$((X+1)); done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn until_loop_status_zero_after_completion() {
     let _g = TestGuard::new();
     test_input("until true; do :; done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn until_loop_status_zero_after_iterations() {
     let _g = TestGuard::new();
     test_input("X=3; until [[ $X -le 0 ]]; do X=$((X-1)); done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn while_break_preserves_status() {
     let _g = TestGuard::new();
     test_input("while true; do break; done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -1483,7 +1487,7 @@ mod tests {
     test_input("X=0; while [[ $X -lt 1 ]]; do X=$((X+1)); false; done").unwrap();
     // Loop body ended with `false` (status 1), but the loop itself
     // completed normally when the condition failed, so status should be 0
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== if/elif/else status =====================
@@ -1492,7 +1496,7 @@ mod tests {
   fn if_true_body_status() {
     let _g = TestGuard::new();
     test_input("if true; then echo ok; fi").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -1500,14 +1504,14 @@ mod tests {
     let _g = TestGuard::new();
     test_input("if false; then echo ok; fi").unwrap();
     // No branch taken, POSIX says status is 0
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn if_else_branch_status() {
     let _g = TestGuard::new();
     test_input("if false; then true; else false; fi").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   // ===================== for loop status =====================
@@ -1516,14 +1520,14 @@ mod tests {
   fn for_loop_empty_list_status() {
     let _g = TestGuard::new();
     test_input("for x in; do echo $x; done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn for_loop_body_status() {
     let _g = TestGuard::new();
     test_input("for x in a b c; do true; done").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== case status =====================
@@ -1532,14 +1536,14 @@ mod tests {
   fn case_match_status() {
     let _g = TestGuard::new();
     test_input("case foo in foo) true;; esac").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn case_no_match_status() {
     let _g = TestGuard::new();
     test_input("case foo in bar) true;; esac").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== other stuff =====================
@@ -1566,28 +1570,28 @@ mod tests {
   fn negate_true() {
     let _g = TestGuard::new();
     test_input("! true").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
   fn negate_false() {
     let _g = TestGuard::new();
     test_input("! false").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn double_negate_true() {
     let _g = TestGuard::new();
     test_input("! ! true").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn double_negate_false() {
     let _g = TestGuard::new();
     test_input("! ! false").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -1595,7 +1599,7 @@ mod tests {
     let _g = TestGuard::new();
     // pipeline status = last cmd (false) = 1, negated -> 0
     test_input("! true | false").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -1603,7 +1607,7 @@ mod tests {
     let _g = TestGuard::new();
     // pipeline status = last cmd (true) = 0, negated -> 1
     test_input("! false | true").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -1611,14 +1615,14 @@ mod tests {
     let _g = TestGuard::new();
     // ! binds to pipeline, not conjunction: (! (true && false)) && true
     test_input("! (true && false) && true").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn negate_in_if_condition() {
     let g = TestGuard::new();
     test_input("if ! false; then echo yes; fi").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
     assert_eq!(g.read_output(), "yes\n");
   }
 
@@ -1627,10 +1631,10 @@ mod tests {
     let _g = TestGuard::new();
     // POSIX specifies that a quoted unset variable expands to an empty string, so the shell actually sees `[ -n "" ]`, which returns false
     test_input("[ -n \"$EMPTYVAR_PROBABLY_NOT_SET_TO_ANYTHING\" ]").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
     // Without quotes, word splitting causes an empty var to be removed entirely, so the shell actually sees `[ -n ]`, testing the value of ']', which returns true
     test_input("[ -n $EMPTYVAR_PROBABLY_NOT_SET_TO_ANYTHING ]").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== command lists in compound statements =====================
@@ -1643,7 +1647,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("if true; true; then false; fi").unwrap();
     // Condition's last command (true) → enters then-branch → false → status 1
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -1651,7 +1655,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("if true; false; then echo a; else echo b; fi").unwrap();
     // Condition's last command (false) → else-branch
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -1676,7 +1680,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("if true; then true; false; fi").unwrap();
     // Body's last command (false) determines if-statement's status
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]
@@ -1758,7 +1762,7 @@ mod tests {
   fn top_level_sequence_status_is_last() {
     let _g = TestGuard::new();
     test_input("true; true; false").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   // ===================== function bodies as compound commands =====================
@@ -1849,7 +1853,7 @@ mod tests {
     // Function exit status should be the last command's status, regardless
     // of which compound command shape the body uses.
     test_input("f() ( false ); f").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 
   #[test]

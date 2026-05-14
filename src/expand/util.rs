@@ -1,9 +1,9 @@
 use regex::Regex;
 
 use crate::expand::escape::unescape_str;
+use crate::expand::markers;
 use crate::expand::var::expand_raw;
 use crate::match_loop;
-use crate::readline::markers;
 use crate::util::ShResult;
 
 /// Expand a case pattern: performs variable/command expansion while preserving

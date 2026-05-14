@@ -1,6 +1,6 @@
 use crate::{
-  readline::{editcmd::To, editmode::EditMode},
-  state::{CursorStyle, write_meta},
+  readline::editmode::EditMode,
+  state::{terminal::CursorStyle, util::write_meta},
 };
 
 pub struct RemoteMode;
@@ -8,7 +8,7 @@ pub struct RemoteMode;
 impl EditMode for RemoteMode {
   fn handle_key(
     &mut self,
-    key: crate::readline::keys::KeyEvent,
+    key: crate::keys::KeyEvent,
   ) -> Option<crate::readline::editcmd::EditCmd> {
     write_meta(|m| m.notify_key_event(key)).ok()?;
     None
@@ -30,16 +30,8 @@ impl EditMode for RemoteMode {
     None
   }
 
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
-
   fn clamp_cursor(&self) -> bool {
     false
-  }
-
-  fn hist_scroll_start_pos(&self) -> Option<crate::readline::editcmd::To> {
-    Some(To::End)
   }
 
   fn report_mode(&self) -> super::ModeReport {

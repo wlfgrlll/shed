@@ -16,9 +16,6 @@ use super::{CharClass, Pos};
 pub struct Grapheme(pub(super) SmallVec<[char; 4]>);
 
 impl Grapheme {
-  pub fn chars(&self) -> &[char] {
-    &self.0
-  }
   /// Returns the display width of the Grapheme. ASCII control bytes (other
   /// than `\n` and `\t`) and DEL render as 2-column caret notation (`^[`,
   /// `^M`, `^?`, etc.) in the highlighter, so their width must match.
@@ -168,9 +165,6 @@ impl Line {
     let at = at.min(self.0.len());
     self.0.insert(at, g);
   }
-  pub fn width(&self) -> usize {
-    self.0.iter().map(|g| g.width()).sum()
-  }
   pub fn trim_start(&mut self) -> Line {
     let mut clone = self.clone();
     while clone.0.first().is_some_and(|g| g.is_ws()) {
@@ -234,13 +228,6 @@ impl Lines {
       .join("\n")
   }
 
-  pub fn trim_lines(&mut self) {
-    while self.last().is_some_and(|line| line.is_empty()) {
-      self.0.pop();
-    }
-    self.push_empty();
-  }
-
   pub fn split_lines_at(&mut self, pos: Pos) -> Lines {
     let tail = self[pos.row].split_off(pos.col);
     let mut rest: Lines = self.drain(pos.row + 1..).collect();
@@ -296,11 +283,6 @@ impl Lines {
 
     this_line.len() <= other_line.len()
       && this_line.iter().zip(other_line.iter()).all(|(l, r)| l == r)
-  }
-
-  pub fn into_lines(mut self) -> Vec<Line> {
-    self.push_empty();
-    self.0
   }
 
   pub fn strip_prefix_lines(mut self, other: &Lines) -> Option<Lines> {

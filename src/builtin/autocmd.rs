@@ -1,31 +1,13 @@
 use super::{
+  ShResult,
   getopt::{Opt, OptSpec},
   sherr,
-  state::{logic::{AutoCmd, AutoCmdKind}, util::write_logic},
-  ShResult,
+  state::{
+    logic::{AutoCmd, AutoCmdKind},
+    util::write_logic,
+  },
   with_status,
 };
-
-pub struct AutoCmdOpts {
-  clear: bool,
-}
-pub fn get_autocmd_opts(opts: &[Opt]) -> ShResult<AutoCmdOpts> {
-  let mut autocmd_opts = AutoCmdOpts { clear: false };
-
-  let mut opts = opts.iter();
-  while let Some(arg) = opts.next() {
-    match arg {
-      Opt::Short('c') => {
-        autocmd_opts.clear = true;
-      }
-      _ => {
-        return Err(sherr!(ExecFail, "unexpected option: {}", arg,));
-      }
-    }
-  }
-
-  Ok(autocmd_opts)
-}
 
 pub(super) struct AutoCmdBuiltin;
 impl super::Builtin for AutoCmdBuiltin {
@@ -43,7 +25,7 @@ impl super::Builtin for AutoCmdBuiltin {
       }
     }
 
-    let Some((kind,kind_span)) = argv.next() else {
+    let Some((kind, kind_span)) = argv.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "expected an autocmd kind",
@@ -62,17 +44,14 @@ impl super::Builtin for AutoCmdBuiltin {
       return with_status(0);
     }
 
-    let Some((autocmd_cmd,_)) = argv.next() else {
+    let Some((autocmd_cmd, _)) = argv.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "expected an autocmd command",
       ));
     };
 
-    let autocmd = AutoCmd::new(
-      autocmd_kind,
-      autocmd_cmd.clone(),
-    );
+    let autocmd = AutoCmd::new(autocmd_kind, autocmd_cmd.clone());
 
     write_logic(|l| l.insert_autocmd(autocmd));
 
@@ -82,8 +61,10 @@ impl super::Builtin for AutoCmdBuiltin {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, logic::AutoCmdKind, util::read_logic};
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::{
+    state::{self, logic::AutoCmdKind, util::read_logic},
+    tests::testutil::{TestGuard, test_input},
+  };
 
   // ===================== Registration =====================
 
@@ -164,7 +145,7 @@ mod tests {
     let _guard = TestGuard::new();
     // Clearing when nothing is registered should not error
     test_input("autocmd -c pre-cmd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== Error Cases =====================
@@ -173,21 +154,21 @@ mod tests {
   fn missing_kind() {
     let _guard = TestGuard::new();
     test_input("autocmd").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn invalid_kind() {
     let _guard = TestGuard::new();
     test_input("autocmd not-a-real-kind 'echo hi'").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn missing_command() {
     let _guard = TestGuard::new();
     test_input("autocmd pre-cmd").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== All valid kind strings =====================
@@ -239,11 +220,11 @@ mod tests {
     test_input("autocmd post-change-dir 'false'").unwrap();
 
     test_input("true").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
 
     test_input("cd /tmp").unwrap();
     // cd itself succeeds, autocmd runs `false` but status should be
     // restored to cd's success
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

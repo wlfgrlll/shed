@@ -1,5 +1,6 @@
+use crate::state::terminal::calc_str_width;
+use crate::write_term;
 use crate::{match_loop, sherr, util::error::ShResult};
-use crate::{readline::term::calc_str_width, write_term};
 use std::fmt::Write;
 use yansi::{Paint, Painted, Style};
 
@@ -19,6 +20,7 @@ pub struct PaletteEntry {
   decorations: Decorations,
 }
 
+#[allow(dead_code)]
 impl PaletteEntry {
   pub fn new() -> Self {
     Self {

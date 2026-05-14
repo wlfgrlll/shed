@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use nix::{libc::STDIN_FILENO, unistd::isatty};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
@@ -13,34 +11,19 @@ use crate::{
     linebuf::{
       CharClass, DEFAULT_VIEWPORT_HEIGHT, Edit, Grapheme, Line, Lines, MotionKind, Pos, SelectMode,
     },
-    term::get_win_size,
   },
   sherr,
-  state::{self, read_shopts, write_meta},
+  state::{
+    self,
+    terminal::get_win_size,
+    util::{read_shopts, write_meta},
+  },
   status_msg,
-  util::ShResult,
+  util::{ShResult, ordered},
 };
 
 use super::char_class::{CharClassIter, CharClassIterRev};
 use super::edit::extract_range_contiguous;
-
-/// Rotate alphabetic characters by 13 alphabetic positions
-pub fn rot13(input: &str) -> String {
-  input
-    .chars()
-    .map(|c| {
-      if c.is_ascii_lowercase() {
-        let offset = b'a';
-        (((c as u8 - offset + 13) % 26) + offset) as char
-      } else if c.is_ascii_uppercase() {
-        let offset = b'A';
-        (((c as u8 - offset + 13) % 26) + offset) as char
-      } else {
-        c
-      }
-    })
-    .collect()
-}
 
 pub fn rot13_char(c: char) -> char {
   let offset = if c.is_ascii_lowercase() {
@@ -60,15 +43,6 @@ pub fn toggle_case_char(c: char) -> char {
     c.to_ascii_lowercase()
   } else {
     c
-  }
-}
-
-/// Given two things that implement Ord, make sure that the left is less than the right
-pub fn ordered<T: Ord>(start: T, end: T) -> (T, T) {
-  if start > end {
-    (end, start)
-  } else {
-    (start, end)
   }
 }
 
@@ -137,19 +111,9 @@ impl super::LineBuf {
     let max_offset = self.lines.len().saturating_sub(height);
     self.scroll_offset = self.scroll_offset.min(max_offset);
   }
-  pub fn get_window(&self) -> Lines {
-    let height = self.get_viewport_height();
-    self
-      .lines
-      .iter()
-      .skip(self.scroll_offset)
-      .take(height)
-      .cloned()
-      .collect()
-  }
   pub fn display_window_joined(&mut self) -> String {
     let joined = self.joined();
-    let do_hl = state::read_shopts(|s| s.highlight.enable);
+    let do_hl = state::util::read_shopts(|s| s.highlight.enable);
     let palette = if do_hl {
       highlight::Palette::new()
     } else {
@@ -495,10 +459,6 @@ impl super::LineBuf {
     }
   }
 
-  pub fn grapheme_positions(&self) -> Vec<(Pos, Grapheme)> {
-    Self::enumerate_graphemes(&self.lines)
-  }
-
   pub fn enumerate_graphemes(lines: &Lines) -> Vec<(Pos, Grapheme)> {
     lines
       .iter()
@@ -575,20 +535,6 @@ impl super::LineBuf {
     Some(graphemes[range].join(""))
   }
 
-  pub fn slice_to_cursor(&self) -> Option<String> {
-    let mut result = String::new();
-    for i in 0..self.cursor.pos.row {
-      result.push_str(&self.lines[i].to_string());
-      result.push('\n');
-    }
-    let line = &self.lines[self.cursor.pos.row];
-    let col = self.cursor.pos.col.min(line.len());
-    for g in &line.graphemes()[..col] {
-      result.push_str(&g.to_string());
-    }
-    Some(result)
-  }
-
   pub fn cursor_byte_pos(&self) -> usize {
     let mut pos = 0;
     for i in 0..self.cursor.pos.row {
@@ -656,9 +602,6 @@ impl super::LineBuf {
 
     // update viewport scroll offset
     self.update_scroll_offset();
-  }
-  pub fn is_merging(&self) -> bool {
-    self.merging_undos || self.undo_stack.last().is_some_and(|edit| edit.merging)
   }
   pub fn stop_undo_merge(&mut self) {
     self.merging_undos = false;
@@ -737,14 +680,6 @@ impl super::LineBuf {
         end,
         inclusive,
       } => self.extract_span((*start, *end), *inclusive),
-      MotionKind::Lines { lines } => {
-        let mut extracted_lines = vec![];
-        for line_no in lines.iter().rev() {
-          let line = self.lines.remove(*line_no);
-          extracted_lines.push(line);
-        }
-        Lines(extracted_lines)
-      }
       MotionKind::Line {
         start,
         end,
@@ -805,12 +740,6 @@ impl super::LineBuf {
       MotionKind::Line { start, end, .. } => {
         let (s, _) = ordered(start, end);
         self.set_cursor(Pos { row: s, col: 0 });
-      }
-      MotionKind::Lines { lines } => {
-        let Some(line) = lines.first() else {
-          return;
-        };
-        self.set_cursor(Pos { row: *line, col: 0 });
       }
       MotionKind::Block { .. } => unimplemented!(),
     }
@@ -1124,23 +1053,6 @@ impl super::LineBuf {
   }
   pub(super) fn scan_forward<F: FnMut(&Grapheme) -> bool>(&self, f: F) -> Option<Pos> {
     self.scan_forward_from(self.cursor.pos, f)
-  }
-  pub(super) fn line_iter_mut_by_indices(
-    &mut self,
-    indices: &[usize],
-  ) -> impl Iterator<Item = &mut Line> + '_ {
-    let indices_set: HashSet<usize> = indices.iter().cloned().collect();
-    self
-      .lines
-      .iter_mut()
-      .enumerate()
-      .filter_map(move |(i, line)| {
-        if indices_set.contains(&i) {
-          Some(line)
-        } else {
-          None
-        }
-      })
   }
   pub(super) fn line_to_pos(&self, pos: Pos) -> &[Grapheme] {
     let line = &self.lines[pos.row];

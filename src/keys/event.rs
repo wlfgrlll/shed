@@ -1,7 +1,5 @@
 use std::sync::Arc;
-use unicode_segmentation::UnicodeSegmentation;
 
-use crate::sherr;
 use crate::util::ShResult;
 
 // Credit to Rustyline for the design ideas in this module
@@ -10,68 +8,6 @@ use crate::util::ShResult;
 pub struct KeyEvent(pub KeyCode, pub ModKeys);
 
 impl KeyEvent {
-  pub fn new(ch: &str, mut mods: ModKeys) -> Self {
-    use {KeyCode as K, KeyEvent as E, ModKeys as M};
-
-    let mut graphemes = ch.graphemes(true);
-
-    let first = match graphemes.next() {
-      Some(g) => g,
-      None => return E(K::Null, mods),
-    };
-
-    // If more than one grapheme, it's not a single key event
-    if graphemes.next().is_some() {
-      return E(K::Null, mods);
-    }
-
-    let mut chars = first.chars();
-
-    let single_char = chars.next();
-    let is_single_char = chars.next().is_none();
-
-    match single_char {
-      Some(c) if is_single_char && c.is_control() => match c {
-        '\x00' => E(K::Char('@'), mods | M::CTRL),
-        '\x09' => {
-          if mods.contains(M::SHIFT) {
-            mods.remove(M::SHIFT);
-            E(K::BackTab, mods)
-          } else {
-            E(K::Tab, mods)
-          }
-        }
-        '\x0d' => E(K::Enter, mods),
-        '\x08' => E(K::Backspace, mods),
-        '\x1b' => E(K::Esc, mods),
-        '\x7f' => E(K::Backspace, mods),
-        '\u{9b}' => E(K::Esc, mods | M::SHIFT),
-        '\x1c' => E(K::Char('\\'), mods | M::CTRL),
-        '\x1d' => E(K::Char(']'), mods | M::CTRL),
-        '\x1e' => E(K::Char('^'), mods | M::CTRL),
-        '\x1f' => E(K::Char('_'), mods | M::CTRL),
-        '\x01'..='\x1a' => {
-          // Map Ctrl + [a-z] to their corresponding control characters
-          let ctrl_char = (c as u8 - 1 + b'a') as char;
-          E(K::Char(ctrl_char), mods | M::CTRL)
-        }
-        _ => E(K::Null, mods),
-      },
-      Some(c) if is_single_char => {
-        if !mods.is_empty() {
-          mods.remove(M::SHIFT);
-        }
-        E(K::Char(c), mods)
-      }
-      _ => {
-        // multi-char grapheme (emoji, accented, etc)
-        if !mods.is_empty() {
-          mods.remove(M::SHIFT);
-        }
-        E(K::Grapheme(Arc::from(first)), mods)
-      }
-    }
-  }
   pub fn as_vim_seq(&self) -> ShResult<String> {
     let mut seq = String::new();
     let KeyEvent(event, mods) = self;
@@ -91,22 +27,12 @@ impl KeyEvent {
     }
 
     match event {
-      KeyCode::UnknownEscSeq => {
-        return Err(sherr!(
-          ParseErr,
-          "Cannot convert unknown escape sequence to Vim key sequence",
-        ));
-      }
       KeyCode::ExMode => {
         seq.push_str("CMD");
         needs_angle_bracket = true;
       }
       KeyCode::Backspace => {
         seq.push_str("BS");
-        needs_angle_bracket = true;
-      }
-      KeyCode::BackTab => {
-        seq.push_str("S-Tab");
         needs_angle_bracket = true;
       }
       KeyCode::BracketedPasteStart => todo!(),
@@ -148,7 +74,6 @@ impl KeyEvent {
         seq.push_str("Left");
         needs_angle_bracket = true;
       }
-      KeyCode::Null => todo!(),
       KeyCode::PageDown => {
         seq.push_str("PgDn");
         needs_angle_bracket = true;
@@ -172,7 +97,6 @@ impl KeyEvent {
       KeyCode::Char(ch) => {
         seq.push(*ch);
       }
-      KeyCode::Grapheme(gr) => seq.push_str(gr),
       KeyCode::Verbatim(s) => seq.push_str(s),
       clk @ (KeyCode::MiddleClick(x, y) | KeyCode::RightClick(x, y) | KeyCode::LeftClick(x, y)) => {
         let name = match clk {
@@ -216,13 +140,10 @@ impl KeyEvent {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum KeyCode {
-  UnknownEscSeq,
   Backspace,
-  BackTab,
   BracketedPasteStart,
   BracketedPasteEnd,
   Char(char),
-  Grapheme(Arc<str>),
   Verbatim(Arc<str>), // For sequences that should be treated as literal input, not parsed into a KeyCode
   Delete,
   Down,
@@ -233,7 +154,6 @@ pub enum KeyCode {
   Home,
   Insert,
   Left,
-  Null,
   PageDown,
   PageUp,
   Right,

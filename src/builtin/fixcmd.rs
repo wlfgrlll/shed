@@ -7,21 +7,18 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::{
+use super::{
   match_loop, out,
   parse::{
     NdRule, Node,
     execute::{Dispatcher, exec_input},
     lex::{Span, Tk},
   },
-  readline::{
-    history::{HistEntry, History},
-    linebuf::ordered,
-  },
+  readline::{HistEntry, History},
   sherr,
-  shopt::xtrace_print,
+  shopt_internal::xtrace_print,
   state::{self},
-  util::{ShResult, ShResultExt},
+  util::{ShResult, ShResultExt, ordered},
 };
 
 use bitflags::bitflags;
@@ -170,7 +167,7 @@ impl super::Builtin for FixCmd {
 
     let (_argv, opts) = parse_fc_args(argv).promote_err(span.clone())?;
 
-    let conn = state::get_db_conn()
+    let conn = state::util::get_db_conn()
       .ok_or_else(|| sherr!(InternalErr, "database not available"))
       .promote_err(span.clone())?;
     let hist = History::new(conn, "shed_history").promote_err(span.clone())?;
@@ -182,7 +179,7 @@ impl super::Builtin for FixCmd {
       fc_edit(hist, opts).promote_err(span)?;
     }
 
-    state::set_status(0);
+    state::util::set_status(0);
     Ok(())
   }
 }

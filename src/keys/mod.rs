@@ -3,14 +3,6 @@ mod map;
 
 use super::expand;
 
-pub(super) use event::{
-  KeyEvent,
-  KeyCode,
-  ModKeys
-};
+pub(super) use event::{KeyCode, KeyEvent, ModKeys};
 
-pub(super) use map::{
-  KeyMapMatch,
-  KeyMapFlags,
-  KeyMap
-};
+pub(super) use map::{KeyMap, KeyMapFlags, KeyMapMatch};

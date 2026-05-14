@@ -1,9 +1,8 @@
 use super::{
-  varcmds::{split_assignment_raw},
-  outln, sherr,
+  ShResult, outln, sherr,
   state::util::{read_logic, write_logic},
   state::vars::{display_as_var, display_as_vars},
-  ShResult,
+  varcmds::split_assignment_raw,
   with_status,
 };
 
@@ -68,8 +67,10 @@ impl super::Builtin for Unalias {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, util::read_logic};
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::{
+    state::{self, util::read_logic},
+    tests::testutil::{TestGuard, test_input},
+  };
   use pretty_assertions::assert_eq;
 
   #[test]
@@ -127,21 +128,21 @@ mod tests {
   fn alias_reserved_name_command() {
     let _guard = TestGuard::new();
     test_input("alias command='something'").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn alias_reserved_name_builtin() {
     let _guard = TestGuard::new();
     test_input("alias builtin='something'").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
   fn alias_missing_equals() {
     let _guard = TestGuard::new();
     test_input("alias noequals").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -180,7 +181,7 @@ mod tests {
   fn unalias_nonexistent() {
     let _guard = TestGuard::new();
     test_input("unalias nosuchalias").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -220,9 +221,9 @@ mod tests {
   fn alias_status_zero() {
     let _guard = TestGuard::new();
     test_input("alias ok='true'").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
 
     test_input("unalias ok").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

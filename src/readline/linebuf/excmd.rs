@@ -5,14 +5,22 @@ use nix::libc::STDIN_FILENO;
 use scopeguard::defer;
 
 use crate::{
-  autocmd, builtin::stash::{Stash, StashedCmd}, motion, parse::execute::{exec_int, exec_nonint}, procio::{RedirSet, RedirSpec, capture_command}, readline::{
+  autocmd,
+  builtin::stash::{Stash, StashedCmd},
+  motion,
+  parse::execute::{exec_int, exec_nonint},
+  procio::{RedirSet, RedirSpec, capture_command},
+  readline::{
     editcmd::{Anchor, Cmd, EditCmd, ReadSrc, StashArgs, StashListArg, Verb, WriteDest},
     editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
     linebuf::{Line, Lines, MotionKind, Pos, ordered},
-  }, state::{
-    VarFlags, VarKind, read_shopts, read_vars, with_term, write_meta,
-    write_vars,
-  }, status_msg, system_msg, util::{ShResult, format_size, var_ctx_guard}, verb
+  },
+  state::{
+    Shed, util::read_shopts, util::with_term, util::write_meta, vars::VarFlags, vars::VarKind,
+  },
+  status_msg, system_msg,
+  util::{ShResult, format_size, var_ctx_guard},
+  verb,
 };
 
 impl super::LineBuf {
@@ -443,7 +451,7 @@ impl super::LineBuf {
   }
 
   fn ex_edit(&mut self, paths: &[PathBuf]) -> ShResult<()> {
-    if read_vars(|v| v.try_get_var("EDITOR")).is_none() {
+    if Shed::vars(|v| v.try_get_var("EDITOR")).is_none() {
       system_msg!("$EDITOR is unset. Aborting edit.");
       Ok(())
     } else {
@@ -494,7 +502,7 @@ impl super::LineBuf {
     let mut cursor = cursor_raw.to_string();
     let mut anchor = self.anchor_to_flat();
 
-    write_vars(|v| -> ShResult<()> {
+    Shed::vars_mut(|v| -> ShResult<()> {
       v.set_var("BUFFER", VarKind::Str(buf.clone()), VarFlags::EXPORT)?;
       v.set_var("CURSOR", VarKind::Str(cursor.to_string()), VarFlags::EXPORT)?;
       if let Some(anchor) = anchor {
@@ -516,7 +524,7 @@ impl super::LineBuf {
 
     let mut new_anchor = None;
 
-    let keys = write_vars(|v| {
+    let keys = Shed::vars_mut(|v| {
       buf = v.take_var("BUFFER");
       cursor = v.take_var("CURSOR");
       if anchor.is_some() {

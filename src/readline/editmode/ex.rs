@@ -8,19 +8,19 @@ use std::vec::IntoIter;
 use itertools::{Itertools, PeekingNext};
 
 use crate::key;
+use crate::keys::KeyEvent;
 use crate::match_loop;
+use crate::parse::lex::TkVecUtils;
 use crate::parse::lex::{self, LexFlags, LexStream, Span, Tk};
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
-  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg, To,
+  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg,
   Verb, WriteDest,
 };
 use crate::readline::editmode::{EditMode, ModeReport};
 use crate::readline::history::History;
-use crate::readline::keys::KeyEvent;
 use crate::readline::linebuf::LineBuf;
-use crate::state::CursorStyle;
-use crate::parse::lex::TkVecUtils;
+use crate::state::terminal::CursorStyle;
 use crate::util::ShResult;
 use crate::{status_msg, verb};
 use bitflags::bitflags;
@@ -170,16 +170,8 @@ impl EditMode for ViEx {
     Some(self.pending_cmd.editor.buf.cursor_to_flat())
   }
 
-  fn move_cursor_on_undo(&self) -> bool {
-    self.pending_cmd.editor.mode.move_cursor_on_undo()
-  }
-
   fn clamp_cursor(&self) -> bool {
     self.pending_cmd.editor.mode.clamp_cursor()
-  }
-
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    None
   }
 
   fn report_mode(&self) -> super::ModeReport {
@@ -215,6 +207,7 @@ const COMMANDS: &[(&str, ExTkRule)] = &[
   ("help", ExTkRule::Help),
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ExTkRule {
   Number,
@@ -225,8 +218,10 @@ pub enum ExTkRule {
   Offset,
   Mark,
   Bang,
+  Append,
   NormalSeq,
   Pattern,
+  PatternRev,
   Argument,
 
   Substitute,
@@ -498,22 +493,24 @@ impl<'a> ExLexer<'a> {
   fn parse_args(&mut self) {
     let Some(cmd) = self.command() else { return };
 
-    match cmd.class {
+    match cmd.class.clone() {
       ExTkRule::Substitute => self.parse_substitute_arg(),
       ExTkRule::Global => self.parse_global_arg(),
       ExTkRule::Normal => self.parse_normal_seq(),
       ExTkRule::Bang => self.parse_shell_cmd(),
-      _ => {
+      rule => {
         // Some command like 'edit' or 'write' or something that just expects words
         // These are subject to shell expansion, so we use LexStream for these
         let Some(start_pos) = self.peek_pos() else {
           return;
         };
+        let is_write = matches!(rule, ExTkRule::Write);
         let rest = self.chars.by_ref().map(|(_, ch)| ch).collect::<String>();
         let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
           .filter_map(Result::ok)
           .filter_map(|tk| tk.filter_meta().then_some(tk))
           .map(ExTk::from);
+        let mut pushed = false;
 
         for mut tk in stream {
           let inner = tk.span.range();
@@ -521,7 +518,11 @@ impl<'a> ExLexer<'a> {
             (inner.start + start_pos)..(inner.end + start_pos),
             self.input.clone(),
           );
+          if !pushed && is_write && tk.span.as_str() == ">>" {
+            tk.class = ExTkRule::Append;
+          }
           self.tokens.push(tk);
+          pushed = true;
         }
       }
     }
@@ -648,9 +649,13 @@ impl<'a> ExLexer<'a> {
         };
         (i + c.len_utf8(), ExTkRule::Mark)
       }
-      '/' | '?' => {
+      ch @ ('/' | '?') => {
+        let rule = match ch {
+          '?' => ExTkRule::PatternRev,
+          _ => ExTkRule::Pattern,
+        };
         let end = self.consume_pattern(start + 1, first);
-        (end, ExTkRule::Pattern)
+        (end, rule)
       }
       _ => return false, // unreachable probably
     };
@@ -840,6 +845,14 @@ impl ExParser {
         let mark_name = tk.span.as_str().chars().nth(1).unwrap();
 
         ExPR::Partial(LineAddr::Mark(mark_name))
+      }
+      ExTkRule::Pattern => {
+        let pat = tk.span.as_str().to_string();
+        ExPR::Partial(LineAddr::Pattern(pat))
+      }
+      ExTkRule::PatternRev => {
+        let pat = tk.span.as_str().to_string();
+        ExPR::Partial(LineAddr::PatternRev(pat))
       }
       _ => unreachable!(),
     }
@@ -1053,16 +1066,22 @@ impl ExParser {
         ExR::success(ExNdRule::Write(WriteDest::Cmd(args_raw)))
       }
     } else {
-      let Some(arg) = self.tokens.next() else {
+      let Some(mut arg) = self.tokens.next() else {
         return ExR::error(format!(
           "expected {} argument for read command",
           if is_shell_arg { "shell" } else { "file" }
         ));
       };
+      let is_append = matches!(arg.class, ExTkRule::Append);
+      if is_append && let Some(next) = self.tokens.next() {
+        arg = next;
+      }
       let arg = arg.span.as_str();
 
       if is_read {
         ExR::success(ExNdRule::Read(ReadSrc::File(PathBuf::from(arg))))
+      } else if is_append {
+        ExR::success(ExNdRule::Write(WriteDest::FileAppend(PathBuf::from(arg))))
       } else {
         ExR::success(ExNdRule::Write(WriteDest::File(PathBuf::from(arg))))
       }

@@ -11,15 +11,9 @@ use bitflags::bitflags;
 use crate::{
   builtin::BUILTIN_NAMES,
   match_loop,
-  readline::linebuf::Pos,
+  readline::Pos,
   sherr,
-  util::{
-    ShResult,
-    QuoteState,
-    ends_with_unescaped,
-    scan_braces,
-    scan_parens,
-  },
+  util::{QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
 };
 
 pub const KEYWORDS: [&str; 19] = [
@@ -74,7 +68,6 @@ impl TkVecUtils<Tk> for Vec<Tk> {
     splits
   }
 }
-
 
 pub fn not_marker(tk: &ShResult<Tk>) -> bool {
   tk.is_err()
@@ -1407,7 +1400,7 @@ impl Iterator for LexStream {
       }
       '#'
         if !self.flags.contains(LexFlags::INTERACTIVE)
-          || crate::state::read_shopts(|s| s.core.interactive_comments) =>
+          || crate::state::util::read_shopts(|s| s.core.interactive_comments) =>
       {
         let ch_idx = self.cursor;
         self.inc_cursor(1);

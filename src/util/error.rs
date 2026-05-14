@@ -1,13 +1,10 @@
-use ariadne::{Color, Fmt, Label, Span as AriadneSpan};
+use ariadne::{Label, Span as AriadneSpan};
 use ariadne::{Report, ReportKind};
 use nix::errno::Errno;
-use rand::TryRng;
-use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
 use std::rc::Rc;
-use yansi::Paint;
 
 use crate::parse::lex::{Span, SpanSource};
 use crate::procio::{RedirGuard, stderr_fileno, stdout_fileno};
@@ -16,81 +13,11 @@ use crate::util::FdWriter;
 
 pub type ShResult<T> = Result<T, ShErr>;
 
-pub struct ColorRng {
-  last_color: Option<Color>,
-}
-
-impl ColorRng {
-  fn get_colors() -> &'static [Color] {
-    &[
-      Color::Red,
-      Color::Cyan,
-      Color::Blue,
-      Color::Green,
-      Color::Yellow,
-      Color::Magenta,
-      Color::Fixed(208), // orange
-      Color::Fixed(39),  // deep sky blue
-      Color::Fixed(170), // orchid / magenta-pink
-      Color::Fixed(76),  // chartreuse
-      Color::Fixed(51),  // aqua
-      Color::Fixed(226), // bright yellow
-      Color::Fixed(99),  // slate blue
-      Color::Fixed(214), // light orange
-      Color::Fixed(48),  // spring green
-      Color::Fixed(201), // hot pink
-      Color::Fixed(81),  // steel blue
-      Color::Fixed(220), // gold
-      Color::Fixed(105), // medium purple
-    ]
-  }
-
-  pub fn last_color(&mut self) -> Color {
-    if let Some(color) = self.last_color.take() {
-      color
-    } else {
-      let color = self.next().unwrap_or(Color::White);
-      self.last_color = Some(color);
-      color
-    }
-  }
-}
-
-impl Iterator for ColorRng {
-  type Item = Color;
-  fn next(&mut self) -> Option<Self::Item> {
-    let colors = Self::get_colors();
-    let idx = rand::rngs::SysRng.try_next_u32().ok()? as usize % colors.len();
-    Some(colors[idx])
-  }
-}
-
-thread_local! {
-  static COLOR_RNG: RefCell<ColorRng> = const { RefCell::new(ColorRng { last_color: None }) };
-}
-
 pub fn get_context(msg: String, span: Span) -> (SpanSource, Label<Span>) {
-  let color = last_color();
   (
     span.clone().source().clone(),
-    Label::new(span).with_color(color).with_message(msg),
+    Label::new(span).with_message(msg),
   )
-}
-
-fn next_color() -> Color {
-  COLOR_RNG.with(|rng| {
-    let color = rng.borrow_mut().next().unwrap();
-    rng.borrow_mut().last_color = Some(color);
-    color
-  })
-}
-
-fn last_color() -> Color {
-  COLOR_RNG.with(|rng| rng.borrow_mut().last_color())
-}
-
-pub fn clear_color() {
-  COLOR_RNG.with(|rng| rng.borrow_mut().last_color = None);
 }
 
 pub trait ShResultExt {
@@ -98,7 +25,6 @@ pub trait ShResultExt {
   fn try_blame(self, span: Span) -> Self;
   /// If the value is Err(), attach a span to it
   fn promote_err(self, span: Span) -> Self;
-  fn is_flow_control(&self) -> bool;
 }
 
 impl<T> ShResultExt for Result<T, ShErr> {
@@ -112,64 +38,6 @@ impl<T> ShResultExt for Result<T, ShErr> {
   }
   fn promote_err(self, span: Span) -> Self {
     self.map_err(|e| e.promote(span))
-  }
-  fn is_flow_control(&self) -> bool {
-    self.as_ref().is_err_and(|e| e.is_flow_control())
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct Note {
-  main: String,
-  sub_notes: Vec<Note>,
-  depth: usize,
-}
-
-impl Note {
-  pub fn new(main: impl Into<String>) -> Self {
-    Self {
-      main: main.into(),
-      sub_notes: vec![],
-      depth: 0,
-    }
-  }
-
-  pub fn with_sub_notes(self, new_sub_notes: Vec<impl Into<String>>) -> Self {
-    let Self {
-      main,
-      mut sub_notes,
-      depth,
-    } = self;
-    for raw_note in new_sub_notes {
-      let mut note = Note::new(raw_note);
-      note.depth = self.depth + 1;
-      sub_notes.push(note);
-    }
-    Self {
-      main,
-      sub_notes,
-      depth,
-    }
-  }
-}
-
-impl Display for Note {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let note = Fmt::fg("note", Color::Green);
-    let main = &self.main;
-    if self.depth == 0 {
-      writeln!(f, "{note}: {main}")?;
-    } else {
-      let bar_break = Fmt::fg("-", Color::Cyan);
-      let bar_break = bar_break.bold();
-      let indent = "  ".repeat(self.depth);
-      writeln!(f, "  {indent}{bar_break} {main}")?;
-    }
-
-    for sub_note in &self.sub_notes {
-      write!(f, "{sub_note}")?;
-    }
-    Ok(())
   }
 }
 
@@ -265,26 +133,14 @@ impl ShErr {
     self
   }
   pub fn at(kind: ShErrKind, span: Span, msg: impl Into<String>) -> Self {
-    let color = last_color(); // use last_color to ensure the same color is used for the label and the message given
     let src = span.span_source().clone();
     let msg: String = msg.into();
-    Self::new(kind, span.clone()).with_label(
-      src,
-      ariadne::Label::new(span)
-        .with_color(color)
-        .with_message(msg),
-    )
+    Self::new(kind, span.clone()).with_label(src, ariadne::Label::new(span).with_message(msg))
   }
   pub fn labeled(self, span: Span, msg: impl Into<String>) -> Self {
-    let color = last_color();
     let src = span.span_source().clone();
     let msg: String = msg.into();
-    self.with_label(
-      src,
-      ariadne::Label::new(span)
-        .with_color(color)
-        .with_message(msg),
-    )
+    self.with_label(src, ariadne::Label::new(span).with_message(msg))
   }
   pub fn blame(mut self, span: Span) -> Self {
     self.src_span = Some(span);
@@ -459,6 +315,7 @@ pub enum ShErrKind {
   ReadlineErr,
   ExCommand,
   InvalidAssignment,
+  NoTTY,
 
   // Not really errors, more like internal signals
   CleanExit(i32),
@@ -497,6 +354,7 @@ impl Display for ShErrKind {
       Self::BadPermission => "Bad Permissions",
       Self::Errno(e) => &format!("Errno: {}", e.desc()),
       Self::NotFound => "Not Found",
+      Self::NoTTY => "Invalid TTY",
       Self::CleanExit(_) => "",
       Self::FuncReturn(_) => "Syntax Error",
       Self::LoopContinue(_) => "Syntax Error",

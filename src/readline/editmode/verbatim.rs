@@ -1,7 +1,7 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::readline::editcmd::{CmdFlags, EditCmd, RegisterName, To, Verb};
-use crate::readline::keys::{KeyCode as K, KeyEvent as E};
-use crate::state::CursorStyle;
+use crate::keys::{KeyCode as K, KeyEvent as E};
+use crate::readline::editcmd::{CmdFlags, EditCmd, RegisterName, Verb};
+use crate::state::terminal::CursorStyle;
 use crate::verb;
 
 #[derive(Default, Clone, Debug)]
@@ -55,14 +55,8 @@ impl EditMode for ViVerbatim {
   fn pending_seq(&self) -> Option<String> {
     None
   }
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
   fn clamp_cursor(&self) -> bool {
     false
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    Some(To::End)
   }
   fn report_mode(&self) -> ModeReport {
     ModeReport::Verbatim

@@ -1,9 +1,9 @@
-use crate::{
-  builtin::join_raw_args,
+use super::{
+  ShResult,
   getopt::{Opt, OptSpec},
-  outln,
-  state::util::{read_vars, write_vars},
-  util::{ShResult, with_status},
+  join_raw_args, outln,
+  state::Shed,
+  with_status,
 };
 
 pub(super) struct Defer;
@@ -13,7 +13,7 @@ impl super::Builtin for Defer {
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      read_vars(|s| -> ShResult<()> {
+      Shed::vars(|s| -> ShResult<()> {
         for line in s.cur_scope().display_deferred_cmds().lines() {
           outln!("{line}");
         }
@@ -27,10 +27,10 @@ impl super::Builtin for Defer {
     let command = join_raw_args(args.argv);
 
     if clear {
-      write_vars(|v| v.cur_scope_mut().take_deferred_cmds()); // drops them
+      Shed::vars_mut(|v| v.cur_scope_mut().take_deferred_cmds()); // drops them
     }
 
-    write_vars(|v| v.cur_scope_mut().defer_cmd(command.0));
+    Shed::vars_mut(|v| v.cur_scope_mut().defer_cmd(command.0));
 
     with_status(0)
   }
@@ -142,6 +142,6 @@ mod tests {
   fn defer_status_zero() {
     let _g = TestGuard::new();
     test_input("defer 'echo unused'").unwrap();
-    assert_eq!(crate::state::get_status(), 0);
+    assert_eq!(crate::state::util::get_status(), 0);
   }
 }

@@ -7,20 +7,20 @@ use nix::{
   unistd::read,
 };
 
-use crate::{
+use super::{
+  Shed,
   expand::expand_keymap,
   getopt::{Opt, OptSpec},
   out,
   parse::lex::Span,
   procio::stdin_fileno,
   sherr, signal,
-  state::{self, VarFlags, VarKind, with_term, write_vars},
-  util::{
-    ShErrKind,
-    ShResult,
-    ShResultExt,
-    with_status,
+  state::{
+    self,
+    util::with_term,
+    vars::{VarFlags, VarKind},
   },
+  util::{ShErrKind, ShResult, ShResultExt, with_status},
 };
 
 bitflags! {
@@ -117,14 +117,14 @@ fn read_bytes(
 
   loop {
     if poll(&mut [poll_fd.clone()], timeout)? == 0 {
-      state::set_status(1);
+      state::util::set_status(1);
       return String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}")); // timeout
     }
 
     let mut in_buf = [0u8; 1];
     match read(stdin_fileno(), &mut in_buf) {
       Ok(0) => {
-        state::set_status(1);
+        state::util::set_status(1);
         let ret =
           String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))?;
         return Ok(ret); // EOF
@@ -147,7 +147,7 @@ fn read_bytes(
       }
       Err(Errno::EINTR) => {
         if signal::sigint_pending() {
-          state::set_status(130);
+          state::util::set_status(130);
           return Ok(String::new());
         }
         continue;
@@ -156,22 +156,22 @@ fn read_bytes(
     }
   }
 
-  state::set_status(0);
+  state::util::set_status(0);
   String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))
 }
 
 fn field_split_vars(input: &str, vars: &[(String, Span)]) -> ShResult<()> {
   if vars.is_empty() {
-    write_vars(|v| v.set_var("REPLY", VarKind::Str(input.to_string()), VarFlags::NONE))?;
+    Shed::vars_mut(|v| v.set_var("REPLY", VarKind::Str(input.to_string()), VarFlags::empty()))?;
     return Ok(());
   }
 
-  let sep = state::get_separators();
+  let sep = state::util::get_separators();
 
   let fields: Vec<&str> = input.splitn(vars.len(), |c| sep.contains(c)).collect();
   for (name, field) in vars.iter().zip(fields) {
     let field = field.trim_start_matches(|c: char| sep.contains(c));
-    write_vars(|v| v.set_var(&name.0, VarKind::Str(field.to_string()), VarFlags::NONE))?;
+    Shed::vars_mut(|v| v.set_var(&name.0, VarKind::Str(field.to_string()), VarFlags::empty()))?;
   }
 
   Ok(())
@@ -182,13 +182,13 @@ fn field_split_arr(input: &str, arr_name: &str) -> ShResult<()> {
     return Err(sherr!(ExecFail, "read: Array name cannot be empty"));
   }
 
-  let sep = state::get_separators();
+  let sep = state::util::get_separators();
   let fields: VecDeque<String> = input
     .split(|c| sep.contains(c))
     .map(|s| s.to_string())
     .collect();
 
-  write_vars(|v| v.set_var(arr_name, VarKind::Arr(fields), VarFlags::NONE))
+  Shed::vars_mut(|v| v.set_var(arr_name, VarKind::Arr(fields), VarFlags::empty()))
 }
 
 pub(super) struct ReadKey;
@@ -254,7 +254,7 @@ impl super::Builtin for ReadKey {
     }
 
     if let Some(var) = var_name {
-      write_vars(|v| v.set_var(var, VarKind::Str(vim_seq), VarFlags::NONE))?;
+      Shed::vars_mut(|v| v.set_var(var, VarKind::Str(vim_seq), VarFlags::empty()))?;
     } else {
       out!("{vim_seq}");
     }
@@ -265,7 +265,7 @@ impl super::Builtin for ReadKey {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, VarFlags, VarKind, read_vars, write_vars};
+  use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Basic read into REPLY =====================
@@ -274,7 +274,7 @@ mod tests {
   fn read_pipe_into_reply() {
     let _g = TestGuard::new();
     test_input("read < <(echo hello)").unwrap();
-    let val = read_vars(|v| v.get_var("REPLY"));
+    let val = Shed::vars(|v| v.get_var("REPLY"));
     assert_eq!(val, "hello");
   }
 
@@ -282,7 +282,7 @@ mod tests {
   fn read_pipe_into_named_var() {
     let _g = TestGuard::new();
     test_input("read myvar < <(echo world)").unwrap();
-    let val = read_vars(|v| v.get_var("myvar"));
+    let val = Shed::vars(|v| v.get_var("myvar"));
     assert_eq!(val, "world");
   }
 
@@ -292,26 +292,26 @@ mod tests {
   fn read_two_vars() {
     let _g = TestGuard::new();
     test_input("read a b < <(echo 'hello world')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "hello");
-    assert_eq!(read_vars(|v| v.get_var("b")), "world");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "world");
   }
 
   #[test]
   fn read_last_var_gets_remainder() {
     let _g = TestGuard::new();
     test_input("read a b < <(echo 'one two three four')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "one");
-    assert_eq!(read_vars(|v| v.get_var("b")), "two three four");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "one");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "two three four");
   }
 
   #[test]
   fn read_more_vars_than_fields() {
     let _g = TestGuard::new();
     test_input("read a b c < <(echo 'only')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("a")), "only");
+    assert_eq!(Shed::vars(|v| v.get_var("a")), "only");
     // b and c get empty strings since there are no more fields
-    assert_eq!(read_vars(|v| v.get_var("b")), "");
-    assert_eq!(read_vars(|v| v.get_var("c")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("b")), "");
+    assert_eq!(Shed::vars(|v| v.get_var("c")), "");
   }
 
   // ===================== Custom IFS =====================
@@ -319,22 +319,22 @@ mod tests {
   #[test]
   fn read_custom_ifs() {
     let _g = TestGuard::new();
-    write_vars(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     test_input("read x y z < <(echo 'a:b:c')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("x")), "a");
-    assert_eq!(read_vars(|v| v.get_var("y")), "b");
-    assert_eq!(read_vars(|v| v.get_var("z")), "c");
+    assert_eq!(Shed::vars(|v| v.get_var("x")), "a");
+    assert_eq!(Shed::vars(|v| v.get_var("y")), "b");
+    assert_eq!(Shed::vars(|v| v.get_var("z")), "c");
   }
 
   #[test]
   fn read_custom_ifs_remainder() {
     let _g = TestGuard::new();
-    write_vars(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     test_input("read x y < <(echo 'a:b:c:d')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("x")), "a");
-    assert_eq!(read_vars(|v| v.get_var("y")), "b:c:d");
+    assert_eq!(Shed::vars(|v| v.get_var("x")), "a");
+    assert_eq!(Shed::vars(|v| v.get_var("y")), "b:c:d");
   }
 
   // ===================== Custom delimiter =====================
@@ -344,7 +344,7 @@ mod tests {
     let _g = TestGuard::new();
     // -d sets the delimiter; printf sends "hello,world" - read stops at ','
     test_input("read -d , myvar < <(echo -n 'hello,world')").unwrap();
-    assert_eq!(read_vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
   }
 
   // ===================== Status =====================
@@ -353,7 +353,7 @@ mod tests {
   fn read_status_zero() {
     let _g = TestGuard::new();
     test_input("read < <(echo hello)").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -361,6 +361,6 @@ mod tests {
     let _g = TestGuard::new();
     // Empty input / EOF should set status 1
     test_input("read < <(echo -n '')").unwrap();
-    assert_eq!(state::get_status(), 1);
+    assert_eq!(state::util::get_status(), 1);
   }
 }

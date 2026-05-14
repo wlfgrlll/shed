@@ -1,5 +1,3 @@
-use itertools::Either;
-
 use crate::{
   motion,
   readline::{
@@ -77,8 +75,6 @@ impl super::LineBuf {
       | Verb::VerbatimMode
       | Verb::ReplaceMode
       | Verb::VisualModeLine
-      | Verb::VisualModeBlock
-      | Verb::CompleteBackward
       | Verb::VisualModeSelectLast => {
         let Some(motion_kind) = self.eval_motion_with_hint(cmd)? else {
           return Ok(());
@@ -147,9 +143,6 @@ impl super::LineBuf {
     let reg_content = match &motion {
       MotionKind::Char { .. } => RegisterContent::Span(content.0),
       MotionKind::Line { .. } => RegisterContent::Line(content.0),
-      MotionKind::Lines { .. } => {
-        RegisterContent::Line(vec![content.last().cloned().unwrap_or_default()])
-      }
       MotionKind::Block { .. } => RegisterContent::Block(content.0),
     };
     register.write_to_register(reg_content);
@@ -171,23 +164,6 @@ impl super::LineBuf {
         };
         let (s, _) = ordered(start, end);
         self.set_row(s);
-        if *verb == Verb::Change {
-          // we've gotta indent
-          let (start, _) = self.indent_levels_for_row(self.row());
-          let line = self.cur_line_mut();
-          let mut col = 0;
-          for tab in std::iter::repeat_n(Grapheme::from('\t'), start) {
-            line.0.insert(col, tab);
-            col += 1;
-          }
-          self.cursor.pos = self.offset_cursor(0, col as isize);
-        }
-      }
-      MotionKind::Lines { lines } => {
-        let Some(s) = lines.first() else {
-          return Ok(());
-        };
-        self.set_row(*s);
         if *verb == Verb::Change {
           // we've gotta indent
           let (start, _) = self.indent_levels_for_row(self.row());
@@ -571,12 +547,9 @@ impl super::LineBuf {
     let Some(motion) = self.eval_motion(cmd)? else {
       return Ok(());
     };
-    let lines: Either<_, _> = match motion {
-      MotionKind::Char { start, end, .. } => {
-        Either::Left(self.line_iter_mut(ordered(start.row, end.row)))
-      }
-      MotionKind::Line { start, end, .. } => Either::Left(self.line_iter_mut(ordered(start, end))),
-      MotionKind::Lines { lines } => Either::Right(self.line_iter_mut_by_indices(&lines)),
+    let lines = match motion {
+      MotionKind::Char { start, end, .. } => self.line_iter_mut(ordered(start.row, end.row)),
+      MotionKind::Line { start, end, .. } => self.line_iter_mut(ordered(start, end)),
       MotionKind::Block { .. } => unimplemented!(),
     };
     let mut col_offset = 0;
@@ -598,16 +571,15 @@ impl super::LineBuf {
     let Some(motion) = self.eval_motion(cmd)? else {
       return Ok(());
     };
-    let line_nums: Either<_, _> = match motion {
+    let line_nums = match motion {
       MotionKind::Char { start, end, .. } => {
         let (s, e) = ordered(start.row, end.row);
-        Either::Left(s..=e)
+        s..=e
       }
       MotionKind::Line { start, end, .. } => {
         let (s, e) = ordered(start, end);
-        Either::Left(s..=e)
+        s..=e
       }
-      MotionKind::Lines { lines } => Either::Right(lines.into_iter()),
       MotionKind::Block { .. } => unimplemented!(),
     };
     let line_nums: Vec<usize> = line_nums.collect();

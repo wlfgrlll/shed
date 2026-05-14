@@ -194,11 +194,7 @@ pub fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> GetOptR
           .iter()
           .find(|o| !opt_specs.iter().any(|s| s.opt == **o))
           .unwrap();
-        return Err(sherr!(
-          ParseErr,
-          "Unknown option: {}",
-          unknown.to_string(),
-        ));
+        return Err(sherr!(ParseErr, "Unknown option: {}", unknown.to_string(),));
       }
       non_opts.push((word, span));
       continue;
@@ -309,11 +305,7 @@ fn sort_tks_raw(
           .iter()
           .find(|o| !opt_specs.iter().any(|s| s.opt == **o))
           .unwrap();
-        return Err(sherr!(
-          ParseErr,
-          "Unknown option: {}",
-          unknown.to_string(),
-        ));
+        return Err(sherr!(ParseErr, "Unknown option: {}", unknown.to_string(),));
       }
       non_opts.push(token);
       continue;
@@ -645,13 +637,20 @@ mod tests {
 
   // ===================== Variable expansion through opts (TestGuard) =====================
 
-  use crate::state::{self, VarFlags, VarKind, write_vars};
+  use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
   fn expanded_var_opts_echo() {
     let g = TestGuard::new();
-    write_vars(|v| v.set_var("ECHO_ARGS", VarKind::Str("-p \\s".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "ECHO_ARGS",
+        VarKind::Str("-p \\s".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
     test_input("echo $ECHO_ARGS").unwrap();
     let out = g.read_output();
     assert_eq!(out, "shed\n");
@@ -660,9 +659,16 @@ mod tests {
   #[test]
   fn expanded_var_opts_read() {
     let g = TestGuard::new();
-    write_vars(|v| v.set_var("READ_ARGS", VarKind::Str("-r line".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "READ_ARGS",
+        VarKind::Str("-r line".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
     test_input("read $READ_ARGS <<< hello").unwrap();
-    let line = state::read_vars(|v| v.get_var("line"));
+    let line = state::Shed::vars(|v| v.get_var("line"));
     assert_eq!(line, "hello");
     drop(g);
   }
@@ -670,7 +676,7 @@ mod tests {
   #[test]
   fn expanded_var_multiple_opts() {
     let g = TestGuard::new();
-    write_vars(|v| v.set_var("ARGS", VarKind::Str("-e -n".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("ARGS", VarKind::Str("-e -n".into()), VarFlags::empty())).unwrap();
     test_input("echo $ARGS hello").unwrap();
     let out = g.read_output();
     // -e enables escapes, -n suppresses newline

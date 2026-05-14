@@ -2,14 +2,18 @@ use bitflags::bitflags;
 
 use itertools::{EitherOrBoth, Itertools};
 
-use crate::{
+use super::{
+  Dispatcher, NdRule, Node, ShResult,
   getopt::{Opt, OptSpec},
   out, outln,
-  parse::{NdRule, Node, execute::Dispatcher},
-  readline::complete::{BashCompSpec, Candidate, CompContext, CompSpec},
+  readline::{BashCompSpec, Candidate, CompContext, CompSpec},
   sherr,
-  state::{vars::VarKind, util::{read_meta, read_vars, write_meta}},
-  util::{ShResult, with_status},
+  state::{
+    Shed,
+    util::{read_meta, write_meta},
+    vars::VarKind,
+  },
+  with_status,
 };
 
 bitflags! {
@@ -142,7 +146,7 @@ impl super::Builtin for CompGen {
     unreachable!("CompGen uses run_builtin directly")
   }
   fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
-    use crate::getopt::get_opts_from_tokens_raw;
+    use super::getopt::get_opts_from_tokens_raw;
 
     let NdRule::Command {
       assignments: _,
@@ -229,7 +233,7 @@ impl super::Builtin for Compadd {
       .collect();
 
     if let Some(cand_arr) = cand_arr {
-      let elems: Vec<Candidate> = read_vars(|v| v.get_arr_elems(&cand_arr))
+      let elems: Vec<Candidate> = Shed::vars(|v| v.get_arr_elems(&cand_arr))
         .into_iter()
         .map(make_candidate)
         .collect();
@@ -238,7 +242,7 @@ impl super::Builtin for Compadd {
     }
 
     let descriptions = if let Some(desc_arr) = desc_arr {
-      read_vars(|v| v.get_arr_elems(&desc_arr))
+      Shed::vars(|v| v.get_arr_elems(&desc_arr))
     } else {
       vec![]
     }
@@ -255,7 +259,7 @@ impl super::Builtin for Compadd {
       .collect();
 
     if let Some(assoc_arr) = assoc_arr
-      && let Some(assoc_arr) = read_vars(|v| v.try_get_var_meta(&assoc_arr))
+      && let Some(assoc_arr) = Shed::vars(|v| v.try_get_var_meta(&assoc_arr))
       && let VarKind::AssocArr(arr) = assoc_arr.kind()
     {
       for (cand, desc) in arr {
@@ -346,8 +350,14 @@ pub fn get_comp_opts(opts: Vec<Opt>) -> ShResult<CompOpts> {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, vars::{VarFlags,VarKind}, util::{read_meta, read_vars, write_meta, write_vars}};
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::{
+    state::{
+      self, Shed,
+      util::{read_meta, write_meta},
+      vars::{VarFlags, VarKind},
+    },
+    tests::testutil::{TestGuard, test_input},
+  };
   use std::fs;
   use tempfile::TempDir;
 
@@ -423,7 +433,7 @@ mod tests {
   fn complete_no_command_fails() {
     let _g = TestGuard::new();
     test_input("complete -W 'foo'").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== complete -r: Removal =====================
@@ -454,7 +464,7 @@ mod tests {
     let _g = TestGuard::new();
     // Removing a spec that doesn't exist should not error
     test_input("complete -r nosuchcmd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== complete -p: Print =====================
@@ -490,21 +500,21 @@ mod tests {
   fn complete_option_default() {
     let _g = TestGuard::new();
     test_input("complete -o default -W 'foo' mycmd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn complete_option_dirnames() {
     let _g = TestGuard::new();
     test_input("complete -o dirnames -W 'foo' mycmd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn complete_option_invalid() {
     let _g = TestGuard::new();
     test_input("complete -o bogus -W 'foo' mycmd").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   // ===================== compgen -W: Word list =====================
@@ -571,7 +581,8 @@ mod tests {
   #[test]
   fn compgen_variables() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("TESTCOMPVAR", VarKind::Str("x".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("TESTCOMPVAR", VarKind::Str("x".into()), VarFlags::empty()))
+      .unwrap();
 
     test_input("compgen -v TESTCOMP").unwrap();
     let out = guard.read_output();
@@ -658,14 +669,14 @@ mod tests {
   fn complete_status_zero() {
     let _g = TestGuard::new();
     test_input("complete -W 'x' mycmd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   #[test]
   fn compgen_status_zero() {
     let _g = TestGuard::new();
     test_input("compgen -W 'hello'").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== compadd =====================
@@ -797,7 +808,7 @@ mod tests {
   fn compadd_status_zero() {
     let _g = TestGuard::new();
     test_input("compadd a b c").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 
   // ===================== compadd -A (assoc-array source) =====================

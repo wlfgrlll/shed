@@ -2,16 +2,11 @@ use std::str::FromStr;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::{
+use super::{
   expand::as_var_val_display,
   match_loop, outln, sherr,
-  state::{VarKind, read_vars, write_shopts, write_vars},
-  util::{
-    ShErr,
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  state::{Shed, util::write_shopts, vars::VarKind},
+  util::{ShErr, ShResult, ShResultExt, with_status},
 };
 use bitflags::bitflags;
 
@@ -76,24 +71,6 @@ impl SetFlags {
       _ if *self == Self::NO_UNSET => Some('u'),
       _ if *self == Self::VERBOSE => Some('v'),
       _ if *self == Self::XTRACE => Some('x'),
-      _ => None,
-    }
-  }
-  pub fn as_str(&self) -> Option<&'static str> {
-    match *self {
-      _ if *self == Self::ALLEXPORT => Some("allexport"),
-      _ if *self == Self::NOTIFY => Some("notify"),
-      _ if *self == Self::NO_CLOBBER => Some("noclobber"),
-      _ if *self == Self::ERREXIT => Some("errexit"),
-      _ if *self == Self::NO_GLOB => Some("noglob"),
-      _ if *self == Self::HASHALL => Some("hashall"),
-      _ if *self == Self::MONITOR => Some("monitor"),
-      _ if *self == Self::NO_EXEC => Some("noexec"),
-      _ if *self == Self::NO_UNSET => Some("nounset"),
-      _ if *self == Self::VERBOSE => Some("verbose"),
-      _ if *self == Self::VI_MODE => Some("vi"),
-      _ if *self == Self::EMACS_MODE => Some("emacs"),
-      _ if *self == Self::XTRACE => Some("xtrace"),
       _ => None,
     }
   }
@@ -193,7 +170,7 @@ pub fn build_set_call(readable: bool) -> String {
       .collect::<Vec<_>>()
       .join(" ");
 
-    let pos_args = read_vars(|v| {
+    let pos_args = Shed::vars(|v| {
       v.sh_argv()
         .clone()
         .into_iter()
@@ -260,7 +237,7 @@ impl super::Builtin for Set {
 
     if args.argv.is_empty() {
       // print values of all variables
-      let all_vars = read_vars(|v| v.all_vars());
+      let all_vars = Shed::vars(|v| v.all_vars());
       for (k, v) in all_vars {
         match v.kind() {
           VarKind::Arr(items) => {
@@ -352,7 +329,7 @@ impl super::Builtin for Set {
     }
 
     if !pos_args.is_empty() || clear_if_empty {
-      write_vars(|v| {
+      Shed::vars_mut(|v| {
         let cur_scope = v.cur_scope_mut();
         cur_scope.clear_args();
         for arg in pos_args {

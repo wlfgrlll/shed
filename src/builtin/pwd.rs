@@ -50,6 +50,6 @@ mod tests {
   fn pwd_status_zero() {
     let _g = TestGuard::new();
     test_input("pwd").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

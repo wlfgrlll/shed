@@ -11,23 +11,12 @@ use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
 use std::fmt::Display;
 
 use super::{
-  builtin,
-  errln,
-  expand,
-  jobs,
-  procio,
-  shopt,
-  signal,
+  builtin, errln, expand, jobs,
   parse::lex::clean_input,
-  util,
-  state,
+  procio,
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
-  sherr,
-  util::{
-    ShErr,
-    ShResult,
-    split_tk,
-  },
+  sherr, shopt, signal, state, util,
+  util::{ShErr, ShResult, split_tk},
 };
 
 pub mod execute;
@@ -59,7 +48,6 @@ impl NodeVecUtils<Node> for Vec<Node> {
     None
   }
 }
-
 
 /// Try to match a specific parsing rule
 ///
@@ -1027,10 +1015,7 @@ impl ParseStream {
     self.context.push_back((
       src.clone(),
       Label::new(name_tk.span.clone().with_name(name_raw.clone()))
-        .with_message(format!(
-          "in function '{}' defined here",
-          name_raw.clone()
-        ))
+        .with_message(format!("in function '{}' defined here", name_raw.clone())),
     ));
 
     let Some(mut compound_cmd) = self.parse_compound()? else {
@@ -1918,7 +1903,7 @@ impl ParseStream {
           context.push_back((
             assignments_span.source().clone(),
             Label::new(assignments_span)
-              .with_message("in variable assignment defined here".to_string())
+              .with_message("in variable assignment defined here".to_string()),
           ));
           return Ok(Some(node!(
             self,
@@ -3100,7 +3085,7 @@ pub mod tests {
 
   // ===================== Heredoc Execution =====================
 
-  use crate::state::{VarFlags, VarKind, write_vars};
+  use crate::state::{Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
@@ -3122,7 +3107,7 @@ pub mod tests {
   #[test]
   fn heredoc_variable_expansion() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("NAME", VarKind::Str("world".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("NAME", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
     test_input("cat <<EOF\nhello $NAME\nEOF".to_string()).unwrap();
     let out = guard.read_output();
     assert_eq!(out, "hello world\n");
@@ -3131,7 +3116,7 @@ pub mod tests {
   #[test]
   fn heredoc_literal_no_expansion() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("NAME", VarKind::Str("world".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("NAME", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
     test_input("cat <<'EOF'\nhello $NAME\nEOF".to_string()).unwrap();
     let out = guard.read_output();
     assert_eq!(out, "hello $NAME\n");
@@ -3180,7 +3165,8 @@ pub mod tests {
   #[test]
   fn herestring_variable_expansion() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("MSG", VarKind::Str("hi there".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("MSG", VarKind::Str("hi there".into()), VarFlags::empty()))
+      .unwrap();
     test_input("cat <<< $MSG".to_string()).unwrap();
     let out = guard.read_output();
     assert_eq!(out, "hi there\n");
@@ -3189,7 +3175,7 @@ pub mod tests {
   #[test]
   fn heredoc_double_quoted_delimiter_is_literal() {
     let guard = TestGuard::new();
-    write_vars(|v| v.set_var("X", VarKind::Str("val".into()), VarFlags::NONE)).unwrap();
+    Shed::vars_mut(|v| v.set_var("X", VarKind::Str("val".into()), VarFlags::empty())).unwrap();
     test_input("cat <<\"EOF\"\nhello $X\nEOF".to_string()).unwrap();
     let out = guard.read_output();
     assert_eq!(out, "hello $X\n");

@@ -27,8 +27,8 @@ macro_rules! __test_setup_vars {
 #[macro_export]
 macro_rules! __test_setup_params {
   ([$($value:literal),* $(,)?]) => {
-    $crate::state::write_vars(|v| {
-      v.set_param($crate::state::ShellParam::ShellName, "test_input");
+    $crate::state::Shed::vars_mut(|v| {
+      v.set_param($crate::state::vars::ShellParam::ShellName, "test_input");
       let scope = v.cur_scope_mut();
       scope.sh_argv_mut().clear();
       scope.bpush_arg("test_input".to_string()); // $0

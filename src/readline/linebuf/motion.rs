@@ -2,7 +2,7 @@ use crate::{
   readline::editcmd::{
     Bound, Cmd, Dest, Direction, EditCmd, LineAddr, Motion, TextObj, To, Verb, Word,
   },
-  state::write_meta,
+  state::util::write_meta,
   status_msg,
   util::ShResult,
 };
@@ -361,11 +361,6 @@ impl super::LineBuf {
             })
           }
         }
-        Motion::WholeBuffer => Some(MotionKind::Line {
-          start: 0,
-          end: this.lines.len().saturating_sub(1),
-          inclusive: false,
-        }),
         Motion::ToColumn => {
           let row = this.row();
           let end = Pos {
@@ -408,9 +403,8 @@ impl super::LineBuf {
         }
 
         Motion::ToDelimMatch => this.find_delim_match(),
-        Motion::ToBracket(direction) | Motion::ToParen(direction) | Motion::ToBrace(direction) => {
+        Motion::ToParen(direction) | Motion::ToBrace(direction) => {
           let (opener, closer) = match motion {
-            Motion::ToBracket(_) => ('[', ']'),
             Motion::ToParen(_) => ('(', ')'),
             Motion::ToBrace(_) => ('{', '}'),
             _ => unreachable!(),
@@ -513,14 +507,6 @@ impl super::LineBuf {
             inclusive: false,
           })
         }
-        dir @ (Motion::Global(constraint, pat) | Motion::NotGlobal(constraint, pat)) => {
-          let lines =
-            this.get_matching_lines(constraint, pat, matches!(dir, Motion::Global(_, _)))?;
-
-          this.last_global = Some(cmd.clone());
-          Some(MotionKind::Lines { lines })
-        }
-
         Motion::RepeatMotion | Motion::RepeatMotionRev => None,
         Motion::Null => None,
         Motion::Selection(_) => {
@@ -551,12 +537,6 @@ impl super::LineBuf {
         }
         MotionKind::Line { start, .. } => {
           this.set_row(start);
-        }
-        MotionKind::Lines { lines } => {
-          let Some(line) = lines.first() else {
-            return Ok(());
-          };
-          this.set_row(*line);
         }
         MotionKind::Block { .. } => unimplemented!(),
       }
@@ -612,14 +592,6 @@ impl super::LineBuf {
           self.lines[e.row][col] = f(&self.lines[e.row][col]);
         }
       }
-      MotionKind::Lines { lines } => {
-        for line_no in lines.iter().rev() {
-          let line = self.line_mut(*line_no);
-          for col in 0..line.len() {
-            line[col] = f(&line[col]);
-          }
-        }
-      }
       MotionKind::Line {
         start,
         end,
@@ -668,7 +640,6 @@ impl super::LineBuf {
                 }
                 continue 'outer;
               }
-              Dest::After => unreachable!(),
             }
           }
           return 0; // not found
@@ -696,7 +667,6 @@ impl super::LineBuf {
                 }
                 continue 'outer;
               }
-              Dest::After => unreachable!(),
             }
           }
           return 0; // not found
@@ -947,8 +917,6 @@ impl super::LineBuf {
       TextObj::Sentence(_)
       | TextObj::Paragraph(_)
       | TextObj::WholeSentence(_)
-      | TextObj::Tag(_)
-      | TextObj::Custom(_)
       | TextObj::WholeParagraph(_) => {
         log::warn!("{:?} text objects are not implemented yet", obj);
         None

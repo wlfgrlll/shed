@@ -1,6 +1,5 @@
-use crate::{
-  sherr,
-  state::write_vars,
+use super::{
+  Shed, sherr,
   util::{ShResult, with_status},
 };
 
@@ -22,7 +21,7 @@ impl super::Builtin for Shift {
       .unwrap_or(Ok(1))?;
 
     for _ in 0..count {
-      write_vars(|v| v.sh_argv_scope_mut().fpop_arg());
+      Shed::vars_mut(|v| v.sh_argv_scope_mut().fpop_arg());
     }
 
     with_status(0)
@@ -67,7 +66,7 @@ mod tests {
   fn shift_non_numeric_fails() {
     let _g = TestGuard::new();
     test_input("shift abc").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -75,6 +74,6 @@ mod tests {
     let _g = TestGuard::new();
     test_input("f() { shift 1; }").unwrap();
     test_input("f a b").unwrap();
-    assert_eq!(state::get_status(), 0);
+    assert_eq!(state::util::get_status(), 0);
   }
 }

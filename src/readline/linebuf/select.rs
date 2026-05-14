@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::readline::editcmd::{LineAddr, Motion};
 
-use super::{MotionKind, Pos, SignedPos, ordered};
+use super::{Pos, SignedPos, ordered};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelectMode {
@@ -63,10 +63,6 @@ impl super::LineBuf {
     self.select_mode = Some(SelectMode::Line(self.cursor.pos));
   }
 
-  pub fn start_block_select(&mut self) {
-    self.select_mode = Some(SelectMode::Block(self.cursor.pos));
-  }
-
   pub fn stop_selecting(&mut self) {
     if self.select_mode.is_some() {
       self.last_selection = self.select_mode.map(|m| {
@@ -79,33 +75,6 @@ impl super::LineBuf {
     self.select_mode = None;
   }
 
-  pub fn select_motion(&self) -> Option<MotionKind> {
-    let range = self.select_range()?;
-    match range {
-      Motion::CharRange(s, e) => {
-        let (s, e) = ordered(s, e);
-        Some(MotionKind::Char {
-          start: s,
-          end: e,
-          inclusive: true,
-        })
-      }
-      Motion::LineRange(s, e) => {
-        let s = self.resolve_line_addr(&s).ok()??;
-        let e = self.resolve_line_addr(&e).ok()??;
-        let (s, e) = ordered(s, e);
-        Some(MotionKind::Line {
-          start: s,
-          end: e,
-          inclusive: true,
-        })
-      }
-      Motion::BlockRange(..) => todo!(),
-      _ => unreachable!(),
-    }
-  }
-
-  /// Absolute values of currently selected range
   pub fn select_range(&self) -> Option<Motion> {
     let mode = self.select_mode.as_ref()?;
     self.evaluate_selection(mode)

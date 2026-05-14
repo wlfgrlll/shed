@@ -1,11 +1,11 @@
 use std::{iter::Peekable, str::Chars};
 
-use crate::{
-  expand::escape::{read_hex, read_octal, read_stty_escape},
+use super::{
+  error::ShResult,
+  expand::{read_hex, read_octal, read_stty_escape},
   match_loop,
   parse::lex::{Span, Tk},
   sherr,
-  util::error::ShResult,
 };
 
 /// Used to track whether the lexer is currently inside a quote, and if so, which type
@@ -93,19 +93,6 @@ pub fn split_tk(tk: &Tk, pat: &str) -> Vec<Tk> {
       )
     },
   )
-}
-
-pub fn split_tk_at(tk: &Tk, pat: &str) -> Option<(Tk, Tk)> {
-  let slice = tk.as_str();
-  let base = tk.span.range().start;
-  split_at_unescaped(slice, pat).map(|(start, len)| {
-    let left = Tk::new(tk.class.clone(), Span::new(base..base + start, tk.source()));
-    let right = Tk::new(
-      tk.class.clone(),
-      Span::new(base + start + len..base + slice.len(), tk.source()),
-    );
-    (left, right)
-  })
 }
 
 pub fn split_all_with<T, F, B>(slice: &str, segment_fn: F, mut build: B) -> Vec<T>

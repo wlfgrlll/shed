@@ -12,11 +12,17 @@ use nix::{
   unistd::{Pid, getpgid, getpid, setpgid},
 };
 
-use crate::{
-  autocmd, builtin::trap::TrapTarget, jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term}, parse::execute::exec_nonint, sherr, state::{
-    self, Var, VarFlags, VarKind, read_jobs, read_logic, with_vars, write_jobs,
-    write_meta, write_vars,
-  }, util::ShResult
+use super::{
+  autocmd,
+  jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
+  parse::execute::exec_nonint,
+  sherr,
+  state::logic::TrapTarget,
+  state::{
+    self, Shed, util::read_logic, util::with_vars, util::write_meta, vars::Var, vars::VarFlags,
+    vars::VarKind,
+  },
+  util::ShResult,
 };
 
 static SIGNALS: AtomicU64 = AtomicU64::new(0);
@@ -257,13 +263,13 @@ extern "C" fn handle_signal(sig: libc::c_int) {
 pub fn hang_up(_: libc::c_int) {
   SHOULD_QUIT.store(true, Ordering::SeqCst);
   QUIT_CODE.store(1, Ordering::SeqCst);
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     j.hang_up();
   });
 }
 
 pub fn terminal_stop() -> ShResult<()> {
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     if let Some(job) = j.get_fg_mut() {
       job.killpg(Signal::SIGTSTP)
     } else {
@@ -274,7 +280,7 @@ pub fn terminal_stop() -> ShResult<()> {
 }
 
 pub fn interrupt() -> ShResult<()> {
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     if let Some(job) = j.get_fg_mut() {
       job.killpg(Signal::SIGINT)
     } else {
@@ -310,7 +316,7 @@ pub fn wait_child() -> ShResult<()> {
 
 pub fn child_signaled(pid: Pid, sig: Signal) -> ShResult<()> {
   let pgid = getpgid(Some(pid)).unwrap_or(pid);
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
       let child = job
         .children_mut()
@@ -329,7 +335,7 @@ pub fn child_signaled(pid: Pid, sig: Signal) -> ShResult<()> {
 
 pub fn child_stopped(pid: Pid, sig: Signal) -> ShResult<()> {
   let pgid = getpgid(Some(pid)).unwrap_or(pid);
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
       let child = job
         .children_mut()
@@ -348,7 +354,7 @@ pub fn child_stopped(pid: Pid, sig: Signal) -> ShResult<()> {
 
 pub fn child_continued(pid: Pid) -> ShResult<()> {
   let pgid = getpgid(Some(pid)).unwrap_or(pid);
-  write_jobs(|j| {
+  Shed::jobs_mut(|j| {
     if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
       job.killpg(Signal::SIGCONT).ok();
     }
@@ -365,7 +371,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
    * if it is not a foreground job, then it exists in the job table
    * If this assumption is incorrect, the code has gone wrong somewhere.
    */
-  if let Some((pgid, is_fg, is_finished)) = write_jobs(|j| {
+  if let Some((pgid, is_fg, is_finished)) = Shed::jobs_mut(|j| {
     let fg_pgid = j.get_fg().map(|job| job.pgid());
     if let Some(job) = j.query_mut(JobID::Pid(pid)) {
       let pgid = job.pgid();
@@ -387,8 +393,8 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
       take_term()?;
     } else {
       JOB_DONE.store(true, Ordering::SeqCst);
-      let job_order = read_jobs(|j| j.order().to_vec());
-      let result = read_jobs(|j| j.query(JobID::Pgid(pgid)).cloned());
+      let job_order = Shed::jobs(|j| j.order().to_vec());
+      let result = Shed::jobs(|j| j.query(JobID::Pgid(pgid)).cloned());
       if let Some(job) = result {
         let statuses = job.get_stats();
 
@@ -407,7 +413,9 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
             .map(|s| s.to_string())
             .collect::<VecDeque<String>>();
 
-          write_vars(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::NONE))?;
+          Shed::vars_mut(|v| {
+            v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::empty())
+          })?;
         }
 
         let cmds = job.get_cmds().into_iter().map(|s| s.to_string());
@@ -418,7 +426,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
           _ => "1".into(),
         });
 
-        let children: Vec<(String,String)> = cmds.zip(statuses).collect();
+        let children: Vec<(String, String)> = cmds.zip(statuses).collect();
         let status = children.last().map(|c| c.1.clone()).unwrap_or_default();
 
         let cmd_count = children.len();
@@ -426,19 +434,19 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
         let post_job_vars: HashMap<String, Var> = [
           (
             "CHILDREN".to_string(),
-            Var::new(VarKind::AssocArr(children), VarFlags::NONE),
+            Var::new(VarKind::AssocArr(children), VarFlags::empty()),
           ),
           (
             "CHILD_COUNT".to_string(),
-            Var::new(VarKind::Str(cmd_count.to_string()), VarFlags::NONE),
+            Var::new(VarKind::Str(cmd_count.to_string()), VarFlags::empty()),
           ),
           (
             "JOB_ID".to_string(),
-            Var::new(VarKind::Str(id), VarFlags::NONE),
+            Var::new(VarKind::Str(id), VarFlags::empty()),
           ),
           (
             "JOB_STATUS".to_string(),
-            Var::new(VarKind::Str(status), VarFlags::NONE),
+            Var::new(VarKind::Str(status), VarFlags::empty()),
           ),
         ]
         .into();

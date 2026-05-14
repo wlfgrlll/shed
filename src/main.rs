@@ -22,29 +22,28 @@ use nix::unistd::{Pid, isatty, read, write};
 use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::builtin::trap::TrapTarget;
 use crate::builtin::{source_builtin_completions, source_builtin_scripts};
 use crate::expand::expand_keymap;
+use crate::keys::KeyEvent;
 use crate::parse::execute::{exec_dash_c, exec_int, exec_nonint};
 use crate::procio::{
   MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack, stdin_fileno,
 };
-use crate::readline::editmode::ModeReport;
-use crate::readline::keys::KeyEvent;
-use crate::readline::linebuf::{Hint, Lines, Pos};
-use crate::readline::term::{OSC_EXEC_START, osc_exec_end};
+use crate::readline::{Hint, Lines, Pos};
 use crate::readline::{LineData, Prompt, ReadlineEvent, ShedLine};
 use crate::signal::{
   GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
 };
+use crate::state::Shed;
+use crate::state::logic::TrapTarget;
 use crate::state::{
-  LineHeader, QueryHeader, ShedSocket, SocketRequest, StatusHeader, TermGuard,
-  VarKind, generate_default_rc, rc_file_path, read_logic, read_meta, read_shopts, read_vars,
-  source_env, source_login, source_rc, with_term, write_jobs, write_meta, write_shopts,
+  meta::LineHeader, meta::QueryHeader, meta::ShedSocket, meta::SocketRequest, meta::StatusHeader,
+  terminal::TermGuard, util::generate_default_rc, util::rc_file_path, util::read_logic,
+  util::read_meta, util::read_shopts, util::source_env, util::source_login, util::source_rc,
+  util::with_term, util::write_meta, util::write_shopts, vars::VarKind,
 };
 use crate::util::{ShErrKind, ShResult};
 use clap::Parser;
-use state::write_vars;
 
 pub mod builtin;
 pub mod expand;
@@ -57,8 +56,8 @@ pub mod shopt;
 pub mod signal;
 pub mod state;
 
-pub(crate) mod util;
 pub(crate) mod keys;
+pub(crate) mod util;
 use keys::KeyMapMatch;
 
 #[cfg(test)]
@@ -143,7 +142,7 @@ fn setup_panic_handler() {
   // set our hook
   std::panic::set_hook(Box::new(move |info| {
     // hang up jobs
-    write_jobs(|j| j.hang_up());
+    Shed::jobs_mut(|j| j.hang_up());
 
     // log panic
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
@@ -168,7 +167,7 @@ fn setup_panic_handler() {
   }));
 }
 
-fn main() -> ExitCode {
+fn setup() -> Option<ShedArgs> {
   yansi::enable();
   let pid = Pid::this();
   if let Ok(log_file) = OpenOptions::new()
@@ -187,8 +186,8 @@ fn main() -> ExitCode {
   });
 
   setup_panic_handler();
-  state::set_ver_info().ok();
-  state::set_sh_lvl().ok();
+  state::util::set_ver_info().ok();
+  state::util::set_sh_lvl().ok();
 
   let mut args = ShedArgs::parse();
   if std::env::args().next().is_some_and(|a| a.starts_with('-')) {
@@ -203,7 +202,7 @@ fn main() -> ExitCode {
       std::env::consts::ARCH,
       std::env::consts::OS
     );
-    return ExitCode::SUCCESS;
+    return None;
   }
 
   if !args.no_rc
@@ -220,19 +219,34 @@ fn main() -> ExitCode {
     write_shopts(|o| o.query(&format!("set.{set_opt}=true"))).ok();
   }
 
-  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, state::init_db_conn);
+  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, state::util::init_db_conn);
+
+  Some(args)
+}
+
+fn main() -> ExitCode {
+  let Some(args) = setup() else {
+    return ExitCode::SUCCESS;
+  };
 
   if let Err(e) = dispatch_input(args) {
     e.print_error();
+    if QUIT_CODE.load(Ordering::SeqCst) == 0 {
+      QUIT_CODE.store(1, Ordering::SeqCst);
+    }
   };
 
+  tear_down()
+}
+
+fn tear_down() -> ExitCode {
   if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Exit))
     && let Err(e) = exec_nonint(trap, Some("trap".into()))
   {
     e.print_error();
   }
 
-  let mut deferred = write_vars(|v| v.cur_scope_mut().take_deferred_cmds());
+  let mut deferred = Shed::vars_mut(|v| v.cur_scope_mut().take_deferred_cmds());
 
   while let Some(cmd) = deferred.pop() {
     if let Err(e) = exec_nonint(cmd, Some("defer".into())) {
@@ -242,7 +256,7 @@ fn main() -> ExitCode {
 
   autocmd!(OnExit);
 
-  write_jobs(|j| j.hang_up());
+  Shed::jobs_mut(|j| j.hang_up());
 
   let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
   if code == 0 && isatty(stdin_fileno()).unwrap_or_default() {
@@ -293,7 +307,7 @@ fn dispatch_input(mut args: ShedArgs) -> ShResult<()> {
 fn read_commands(args: Vec<String>) -> ShResult<()> {
   let commands = read_input()?;
 
-  write_vars(|v| {
+  Shed::vars_mut(|v| {
     let scope = v.cur_scope_mut();
     let zero = scope.sh_argv().front().cloned().unwrap_or_default();
     scope.sh_argv_mut().clear();
@@ -339,8 +353,8 @@ fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
   };
 
   let path_str = path.to_string_lossy().to_string();
-  write_vars(|v| {
-    v.set_param(state::ShellParam::ShellName, &path_str); // $0
+  Shed::vars_mut(|v| {
+    v.set_param(state::vars::ShellParam::ShellName, &path_str); // $0
     let scope = v.cur_scope_mut();
     scope.sh_argv_mut().clear();
     scope.bpush_arg(path_str.clone());
@@ -407,7 +421,7 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
 fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
   let mut exec_if_timeout = None;
 
-  let timeout = if !readline.pending_keymap.is_empty() {
+  let timeout = if !readline.pending_keymap().is_empty() {
     // wait for more keymap keys
     PollTimeout::from(1000u16)
   } else if let Some(timeout) = write_meta(|m| m.take_poll_timeout()) {
@@ -490,7 +504,7 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
 
 fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShResult<()> {
   let _raw_mode = interactive_setup(args)?;
-  state::try_hash();
+  state::util::try_hash();
 
   let mut readline = match ShedLine::new(Prompt::new()) {
     Ok(rl) => rl,
@@ -533,9 +547,8 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
 
   // Main poll loop
   loop {
-    state::try_hash();
-    util::clear_color();
-    let _flush_guard = state::FlushGuard; // flushes terminal on drop
+    state::util::try_hash();
+    let _flush_guard = state::terminal::FlushGuard; // flushes terminal on drop
 
     poll_fds.clear();
     poll_fds.push(tty_poll.clone());
@@ -549,9 +562,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
       readline.fix_editing_mode();
 
       vi_mode = !vi_mode; // and toggle this
-    } else if read_meta(|m| m.num_subscribers()) == 0
-      && readline.mode.report_mode() == ModeReport::Remote
-    {
+    } else if read_meta(|m| m.num_subscribers()) == 0 && readline.in_insert_mode() {
       // we are in remote mode with no consumers for our broadcasted input.
       // That effectively soft locks the shell, so let's fix that
       readline.fix_editing_mode();
@@ -568,7 +579,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
       Ok(0) => {
         // We timed out. Check if there's a screensaver command
         if let Some(cmd) = exec_if_timeout
-          && readline.editor.is_empty()
+          && readline.editor().is_empty()
         {
           // don't exec screensaver if we have a pending command
           let prepared = ReadlineEvent::Line(cmd.clone());
@@ -602,7 +613,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
     }
 
     // resolve pending keymap ambiguity
-    if !readline.pending_keymap.is_empty()
+    if !readline.pending_keymap().is_empty()
       && poll_fds[0]
         .revents()
         .is_none_or(|r| !r.contains(PollFlags::POLLIN))
@@ -612,20 +623,24 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
     }
 
     // Check if stdin has data
-    if poll_fds[0]
-      .revents()
-      .is_some_and(|r| r.contains(PollFlags::POLLIN))
-    {
-      match with_term(|t| t.read()) {
-        Ok(_) => { /* data read, will be processed below */ }
-        Err(e) => match e.kind() {
-          ShErrKind::LoopBreak(_) => break,
-          ShErrKind::LoopContinue(_) => continue,
-          _ => {
-            e.print_error();
-            break;
-          }
-        },
+    if let Some(revents) = poll_fds[0].revents() {
+      if revents.intersects(PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL) {
+        // we don't have a terminal anymore. let's get outta here
+        QUIT_CODE.store(0, Ordering::SeqCst);
+        return Ok(());
+      }
+      if revents.contains(PollFlags::POLLIN) {
+        match with_term(|t| t.read()) {
+          Ok(_) => { /* data read, will be processed below */ }
+          Err(e) => match e.kind() {
+            ShErrKind::LoopBreak(_) => break,
+            ShErrKind::LoopContinue(_) => continue,
+            _ => {
+              e.print_error();
+              break;
+            }
+          },
+        }
       }
     }
 
@@ -686,7 +701,7 @@ fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()>
       return Ok(());
     }
   }
-  if !readline.pending_keymap.is_empty() {
+  if !readline.pending_keymap().is_empty() {
     resolve_keymap(readline)?;
   }
   Ok(())
@@ -700,7 +715,7 @@ fn handle_readline_event(
   match event {
     Ok(ReadlineEvent::Line(input)) => {
       let token = read_shopts(|s| s.core.auto_hist)
-        .then(|| readline.history.push(input.clone()).ok().flatten())
+        .then(|| readline.history_mut().push(input.clone()).ok().flatten())
         .flatten(); // token is used as a stable identifier for the command in the history
 
       let exec_start = Instant::now();
@@ -709,7 +724,7 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       write_meta(|m| m.start_timer());
 
-      write_term!("{OSC_EXEC_START}").ok();
+      with_term(|t| t.emit_osc_exec_start()).ok();
 
       let res = {
         // _guard restores terminal state on drop
@@ -717,8 +732,7 @@ fn handle_readline_event(
         exec_int(input.clone(), Some("<stdin>".into()))
       };
 
-      let osc_end = osc_exec_end(state::get_status());
-      write_term!("{osc_end}").ok();
+      with_term(|t| t.emit_osc_exec_end(state::util::get_status())).ok();
 
       if let Err(e) = res {
         match e.kind() {
@@ -755,7 +769,7 @@ fn handle_readline_event(
         && !should_write
       {
         readline
-          .history
+          .history_mut()
           .delete("WHERE token = ?1", rusqlite::params![token.to_string()])?;
       }
 
@@ -763,8 +777,8 @@ fn handle_readline_event(
         && should_write
         && let Some(token) = token
         && let Err(e) = readline
-          .history
-          .set_status(token, runtime, state::get_status())
+          .history_mut()
+          .set_status(token, runtime, state::util::get_status())
       {
         e.print_error();
       }
@@ -803,14 +817,14 @@ fn handle_readline_event(
 
 fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
   let keymap_flags = readline.curr_keymap_flags();
-  let matches = read_logic(|l| l.keymaps_filtered(keymap_flags, &readline.pending_keymap));
+  let matches = read_logic(|l| l.keymaps_filtered(keymap_flags, readline.pending_keymap()));
   // If there's an exact match, fire it; otherwise flush as normal keys
   let exact = matches
     .iter()
-    .find(|km| km.compare(&readline.pending_keymap) == KeyMapMatch::IsExact);
+    .find(|km| km.compare(readline.pending_keymap()) == KeyMapMatch::IsExact);
   if let Some(km) = exact {
     let action = km.action_expanded();
-    readline.pending_keymap.clear();
+    readline.pending_keymap_mut().clear();
     for key in action {
       let event = readline.handle_key(key).transpose();
       if let Some(event) = event {
@@ -818,7 +832,7 @@ fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
       }
     }
   } else {
-    let buffered = std::mem::take(&mut readline.pending_keymap);
+    let buffered = std::mem::take(readline.pending_keymap_mut());
     for key in buffered {
       let event = readline.handle_key(key).transpose();
       if let Some(event) = event {
@@ -886,55 +900,54 @@ fn handle_socket_request(
         }
       }
     }
-    SocketRequest::LineSet(line_header, value) => {
-      match line_header {
-        LineHeader::Buffer => {
-          readline.editor.edit(|this| {
-            this.set_buffer(value.clone());
-          });
-          readline
-            .history
-            .update_pending_cmd((&readline.editor.joined(), readline.editor.cursor_to_flat()));
-          let hint = readline.history.get_hint();
-          readline.editor.set_hint(hint);
-          readline.editor.move_cursor_to_end();
-          readline.needs_redraw = true;
+    SocketRequest::LineSet(line_header, value) => match line_header {
+      LineHeader::Buffer => {
+        let joined = readline.editor().joined();
+        let pos = readline.editor().cursor_to_flat();
+
+        readline.editor_mut().edit(|this| {
+          this.set_buffer(value.clone());
+        });
+
+        readline.history_mut().update_pending_cmd((&joined, pos));
+
+        let hint = readline.history().get_hint();
+
+        readline.editor_mut().set_hint(hint);
+        readline.editor_mut().move_cursor_to_end();
+        readline.set_needs_redraw(true);
+      }
+      LineHeader::Cursor => readline.editor_mut().with_hint(|this| {
+        if let Some((row, col)) = value.split_once(':')
+          && let Ok(row) = row.parse::<usize>()
+          && let Ok(col) = col.parse::<usize>()
+        {
+          this.set_cursor(Pos::new(row, col));
+        } else if let Ok(pos) = value.parse::<usize>() {
+          this.set_cursor_from_flat(pos);
         }
-        LineHeader::Cursor => readline.editor.with_hint(|this| {
-          if let Some((row, col)) = value.split_once(':')
-            && let Ok(row) = row.parse::<usize>()
-            && let Ok(col) = col.parse::<usize>()
-          {
-            this.set_cursor(Pos::new(row, col));
-          } else if let Ok(pos) = value.parse::<usize>() {
-            this.set_cursor_from_flat(pos);
-          }
-        }),
-        LineHeader::Hint => {
-          readline
-            .editor
-            .set_hint(Some(Hint::Override(Lines::to_lines(value))));
-        }
-        LineHeader::Mode => {
-          let Ok(mode) = value.parse::<ModeReport>() else {
-            // invalid mode report, ignore
-            return Ok(None);
-          };
-          let mut mode = mode.as_edit_mode();
-          readline.swap_mode(&mut mode);
-        }
-        LineHeader::Anchor => {
-          if let Some((row, col)) = value.split_once(':')
-            && let Ok(row) = row.parse::<usize>()
-            && let Ok(col) = col.parse::<usize>()
-          {
-            readline.editor.set_anchor(Pos::new(row, col));
-          } else if let Ok(pos) = value.parse::<usize>() {
-            readline.editor.set_anchor_from_flat(pos);
-          }
+      }),
+      LineHeader::Hint => {
+        readline
+          .editor_mut()
+          .set_hint(Some(Hint::Override(Lines::to_lines(value))));
+      }
+      LineHeader::Mode => {
+        if !readline.try_swap_mode_from_str(&value) {
+          return Ok(None);
         }
       }
-    }
+      LineHeader::Anchor => {
+        if let Some((row, col)) = value.split_once(':')
+          && let Ok(row) = row.parse::<usize>()
+          && let Ok(col) = col.parse::<usize>()
+        {
+          readline.editor_mut().set_anchor(Pos::new(row, col));
+        } else if let Ok(pos) = value.parse::<usize>() {
+          readline.editor_mut().set_anchor_from_flat(pos);
+        }
+      }
+    },
     SocketRequest::LineSendKeys(events) => {
       if let Some(event) = readline.replay_keys(events, true)? {
         return Ok(Some(event));
@@ -947,19 +960,19 @@ fn handle_socket_request(
         write(&conn, b"\n").ok();
       }
       QueryHeader::GetVar(var) => {
-        let var = read_vars(|v| v.get_var(&var));
+        let var = Shed::vars(|v| v.get_var(&var));
         write(&conn, var.as_bytes()).ok();
         write(&conn, b"\n").ok();
       }
       QueryHeader::SetVar(var, val, flags) => {
-        write_vars(|v| v.set_var(&var, VarKind::Str(val), flags)).ok();
+        Shed::vars_mut(|v| v.set_var(&var, VarKind::Str(val), flags)).ok();
         write(&conn, b"ok\n").ok();
       }
       QueryHeader::Status(headers) => {
         let mut responses = vec![];
         for header in headers {
           match header {
-            StatusHeader::ExitCode => responses.push(state::get_status().to_string()),
+            StatusHeader::ExitCode => responses.push(state::util::get_status().to_string()),
             StatusHeader::CommandName => {
               if let Some(job) = read_meta(|m| m.last_job().cloned())
                 && let Some(cmd) = job.name()

@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::state::read_shopts;
+use crate::state::util::read_shopts;
 
 use super::{Lines, Pos};
 
@@ -8,30 +8,19 @@ use super::{Lines, Pos};
 pub enum Hint {
   Override(Lines),
   History(Lines),
-  Completion(Lines),
 }
 
 impl Hint {
-  pub fn new_override(s: String) -> Self {
-    Self::Override(Lines::to_lines(s))
-  }
-  pub fn new_history(s: String) -> Self {
-    Self::History(Lines::to_lines(s))
-  }
-  pub fn new_completion(s: String) -> Self {
-    Self::Completion(Lines::to_lines(s))
-  }
-
   pub fn set_lines(&mut self, new_lines: Lines) {
     match self {
-      Self::Override(lines) | Self::History(lines) | Self::Completion(lines) => {
+      Self::Override(lines) | Self::History(lines) => {
         *lines = new_lines;
       }
     }
   }
   pub fn lines(&self) -> &Lines {
     match self {
-      Self::Override(lines) | Self::History(lines) | Self::Completion(lines) => lines,
+      Self::Override(lines) | Self::History(lines) => lines,
     }
   }
   pub fn raw(&self) -> String {
@@ -39,9 +28,7 @@ impl Hint {
   }
   pub fn take_lines(&mut self) -> Lines {
     match self {
-      Self::Override(lines) | Self::History(lines) | Self::Completion(lines) => {
-        std::mem::take(lines)
-      }
+      Self::Override(lines) | Self::History(lines) => std::mem::take(lines),
     }
   }
   pub fn display(&self, prefix: Option<&str>) -> String {
@@ -53,9 +40,6 @@ impl Hint {
     }
 
     format!("\x1b[90m{text}\x1b[0m").replace("\n", "\n\x1b[90m")
-  }
-  pub fn len(&self) -> usize {
-    self.lines().len()
   }
   pub fn is_empty(&self) -> bool {
     self.lines().is_empty() || (self.lines().len() == 1 && self.lines()[0].is_empty())
@@ -86,15 +70,7 @@ impl Ord for Hint {
       Self::History(_) => match other {
         Self::Override(_) => Ordering::Less,
         Self::History(_) => Ordering::Equal,
-        Self::Completion(_) => Ordering::Greater,
       },
-      Self::Completion(_) => {
-        if matches!(other, Self::Completion(_)) {
-          Ordering::Equal
-        } else {
-          Ordering::Less
-        }
-      }
     }
   }
 }
@@ -215,10 +191,6 @@ impl super::LineBuf {
 
   pub fn try_get_hint_text(&self) -> Option<String> {
     self.hint.as_ref().map(|h| h.display(Some(&self.joined())))
-  }
-
-  pub fn join_hint(&self) -> String {
-    self.try_join_hint().unwrap_or_default()
   }
 
   pub fn try_join_hint(&self) -> Option<String> {

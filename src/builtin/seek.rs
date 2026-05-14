@@ -120,7 +120,7 @@ mod tests {
     g.read_output();
 
     test_input("read line <&9").unwrap();
-    let val = crate::state::read_vars(|v| v.get_var("line"));
+    let val = crate::state::Shed::vars(|v| v.get_var("line"));
     assert_eq!(val, "world");
   }
 
@@ -199,7 +199,7 @@ mod tests {
     // Read again from beginning
     test_input("read line <&9").unwrap();
 
-    let val = crate::state::read_vars(|v| v.get_var("line"));
+    let val = crate::state::Shed::vars(|v| v.get_var("line"));
     assert_eq!(val, "abc");
   }
 
@@ -208,7 +208,7 @@ mod tests {
     let _g = TestGuard::new();
 
     test_input("seek 99 0").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 
   #[test]
@@ -216,9 +216,9 @@ mod tests {
     let _g = TestGuard::new();
 
     test_input("seek").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
 
     test_input("seek 9").ok();
-    assert_ne!(state::get_status(), 0);
+    assert_ne!(state::util::get_status(), 0);
   }
 }

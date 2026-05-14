@@ -11,17 +11,10 @@ use crate::{
   errln,
   getopt::{Opt, OptSpec},
   outln,
-  readline::{
-    histimport,
-    history::{HistEntry, History},
-  },
+  readline::{HistEntry, History, import_history},
   sherr,
-  state::{self, write_meta},
-  util::{
-    ShResult,
-    ShResultExt,
-    with_status,
-  },
+  state::{self, util::write_meta},
+  util::{ShResult, ShResultExt, with_status},
 };
 
 /// Helper macro to reduce repetition when adding conditions to the query. It handles the '--not' logic and parameter binding.
@@ -320,7 +313,7 @@ impl HistQuery {
           "import" => {
             let path = match arg.as_str() {
               "bash" => {
-                let Some(home) = state::get_home() else {
+                let Some(home) = state::util::get_home() else {
                   return Err(sherr!(
                     ParseErr,
                     "Cannot use {opt} without a valid home directory"
@@ -329,7 +322,7 @@ impl HistQuery {
                 home.join(".bash_history")
               }
               "zsh" => {
-                let Some(home) = state::get_home() else {
+                let Some(home) = state::util::get_home() else {
                   return Err(sherr!(
                     ParseErr,
                     "Cannot use {opt} without a valid home directory"
@@ -338,7 +331,7 @@ impl HistQuery {
                 home.join(".zsh_history")
               }
               "fish" => {
-                let Some(home) = state::get_home() else {
+                let Some(home) = state::util::get_home() else {
                   return Err(sherr!(
                     ParseErr,
                     "Cannot use {opt} without a valid home directory"
@@ -480,7 +473,7 @@ impl super::Builtin for Hist {
     } else {
       "shed_history"
     };
-    let conn = state::get_db_conn()
+    let conn = state::util::get_db_conn()
       .ok_or_else(|| sherr!(InternalErr, "database not available"))
       .promote_err(span.clone())?;
     let hist = History::new(conn, table).promote_err(span.clone())?;
@@ -500,7 +493,7 @@ impl super::Builtin for Hist {
     }
 
     if let Some(ref path) = query.import {
-      let entries: Vec<(i64, HistEntry)> = histimport::import_history(path.into())
+      let entries: Vec<(i64, HistEntry)> = import_history(path.into())
         .promote_err(span.clone())?
         .into_iter()
         .enumerate()

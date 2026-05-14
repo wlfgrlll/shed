@@ -1,7 +1,7 @@
 use super::{CmdReplay, EditMode, ModeReport, common_cmds};
+use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
 use crate::readline::editcmd::{Direction, EditCmd, Motion, To, Verb, Word};
-use crate::readline::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::state::CursorStyle;
+use crate::state::terminal::CursorStyle;
 use crate::{key, motion, verb};
 
 #[derive(Default, Debug)]
@@ -14,10 +14,6 @@ pub struct ViReplace {
 impl ViReplace {
   pub fn new() -> Self {
     Self::default()
-  }
-  pub fn with_count(mut self, repeat_count: u16) -> Self {
-    self.repeat_count = repeat_count;
-    self
   }
   pub fn register_and_return(&mut self) -> Option<EditCmd> {
     let mut cmd = self.take_cmd();
@@ -62,11 +58,6 @@ impl EditMode for ViReplace {
         self.register_and_return()
       }
 
-      key!(BackTab) => {
-        self.pending_cmd.set_verb(verb!(Verb::CompleteBackward));
-        self.register_and_return()
-      }
-
       key!(Ctrl + 'i') | key!(Tab) => {
         self.pending_cmd.set_verb(verb!(Verb::Complete));
         self.register_and_return()
@@ -92,14 +83,8 @@ impl EditMode for ViReplace {
   fn as_replay(&self) -> Option<CmdReplay> {
     Some(CmdReplay::mode(self.cmds.clone(), self.repeat_count))
   }
-  fn move_cursor_on_undo(&self) -> bool {
-    true
-  }
   fn clamp_cursor(&self) -> bool {
     true
-  }
-  fn hist_scroll_start_pos(&self) -> Option<To> {
-    Some(To::End)
   }
   fn report_mode(&self) -> ModeReport {
     ModeReport::Replace

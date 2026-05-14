@@ -2,15 +2,15 @@ use std::{fmt::Display, str::FromStr};
 
 use nix::unistd::write;
 
-use crate::expand::expand_keymap;
-use crate::procio::stderr_fileno;
-use crate::util::ansi_from_description;
-use crate::{
+use super::{
+  expand::expand_keymap,
   parse::lex::Span,
-  state::{read_shopts, read_vars},
-  util::{ShErr, ShResult},
+  procio::stderr_fileno,
+  sherr,
+  state::{Shed, util::read_shopts},
+  two_way_display,
+  util::{ShErr, ShResult, ansi_from_description},
 };
-use crate::{sherr, two_way_display};
 
 pub fn xtrace_print(argv: &[(String, Span)]) {
   if read_shopts(|o| o.set.xtrace) {
@@ -20,7 +20,7 @@ pub fn xtrace_print(argv: &[(String, Span)]) {
       .collect::<Vec<String>>();
 
     let stderr = stderr_fileno();
-    let depth = read_vars(|v| v.depth());
+    let depth = Shed::vars(|v| v.depth());
     let prefix = "+".repeat((depth as usize) + 1);
     let output = format!("{prefix} {}", words.join(" "));
     log::debug!("xtrace: {output:?}");
@@ -89,7 +89,7 @@ macro_rules! shopt_group {
               $(
                 let validate: fn(&$ty) -> Result<(), String> = $validator;
                 if let Err(e) = validate(&parsed).map_err(|msg| sherr!(SyntaxErr, "shopt: {msg}")) {
-                  $crate::state::set_status(2);
+                  $crate::state::util::set_status(2);
                   return Err(e);
                 }
               )?

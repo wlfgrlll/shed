@@ -86,7 +86,8 @@ pub struct Stash {
 
 impl Stash {
   pub fn new() -> ShResult<Self> {
-    let conn = state::get_db_conn().ok_or_else(|| sherr!(InternalErr, "database not available"))?;
+    let conn =
+      state::util::get_db_conn().ok_or_else(|| sherr!(InternalErr, "database not available"))?;
     Self::init_stash_table(&conn)?;
     Ok(Self { conn })
   }
