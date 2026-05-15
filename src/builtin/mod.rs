@@ -2,7 +2,7 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use super::{
-  Shed, errln, expand,
+  errln, expand,
   getopt::{self, Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
   keys, match_loop, out, outln,
   parse::{
@@ -12,8 +12,8 @@ use super::{
   },
   procio,
   procio::RedirSet,
-  readline, sherr, shopt as shopt_internal, signal, state,
-  state::jobs::ChildProc,
+  readline, sherr, signal, state,
+  state::{Shed, jobs::ChildProc, shopt as shopt_internal},
   status_msg, system_msg,
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
 };
@@ -22,13 +22,13 @@ mod alias;
 mod arrops;
 mod autocmd;
 mod cd;
-pub(super) mod complete;
+mod complete;
 mod defer;
 mod dirstack;
 mod echo;
 mod eval;
 mod exec;
-pub(super) mod fixcmd;
+mod fixcmd;
 mod flowctl;
 mod getopts;
 mod hash;
@@ -46,7 +46,7 @@ mod set;
 mod shift;
 mod shopt;
 mod source;
-pub(super) mod stash;
+mod stash;
 mod test; // [[ ]] thing
 mod times;
 mod trap;

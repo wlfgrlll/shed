@@ -15,14 +15,14 @@ use super::{
   parse::lex::clean_input,
   procio,
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
-  sherr, shopt, signal, state,
+  sherr, signal, state,
   state::jobs,
   util,
   util::{ShErr, ShResult, split_tk},
 };
 
-pub mod execute;
-pub mod lex;
+pub(super) mod execute;
+pub(super) mod lex;
 
 pub const TEST_UNARY_OPS: [&str; 23] = [
   "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-L", "-k", "-n", "-p", "-r", "-s", "-S", "-t",
@@ -171,10 +171,6 @@ impl ParsedSrc {
     self.parse_flags = flags;
     self
   }
-  pub fn with_context(mut self, ctx: LabelCtx) -> Self {
-    self.context = ctx;
-    self
-  }
   pub fn parse_src(&mut self) -> Result<(), Vec<ShErr>> {
     let mut tokens = vec![];
     let mut errors = vec![];
@@ -243,24 +239,21 @@ impl ParsedSrc {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct Ast(Vec<Node>);
+pub(super) struct Ast(Vec<Node>);
 
 impl Ast {
   pub fn new(tree: Vec<Node>) -> Self {
     Self(tree)
-  }
-  pub fn into_inner(self) -> Vec<Node> {
-    self.0
   }
   pub fn tree_mut(&mut self) -> &mut Vec<Node> {
     &mut self.0
   }
 }
 
-pub type LabelCtx = VecDeque<(SpanSource, Label<Span>)>;
+pub(super) type LabelCtx = VecDeque<(SpanSource, Label<Span>)>;
 
 #[derive(Clone, Debug)]
-pub struct Node {
+pub(super) struct Node {
   pub class: NdRule,
   pub flags: NdFlags,
   pub redirs: Vec<RedirSpec>,
@@ -411,44 +404,32 @@ bitflags! {
 }
 
 #[derive(Clone, Debug)]
-pub struct CondNode {
+pub(super) struct CondNode {
   pub cond: Box<Node>,
   pub body: Box<Node>,
 }
 
 #[derive(Clone, Debug)]
-pub struct CaseNode {
+pub(super) struct CaseNode {
   pub pattern: Tk,
   pub body: Box<Node>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ListOp {
-  Sep,
-  Bg,
-}
-
-#[derive(Clone, Debug)]
-pub struct ListNode {
-  pub cmd: Box<Node>,
-  pub operator: ListOp,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ConjunctOp {
+pub(super) enum ConjunctOp {
   And,
   Or,
   Null,
 }
 
 #[derive(Clone, Debug)]
-pub struct ConjunctNode {
+pub(super) struct ConjunctNode {
   pub cmd: Box<Node>,
   pub operator: ConjunctOp,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum LoopKind {
+pub(super) enum LoopKind {
   While,
   Until,
 }
@@ -459,7 +440,7 @@ crate::two_way_display!(LoopKind,
 );
 
 #[derive(Clone, Debug)]
-pub enum TestCase {
+pub(super) enum TestCase {
   Unary {
     operator: Tk,
     operand: Tk,
@@ -474,7 +455,7 @@ pub enum TestCase {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct TestCaseBuilder {
+pub(super) struct TestCaseBuilder {
   lhs: Option<Tk>,
   operator: Option<Tk>,
   rhs: Option<Tk>,
@@ -547,28 +528,6 @@ impl TestCaseBuilder {
   pub fn can_build(&self) -> bool {
     self.operator.is_some() && self.rhs.is_some()
   }
-  pub fn build(self) -> TestCase {
-    let Self {
-      lhs,
-      operator,
-      rhs,
-      conjunct,
-    } = self;
-    if let Some(lhs) = lhs {
-      TestCase::Binary {
-        lhs,
-        operator: operator.unwrap(),
-        rhs: rhs.unwrap(),
-        conjunct,
-      }
-    } else {
-      TestCase::Unary {
-        operator: operator.unwrap(),
-        operand: rhs.unwrap(),
-        conjunct,
-      }
-    }
-  }
   pub fn build_and_take(&mut self) -> TestCase {
     if self.lhs.is_some() {
       TestCase::Binary {
@@ -588,7 +547,7 @@ impl TestCaseBuilder {
 }
 
 #[derive(Clone, Debug)]
-pub enum AssignKind {
+pub(super) enum AssignKind {
   Eq,
   PlusEq,
   MinusEq,
@@ -598,7 +557,7 @@ pub enum AssignKind {
 
 #[derive(Clone, Debug, PartialEq)]
 /// Flat NdRule names used mainly for debugging
-pub enum NdKind {
+pub(super) enum NdKind {
   List,
   IfNode,
   LoopNode,
@@ -641,7 +600,7 @@ impl crate::parse::NdRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum NdRule {
+pub(super) enum NdRule {
   List {
     commands: Vec<Node>,
   },
@@ -712,7 +671,7 @@ bitflags! {
   }
 }
 
-pub struct ParseStream {
+pub(super) struct ParseStream {
   pub tokens: Vec<Tk>,
   pub cursor: usize,
   pub context: LabelCtx,
@@ -732,19 +691,6 @@ impl Debug for ParseStream {
 }
 
 impl ParseStream {
-  pub fn new(tokens: Vec<Tk>) -> Self {
-    let tokens = tokens
-      .into_iter()
-      .filter(|tk| tk.class != TkRule::Comment)
-      .collect();
-    Self {
-      tokens,
-      cursor: 0,
-      context: VecDeque::new(),
-      block_depth: 0,
-      flags: ParseFlags::empty(),
-    }
-  }
   pub fn with_context(tokens: Vec<Tk>, context: LabelCtx) -> Self {
     let tokens = tokens
       .into_iter()
@@ -777,19 +723,13 @@ impl ParseStream {
     let tk = self
       .tokens
       .get(self.cursor)
-      .and_then(|tk| (tk.class != TkRule::EOI).then_some(tk))
+      .and_then(|tk| (tk.class != TkRule::Eoi).then_some(tk))
       .cloned()?;
     self.cursor += 1;
     Some(tk)
   }
   fn tokens(&self) -> &[Tk] {
     &self.tokens[self.cursor..]
-  }
-  pub fn feed_tokens(&mut self, tokens: Vec<Tk>) {
-    self.tokens.extend(tokens);
-  }
-  pub fn feed_token(&mut self, token: Tk) {
-    self.tokens.push(token);
   }
   fn is_empty(&self) -> bool {
     self.tokens().is_empty()
@@ -820,7 +760,7 @@ impl ParseStream {
   fn assert_separator(&mut self, node_tks: &mut Vec<Tk>) -> ShResult<()> {
     let next_class = self.next_tk_class();
     match next_class {
-      TkRule::EOI | TkRule::Or | TkRule::Bg | TkRule::And | TkRule::BraceGrpEnd | TkRule::Pipe => {
+      TkRule::Eoi | TkRule::Or | TkRule::Bg | TkRule::And | TkRule::BraceGrpEnd | TkRule::Pipe => {
         Ok(())
       }
 
@@ -836,7 +776,7 @@ impl ParseStream {
   fn next_tk_is_some(&self) -> bool {
     self
       .peek_tk()
-      .is_some_and(|tk| !matches!(tk.class, TkRule::Comment | TkRule::EOI))
+      .is_some_and(|tk| !matches!(tk.class, TkRule::Comment | TkRule::Eoi))
   }
   fn check_case_pattern(&self) -> bool {
     self
@@ -1268,7 +1208,7 @@ impl ParseStream {
         .with_context(context),
       );
     };
-    let Some(next_tk) = next().filter(|tk| tk.class != TkRule::EOI) else {
+    let Some(next_tk) = next().filter(|tk| tk.class != TkRule::Eoi) else {
       return Err(
         sherr!(
           ParseErr @ redir_tk.span.clone(),
@@ -1923,7 +1863,7 @@ impl ParseStream {
         match tk.class {
           TkRule::Comment => break,
 
-          TkRule::EOI
+          TkRule::Eoi
           | TkRule::Pipe
           | TkRule::ErrPipe
           | TkRule::And
@@ -2103,15 +2043,15 @@ impl ParseStream {
 impl Iterator for ParseStream {
   type Item = Result<Node, (usize, ShErr)>; // (block_depth and error)
   fn next(&mut self) -> Option<Self::Item> {
-    // Empty token vector or only SOI/EOI tokens, nothing to do
-    if self.is_empty() && self.len() == 1 && self.tokens().last().unwrap().class == TkRule::EOI {
+    // Empty token vector or only Soi/Eoi tokens, nothing to do
+    if self.is_empty() && self.len() == 1 && self.tokens().last().unwrap().class == TkRule::Eoi {
       return None;
     }
     while let Some(tk) = self.tokens().first() {
-      if let TkRule::EOI = tk.class {
+      if let TkRule::Eoi = tk.class {
         return None;
       }
-      if let TkRule::SOI | TkRule::Sep = tk.class {
+      if let TkRule::Soi | TkRule::Sep = tk.class {
         self.next_tk();
       } else {
         break;

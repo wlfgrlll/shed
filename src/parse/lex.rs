@@ -22,16 +22,12 @@ pub const KEYWORDS: [&str; 19] = [
   "case", "esac", "[[", "]]", "!", "time", "function",
 ];
 
-pub const OPENERS: [&str; 6] = ["if", "while", "until", "for", "select", "case"];
-
 pub const MIDDLES: [&str; 2] = ["elif", "else"];
 
 pub const CLOSERS: [&str; 6] = ["fi", "done", "esac", "}", ")", ";;"];
 
 pub trait TkVecUtils<Tk> {
   fn get_span(&self) -> Option<Span>;
-  fn debug_tokens(&self);
-  fn split_at_separators(&self) -> Vec<Vec<Tk>>;
 }
 
 impl TkVecUtils<Tk> for Vec<Tk> {
@@ -47,34 +43,6 @@ impl TkVecUtils<Tk> for Vec<Tk> {
       None
     }
   }
-  fn debug_tokens(&self) {
-    for _token in self {}
-  }
-  fn split_at_separators(&self) -> Vec<Vec<Tk>> {
-    let mut splits = vec![];
-    let mut cur_split = vec![];
-    for tk in self {
-      match tk.class {
-        TkRule::Pipe | TkRule::ErrPipe | TkRule::And | TkRule::Or | TkRule::Bg | TkRule::Sep => {
-          splits.push(std::mem::take(&mut cur_split));
-        }
-        _ => cur_split.push(tk.clone()),
-      }
-    }
-
-    if !cur_split.is_empty() {
-      splits.push(cur_split);
-    }
-
-    splits
-  }
-}
-
-pub fn not_marker(tk: &ShResult<Tk>) -> bool {
-  tk.is_err()
-    || !tk
-      .as_ref()
-      .is_ok_and(|tk| matches!(tk.class, TkRule::SOI | TkRule::EOI))
 }
 
 /// Constructs a parse error and commits cursor position for the lexer
@@ -120,7 +88,7 @@ impl Display for SpanSource {
 /// A slice of some source text. Ultimately wraps an Rc<String>, which means these are cheap to clone.
 ///
 /// Load-bearing struct. Used extensively throughout the codebase for slicing shell input for various reasons (error reporting, tab completion, etc)
-pub struct Span {
+pub(crate) struct Span {
   range: Range<usize>,
   pos: Pos,
   source: SpanSource,
@@ -178,40 +146,6 @@ impl Span {
   pub fn set_range(&mut self, range: Range<usize>) {
     self.range = range;
   }
-
-  pub fn shift(&mut self, amt: isize) {
-    let max = self.source.content.len();
-
-    let start_signed = self.range.start as isize + amt;
-    debug_assert!(start_signed >= 0, "Span::shift underflow");
-    let start = start_signed as usize;
-
-    let end_signed = self.range.end as isize + amt;
-    debug_assert!(end_signed >= 0, "Span::shift underflow");
-    debug_assert!(end_signed as usize <= max, "Span::shift overflow");
-    let end = end_signed as usize;
-
-    self.range = start..end;
-  }
-
-  pub fn shift_clamped(&mut self, amt: isize) {
-    let diff = self.range.end - self.range.start;
-    let max = self.source.content.len() as isize;
-    let start = (self.range.start as isize + amt).clamp(0, max) as usize;
-    let end = (self.range.end as isize + amt).clamp(0, max) as usize;
-
-    if end == (max as usize) && end - start < diff {
-      // If we hit the end of the source, adjust the start to maintain the same length if possible
-      let new_start = end.saturating_sub(diff);
-      self.range = new_start..end;
-    } else if start == 0 && end - start < diff {
-      // If we hit the start of the source, adjust the end to maintain the same length if possible
-      let new_end = (start + diff).min(max as usize);
-      self.range = start..new_end;
-    } else {
-      self.range = start..end;
-    }
-  }
 }
 
 impl ariadne::Span for Span {
@@ -232,15 +166,15 @@ impl ariadne::Span for Span {
 
 #[derive(Clone, PartialEq, Debug)]
 /// The "class" of a token, i.e. what kind of token it is. This is the result of lexing, and is used during parsing to determine how to interpret the token.
-pub enum TkRule {
+pub(crate) enum TkRule {
   /// A normal string token. By far the most common type of token. Used for command names, keywords, arguments, basically any "words".
   /// String tokens are further disambiguated using the TkFlags on the token itself, which can mark a string token as a keyword, a command name, a subshell, etc.
   Str,
 
   /// The start of a given input.
-  SOI,
+  Soi,
   /// The end of a given input.
-  EOI,
+  Eoi,
 
   Null,
   Pipe,
@@ -261,11 +195,6 @@ pub enum TkRule {
     start_delim: Box<Span>,
     end_delim: Option<Box<Span>>, // is None if not found when lexing unfinished input
   },
-
-  // these three are only used in input annotation/syntax highlighting
-  HereDocStart,
-  HereDocBody,
-  HereDocEnd,
 
   /// These are only used as an intermediate state for tokens that are in the process of being expanded.
   /// You can be confident that any token you are working on does not have this rule.
@@ -293,7 +222,7 @@ impl Default for TkRule {
 /// Therefore, you can generally consider cloning a token to be effectively as cheap as cloning an Rc<T>.
 ///
 /// `TkRule::Expanded` is only created during token expansion, which generally happens much later in an execution cycle.
-pub struct Tk {
+pub(crate) struct Tk {
   pub class: TkRule,
   pub span: Span,
   pub flags: TkFlags,
@@ -329,35 +258,8 @@ impl Tk {
     self.span.as_str().trim() == ";;"
   }
 
-  pub fn is_opener(&self) -> bool {
-    OPENERS.contains(&self.as_str())
-      || matches!(self.class, TkRule::BraceGrpStart | TkRule::SubshStart)
-      || matches!(self.class, TkRule::CasePattern)
-  }
-  pub fn is_middle(&self) -> bool {
-    MIDDLES.contains(&self.as_str())
-  }
-
-  pub fn is_closer(&self) -> bool {
-    CLOSERS.contains(&self.as_str()) || matches!(self.class, TkRule::BraceGrpEnd | TkRule::SubshEnd)
-  }
-
   pub fn filter_meta(&self) -> bool {
-    !matches!(self.class, TkRule::SOI | TkRule::EOI | TkRule::Null)
-  }
-
-  pub fn is_closer_for(&self, other: &Tk) -> bool {
-    if (matches!(other.class, TkRule::BraceGrpStart) && matches!(self.class, TkRule::BraceGrpEnd))
-      || (matches!(other.class, TkRule::CasePattern) && self.has_double_semi())
-    {
-      return true;
-    }
-    match other.as_str() {
-      "for" | "while" | "until" => matches!(self.as_str(), "done"),
-      "if" => matches!(self.as_str(), "fi"),
-      "case" => matches!(self.as_str(), "esac"),
-      _ => false,
-    }
+    !matches!(self.class, TkRule::Soi | TkRule::Eoi | TkRule::Null)
   }
 
   /// used when lexing recursively, to replace the token's span with the original source
@@ -454,8 +356,8 @@ pub fn clean_input(input: &str) -> String {
 /// This struct is useful for more than just the lex-parse-execute pipeline. A single input will be lexed multiple times in many places throughout the codebase. Examples include the syntax highlighter, the line editor auto-indent logic, the bodies of subshells, etc
 ///
 /// Notes:
-/// The first and last lexed token will be an empty token with class TkRule::SOI and TkRule::EOI respectively. These tokens must be handled specially if you are using the lexer for internal stuff like the cases mentioned above.
-pub struct LexStream {
+/// The first and last lexed token will be an empty token with class TkRule::Soi and TkRule::Eoi respectively. These tokens must be handled specially if you are using the lexer for internal stuff like the cases mentioned above.
+pub(crate) struct LexStream {
   source: Rc<str>,
   pub cursor: usize,
   pos_offset: usize,
@@ -1296,7 +1198,7 @@ impl Iterator for LexStream {
     }
 
     if self.cursor == self.source.len() {
-      // Return the EOI token
+      // Return the Eoi token
       if self.in_brc_grp() && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
         let start = self.brc_grp_start.unwrap_or(self.cursor.saturating_sub(1));
         self.flags |= LexFlags::STALE;
@@ -1315,15 +1217,15 @@ impl Iterator for LexStream {
         ))
         .into();
       }
-      let token = self.get_token(self.cursor..self.cursor, TkRule::EOI);
+      let token = self.get_token(self.cursor..self.cursor, TkRule::Eoi);
       self.flags |= LexFlags::STALE;
       return Some(Ok(token));
     }
 
-    // Return the SOI token
+    // Return the Soi token
     if self.flags.contains(LexFlags::FRESH) {
       self.flags &= !LexFlags::FRESH;
-      let token = self.get_token(self.cursor..self.cursor, TkRule::SOI);
+      let token = self.get_token(self.cursor..self.cursor, TkRule::Soi);
       return Some(Ok(token));
     }
 
@@ -1502,11 +1404,6 @@ pub fn is_assignment(text: &str) -> bool {
   false
 }
 
-/// Is '|', '&', '>', or '<'
-pub fn is_op(ch: char) -> bool {
-  matches!(ch, '|' | '&' | '>' | '<')
-}
-
 /// Is whitespace or a semicolon
 pub fn is_hard_sep(ch: char) -> bool {
   matches!(ch, ' ' | '\t' | '\n' | ';')
@@ -1609,7 +1506,7 @@ mod tests {
     let rc: Rc<str> = src.into();
     LexStream::new(rc, LexFlags::LEX_UNFINISHED)
       .filter_map(Result::ok)
-      .filter(|t| !matches!(t.class, TkRule::SOI | TkRule::EOI))
+      .filter(|t| !matches!(t.class, TkRule::Soi | TkRule::Eoi))
       .map(|t| t.class)
       .collect()
   }
@@ -1618,7 +1515,7 @@ mod tests {
     let rc: Rc<str> = src.into();
     LexStream::new(rc, LexFlags::LEX_UNFINISHED)
       .filter_map(Result::ok)
-      .find(|t| !matches!(t.class, TkRule::SOI | TkRule::EOI | TkRule::Sep))
+      .find(|t| !matches!(t.class, TkRule::Soi | TkRule::Eoi | TkRule::Sep))
       .map(|t| t.span.as_str().to_string())
       .unwrap_or_default()
   }

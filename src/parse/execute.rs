@@ -10,20 +10,20 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{
   AssignKind, CaseNode, CondNode, ConjunctNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node,
   ParsedSrc,
-  lex::{KEYWORDS, Span, Tk, TkFlags},
-};
-
-use super::{
   builtin::{BUILTIN_NAMES, lookup_builtin},
   errln,
   expand::{expand_aliases, expand_arithmetic_wrapped, expand_case_pattern},
   jobs::{ChildProc, JobStack, dispatch_job},
+  lex::{KEYWORDS, Span, Tk, TkFlags},
   procio::{self, PipeGenerator, RedirGuard, RedirSet, RedirSpec},
   sherr,
-  shopt::xtrace_print,
   signal::{check_signals, signals_pending},
-  state::logic::TrapTarget,
-  state::{self, Shed, logic::ShFunc, vars::ShellParam, vars::Var, vars::VarFlags, vars::VarKind},
+  state::{
+    self, Shed,
+    logic::{ShFunc, TrapTarget},
+    shopt::xtrace_print,
+    vars::{ShellParam, Var, VarFlags, VarKind},
+  },
   util::{
     self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, split_case_pat,
     var_ctx_guard, with_status,
@@ -1388,10 +1388,6 @@ pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
 
 pub fn is_func(name: &str) -> bool {
   Shed::logic(|l| l.get_func(name)).is_some()
-}
-
-pub fn is_subsh(tk: Option<&Tk>) -> bool {
-  tk.is_some_and(|tk| tk.flags.contains(TkFlags::IS_SUBSH))
 }
 
 pub fn is_arith(tk: Option<&Tk>) -> bool {

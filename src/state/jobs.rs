@@ -129,9 +129,6 @@ impl ChildProc {
   pub fn pid(&self) -> Pid {
     self.pid
   }
-  pub fn pgid(&self) -> Pid {
-    self.pgid
-  }
   pub fn cmd(&self) -> Option<&str> {
     self.command.as_deref()
   }
@@ -145,9 +142,6 @@ impl ChildProc {
     }
     result
   }
-  pub fn kill<T: Into<Option<Signal>>>(&self, sig: T) -> ShResult<()> {
-    Ok(kill(self.pid, sig)?)
-  }
   pub fn set_pgid(&mut self, pgid: Pid) -> ShResult<()> {
     setpgid(self.pid, pgid)?;
     self.pgid = pgid;
@@ -155,12 +149,6 @@ impl ChildProc {
   }
   pub fn set_stat(&mut self, stat: WtStat) {
     self.stat = stat
-  }
-  pub fn is_alive(&self) -> bool {
-    self.stat == WtStat::StillAlive
-  }
-  pub fn is_stopped(&self) -> bool {
-    matches!(self.stat, WtStat::Stopped(..))
   }
   pub fn exited(&self) -> bool {
     matches!(self.stat, WtStat::Exited(..))
@@ -190,21 +178,6 @@ impl JobBldr {
       send_hup: true,
     }
   }
-  pub fn with_id(self, id: usize) -> Self {
-    Self {
-      table_id: Some(id),
-      ..self
-    }
-  }
-  pub fn with_pgid(self, pgid: Pid) -> Self {
-    Self {
-      pgid: Some(pgid),
-      ..self
-    }
-  }
-  pub fn with_children(self, children: Vec<ChildProc>) -> Self {
-    Self { children, ..self }
-  }
   pub fn push_child(&mut self, child: ChildProc) {
     self.children.push(child);
   }
@@ -213,10 +186,6 @@ impl JobBldr {
   }
   pub fn pgid(&self) -> Option<Pid> {
     self.pgid
-  }
-  pub fn no_hup(mut self) -> Self {
-    self.send_hup = false;
-    self
   }
   pub fn build(self) -> Job {
     Job {

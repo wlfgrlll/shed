@@ -1,13 +1,4 @@
-use std::{
-  cell::RefCell, collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf,
-  str::FromStr,
-};
-
-use nix::{
-  sys::stat::{self, SFlag},
-  unistd::{AccessFlags, isatty},
-};
-use regex::Regex;
+use std::{collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf, str::FromStr};
 
 use super::{
   Shed,
@@ -16,13 +7,13 @@ use super::{
   state::{vars::VarFlags, vars::VarKind},
   util::{ShErr, ShResult},
 };
-
-thread_local! {
-  pub static LAST_RE: RefCell<Option<(String, Regex)>> = const { RefCell::new(None) };
-}
+use nix::{
+  sys::stat::{self, SFlag},
+  unistd::{AccessFlags, isatty},
+};
 
 #[derive(Debug, Clone)]
-pub enum UnaryOp {
+pub(crate) enum UnaryOp {
   Exists,                    // -e
   Directory,                 // -d
   File,                      // -f
@@ -77,7 +68,7 @@ impl FromStr for UnaryOp {
 }
 
 #[derive(Debug, Clone)]
-pub enum TestOp {
+pub(crate) enum TestOp {
   Unary(UnaryOp),
   StringEq,   // ==
   StringNeq,  // !=
@@ -253,8 +244,8 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
         match test_op {
           TestOp::Unary(_) => {
             return Err(sherr!(
-              SyntaxErr @ err_span,
-              "Expected a binary operator in this test call; found a unary operator",
+                SyntaxErr @ err_span,
+                "Expected a binary operator in this test call; found a unary operator",
             ));
           }
           TestOp::StringEq => {
@@ -291,22 +282,12 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
               _ => unreachable!(),
             }
           }
-          TestOp::RegexMatch => LAST_RE.with(|cell| {
-            let mut cache = cell.borrow_mut();
-            if cache.as_ref().is_none_or(|(pat, _)| pat != &rhs) {
-              let cleaned = replace_posix_classes(&rhs);
-              let Ok(compiled) = Regex::new(&cleaned) else {
-                return Err(sherr!(
-                  SyntaxErr @ err_span.clone(),
-                  "Invalid regex pattern: {rhs}"
-                ));
-              };
-              *cache = Some((rhs.clone(), compiled));
-            }
+          TestOp::RegexMatch => {
+            let cleaned = replace_posix_classes(&rhs);
+            let re = Shed::meta_mut(|m| m.get_regex(cleaned))
+              .map_err(|e| sherr!(SyntaxErr @ err_span.clone(), "Invalid regex: {e}"))?;
 
-            let (_, regex) = cache.as_ref().unwrap();
-
-            if let Some(caps) = regex.captures(&lhs) {
+            if let Some(caps) = re.captures(&lhs) {
               let groups: VecDeque<String> = caps
                 .iter()
                 .map(|m| m.map(|mat| mat.as_str().to_string()).unwrap_or_default())
@@ -314,13 +295,13 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
 
               Shed::vars_mut(|v| v.set_var("SHED_REMATCH", VarKind::Arr(groups), VarFlags::LOCAL))?;
 
-              Ok(true)
+              true
             } else {
               Shed::vars_mut(|v| v.unset_var("SHED_REMATCH")).ok();
 
-              Ok(false)
+              false
             }
-          })?,
+          }
         }
       }
     };

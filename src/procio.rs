@@ -109,7 +109,6 @@ pub fn pipes_high_no_cloexec() -> nix::Result<(OwnedFd, OwnedFd)> {
 pub struct Redir {
   fd: RawFd,
   from: Option<OwnedFd>,
-  span: Option<Span>,
 }
 
 impl Redir {
@@ -117,15 +116,10 @@ impl Redir {
     Self {
       fd,
       from: Some(from),
-      span: None,
     }
   }
   pub fn close(fd: RawFd) -> Self {
-    Self {
-      fd,
-      from: None,
-      span: None,
-    }
+    Self { fd, from: None }
   }
   pub fn apply(&mut self) -> ShResult<()> {
     if let Some(from) = &self.from {
@@ -138,23 +132,13 @@ impl Redir {
     }
     Ok(())
   }
-  pub fn with_span(mut self, span: Span) -> Self {
-    self.span = Some(span);
-    self
-  }
-  pub fn target_fd(&self) -> RawFd {
-    self.fd
-  }
-  pub fn source_fd(&self) -> Option<BorrowedFd<'_>> {
-    self.from.as_ref().map(|fd| fd.as_fd())
-  }
 }
 
 /// Step one of our redirection building pipeline.
 ///
 /// The parser uses these to create RedirSpecs.
 #[derive(Default, Debug)]
-pub struct RedirBldr {
+pub(super) struct RedirBldr {
   pub fd: Option<RawFd>,
   pub class: Option<RedirType>,
   pub target: Option<RedirTarget>,
@@ -361,27 +345,22 @@ impl TryFrom<Tk> for RedirBldr {
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
-pub enum RedirType {
-  Null,          // Default
-  Input,         // <
-  Output,        // >
-  OutputForce,   // >|
-  Append,        // >>
-  HereDoc,       // <<
-  IndentHereDoc, // <<-, strips leading tabs
-  HereString,    // <<<
-  ReadWrite,     // <>, fd is opened for reading and writing
+pub(super) enum RedirType {
+  Null,        // Default
+  Input,       // <
+  Output,      // >
+  OutputForce, // >|
+  Append,      // >>
+  HereDoc,     // <<
+  HereString,  // <<<
+  ReadWrite,   // <>, fd is opened for reading and writing
 }
 
 impl RedirType {
   pub fn is_input(&self) -> bool {
     matches!(
       self,
-      RedirType::Input
-        | RedirType::HereDoc
-        | RedirType::IndentHereDoc
-        | RedirType::HereString
-        | RedirType::ReadWrite
+      RedirType::Input | RedirType::HereDoc | RedirType::HereString | RedirType::ReadWrite
     )
   }
   pub fn is_output(&self) -> bool {
@@ -406,7 +385,7 @@ impl RedirType {
 }
 
 #[derive(Clone, Debug)]
-pub enum RedirTarget {
+pub(super) enum RedirTarget {
   Path(Tk),
   Fd(RawFd),
   Close,
@@ -414,7 +393,7 @@ pub enum RedirTarget {
 }
 
 #[derive(Debug, Clone)]
-pub enum RedirSpec {
+pub(super) enum RedirSpec {
   File {
     fd: RawFd,
     path: Tk,
@@ -512,7 +491,7 @@ impl RedirSpec {
 }
 
 #[derive(Default, Debug)]
-pub struct RedirSet(pub Vec<RedirSpec>);
+pub(super) struct RedirSet(pub Vec<RedirSpec>);
 
 impl RedirSet {
   pub fn apply_persistent(self) -> ShResult<()> {
@@ -562,7 +541,7 @@ impl From<RedirSpec> for RedirSet {
 }
 
 #[derive(Debug)]
-pub struct RedirGuard {
+pub(super) struct RedirGuard {
   saved: Option<IoGroup>,
 }
 
@@ -592,7 +571,7 @@ impl Drop for RedirGuard {
 /// A struct wrapping three fildescs representing `stdin`, `stdout`, and
 /// `stderr` respectively
 #[derive(Debug)]
-pub struct IoGroup(BTreeMap<RawFd, Option<OwnedFd>>);
+pub(super) struct IoGroup(BTreeMap<RawFd, Option<OwnedFd>>);
 
 impl IoGroup {
   pub fn capture_targets(targets: &BTreeSet<RawFd>) -> ShResult<Self> {
@@ -628,7 +607,7 @@ impl IoGroup {
 }
 
 /// An iterator that lazily creates a specific number of pipes.
-pub struct PipeGenerator {
+pub(super) struct PipeGenerator {
   num_cmds: usize,
   cursor: usize,
   last_rpipe: Option<Redir>,
@@ -669,35 +648,19 @@ impl Iterator for PipeGenerator {
   }
 }
 
-/// Split a list of RedirSpecs into a list of input redirs and output redirs
-///
-/// Returned as (input_redirs, output_redirs).
-pub fn split_by_channel(specs: Vec<RedirSpec>) -> (Vec<RedirSpec>, Vec<RedirSpec>) {
-  let mut out_redirs = vec![];
-  let mut in_redirs = vec![];
-  for spec in specs {
-    if spec.mode().is_input() {
-      in_redirs.push(spec);
-    } else if spec.mode().is_output() {
-      out_redirs.push(spec);
-    }
-  }
-  (in_redirs, out_redirs)
-}
-
-pub fn stdin_fileno() -> BorrowedFd<'static> {
+pub(super) fn stdin_fileno() -> BorrowedFd<'static> {
   unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) }
 }
 
-pub fn stdout_fileno() -> BorrowedFd<'static> {
+pub(super) fn stdout_fileno() -> BorrowedFd<'static> {
   unsafe { BorrowedFd::borrow_raw(STDOUT_FILENO) }
 }
 
-pub fn stderr_fileno() -> BorrowedFd<'static> {
+pub(super) fn stderr_fileno() -> BorrowedFd<'static> {
   unsafe { BorrowedFd::borrow_raw(STDERR_FILENO) }
 }
 
-pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
+pub(super) fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
   use std::io::Read;
   let mut file = std::fs::File::from(fd);
   let mut buf = Vec::new();
@@ -705,7 +668,7 @@ pub fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
   String::from_utf8(buf).map_err(|e| sherr!(InternalErr, "Failed to read fd: {}", e))
 }
 
-pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
+pub(super) fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
   let (rpipe, wpipe) = pipes_high()?;
   let stdin_pipes = if stdin.is_some() {
     Some(pipes_high()?)
@@ -772,7 +735,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
   }
 }
 
-pub fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<File> {
+pub(super) fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<File> {
   let path = path.as_ref();
   let result = match class {
     RedirType::Input => OpenOptions::new().read(true).open(Path::new(&path)),

@@ -2,7 +2,7 @@ use std::{
   cmp::Ordering,
   collections::HashMap,
   env,
-  os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd},
+  os::fd::{AsFd, AsRawFd, OwnedFd},
   path::PathBuf,
   sync::{Arc, Condvar, Mutex},
   thread::JoinHandle,
@@ -64,31 +64,31 @@ use crate::{
   util::ShResult,
 };
 
-pub fn has_cmds(cmds: &[&str]) -> bool {
+pub(crate) fn has_cmds(cmds: &[&str]) -> bool {
   let path_cmds = MetaTab::get_cmds_in_path();
   path_cmds
     .iter()
     .all(|c| cmds.iter().any(|&cmd| c.name() == cmd))
 }
 
-pub fn has_cmd(cmd: &str) -> bool {
+pub(crate) fn has_cmd(cmd: &str) -> bool {
   MetaTab::get_cmds_in_path()
     .into_iter()
     .any(|c| c.name() == cmd)
 }
 
 /// Marks the end of a test's output
-pub const TEST_OUTPUT_SENTINEL: &[u8] = b"\x07__shed_test_end__\x07";
+pub(crate) const TEST_OUTPUT_SENTINEL: &[u8] = b"\x07__shed_test_end__\x07";
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
   haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-pub fn test_input(input: impl Into<String>) -> ShResult<()> {
+pub(crate) fn test_input(input: impl Into<String>) -> ShResult<()> {
   exec_nonint(input.into(), None)
 }
 
-pub struct TestGuard {
+pub(crate) struct TestGuard {
   _redir_guard: RedirGuard,
   old_cwd: PathBuf,
   saved_env: HashMap<String, String>,
@@ -173,10 +173,6 @@ impl TestGuard {
     }
   }
 
-  pub fn pty_slave(&self) -> BorrowedFd<'_> {
-    self.pty_slave.as_fd()
-  }
-
   pub fn add_cleanup(&mut self, f: impl FnOnce() + 'static) {
     self.cleanups.push(Box::new(f));
   }
@@ -250,7 +246,7 @@ impl Drop for TestGuard {
   }
 }
 
-pub fn get_ast(input: &str) -> ShResult<Vec<crate::parse::Node>> {
+pub(crate) fn get_ast(input: &str) -> ShResult<Vec<crate::parse::Node>> {
   let input = expand_aliases(input.into());
 
   let mut parser = ParsedSrc::new(input.into())
@@ -265,15 +261,6 @@ pub fn get_ast(input: &str) -> ShResult<Vec<crate::parse::Node>> {
 }
 
 impl crate::parse::Node {
-  pub fn count_noderules(&mut self, kind: NdKind) -> usize {
-    let mut count = 0;
-    self.walk_tree(&mut |s| {
-      if s.class.as_nd_kind() == kind {
-        count += 1;
-      }
-    });
-    count
-  }
   pub fn assert_structure(
     &mut self,
     expected: &mut impl Iterator<Item = NdKind>,

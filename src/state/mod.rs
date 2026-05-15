@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::{
-  WtStat, autocmd, keys, match_loop, parse, procio, readline, sherr, shopt, signal,
+  WtStat, autocmd, keys, match_loop, parse, procio, readline, sherr, signal,
   state::vars::{VarFlags, VarKind},
   util::{ShErr, ShErrKind, ShResult},
 };
@@ -19,6 +19,7 @@ pub mod jobs;
 pub(super) mod logic;
 pub(super) mod meta;
 pub(super) mod scopes;
+pub mod shopt;
 pub(super) mod terminal;
 pub(super) mod util;
 pub(super) mod vars;

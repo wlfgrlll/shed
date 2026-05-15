@@ -6,10 +6,9 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
-use std::rc::Rc;
 
 use crate::parse::lex::{Span, SpanSource};
-use crate::procio::{RedirGuard, stderr_fileno, stdout_fileno};
+use crate::procio::{RedirGuard, stderr_fileno};
 use crate::sherr;
 use crate::util::FdWriter;
 
@@ -117,7 +116,7 @@ impl<T> ShResultExt for Result<T, ShErr> {
 
 /// The shell's main error type.
 #[derive(Debug)]
-pub struct ShErr {
+pub(crate) struct ShErr {
   kind: ShErrKind,
   src_span: Option<Span>,
   labels: Vec<ariadne::Label<Span>>,
@@ -160,12 +159,6 @@ impl ShErr {
   }
   pub fn loop_continue(code: i32) -> Self {
     Self::simple(ShErrKind::LoopBreak(code), "'break' found outside of loop")
-  }
-  pub fn func_return(code: i32) -> Self {
-    Self::simple(
-      ShErrKind::FuncReturn(code),
-      "'return' found outside of function",
-    )
   }
   pub fn is_flow_control(&self) -> bool {
     self.kind.is_flow_control()
@@ -234,15 +227,6 @@ impl ShErr {
   }
   pub fn set_kind(&mut self, kind: ShErrKind) {
     self.kind = kind;
-  }
-  pub fn rename(mut self, name: impl Into<String>) -> Self {
-    let name: String = name.into();
-    let name: Rc<str> = name.into();
-
-    if let Some(span) = self.src_span.as_mut() {
-      span.rename(name);
-    }
-    self
   }
   pub fn with_label(mut self, source: SpanSource, label: ariadne::Label<Span>) -> Self {
     self.sources.push(source);
@@ -326,9 +310,6 @@ impl ShErr {
   pub fn print_error(&self) {
     self.print_error_internal(&mut FdWriter(stderr_fileno()));
   }
-  pub fn print_error_stdout(&self) {
-    self.print_error_internal(&mut FdWriter(stdout_fileno()));
-  }
 }
 
 impl Display for ShErr {
@@ -382,14 +363,10 @@ pub enum ShErrKind {
   InternalErr,
   ExecFail,
   HistoryReadErr,
-  ResourceLimitExceeded,
   BadPermission,
   Errno(Errno),
   NotFound,
-  ReadlineErr,
-  ExCommand,
   InvalidAssignment,
-  NoTTY,
 
   // Not really errors, more like internal signals
   CleanExit(i32),
@@ -398,7 +375,6 @@ pub enum ShErrKind {
   LoopBreak(i32),
   ErrInterrupt, // used for set -e
   Interrupt,    // used for Ctrl+C on loops
-  Null,
 }
 
 impl ShErrKind {
@@ -424,21 +400,16 @@ impl Display for ShErrKind {
       Self::InternalErr => "Internal Error",
       Self::HistoryReadErr => "History Parse Error",
       Self::ExecFail => "Execution Failed",
-      Self::ResourceLimitExceeded => "Resource Limit Exceeded",
       Self::BadPermission => "Bad Permissions",
       Self::Errno(e) => &format!("Errno: {}", e.desc()),
       Self::NotFound => "Not Found",
-      Self::NoTTY => "Invalid TTY",
       Self::CleanExit(_) => "",
       Self::FuncReturn(_) => "Syntax Error",
       Self::LoopContinue(_) => "Syntax Error",
       Self::LoopBreak(_) => "Syntax Error",
-      Self::ReadlineErr => "Readline Error",
-      Self::ExCommand => "Ex Command Error",
       Self::InvalidAssignment => "Invalid Assignment",
       Self::Interrupt => "",
       Self::ErrInterrupt => "errexit",
-      Self::Null => "",
     };
     write!(f, "{output}")
   }

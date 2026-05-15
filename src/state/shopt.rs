@@ -4,17 +4,17 @@ use nix::unistd::write;
 
 use shed_macros::ShOptGroup;
 
-use super::{
+use crate::{
   expand::expand_keymap,
   parse::lex::Span,
   procio::stderr_fileno,
-  sherr,
-  state::Shed,
-  two_way_display,
+  sherr, two_way_display,
   util::{ShErr, ShResult, ansi_from_description},
 };
 
-pub fn xtrace_print(argv: &[(String, Span)]) {
+use super::Shed;
+
+pub(crate) fn xtrace_print(argv: &[(String, Span)]) {
   if Shed::shopts(|o| o.set.xtrace) {
     let words = argv
       .iter()
@@ -31,8 +31,9 @@ pub fn xtrace_print(argv: &[(String, Span)]) {
   }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
-pub enum ShedBellStyle {
+pub(crate) enum ShedBellStyle {
   Audible,
   Visible,
   Disable,
@@ -45,7 +46,7 @@ two_way_display! {ShedBellStyle,
 }
 
 #[derive(Clone, Debug)]
-pub struct ShOpts {
+pub(crate) struct ShOpts {
   pub core: ShOptCore,
   pub line: ShOptLine,
   pub set: ShOptSet,
@@ -187,7 +188,7 @@ fn validate_viewport_height(v: &String) -> Result<(), String> {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "line"]
-pub struct ShOptLine {
+pub(crate) struct ShOptLine {
   /// Whether to automatically insert a newline when the input is incomplete
   #[default(true)]
   pub linebreak_on_incomplete: bool,
@@ -228,7 +229,7 @@ pub struct ShOptLine {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "set"]
-pub struct ShOptSet {
+pub(crate) struct ShOptSet {
   /// If set, the shell will remember the full path of commands and use that information to speed up command lookup
   #[default(true)]
   pub hashall: bool,
@@ -300,7 +301,7 @@ fn validate_bell_style(v: &String) -> Result<(), String> {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "core"]
-pub struct ShOptCore {
+pub(crate) struct ShOptCore {
   /// Include hidden files in glob patterns
   #[default(false)]
   pub dotglob: bool,
@@ -359,7 +360,7 @@ fn validate_leader(v: &String) -> Result<(), String> {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "prompt"]
-pub struct ShOptPrompt {
+pub(crate) struct ShOptPrompt {
   /// Maximum number of path segments used in the '\W' prompt escape sequence
   #[default(4usize)]
   pub trunc_prompt_path: usize,
@@ -396,7 +397,7 @@ pub struct ShOptPrompt {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "statline"]
-pub struct ShOptStatLine {
+pub(crate) struct ShOptStatLine {
   /// Whether to enable the status line
   #[default(true)]
   pub enable: bool,
@@ -424,7 +425,7 @@ fn validate_color(v: &String) -> Result<(), String> {
 
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "highlight"]
-pub struct ShOptHighlight {
+pub(crate) struct ShOptHighlight {
   /// Whether to enable syntax highlighting in the line editor
   #[default(true)]
   pub enable: bool,

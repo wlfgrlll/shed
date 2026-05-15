@@ -5,7 +5,7 @@ use yansi::Paint;
 use super::{
   Shed,
   context::{CtxTk, CtxTkRule, get_context_tokens},
-  shopt::ShOptHighlight,
+  state::shopt::ShOptHighlight,
   util::{PaletteEntry, style_from_description},
 };
 
@@ -128,7 +128,6 @@ impl Palette {
       CtxTkRule::AssignmentRight => self.argument,
       CtxTkRule::Operator => self.operator,
       CtxTkRule::Redirect => self.operator,
-      CtxTkRule::HereDoc => self.string,
       CtxTkRule::HereDocStart => self.operator,
       CtxTkRule::HereDocBody => self.string,
       CtxTkRule::HereDocEnd => self.operator,

@@ -4,22 +4,19 @@ use itertools::Itertools;
 use nix::libc::STDIN_FILENO;
 use scopeguard::defer;
 
-use crate::{
-  autocmd,
-  builtin::stash::{Stash, StashedCmd},
-  motion,
+use super::{
+  Line, Lines, MotionKind, Pos, ShResult, autocmd,
+  editcmd::{Anchor, Cmd, EditCmd, ReadSrc, StashArgs, StashListArg, Verb, WriteDest},
+  editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
+  motion, ordered,
   parse::execute::{exec_int, exec_nonint},
   procio::{RedirSet, RedirSpec, capture_command},
-  readline::{
-    editcmd::{Anchor, Cmd, EditCmd, ReadSrc, StashArgs, StashListArg, Verb, WriteDest},
-    editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
-    linebuf::{Line, Lines, MotionKind, Pos, ordered},
-  },
+  stash::{Stash, StashedCmd},
   state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg,
-  util::{ShResult, format_size, var_ctx_guard},
-  verb,
 };
+use crate::util::{format_size, var_ctx_guard};
+use crate::verb;
 
 impl super::LineBuf {
   pub(super) fn dispatch_ex_node(&mut self, cmd: &EditCmd) -> ShResult<()> {

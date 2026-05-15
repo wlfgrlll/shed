@@ -1,48 +1,14 @@
-use bitflags::bitflags;
-
 use itertools::{EitherOrBoth, Itertools};
 
 use super::{
   Dispatcher, NdRule, Node, ShResult,
   getopt::{Opt, OptSpec},
   out, outln,
-  readline::{BashCompSpec, Candidate, CompContext, CompSpec},
+  readline::{BashCompSpec, Candidate, CompContext, CompFlags, CompOptFlags, CompOpts, CompSpec},
   sherr,
   state::{Shed, vars::VarKind},
   with_status,
 };
-
-bitflags! {
-  #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-  pub struct CompFlags: u32 {
-    const FILES    = 1 << 0;
-    const DIRS     = 1 << 1;
-    const CMDS     = 1 << 2;
-    const USERS    = 1 << 3;
-    const VARS     = 1 << 4;
-    const JOBS     = 1 << 5;
-    const ALIAS    = 1 << 6;
-    const SIGNALS  = 1 << 7;
-    const PRINT    = 1 << 8;
-    const REMOVE   = 1 << 9;
-    const BUILTINS = 1 << 10;
-  }
-  #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-  pub struct CompOptFlags: u32 {
-    const DEFAULT  = 0b0000000001;
-    const DIRNAMES = 0b0000000010;
-    const SPACE    = 0b0000000100;
-  }
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct CompOpts {
-  pub func: Option<String>,
-  pub wordlist: Option<Vec<String>>,
-  pub action: Option<String>,
-  pub flags: CompFlags,
-  pub opt_flags: CompOptFlags,
-}
 
 pub(super) struct Complete;
 impl super::Builtin for Complete {

@@ -4,16 +4,17 @@ use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-  Shed,
+  Shed, autocmd,
   context::{CtxTkRule, get_context_tokens},
   editcmd,
   editcmd::{EditCmd, Motion, Verb},
+  editmode,
   expand::{expand_alias_with_pos, markers},
   highlight,
   history::History,
-  match_loop, parse,
+  match_loop, motion, parse,
   parse::lex::{LexFlags, LexStream, TkFlags, TkRule},
-  procio, sherr, state, status_msg,
+  procio, sherr, stash, state, status_msg, system_msg,
   util::{QuoteState, ShResult, ordered},
 };
 
@@ -253,7 +254,7 @@ impl LineBuf {
     let raw = to_cursor.join();
     let mut tokens = LexStream::new(raw.clone().into(), LexFlags::empty())
       .filter_map(Result::ok)
-      .filter(|tk| !matches!(tk.class, TkRule::SOI | TkRule::EOI | TkRule::Null))
+      .filter(|tk| !matches!(tk.class, TkRule::Soi | TkRule::Eoi | TkRule::Null))
       .collect::<Vec<_>>();
     while tokens
       .last()

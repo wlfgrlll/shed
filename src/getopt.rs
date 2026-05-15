@@ -5,7 +5,7 @@ use fmt::Display;
 use super::{
   parse::lex::{Span, Tk},
   sherr,
-  shopt::xtrace_print,
+  state::shopt::xtrace_print,
   util::ShResult,
 };
 

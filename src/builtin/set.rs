@@ -12,7 +12,7 @@ use bitflags::bitflags;
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-  pub struct SetFlags: u32 {
+  pub(crate) struct SetFlags: u32 {
     const ALLEXPORT = 1 << 0;
     const ERREXIT = 1 << 1;
     const IGNORE_EOF = 1 << 2;

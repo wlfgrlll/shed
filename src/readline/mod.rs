@@ -17,6 +17,7 @@ mod history;
 mod layout;
 mod linebuf;
 mod register;
+pub(super) mod stash;
 mod term;
 
 use complete::{CompResponse, Completer, FuzzyCompleter, FuzzySelector, SelectorResponse};
@@ -34,19 +35,22 @@ use super::{
   expand::{self, expand_keymap, expand_prompt},
   flush_term, key,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
-  match_loop, motion, parse, procio, sherr, shopt,
+  match_loop, motion, parse, procio, sherr,
   state::{
     self, Shed,
     terminal::{calc_str_width, truncate_with_ellipsis},
     util::with_vars,
     vars::{Var, VarFlags, VarKind},
   },
-  status_msg,
+  status_msg, system_msg,
   util::{self, ShResult},
   verb, write_term,
 };
 
-pub(super) use complete::{BashCompSpec, Candidate, CompContext, CompSpec, ScoredCandidate};
+pub(super) use complete::{
+  BashCompSpec, Candidate, CompContext, CompFlags, CompOptFlags, CompOpts, CompSpec,
+  ScoredCandidate,
+};
 pub(super) use editcmd::Direction;
 pub(super) use editmode::ModeReport;
 pub(super) use histimport::import_history;

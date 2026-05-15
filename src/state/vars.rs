@@ -64,7 +64,7 @@ pub(crate) fn display_local(vars: &ScopeStack) -> String {
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
-pub enum ShellParam {
+pub(crate) enum ShellParam {
   // Global
   Status,
   ShPid,
@@ -145,7 +145,7 @@ bitflags! {
 }
 
 #[derive(Clone, Debug)]
-pub enum ArrIndex {
+pub(crate) enum ArrIndex {
   Literal(usize),
   FromBack(usize),
   ArgCount,
@@ -230,7 +230,7 @@ fn top_level_colon(s: &str) -> Option<usize> {
 /// to use inside `Shed::vars`/`write_vars` closures without
 /// causing re-entrant borrows.
 #[derive(Clone, Debug)]
-pub struct VarName {
+pub(crate) struct VarName {
   name: String,
   index: Option<ArrIndex>,
   slice_start: Option<usize>,
@@ -331,7 +331,7 @@ impl VarName {
 }
 
 #[derive(Clone, Debug)]
-pub enum VarKind {
+pub(crate) enum VarKind {
   Str(String),
   Int(i32),
   Arr(VecDeque<String>),
@@ -470,7 +470,7 @@ impl Display for VarKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct Var {
+pub(crate) struct Var {
   flags: VarFlags,
   kind: VarKind,
 }
@@ -553,7 +553,7 @@ impl_var_from!(
 );
 
 #[derive(Default, Clone, Debug)]
-pub struct VarTab {
+pub(crate) struct VarTab {
   vars: HashMap<String, Var>,
   params: HashMap<ShellParam, String>,
   sh_argv: VecDeque<String>, /* Using a VecDeque makes the implementation of `shift` straightforward */

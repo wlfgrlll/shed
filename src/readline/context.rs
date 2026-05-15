@@ -269,7 +269,6 @@ pub enum CtxTkRule {
 
   Operator,
   Redirect,
-  HereDoc,
   HereDocStart,
   HereDocBody,
   HereDocEnd,
@@ -323,14 +322,11 @@ impl CtxTk {
       TkRule::Sep => Some(CtxTkRule::Separator),
       TkRule::Redir => Some(CtxTkRule::Redirect),
       TkRule::Comment => Some(CtxTkRule::Comment),
-      TkRule::HereDocStart => Some(CtxTkRule::HereDoc),
-      TkRule::HereDocEnd => Some(CtxTkRule::HereDoc),
 
       TkRule::Expanded { exp: _ }
       | TkRule::HereDoc { .. }
-      | TkRule::HereDocBody
-      | TkRule::EOI
-      | TkRule::SOI
+      | TkRule::Eoi
+      | TkRule::Soi
       | TkRule::Null
       | TkRule::Str
       | TkRule::CasePattern => None,
@@ -1688,7 +1684,7 @@ mod tests {
     let rc: Rc<str> = src.into();
     let tk = LexStream::new(rc, LexFlags::LEX_UNFINISHED)
       .filter_map(Result::ok)
-      .find(|t| !matches!(t.class, TkRule::SOI | TkRule::EOI | TkRule::Sep))
+      .find(|t| !matches!(t.class, TkRule::Soi | TkRule::Eoi | TkRule::Sep))
       .expect("expected at least one token");
     CtxTk::from_tk(tk).pop().unwrap()
   }
@@ -1719,7 +1715,7 @@ mod tests {
     let rc: std::rc::Rc<str> = "~/bin/foo".into();
     let tk = LexStream::new(rc, LexFlags::LEX_UNFINISHED)
       .filter_map(Result::ok)
-      .find(|t| !matches!(t.class, TkRule::SOI | TkRule::EOI | TkRule::Sep))
+      .find(|t| !matches!(t.class, TkRule::Soi | TkRule::Eoi | TkRule::Sep))
       .expect("token");
     let expanded = tk.expand_no_side_effects().expect("expand");
     let word = expanded.get_first_word().expect("word");

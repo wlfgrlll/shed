@@ -6,13 +6,11 @@ use std::{
   rc::Rc,
 };
 
+use bitflags::bitflags;
 use nix::sys::signal::Signal;
 
 use crate::{
-  builtin::{
-    BUILTIN_NAMES,
-    complete::{CompFlags, CompOptFlags, CompOpts},
-  },
+  builtin::BUILTIN_NAMES,
   expand::{
     as_var_val_display, escape_glob, escape_str, expand_raw_inner, markers::strip_markers,
     unescape_str,
@@ -35,10 +33,40 @@ use crate::{
   write_term,
 };
 
-/// Compat shim: replaces the old ClampedUsize type that was removed in the linebuf refactor.
-/// A simple wrapper around usize with wrapping arithmetic and a max bound.
+bitflags! {
+  #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+  pub struct CompFlags: u32 {
+    const FILES    = 1 << 0;
+    const DIRS     = 1 << 1;
+    const CMDS     = 1 << 2;
+    const USERS    = 1 << 3;
+    const VARS     = 1 << 4;
+    const JOBS     = 1 << 5;
+    const ALIAS    = 1 << 6;
+    const SIGNALS  = 1 << 7;
+    const PRINT    = 1 << 8;
+    const REMOVE   = 1 << 9;
+    const BUILTINS = 1 << 10;
+  }
+  #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+  pub struct CompOptFlags: u32 {
+    const DEFAULT  = 0b0000000001;
+    const DIRNAMES = 0b0000000010;
+    const SPACE    = 0b0000000100;
+  }
+}
+
+#[derive(Default, Debug, Clone)]
+pub(crate) struct CompOpts {
+  pub func: Option<String>,
+  pub wordlist: Option<Vec<String>>,
+  pub action: Option<String>,
+  pub flags: CompFlags,
+  pub opt_flags: CompOptFlags,
+}
+
 #[derive(Clone, Default, Debug)]
-pub struct ClampedUsize {
+pub(crate) struct ClampedUsize {
   val: usize,
   max: usize,
   wrap: bool,
@@ -220,7 +248,6 @@ impl CompStrat {
       | CtxTkRule::AssignmentLeft
       | CtxTkRule::AssignmentOp
       | CtxTkRule::Operator
-      | CtxTkRule::HereDoc
       | CtxTkRule::HereDocStart
       | CtxTkRule::HereDocBody
       | CtxTkRule::HereDocEnd => Self::Null,
@@ -277,7 +304,6 @@ impl CompStrat {
 
       // Past a comment / heredoc / odd internal-only class, no completion.
       CtxTkRule::Comment
-      | CtxTkRule::HereDoc
       | CtxTkRule::HereDocStart
       | CtxTkRule::HereDocBody
       | CtxTkRule::HereDocEnd
@@ -298,7 +324,7 @@ impl CompStrat {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct Candidate {
+pub(crate) struct Candidate {
   content: String,
   desc: Option<String>,
   id: Option<usize>, // for stuff like history that cares about the original index
@@ -437,6 +463,7 @@ impl Candidate {
   pub fn content(&self) -> &str {
     &self.content
   }
+  #[cfg(test)]
   pub fn desc(&self) -> Option<&str> {
     self.desc.as_deref()
   }
@@ -446,23 +473,9 @@ impl Candidate {
   pub fn as_str(&self) -> &str {
     &self.content
   }
-  pub fn as_bytes(&self) -> &[u8] {
-    self.content.as_bytes()
-  }
   pub fn with_desc(mut self, desc: String) -> Self {
     self.desc = Some(desc);
     self
-  }
-  pub fn is_dir(&self) -> bool {
-    // dumb hack but it saves a stat() call at least :D
-    self
-      .desc
-      .as_ref()
-      .map(|d| d.contains("dir"))
-      .unwrap_or(false)
-  }
-  pub fn starts_with(&self, pat: char) -> bool {
-    self.content.starts_with(pat)
   }
   pub fn display(&self) -> String {
     let mut out = String::with_capacity(self.content.len());
@@ -495,7 +508,7 @@ impl Candidate {
   }
 }
 
-pub fn complete_signals(start: &str) -> Vec<Candidate> {
+pub(crate) fn complete_signals(start: &str) -> Vec<Candidate> {
   let map_closure = if start.starts_with("SIG") || start.is_empty() {
     |s: Signal| s.to_string()
   } else {
@@ -513,7 +526,7 @@ pub fn complete_signals(start: &str) -> Vec<Candidate> {
     .collect()
 }
 
-pub fn complete_aliases(start: &str) -> Vec<Candidate> {
+pub(crate) fn complete_aliases(start: &str) -> Vec<Candidate> {
   Shed::logic(|l| {
     l.aliases()
       .iter()
@@ -523,7 +536,7 @@ pub fn complete_aliases(start: &str) -> Vec<Candidate> {
   })
 }
 
-pub fn complete_jobs(start: &str) -> Vec<Candidate> {
+pub(crate) fn complete_jobs(start: &str) -> Vec<Candidate> {
   if let Some(prefix) = start.strip_prefix('%') {
     Shed::jobs(|j| {
       j.jobs()
@@ -553,7 +566,7 @@ pub fn complete_jobs(start: &str) -> Vec<Candidate> {
   }
 }
 
-pub fn complete_users(start: &str) -> Vec<Candidate> {
+pub(crate) fn complete_users(start: &str) -> Vec<Candidate> {
   let Ok(passwd) = std::fs::read_to_string("/etc/passwd") else {
     return vec![];
   };
@@ -565,7 +578,7 @@ pub fn complete_users(start: &str) -> Vec<Candidate> {
     .collect()
 }
 
-pub fn complete_vars(start: &str) -> Vec<Candidate> {
+pub(crate) fn complete_vars(start: &str) -> Vec<Candidate> {
   if !Shed::vars(|v| v.get_var(start)).is_empty() {
     return vec![];
   }
@@ -586,7 +599,7 @@ pub fn complete_vars(start: &str) -> Vec<Candidate> {
   })
 }
 
-pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
+pub(crate) fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
   if !Shed::vars(|v| v.get_var(raw)).is_empty() {
     return vec![];
   }
@@ -752,7 +765,7 @@ fn file_desc<P: AsRef<Path>>(path: P) -> String {
   format!("{kind:<4} {size:>6} {mode}")
 }
 
-pub enum CompSpecResult {
+pub(crate) enum CompSpecResult {
   NoSpec, // No compspec registered
   NoMatch {
     flags: CompOptFlags,
@@ -765,7 +778,7 @@ pub enum CompSpecResult {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct BashCompSpec {
+pub(crate) struct BashCompSpec {
   /// -F: The name of a function to generate the possible completions.
   pub function: Option<String>,
   /// -W: The list of words
@@ -1036,7 +1049,7 @@ impl CompSpec for BashCompSpec {
   }
 }
 
-pub trait CompSpec: Debug + CloneCompSpec {
+pub(crate) trait CompSpec: Debug + CloneCompSpec {
   fn complete(&self, ctx: &CompContext) -> ShResult<Vec<Candidate>>;
   fn source(&self) -> &str;
   fn get_flags(&self) -> CompOptFlags {
@@ -1044,7 +1057,7 @@ pub trait CompSpec: Debug + CloneCompSpec {
   }
 }
 
-pub trait CloneCompSpec {
+pub(crate) trait CloneCompSpec {
   fn clone_box(&self) -> Box<dyn CompSpec>;
 }
 
@@ -1061,7 +1074,7 @@ impl Clone for Box<dyn CompSpec> {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompContext {
+pub(crate) struct CompContext {
   pub words: Vec<String>,
   pub cword: usize,
   pub line: String,
@@ -1074,7 +1087,7 @@ impl CompContext {
   }
 }
 
-pub enum CompResult {
+pub(crate) enum CompResult {
   NoMatch,
   Single { result: Candidate },
   Many { candidates: Vec<Candidate> },
@@ -1094,20 +1107,20 @@ impl CompResult {
   }
 }
 
-pub enum CompResponse {
+pub(crate) enum CompResponse {
   Passthrough,       // key falls through
   Accept(Candidate), // user accepted completion
   Dismiss,           // user canceled completion
   Consumed,          // key was handled, but completion remains active
 }
 
-pub enum SelectorResponse {
+pub(crate) enum SelectorResponse {
   Accept(Candidate),
   Dismiss,
   Consumed,
 }
 
-pub trait Completer {
+pub(crate) trait Completer {
   fn complete(
     &mut self,
     line: String,
@@ -1138,7 +1151,7 @@ pub trait Completer {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct ScoredCandidate {
+pub(crate) struct ScoredCandidate {
   pub candidate: Candidate,
   pub score: Option<i32>,
   pub penalize_len_diff: bool,
@@ -1244,7 +1257,7 @@ impl From<Candidate> for ScoredCandidate {
 }
 
 #[derive(Debug, Clone)]
-pub struct FuzzyLayout {
+pub(crate) struct FuzzyLayout {
   top_left: usize,
   rows: usize,
   cols: usize,
@@ -1257,7 +1270,7 @@ pub struct FuzzyLayout {
 }
 
 #[derive(Default, Debug)]
-pub struct QueryEditor {
+pub(crate) struct QueryEditor {
   mode: ViInsert,
   scroll_offset: usize,
   available_width: usize,
@@ -1310,7 +1323,7 @@ impl QueryEditor {
 }
 
 #[derive(Default, Debug)]
-pub struct FuzzySelector {
+pub(crate) struct FuzzySelector {
   query: QueryEditor,
   filtered: Vec<ScoredCandidate>,
   candidates: Vec<Candidate>,
@@ -1328,7 +1341,7 @@ pub struct FuzzySelector {
 }
 
 #[derive(Debug)]
-pub struct FuzzyCompleter {
+pub(crate) struct FuzzyCompleter {
   completer: SimpleCompleter,
   pub selector: FuzzySelector,
 }
@@ -1876,7 +1889,7 @@ impl Completer for FuzzyCompleter {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct SimpleCompleter {
+pub(crate) struct SimpleCompleter {
   pub candidates: Vec<Candidate>,
   pub selected_idx: usize,
   pub original_input: String,

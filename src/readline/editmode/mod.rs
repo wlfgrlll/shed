@@ -35,7 +35,7 @@ pub(super) use verbatim::ViVerbatim;
 pub(super) use visual::ViVisual;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModeReport {
+pub(crate) enum ModeReport {
   Insert,
   Normal,
   Ex,

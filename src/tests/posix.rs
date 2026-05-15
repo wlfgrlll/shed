@@ -78,7 +78,7 @@ mod shell_intro_2_1 {
    * If the first line of a file of shell commands starts with the characters "#!", the results are unspecified.
    */
 
-  use crate::{assert_output, tests::testutil::TestGuard};
+  use crate::{assert_output, input, parse::execute::exec_dash_c, tests::testutil::TestGuard};
   use std::{env, io::Write};
 
   #[test]
@@ -86,7 +86,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo hello world; echo $1 $2").unwrap();
-    crate::run_script(file.path(), vec!["world".into(), "hello".into()]).unwrap();
+    input::run_script(file.path(), vec!["world".into(), "hello".into()]).unwrap();
     assert_output!(g, "hello world\nworld hello\n");
   }
 
@@ -94,7 +94,7 @@ mod shell_intro_2_1 {
   fn test_input_dash_c() {
     let g = TestGuard::new();
     let args = vec!["foo".into(), "bar".into(), "biz".into()];
-    crate::exec_dash_c("echo hello world; echo $0 $1 $2".into(), args).unwrap();
+    exec_dash_c("echo hello world; echo $0 $1 $2".into(), args).unwrap();
     assert_output!(g, "hello world\nfoo bar biz\n");
   }
 
@@ -102,7 +102,7 @@ mod shell_intro_2_1 {
   fn test_stdin_commands() {
     let mut g = TestGuard::new();
     g.feed_stdin(b"echo hello world; echo $1 $2\n");
-    crate::read_commands(vec!["world".into(), "hello".into()]).unwrap();
+    input::read_commands(vec!["world".into(), "hello".into()]).unwrap();
     assert_output!(g, "hello world\nworld hello\n");
   }
 
@@ -111,14 +111,14 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_sets_dollar_zero() {
     let g = TestGuard::new();
-    crate::exec_dash_c("echo $0".into(), vec!["myscript".into()]).unwrap();
+    exec_dash_c("echo $0".into(), vec!["myscript".into()]).unwrap();
     assert_output!(g, "myscript\n");
   }
 
   #[test]
   fn dash_c_positional_params_in_order() {
     let g = TestGuard::new();
-    crate::exec_dash_c(
+    exec_dash_c(
       "echo $1 $2 $3".into(),
       vec!["s".into(), "foo".into(), "bar".into(), "biz".into()],
     )
@@ -130,7 +130,7 @@ mod shell_intro_2_1 {
   fn dash_c_arg_count() {
     let g = TestGuard::new();
     // $# is the count of positional params, NOT including $0.
-    crate::exec_dash_c(
+    exec_dash_c(
       "echo $#".into(),
       vec!["s".into(), "a".into(), "b".into(), "c".into()],
     )
@@ -141,14 +141,14 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_arg_count_no_args() {
     let g = TestGuard::new();
-    crate::exec_dash_c("echo $#".into(), vec!["s".into()]).unwrap();
+    exec_dash_c("echo $#".into(), vec!["s".into()]).unwrap();
     assert_output!(g, "0\n");
   }
 
   #[test]
   fn dash_c_at_expansion_unquoted() {
     let g = TestGuard::new();
-    crate::exec_dash_c(
+    exec_dash_c(
       "echo $@".into(),
       vec!["s".into(), "a".into(), "b".into(), "c".into()],
     )
@@ -160,18 +160,18 @@ mod shell_intro_2_1 {
   fn dash_c_star_expansion_quoted_joins_with_ifs() {
     let g = TestGuard::new();
     let args = vec!["s".into(), "a".into(), "b".into(), "c".into()];
-    crate::exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
+    exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
     assert_output!(g, "a b c\n");
 
     unsafe { env::set_var("IFS", ":") };
-    crate::exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
+    exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
     assert_output!(g, "a:b:c\n");
   }
 
   #[test]
   fn dash_c_at_expansion_quoted_preserves_arg_boundaries() {
     let g = TestGuard::new();
-    crate::exec_dash_c(
+    exec_dash_c(
       "for x in \"$@\"; do echo $x; done".into(),
       vec!["s".into(), "a b".into(), "c".into()],
     )
@@ -182,7 +182,7 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_empty_arg_preserved() {
     let g = TestGuard::new();
-    crate::exec_dash_c(
+    exec_dash_c(
       "echo $#:$1:$2:$3".into(),
       vec!["s".into(), "first".into(), "".into(), "third".into()],
     )
@@ -193,7 +193,7 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_no_args_dollar_zero_set() {
     let g = TestGuard::new();
-    crate::exec_dash_c("echo $0".into(), vec![]).unwrap();
+    exec_dash_c("echo $0".into(), vec![]).unwrap();
     let out = g.read_output();
     assert!(
       !out.trim().is_empty(),
@@ -204,7 +204,7 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_args_not_re_expanded() {
     let g = TestGuard::new();
-    crate::exec_dash_c("echo $1".into(), vec!["s".into(), "$HOME".into()]).unwrap();
+    exec_dash_c("echo $1".into(), vec!["s".into(), "$HOME".into()]).unwrap();
     assert_output!(g, "$HOME\n");
   }
 
@@ -215,14 +215,14 @@ mod shell_intro_2_1 {
     // suppresses pathname expansion, so the literal pattern survives
     // even when a matching file exists — which is the actual property
     // we want to assert (the unquoted version would correctly glob).
-    crate::exec_dash_c("echo \"$1\"".into(), vec!["s".into(), "*.toml".into()]).unwrap();
+    exec_dash_c("echo \"$1\"".into(), vec!["s".into(), "*.toml".into()]).unwrap();
     assert_output!(g, "*.toml\n");
   }
 
   #[test]
   fn dash_c_shift_advances_positional() {
     let g = TestGuard::new();
-    crate::exec_dash_c(
+    exec_dash_c(
       "shift; echo $1 $#".into(),
       vec!["s".into(), "a".into(), "b".into(), "c".into()],
     )
@@ -236,7 +236,7 @@ mod shell_intro_2_1 {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo $0").unwrap();
     let path = file.path().to_path_buf();
-    crate::run_script(&path, vec![]).unwrap();
+    input::run_script(&path, vec![]).unwrap();
     assert_output!(g, "{}\n", path.display());
   }
 
@@ -245,7 +245,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo $#").unwrap();
-    crate::run_script(file.path(), vec!["a".into(), "b".into(), "c".into()]).unwrap();
+    input::run_script(file.path(), vec!["a".into(), "b".into(), "c".into()]).unwrap();
     assert_output!(g, "3\n");
   }
 
@@ -254,7 +254,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "for x in \"$@\"; do echo $x; done").unwrap();
-    crate::run_script(file.path(), vec!["a b".into(), "c".into()]).unwrap();
+    input::run_script(file.path(), vec!["a b".into(), "c".into()]).unwrap();
     assert_output!(g, "a b\nc\n");
   }
 
@@ -263,7 +263,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo $#:$1:$2:$3").unwrap();
-    crate::run_script(file.path(), vec!["first".into(), "".into(), "third".into()]).unwrap();
+    input::run_script(file.path(), vec!["first".into(), "".into(), "third".into()]).unwrap();
     assert_output!(g, "3:first::third\n");
   }
 
@@ -272,7 +272,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo $1").unwrap();
-    crate::run_script(file.path(), vec!["$HOME".into()]).unwrap();
+    input::run_script(file.path(), vec!["$HOME".into()]).unwrap();
     assert_output!(g, "$HOME\n");
   }
 
@@ -281,7 +281,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "shift; echo $1 $#").unwrap();
-    crate::run_script(file.path(), vec!["a".into(), "b".into(), "c".into()]).unwrap();
+    input::run_script(file.path(), vec!["a".into(), "b".into(), "c".into()]).unwrap();
     assert_output!(g, "b 2\n");
   }
 }

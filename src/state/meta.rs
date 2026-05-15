@@ -50,7 +50,7 @@ use nix::{
 use regex::Regex;
 
 #[derive(Debug)]
-pub enum StatusHeader {
+pub(crate) enum StatusHeader {
   ExitCode,
   CommandName,
   Runtime,
@@ -59,7 +59,7 @@ pub enum StatusHeader {
 }
 
 #[derive(Debug)]
-pub enum QueryHeader {
+pub(crate) enum QueryHeader {
   Cwd,
   GetVar(String),
   SetVar(String, String, VarFlags),
@@ -67,7 +67,7 @@ pub enum QueryHeader {
 }
 
 #[derive(Debug)]
-pub enum SocketRequest {
+pub(crate) enum SocketRequest {
   /// Posts a system message. System messages appear above the prompt, the same way that job status notifications do.
   /// Useful for important information.
   PostSystemMessage(String),
@@ -90,7 +90,7 @@ pub enum SocketRequest {
 }
 
 #[derive(Debug)]
-pub enum LineHeader {
+pub(crate) enum LineHeader {
   Buffer,
   Cursor,
   Hint,
@@ -325,7 +325,7 @@ impl FromStr for SocketRequest {
 
 /// The socket used to expose the system/status message interface
 #[derive(Debug)]
-pub struct ShedSocket {
+pub(crate) struct ShedSocket {
   listener: UnixListener,
   pid: Pid,
   path: PathBuf,
@@ -418,7 +418,7 @@ impl Drop for ShedSocket {
 }
 
 #[derive(Debug, Clone)]
-pub struct CmdTimer {
+pub(crate) struct CmdTimer {
   command: String,
   wall_start: Instant,
   self_usage_start: Option<Usage>,
@@ -733,7 +733,7 @@ impl CmdTimer {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum UtilKind {
+pub(crate) enum UtilKind {
   Alias,
   Function,
   Builtin,
@@ -742,7 +742,7 @@ pub enum UtilKind {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Utility {
+pub(crate) struct Utility {
   name: String,
   kind: UtilKind,
 }
@@ -784,18 +784,12 @@ impl Utility {
   pub fn kind(&self) -> &UtilKind {
     &self.kind
   }
-  pub fn path(&self) -> Option<&Path> {
-    match &self.kind {
-      UtilKind::Alias | UtilKind::Function | UtilKind::Builtin => None,
-      UtilKind::Command(path_buf) | UtilKind::File(path_buf) => Some(path_buf),
-    }
-  }
 }
 
 /// Automatically manages loop depth in the meta table.
 ///
 /// When dropped, decrements the loop depth in the meta table.
-pub struct LoopGuard;
+pub(crate) struct LoopGuard;
 impl Drop for LoopGuard {
   fn drop(&mut self) {
     Shed::meta_mut(|m| m.leave_loop())
@@ -805,7 +799,7 @@ impl Drop for LoopGuard {
 /// Automatically manages function depth in the meta table.
 ///
 /// When dropped, decrements the function depth in the meta table.
-pub struct FuncGuard;
+pub(crate) struct FuncGuard;
 impl Drop for FuncGuard {
   fn drop(&mut self) {
     Shed::meta_mut(|m| m.leave_func())
@@ -814,7 +808,7 @@ impl Drop for FuncGuard {
 
 /// Miscellaneous global data storage
 #[derive(Debug)]
-pub struct MetaTab {
+pub(crate) struct MetaTab {
   // Time when the shell was started, used for calculating shell uptime
   shell_time: Instant,
 
@@ -866,6 +860,8 @@ pub struct MetaTab {
   last_was_func_def: bool,
 
   main_loop_timeout: Option<PollTimeout>,
+
+  ignore_hist: bool,
 }
 
 impl Clone for MetaTab {
@@ -894,6 +890,7 @@ impl Clone for MetaTab {
       pending_widget_keys: self.pending_widget_keys.clone(),
       last_was_func_def: self.last_was_func_def,
       main_loop_timeout: self.main_loop_timeout,
+      ignore_hist: self.ignore_hist,
 
       procsub_stack: vec![], // does not implement clone
     }
@@ -927,11 +924,12 @@ impl Default for MetaTab {
       pending_widget_keys: vec![],
       last_was_func_def: false,
       main_loop_timeout: None,
+      ignore_hist: false,
     }
   }
 }
 
-pub struct ProcSubGuard;
+pub(crate) struct ProcSubGuard;
 impl Drop for ProcSubGuard {
   fn drop(&mut self) {
     Shed::meta_mut(|m| m.pop_procsub_frame())
@@ -958,6 +956,12 @@ impl MetaTab {
   pub fn push_procsub_frame(&mut self) -> ProcSubGuard {
     self.procsub_stack.push(vec![]);
     ProcSubGuard
+  }
+
+  pub fn no_hist_save(&mut self) -> bool {
+    let val = self.ignore_hist;
+    self.ignore_hist = !val;
+    val
   }
 
   pub fn pop_procsub_frame(&mut self) {

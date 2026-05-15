@@ -2,13 +2,12 @@ use std::{
   env,
   fmt::Write,
   io::{Read, Seek, Write as IoWrite},
-  sync::atomic::AtomicBool,
 };
 
 use tempfile::NamedTempFile;
 
 use super::{
-  match_loop, out,
+  Shed, match_loop, out,
   parse::{
     NdRule, Node,
     execute::{Dispatcher, exec_input},
@@ -22,10 +21,6 @@ use super::{
 };
 
 use bitflags::bitflags;
-
-/// POSIX specifies that an invocation of `fc` that edits and re-executes a command shall not itself be committed to command history
-/// This flag is checked in main and gates history writing.
-pub static NO_HIST_SAVE: AtomicBool = AtomicBool::new(false);
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,7 +195,7 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
   let mut should_push;
 
-  NO_HIST_SAVE.store(true, std::sync::atomic::Ordering::SeqCst);
+  Shed::meta_mut(|m| m.no_hist_save());
   for (_, entry) in entries {
     let old_cmd = entry.command;
     let mut new_cmd = String::new();
@@ -234,7 +229,7 @@ fn fc_reexec(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   let last = opts.last.unwrap_or(first.clone());
   let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
 
-  NO_HIST_SAVE.store(true, std::sync::atomic::Ordering::SeqCst);
+  Shed::meta_mut(|m| m.no_hist_save());
   for (_, entry) in entries {
     let mut command = entry.command;
     let mut should_push = false;
