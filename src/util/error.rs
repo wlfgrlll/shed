@@ -1,6 +1,8 @@
-use ariadne::{Label, Span as AriadneSpan};
+use ariadne::{Color, Label, Span as AriadneSpan};
 use ariadne::{Report, ReportKind};
 use nix::errno::Errno;
+use rand::TryRng;
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
@@ -13,10 +15,82 @@ use crate::util::FdWriter;
 
 pub type ShResult<T> = Result<T, ShErr>;
 
+pub struct ColorRng {
+  last_color: Option<Color>,
+}
+
+impl ColorRng {
+  fn get_colors() -> &'static [Color] {
+    &[
+      Color::Red,
+      Color::Cyan,
+      Color::Blue,
+      Color::Green,
+      Color::Yellow,
+      Color::Magenta,
+      Color::Fixed(208), // orange
+      Color::Fixed(39),  // deep sky blue
+      Color::Fixed(170), // orchid / magenta-pink
+      Color::Fixed(76),  // chartreuse
+      Color::Fixed(51),  // aqua
+      Color::Fixed(226), // bright yellow
+      Color::Fixed(99),  // slate blue
+      Color::Fixed(214), // light orange
+      Color::Fixed(48),  // spring green
+      Color::Fixed(201), // hot pink
+      Color::Fixed(81),  // steel blue
+      Color::Fixed(220), // gold
+      Color::Fixed(105), // medium purple
+    ]
+  }
+
+  pub fn last_color(&mut self) -> Color {
+    if let Some(color) = self.last_color.take() {
+      color
+    } else {
+      let color = self.next().unwrap_or(Color::White);
+      self.last_color = Some(color);
+      color
+    }
+  }
+}
+
+impl Iterator for ColorRng {
+  type Item = Color;
+  fn next(&mut self) -> Option<Self::Item> {
+    let colors = Self::get_colors();
+    let idx = rand::rngs::SysRng.try_next_u32().ok()? as usize % colors.len();
+    Some(colors[idx])
+  }
+}
+
+thread_local! {
+  static COLOR_RNG: RefCell<ColorRng> = const { RefCell::new(ColorRng { last_color: None }) };
+}
+
+#[allow(dead_code)]
+pub fn next_color() -> Color {
+  COLOR_RNG.with(|rng| {
+    let color = rng.borrow_mut().next().unwrap();
+    rng.borrow_mut().last_color = Some(color);
+    color
+  })
+}
+
+pub fn last_color() -> Color {
+  COLOR_RNG.with(|rng| rng.borrow_mut().last_color())
+}
+
+#[allow(dead_code)]
+pub fn clear_color() {
+  COLOR_RNG.with(|rng| rng.borrow_mut().last_color = None);
+}
+
 pub fn get_context(msg: String, span: Span) -> (SpanSource, Label<Span>) {
+  let color = last_color();
   (
     span.clone().source().clone(),
-    Label::new(span).with_message(msg),
+    Label::new(span).with_color(color).with_message(msg),
   )
 }
 

@@ -311,21 +311,21 @@ mod tests {
   fn ulimit_invalid_flag() {
     let _g = TestGuard::new();
     test_input("ulimit -z 100").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn ulimit_non_numeric_value() {
     let _g = TestGuard::new();
     test_input("ulimit -n abc").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn ulimit_status_zero() {
     let _g = TestGuard::new();
     test_input("ulimit -c 0").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== umask =====================
@@ -442,21 +442,21 @@ mod tests {
   fn umask_invalid_octal() {
     let _g = TestGuard::new();
     test_input("umask 999").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn umask_too_many_args() {
     let _g = TestGuard::new();
     test_input("umask 022 077").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn umask_invalid_who() {
     let _g = TestGuard::new();
     test_input("umask z=rwx").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -465,6 +465,6 @@ mod tests {
     with_umask(0o022, || {
       test_input("umask").unwrap();
     });
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

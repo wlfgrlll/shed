@@ -2,22 +2,20 @@ use std::{
   cmp::Ordering,
   collections::HashMap,
   env,
-  sync::{Arc, LazyLock, RwLock, atomic::AtomicU64},
+  sync::{Arc, LazyLock, RwLock},
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::{
+use super::{
+  Shed,
+  complete::{Candidate, FuzzySelector},
+  editcmd::Direction,
+  linebuf::{Hint, LineBuf, Lines},
   procio::{MIN_INTERNAL_FD, do_something_that_opens_fds_that_we_cant_access_hack},
-  readline::{
-    complete::{Candidate, FuzzySelector},
-    editcmd::Direction,
-    linebuf::{Hint, LineBuf, Lines},
-  },
-  sherr,
-  state::{self, util::read_shopts},
+  sherr, state,
   util::ShResult,
 };
 
@@ -33,9 +31,20 @@ pub struct HistEntry {
 
 type HistTables = HashMap<String, Vec<HistEntry>>;
 
-static HIST_GENERATION: AtomicU64 = AtomicU64::new(0);
 static HIST_ENTRIES: LazyLock<Arc<RwLock<HistTables>>> =
   LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+static SEARCH_ENTRIES: LazyLock<Arc<RwLock<HistTables>>> =
+  LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+static SEARCH_WATERMARKS: LazyLock<Arc<RwLock<HashMap<String, i64>>>> =
+  LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+fn num_entries(table: &str) -> usize {
+  HIST_ENTRIES
+    .read()
+    .ok()
+    .and_then(|cache| cache.get(table).map(|entries| entries.len()))
+    .unwrap_or(0)
+}
 
 impl Default for HistEntry {
   fn default() -> Self {
@@ -53,6 +62,25 @@ impl Default for HistEntry {
 impl HistEntry {
   pub fn command(&self) -> &str {
     &self.command
+  }
+}
+
+fn query_since(since_ts: i64, conn: &Connection, table: &str) -> Vec<HistEntry> {
+  let sql = format!(
+    r##"
+    SELECT command, MAX(timestamp) as ts, runtime, cwd, status, token FROM {table}
+    GROUP BY command
+    HAVING MAX(timestamp) > ?1
+    ORDER BY ts ASC
+    "##
+  );
+  let mut stmt = match conn.prepare(&sql) {
+    Ok(s) => s,
+    Err(_) => return vec![],
+  };
+  match stmt.query_map(rusqlite::params![since_ts], History::row_to_entry) {
+    Ok(iter) => iter.filter_map(Result::ok).collect(),
+    Err(_) => vec![],
   }
 }
 
@@ -107,7 +135,7 @@ pub struct History {
 impl History {
   const USER_VERSION: i32 = 2;
   pub fn new(conn: Arc<Connection>, table: &str) -> ShResult<Self> {
-    let max_hist = read_shopts(|o| o.core.max_hist);
+    let max_hist = Shed::shopts(|o| o.core.max_hist);
 
     Self::init_db(&conn, table)?;
 
@@ -124,14 +152,18 @@ impl History {
       virt_cursor: 0,
       max_size,
     };
-    // Ensure the cache slot exists so consumers don't see a missing key
+    // Ensure cache slots exist so consumers don't see a missing key
     // before the async load finishes.
     if let Ok(mut cache) = HIST_ENTRIES.write() {
       cache.entry(hist.table.clone()).or_default();
     }
+    if let Ok(mut cache) = SEARCH_ENTRIES.write() {
+      cache.entry(hist.table.clone()).or_default();
+    }
 
-    // Load the existing history asynchronously. `History::push` can run
-    // concurrently and mutate the cache while we're loading; when the load
+    // Load the existing history asynchronously into both HIST_ENTRIES and
+    // SEARCH_ENTRIES using a single DB connection. `History::push` can run
+    // concurrently and mutate the caches while we're loading; when the load
     // completes we merge by treating any commands already in the cache
     // (added by push during load) as the authoritative newer entry.
     let table_name = hist.table.clone();
@@ -142,12 +174,17 @@ impl History {
         };
         conn.execute_batch("PRAGMA journal_mode=WAL").ok();
         let loaded = query_masked(None, &conn, &table_name);
-        if let Ok(mut cache) = HIST_ENTRIES.write() {
-          let existing = cache.entry(table_name).or_default();
-          // Anything already in the cache was pushed during the load and is
-          // newer than what we just queried; drop loaded entries shadowed
-          // by those pushes (matches GROUP BY command + MAX(timestamp)
-          // semantics in `query_masked`).
+
+        let max_ts = loaded
+          .iter()
+          .filter_map(|e| e.timestamp.duration_since(std::time::UNIX_EPOCH).ok())
+          .map(|d| d.as_secs() as i64)
+          .max()
+          .unwrap_or(0);
+
+        // Merge helper: drop loaded entries shadowed by in-session pushes,
+        // then prepend the rest so pushes stay at the end (newest).
+        let merge = |existing: &mut Vec<HistEntry>, loaded: Vec<HistEntry>| {
           let pushed_cmds: std::collections::HashSet<String> =
             existing.iter().map(|e| e.command.clone()).collect();
           let mut merged: Vec<HistEntry> = loaded
@@ -156,6 +193,18 @@ impl History {
             .collect();
           merged.append(existing);
           *existing = merged;
+        };
+
+        if let Ok(mut cache) = HIST_ENTRIES.write() {
+          merge(cache.entry(table_name.clone()).or_default(), loaded.clone());
+        }
+        if let Ok(mut cache) = SEARCH_ENTRIES.write() {
+          merge(cache.entry(table_name.clone()).or_default(), loaded);
+        }
+        // Initialize watermark; don't overwrite if pushes during load advanced it.
+        if let Ok(mut wm) = SEARCH_WATERMARKS.write() {
+          let wm_entry = wm.entry(table_name).or_insert(0);
+          *wm_entry = (*wm_entry).max(max_ts);
         }
       });
     });
@@ -254,7 +303,7 @@ impl History {
     if command.is_empty() {
       return Ok(None);
     }
-    if read_shopts(|o| o.core.hist_ignore_dupes) {
+    if Shed::shopts(|o| o.core.hist_ignore_dupes) {
       let last: Option<String> = self
         .conn
         .query_row(
@@ -300,9 +349,19 @@ impl History {
     if let Ok(mut cache) = HIST_ENTRIES.write() {
       let table_entries = cache.entry(self.table.clone()).or_default();
       table_entries.retain(|e| e.command != command);
+      table_entries.push(entry.clone());
+    }
+    if let Ok(mut cache) = SEARCH_ENTRIES.write() {
+      let table_entries = cache.entry(self.table.clone()).or_default();
+      table_entries.retain(|e| e.command != command);
       table_entries.push(entry);
     }
+    if let Ok(mut wm) = SEARCH_WATERMARKS.write() {
+      let wm_entry = wm.entry(self.table.clone()).or_insert(0);
+      *wm_entry = (*wm_entry).max(timestamp);
+    }
 
+    self.trim_to_max();
     Ok(Some(token))
   }
 
@@ -328,13 +387,58 @@ impl History {
     Ok(())
   }
 
-  pub fn entry_count(&self) -> i64 {
+  fn unique_command_count(&self) -> i64 {
     self
       .conn
-      .query_row(&format!("SELECT COUNT(*) FROM {}", self.table), [], |row| {
-        row.get(0)
-      })
+      .query_row(
+        &format!("SELECT COUNT(DISTINCT command) FROM {}", self.table),
+        [],
+        |row| row.get(0),
+      )
       .unwrap_or(0)
+  }
+
+  fn trim_to_max(&self) {
+    let Some(max) = self.max_size else { return };
+    let count = self.unique_command_count();
+    let excess = count - max as i64;
+    if excess <= 0 {
+      return;
+    }
+    let table = &self.table;
+    // Delete all rows belonging to the oldest `excess` unique commands.
+    self
+      .conn
+      .execute(
+        &format!(
+          "DELETE FROM {table} WHERE command IN (
+          SELECT command FROM {table}
+          GROUP BY command
+          ORDER BY MAX(timestamp) ASC
+          LIMIT ?1
+        )"
+        ),
+        rusqlite::params![excess],
+      )
+      .ok();
+
+    // Trim the front of both caches (oldest entries are at the front,
+    // sorted by timestamp ASC from query_masked / push ordering).
+    let excess = excess as usize;
+
+    if let Ok(mut cache) = HIST_ENTRIES.write()
+      && let Some(entries) = cache.get_mut(table.as_str())
+    {
+      let drain_count = excess.min(entries.len());
+      entries.drain(0..drain_count);
+    }
+
+    if let Ok(mut cache) = SEARCH_ENTRIES.write()
+      && let Some(entries) = cache.get_mut(table.as_str())
+    {
+      let drain_count = excess.min(entries.len());
+      entries.drain(0..drain_count);
+    }
   }
 
   pub fn last_id(&self) -> i64 {
@@ -525,7 +629,7 @@ impl History {
     if command.is_empty() {
       return Ok(());
     }
-    if read_shopts(|o| o.core.hist_ignore_dupes) {
+    if Shed::shopts(|o| o.core.hist_ignore_dupes) {
       let last: Option<String> = self
         .conn
         .query_row(
@@ -709,10 +813,6 @@ impl History {
     }
   }
 
-  pub fn max_hist_size(&mut self, size: Option<u32>) {
-    self.max_size = size
-  }
-
   pub fn at_pending(&self) -> bool {
     self.cursor >= self.search_mask.len()
   }
@@ -745,33 +845,14 @@ impl History {
       .map(|e| Hint::History(Lines::to_lines(e.command())))
   }
 
-  pub fn refresh_hist_entries_sync(&mut self) {
+  pub fn refresh_hist_entries(&self) -> usize {
+    let num_entries_before = num_entries(&self.table);
     let entries = query_masked(None, &self.conn, &self.table);
     if let Ok(mut cache) = HIST_ENTRIES.write() {
       cache.insert(self.table.clone(), entries);
     }
-  }
-
-  pub fn refresh_hist_entries(&mut self) {
-    let generation = HIST_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-    let table = self.table.clone();
-
-    std::thread::spawn(move || {
-      do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, || {
-        let Some(conn) = state::util::open_db_conn().ok() else {
-          return;
-        };
-        conn.execute_batch("PRAGMA journal_mode=WAL").ok();
-        let entries = query_masked(None, &conn, &table);
-        if HIST_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation
-          && let Ok(mut cache) = HIST_ENTRIES.write()
-        {
-          let entry_table = cache.entry(table.clone()).or_insert_with(Vec::new);
-          // only hold the lock for as long as it takes to swap in the new cache
-          *entry_table = entries;
-        }
-      })
-    });
+    let num_entries_after = num_entries(&self.table);
+    num_entries_after.saturating_sub(num_entries_before)
   }
 
   pub fn is_virtual_scrolling(&self) -> bool {
@@ -846,29 +927,95 @@ impl History {
     self.search_mask.get(self.virt_cursor)
   }
 
-  pub fn start_search(&mut self, initial: &str) -> Option<String> {
-    self.ensure_mask_fresh();
-    if self.search_mask.is_empty() {
-      None
-    } else if self.search_mask.len() == 1 {
-      Some(self.search_mask[0].command().to_string())
-    } else {
-      let mut finder = FuzzySelector::new("History").number_candidates(true);
-      self.update_search_mask(Some(initial));
-      finder.set_query(initial.to_string());
-      let raw_entries = self
-        .search_mask
-        .clone()
-        .into_iter()
-        .enumerate()
-        .map(|(i, ent)| Candidate::from((i, ent.command().to_string())));
-      finder.activate(raw_entries.collect());
-      self.fuzzy_finder = Some(finder);
-      None
+  // Fetch any entries from other sessions added after the watermark and merge
+  // them into SEARCH_ENTRIES. Runs synchronously since the delta is small.
+  fn sync_search_entries(&self) {
+    let watermark = SEARCH_WATERMARKS
+      .read()
+      .ok()
+      .and_then(|wm| wm.get(&self.table).copied())
+      .unwrap_or(0);
+
+    let delta = query_since(watermark, &self.conn, &self.table);
+    if delta.is_empty() {
+      return;
     }
+
+    let new_watermark = delta
+      .iter()
+      .filter_map(|e| e.timestamp.duration_since(std::time::UNIX_EPOCH).ok())
+      .map(|d| d.as_secs() as i64)
+      .max()
+      .unwrap_or(watermark);
+
+    if let Ok(mut cache) = SEARCH_ENTRIES.write() {
+      let entries = cache.entry(self.table.clone()).or_default();
+      for new_entry in delta {
+        entries.retain(|e| e.command != new_entry.command);
+        entries.push(new_entry);
+      }
+      entries.sort_by_key(|e| e.timestamp);
+    }
+    if let Ok(mut wm) = SEARCH_WATERMARKS.write() {
+      let wm_entry = wm.entry(self.table.clone()).or_insert(0);
+      *wm_entry = (*wm_entry).max(new_watermark);
+    }
+  }
+
+  pub fn start_search(&mut self, initial: &str) -> Option<String> {
+    self.sync_search_entries();
+
+    let all_entries = SEARCH_ENTRIES
+      .read()
+      .ok()
+      .and_then(|c| c.get(&self.table).cloned())
+      .unwrap_or_default();
+
+    if all_entries.is_empty() {
+      return None;
+    }
+    if all_entries.len() == 1 {
+      return Some(all_entries[0].command().to_string());
+    }
+
+    let mut finder = FuzzySelector::new("History").number_candidates(true);
+    finder.set_query(initial.to_string());
+
+    let candidates: Vec<HistEntry> = if initial.is_empty() {
+      all_entries.clone()
+    } else {
+      let filtered: Vec<HistEntry> = all_entries
+        .iter()
+        .filter(|e| e.command().starts_with(initial))
+        .cloned()
+        .collect();
+      if filtered.is_empty() {
+        all_entries
+      } else {
+        filtered
+      }
+    };
+
+    let raw_entries = candidates
+      .into_iter()
+      .enumerate()
+      .map(|(i, ent)| Candidate::from((i, ent.command().to_string())));
+    finder.activate(raw_entries.collect());
+    self.fuzzy_finder = Some(finder);
+    None
   }
 
   pub fn stop_search(&mut self) {
     self.fuzzy_finder = None;
+  }
+
+  #[cfg(test)]
+  pub fn entry_count(&self) -> i64 {
+    self
+      .conn
+      .query_row(&format!("SELECT COUNT(*) FROM {}", self.table), [], |row| {
+        row.get(0)
+      })
+      .unwrap_or(0)
   }
 }

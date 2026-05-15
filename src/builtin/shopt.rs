@@ -1,7 +1,7 @@
-use crate::{
+use super::{
+  Shed,
   getopt::{Opt, OptSpec},
   outln,
-  state::util::write_shopts,
   util::{ShResult, ShResultExt, with_status},
 };
 
@@ -14,7 +14,7 @@ impl super::Builtin for Shopt {
     let print_help = args.opts.contains(&Opt::Short('h'));
 
     if args.argv.is_empty() {
-      let output = write_shopts(|s| s.display_opts())?;
+      let output = Shed::shopts_mut(|s| s.display_opts())?;
 
       outln!("{output}");
 
@@ -22,7 +22,7 @@ impl super::Builtin for Shopt {
     }
 
     for (arg, span) in args.argv {
-      let Some(output) = write_shopts(|s| s.query(&arg)).promote_err(span)? else {
+      let Some(output) = Shed::shopts_mut(|s| s.query(&arg)).promote_err(span)? else {
         continue;
       };
 
@@ -41,7 +41,7 @@ impl super::Builtin for Shopt {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, util::read_shopts};
+  use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
 
   // ===================== Display =====================
@@ -82,28 +82,28 @@ mod tests {
   fn shopt_set_bool() {
     let _g = TestGuard::new();
     test_input("shopt core.dotglob=true").unwrap();
-    assert!(read_shopts(|o| o.core.dotglob));
+    assert!(Shed::shopts(|o| o.core.dotglob));
   }
 
   #[test]
   fn shopt_set_int() {
     let _g = TestGuard::new();
     test_input("shopt core.max_hist=500").unwrap();
-    assert_eq!(read_shopts(|o| o.core.max_hist), 500);
+    assert_eq!(Shed::shopts(|o| o.core.max_hist), 500);
   }
 
   #[test]
   fn shopt_set_string() {
     let _g = TestGuard::new();
     test_input("shopt prompt.leader=space").unwrap();
-    assert_eq!(read_shopts(|o| o.prompt.leader.clone()), "space");
+    assert_eq!(Shed::shopts(|o| o.prompt.leader.clone()), "space");
   }
 
   #[test]
   fn shopt_set_completion_ignore_case() {
     let _g = TestGuard::new();
     test_input("shopt prompt.completion_ignore_case=true").unwrap();
-    assert!(read_shopts(|o| o.prompt.completion_ignore_case));
+    assert!(Shed::shopts(|o| o.prompt.completion_ignore_case));
   }
 
   // ===================== Error cases =====================
@@ -112,21 +112,21 @@ mod tests {
   fn shopt_invalid_category() {
     let _g = TestGuard::new();
     test_input("shopt bogus.dotglob").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn shopt_invalid_option() {
     let _g = TestGuard::new();
     test_input("shopt core.nonexistent").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn shopt_invalid_value() {
     let _g = TestGuard::new();
     test_input("shopt core.dotglob=notabool").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -135,6 +135,6 @@ mod tests {
   fn shopt_status_zero() {
     let _g = TestGuard::new();
     test_input("shopt core.autocd=true").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

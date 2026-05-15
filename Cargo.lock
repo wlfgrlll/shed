@@ -853,6 +853,7 @@ dependencies = [
  "rusqlite",
  "scopeguard",
  "serde_json",
+ "shed_macros",
  "smallvec",
  "tempfile",
  "unicode-segmentation",
@@ -860,6 +861,15 @@ dependencies = [
  "uuid",
  "vte",
  "yansi",
+]
+
+[[package]]
+name = "shed_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

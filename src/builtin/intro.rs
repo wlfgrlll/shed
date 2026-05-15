@@ -5,7 +5,7 @@ use crate::{
   outln,
   parse::lex::KEYWORDS,
   sherr,
-  state::{self, Shed, util::read_logic},
+  state::{self, Shed},
   util::{ShResult, with_status},
 };
 
@@ -22,7 +22,7 @@ impl super::Builtin for Type {
       if let Some(util) = state::util::which_util(&arg) {
         match util.kind() {
           state::meta::UtilKind::Alias => {
-            let alias = read_logic(|v| v.get_alias(&arg)).unwrap();
+            let alias = Shed::logic(|v| v.get_alias(&arg)).unwrap();
             let (line, col) = alias.source().line_and_col();
             let name = alias.source().source().name();
             if short {
@@ -37,7 +37,7 @@ impl super::Builtin for Type {
             }
           }
           state::meta::UtilKind::Function => {
-            let func = read_logic(|v| v.get_func(&arg)).unwrap();
+            let func = Shed::logic(|v| v.get_func(&arg)).unwrap();
             let (line, col) = func.source.line_and_col();
             let name = func.source.source().name();
             if short {
@@ -200,7 +200,7 @@ mod tests {
     let _g = TestGuard::new();
     let result = test_input("type __hopefully____not_______a____command__");
     assert!(result.is_ok());
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   // ===================== Priority order =====================
@@ -235,6 +235,6 @@ mod tests {
   fn type_status_zero_on_found() {
     let _g = TestGuard::new();
     test_input("type echo").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

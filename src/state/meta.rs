@@ -19,16 +19,16 @@ use std::{
 use crate::{
   builtin::BUILTIN_NAMES,
   expand::{expand_keymap, glob_to_regex},
-  jobs::Job,
   keys::KeyEvent,
   match_loop,
   procio::MIN_INTERNAL_FD,
   readline::{Candidate, CompSpec, LineData},
   sherr,
+  state::jobs::Job,
   state::{
     Shed,
     logic::AutoCmdKind,
-    util::{query_db, write_logic, write_meta},
+    util::query_db,
     vars::{VarFlags, VarKind},
   },
   util::{ShErr, ShResult},
@@ -798,7 +798,7 @@ impl Utility {
 pub struct LoopGuard;
 impl Drop for LoopGuard {
   fn drop(&mut self) {
-    write_meta(|m| m.leave_loop())
+    Shed::meta_mut(|m| m.leave_loop())
   }
 }
 
@@ -808,7 +808,7 @@ impl Drop for LoopGuard {
 pub struct FuncGuard;
 impl Drop for FuncGuard {
   fn drop(&mut self) {
-    write_meta(|m| m.leave_func())
+    Shed::meta_mut(|m| m.leave_func())
   }
 }
 
@@ -934,7 +934,7 @@ impl Default for MetaTab {
 pub struct ProcSubGuard;
 impl Drop for ProcSubGuard {
   fn drop(&mut self) {
-    write_meta(|m| m.pop_procsub_frame())
+    Shed::meta_mut(|m| m.pop_procsub_frame())
   }
 }
 
@@ -1440,7 +1440,7 @@ impl MetaTab {
     }
   }
   pub fn rehash_internals(&mut self) {
-    write_logic(|l| {
+    Shed::logic_mut(|l| {
       if !l.dirty() {
         return;
       }

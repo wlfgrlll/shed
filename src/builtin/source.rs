@@ -35,7 +35,7 @@ impl super::Builtin for Source {
 pub mod tests {
   use std::io::Write;
 
-  use crate::state::{self, Shed, util::read_logic};
+  use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
   use tempfile::{NamedTempFile, TempDir};
 
@@ -72,7 +72,7 @@ pub mod tests {
     file.write_all(b"greet() { echo hi; }").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    let func = read_logic(|l| l.get_func("greet"));
+    let func = Shed::logic(|l| l.get_func("greet"));
     assert!(func.is_some());
   }
 
@@ -84,7 +84,7 @@ pub mod tests {
     file.write_all(b"alias ll='ls -la'").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    let alias = read_logic(|l| l.get_alias("ll"));
+    let alias = Shed::logic(|l| l.get_alias("ll"));
     assert!(alias.is_some());
   }
 
@@ -134,7 +134,7 @@ pub mod tests {
   fn source_nonexistent_file() {
     let _g = TestGuard::new();
     test_input("source /tmp/__no_such_file_xyz__").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -142,7 +142,7 @@ pub mod tests {
     let _g = TestGuard::new();
     let dir = TempDir::new().unwrap();
     test_input(format!("source {}", dir.path().display())).ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -155,6 +155,6 @@ pub mod tests {
     file.write_all(b"true").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

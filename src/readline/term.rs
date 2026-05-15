@@ -2,16 +2,7 @@ use std::{env, fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{
-  linebuf::Pos,
-  sherr,
-  state::{
-    terminal::width,
-    util::{read_meta, read_shopts, with_term, write_meta},
-  },
-  util::ShResult,
-  write_term,
-};
+use super::{Shed, linebuf::Pos, sherr, state::terminal::width, util::ShResult, write_term};
 
 pub fn enumerate_lines(
   s: &str,
@@ -145,7 +136,7 @@ impl Layout {
     left_margin: usize,
     raw_calc: bool,
   ) -> Pos {
-    let tab_stop = read_shopts(|o| o.line.tab_width);
+    let tab_stop = Shed::shopts(|o| o.line.tab_width);
     let mut pos = orig;
     let mut esc_seq = 0;
     for c in s.graphemes(true) {
@@ -194,15 +185,15 @@ pub fn redraw(
   let end = new_layout.end;
   let cursor = new_layout.cursor;
 
-  if read_meta(|m| m.system_msg_pending()) {
+  if Shed::meta(|m| m.system_msg_pending()) {
     let mut system_msg = String::new();
-    while let Some(msg) = write_meta(|m| m.pop_system_message()) {
+    while let Some(msg) = Shed::meta_mut(|m| m.pop_system_message()) {
       writeln!(system_msg, "{msg}").map_err(err)?;
     }
     write_term!("{system_msg}").ok();
   }
 
-  with_term(|t| t.emit_osc_prompt_start()).ok();
+  Shed::term_mut(|t| t.emit_osc_prompt_start()).ok();
   if let Ok(prefix) = env::var("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
@@ -210,19 +201,19 @@ pub fn redraw(
   if let Ok(suffix) = env::var("SHELL_PROMPT_SUFFIX") {
     write_term!("{suffix}").ok();
   }
-  with_term(|t| t.emit_osc_prompt_end()).ok();
+  Shed::term_mut(|t| t.emit_osc_prompt_end()).ok();
 
-  let t_cols = with_term(|t| t.t_cols());
+  let t_cols = Shed::term(|t| t.t_cols());
 
-  let tab_width = read_shopts(|o| o.line.tab_width);
+  let tab_width = Shed::shopts(|o| o.line.tab_width);
   let prompt_end = Layout::calc_pos(t_cols, prompt, Pos { col: 0, row: 0 }, 0, false);
   let expanded = expand_tabs(line, prompt_end.col, tab_width);
   let multiline = expanded.contains('\n') || prompt_end.col == 0;
   if multiline {
-    let show_numbers = read_shopts(|o| o.line.line_numbers);
+    let show_numbers = Shed::shopts(|o| o.line.line_numbers);
     let display_line = enumerate_lines(
       &expanded,
-      prompt_end.col as usize,
+      prompt_end.col,
       show_numbers,
       offset,
       total_buf_lines,
@@ -232,18 +223,18 @@ pub fn redraw(
     write_term!("{expanded}").ok();
   }
 
-  if end.col == 0 && end.row > prompt_end.row && !with_term(|t| t.buf_ends_with_newline()) {
+  if end.col == 0 && end.row > prompt_end.row && !Shed::term(|t| t.buf_ends_with_newline()) {
     // The line has wrapped. We need to use our own line break.
     write_term!("\n").ok();
   }
 
-  with_term(|t| t.calc_cursor_movement(end, cursor)).ok();
+  Shed::term_mut(|t| t.calc_cursor_movement(end, cursor)).ok();
 
   Ok(())
 }
 
 pub fn move_cursor_to_end(layout: &Layout) -> ShResult<()> {
-  let t_cols = with_term(|t| t.t_cols());
+  let t_cols = Shed::term(|t| t.t_cols());
   let mut end = layout.end.row;
   if layout.psr_end.is_some() && layout.t_cols > t_cols && t_cols > 0 {
     let extra = (layout.t_cols.saturating_sub(1)) / t_cols;
@@ -263,7 +254,7 @@ pub fn clear_rows(layout: &Layout) -> ShResult<()> {
   // Account for lines that may have wrapped due to terminal resize.
   // If a PSR was drawn, the last row extended to the old terminal width.
   // When the terminal shrinks, that row wraps into extra physical rows.
-  let t_cols = with_term(|t| t.t_cols());
+  let t_cols = Shed::term(|t| t.t_cols());
   let mut rows_to_clear = layout.end.row;
   if layout.psr_end.is_some() && layout.t_cols > t_cols && t_cols > 0 {
     let extra = (layout.t_cols.saturating_sub(1)) / t_cols;

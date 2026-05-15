@@ -4,7 +4,6 @@ use nix::unistd::Pid;
 use super::{
   Shed, errln, expand,
   getopt::{self, Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
-  jobs::ChildProc,
   keys, match_loop, out, outln,
   parse::{
     self, NdFlags, NdRule, Node,
@@ -14,6 +13,8 @@ use super::{
   procio,
   procio::RedirSet,
   readline, sherr, shopt as shopt_internal, signal, state,
+  state::jobs::ChildProc,
+  status_msg, system_msg,
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
 };
 
@@ -307,7 +308,7 @@ register_scripts! {
 }
 
 /// Lookup a name in the builtin table via binary search
-pub fn lookup_builtin(name: &str) -> Option<&'static dyn Builtin> {
+pub(super) fn lookup_builtin(name: &str) -> Option<&'static dyn Builtin> {
   BUILTIN_TABLE
     .binary_search_by_key(&name, |(n, _)| n)
     .ok()
@@ -315,7 +316,7 @@ pub fn lookup_builtin(name: &str) -> Option<&'static dyn Builtin> {
 }
 
 type ArgVector = Vec<(String, Span)>;
-pub trait Builtin: Sync {
+pub(super) trait Builtin: Sync {
   /// The actual logic of the builtin. The only required member of Builtin.
   fn execute(&self, args: BuiltinArgs) -> ShResult<()>;
 
@@ -404,9 +405,9 @@ pub trait Builtin: Sync {
         let should_propagate = match e.kind() {
           ShErrKind::CleanExit(_) => true, // this one always goes
           ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
-            state::util::read_meta(|m| m.in_loop())
+            state::Shed::meta(|m| m.in_loop())
           }
-          ShErrKind::FuncReturn(_) => state::util::read_meta(|m| m.in_func()),
+          ShErrKind::FuncReturn(_) => state::Shed::meta(|m| m.in_func()),
           _ => false,
         };
 
@@ -569,7 +570,7 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input("true").unwrap();
 
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -577,7 +578,7 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input("false").unwrap();
 
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   #[test]
@@ -585,6 +586,6 @@ pub mod tests {
     let _g = TestGuard::new();
     test_input(":").unwrap();
 
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

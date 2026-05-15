@@ -66,7 +66,7 @@ mod tests {
   fn shift_non_numeric_fails() {
     let _g = TestGuard::new();
     test_input("shift abc").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -74,6 +74,6 @@ mod tests {
     let _g = TestGuard::new();
     test_input("f() { shift 1; }").unwrap();
     test_input("f a b").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

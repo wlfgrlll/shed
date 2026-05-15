@@ -29,10 +29,9 @@ use crate::{
     self, Shed,
     meta::Utility,
     terminal::{Cols, Rows, TermGuard, calc_str_width},
-    util::{read_logic, read_meta, read_shopts, with_term, write_meta},
     vars::{VarFlags, VarKind},
   },
-  util::{self, ShResult, ends_with_unescaped, var_ctx_guard},
+  util::{self, ShResult, ends_with_unescaped, rfind_unescaped, var_ctx_guard},
   write_term,
 };
 
@@ -426,7 +425,7 @@ impl std::ops::Deref for Candidate {
 
 impl Candidate {
   pub fn is_match(&self, other: &str) -> bool {
-    let ignore_case = read_shopts(|o| o.prompt.completion_ignore_case);
+    let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
     if ignore_case {
       let other_lower = other.to_lowercase();
       let self_lower = self.content.to_lowercase();
@@ -465,8 +464,23 @@ impl Candidate {
   pub fn starts_with(&self, pat: char) -> bool {
     self.content.starts_with(pat)
   }
+  pub fn display(&self) -> String {
+    let mut out = String::with_capacity(self.content.len());
+    let mut chars = self.content.chars();
+    while let Some(ch) = chars.next() {
+      if ch == '\\' {
+        if let Some(next) = chars.next() {
+          out.push(next);
+        }
+      } else {
+        out.push(ch);
+      }
+    }
+    out
+  }
+
   pub fn strip_prefix(&self, prefix: &str) -> Option<String> {
-    let ignore_case = read_shopts(|o| o.prompt.completion_ignore_case);
+    let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
     if ignore_case {
       let old_len = self.content.len();
       let prefix_lower = prefix.to_lowercase();
@@ -500,7 +514,7 @@ pub fn complete_signals(start: &str) -> Vec<Candidate> {
 }
 
 pub fn complete_aliases(start: &str) -> Vec<Candidate> {
-  read_logic(|l| {
+  Shed::logic(|l| {
     l.aliases()
       .iter()
       .map(|(a, v)| Candidate::from(a.to_string()).with_desc(v.to_string()))
@@ -560,7 +574,6 @@ pub fn complete_vars(start: &str) -> Vec<Candidate> {
   Shed::vars(|v| {
     v.flatten_vars()
       .keys()
-      .filter(|k| k.starts_with(start) && *k != start)
       .map(|s| {
         if let Some(val) = Shed::vars(|v| v.try_get_var(s)) {
           Candidate::from(s).with_desc(val)
@@ -568,6 +581,7 @@ pub fn complete_vars(start: &str) -> Vec<Candidate> {
           Candidate::from(s)
         }
       })
+      .filter(|c| c.is_match(start) && c.content() != start)
       .collect::<Vec<_>>()
   })
 }
@@ -581,7 +595,6 @@ pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
   Shed::vars(|v| {
     v.flatten_vars()
       .keys()
-      .filter(|k| k.starts_with(raw) && *k != raw)
       .map(|k| {
         if let Some(val) = Shed::vars(|v| v.try_get_var(k)) {
           Candidate::from(k.to_string()).with_desc(val)
@@ -589,6 +602,7 @@ pub fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
           Candidate::from(k.to_string())
         }
       })
+      .filter(|c| c.is_match(raw) && c.content() != raw)
       .collect::<Vec<_>>()
   })
 }
@@ -602,14 +616,14 @@ fn complete_builtins(start: &str) -> Vec<Candidate> {
 }
 
 fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
-  let mut candidates: Vec<Candidate> = read_meta(|m| {
+  let mut candidates: Vec<Candidate> = Shed::meta(|m| {
     m.cached_utils()
       .map(Candidate::from)
       .filter(|c| c.is_match(start))
       .collect()
   });
 
-  if read_shopts(|o| o.core.autocd) {
+  if Shed::shopts(|o| o.core.autocd) {
     let dirs = complete_dirs(start, cursor_pos);
     candidates.extend(dirs);
   }
@@ -651,8 +665,14 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
   let escaped_pre = escape_glob(&unescaped_pre, false);
   let escaped_post = escape_glob(&unescaped_post, false);
 
-  let pat = format!("{}*{}", &escaped_pre, &escaped_post);
-  let candidates: Vec<Candidate> = glob::glob(&pat)
+  let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
+  let pat = format!("{escaped_pre}*{escaped_post}");
+  let match_opts = glob::MatchOptions {
+    case_sensitive: !ignore_case,
+    require_literal_separator: false,
+    require_literal_leading_dot: false,
+  };
+  let candidates: Vec<Candidate> = glob::glob_with(&pat, match_opts)
     .map(|it| it.filter_map(Result::ok).map(|c| c.into()).collect())
     .unwrap_or_default();
 
@@ -662,15 +682,29 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
       let is_dir = c.desc.as_ref().is_some_and(|d| d.contains("dir"));
       let raw = c.content.clone();
 
-      let mut new_content = match raw.strip_prefix(&unescaped_pre) {
-        Some(after_prefix) => {
-          let middle = after_prefix
-            .strip_suffix(&unescaped_post)
-            .unwrap_or(after_prefix);
-          let middle_escaped = escape_str(middle, false);
-          format!("{prefix}{middle_escaped}{postfix}")
-        }
-        None => escape_str(&raw, false),
+      let mut new_content = if let Some(after_prefix) = raw.strip_prefix(&unescaped_pre) {
+        let middle = after_prefix
+          .strip_suffix(&unescaped_post)
+          .unwrap_or(after_prefix);
+        let middle_escaped = escape_str(middle, false);
+        format!("{prefix}{middle_escaped}{postfix}")
+      } else if ignore_case {
+        // Glob matched case-insensitively; preserve actual filename casing from `raw`
+        // but keep whatever directory prefix the user typed (e.g. ~/ or $VAR/).
+        // rfind_unescaped handles escaped slashes in filenames; unescaped_pre needs
+        // plain rfind since it is already unescaped.
+        let typed_dir_end = rfind_unescaped(prefix, '/').map(|i| i + 1).unwrap_or(0);
+        let raw_dir_end = unescaped_pre.rfind('/').map(|i| i + 1).unwrap_or(0);
+
+        let filename_raw = &raw[raw_dir_end..];
+        let middle = filename_raw
+          .strip_suffix(&unescaped_post)
+          .unwrap_or(filename_raw);
+        let middle_escaped = escape_str(middle, false);
+
+        format!("{}{middle_escaped}{postfix}", &prefix[..typed_dir_end])
+      } else {
+        escape_str(&raw, false)
       };
 
       // glob strips this, we have to add it back
@@ -914,7 +948,7 @@ impl BashCompSpec {
       .map(Candidate::from)
       .collect();
 
-    let comp_add: Vec<Candidate> = write_meta(|m| m.take_comp_candidates())
+    let comp_add: Vec<Candidate> = Shed::meta_mut(|m| m.take_comp_candidates())
       .into_iter()
       .filter(|c| {
         log::debug!(
@@ -981,11 +1015,7 @@ impl CompSpec for BashCompSpec {
     candidates = candidates
       .into_iter()
       .map(|mut c| {
-        let tail = c
-          .content
-          .strip_prefix(&stripped)
-          .unwrap_or_default()
-          .to_string();
+        let tail = c.strip_prefix(&stripped).unwrap_or_default();
         c.content = format!("{prefix}{tail}");
         c
       })
@@ -1324,7 +1354,7 @@ impl FuzzySelector {
       prompt_cursor_col: 0,
       hovered: None,
       title: title.into(),
-      _mouse_guard: with_term(|t| t.mouse_support_guard(true)).ok(),
+      _mouse_guard: Shed::term_mut(|t| t.mouse_support_guard(true)).ok(),
     }
   }
 
@@ -1539,7 +1569,7 @@ impl FuzzySelector {
 
   pub fn draw(&mut self) -> ShResult<usize> {
     self.row_map.clear();
-    let (cols, top_left) = with_term(|t| {
+    let (cols, top_left) = Shed::term_mut(|t| {
       (
         t.t_cols(),
         t.get_cursor_pos()
@@ -1612,8 +1642,8 @@ impl FuzzySelector {
     let desc_col_width = visible
       .iter()
       .filter(|sc| sc.candidate.desc.is_some())
-      .filter_map(|sc| sc.candidate.content().trim_end().lines().next())
-      .map(calc_str_width)
+      .map(|sc| sc.candidate.display())
+      .filter_map(|s| s.trim_end().lines().next().map(calc_str_width))
       .max()
       .unwrap_or(0)
       .min(MAX_DESC_COL);
@@ -1635,7 +1665,8 @@ impl FuzzySelector {
       let mut drew_number = false;
 
       let mut first = true;
-      for line in s_cand.candidate.content().trim_end().lines() {
+      let display = s_cand.candidate.display();
+      for line in display.trim_end().lines() {
         if lines_drawn >= max_height {
           break;
         }
@@ -1717,7 +1748,7 @@ impl FuzzySelector {
 
   pub fn clear(&mut self) -> ShResult<()> {
     if let Some(layout) = self.old_layout.take() {
-      let new_cols = with_term(|t| t.t_cols());
+      let new_cols = Shed::term(|t| t.t_cols());
       let total_cells = layout.rows * layout.cols;
       let physical_rows = if new_cols > 0 {
         total_cells.div_ceil(new_cols)
@@ -2047,7 +2078,7 @@ impl SimpleCompleter {
       return Ok(CompSpecResult::NoSpec);
     };
 
-    let Some(spec) = read_meta(|m| m.get_comp_spec(cmd)) else {
+    let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) else {
       return Ok(CompSpecResult::NoSpec);
     };
 
@@ -2473,8 +2504,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::util::with_term(|t| t.feed_bytes(b"echo hello\t"));
-    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
+    Shed::term_mut(|t| t.feed_bytes(b"echo hello\t"));
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2496,8 +2527,8 @@ mod tests {
     std::env::set_current_dir(&tmp).unwrap();
 
     // User types "echo my\ " with the space already escaped
-    crate::state::util::with_term(|t| t.feed_bytes(b"echo my\\ \t"));
-    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
+    Shed::term_mut(|t| t.feed_bytes(b"echo my\\ \t"));
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2657,8 +2688,8 @@ mod tests {
     std::env::set_current_dir(&tmp).unwrap();
 
     // Type "echo unique_shed_test" then press Tab
-    crate::state::util::with_term(|t| t.feed_bytes(b"echo unique_shed_test\t"));
-    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
+    Shed::term_mut(|t| t.feed_bytes(b"echo unique_shed_test\t"));
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2678,8 +2709,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::util::with_term(|t| t.feed_bytes(b"cd mysub\t"));
-    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
+    Shed::term_mut(|t| t.feed_bytes(b"cd mysub\t"));
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();
@@ -2700,8 +2731,8 @@ mod tests {
     let (mut vi, _g) = test_vi("");
     std::env::set_current_dir(&tmp).unwrap();
 
-    crate::state::util::with_term(|t| t.feed_bytes(b"cmd --opt=eqf\t"));
-    let keys = crate::state::util::with_term(|t| t.drain_keys()).unwrap();
+    Shed::term_mut(|t| t.feed_bytes(b"cmd --opt=eqf\t"));
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     let _ = vi.process_input(keys);
 
     let line = vi.editor.joined();

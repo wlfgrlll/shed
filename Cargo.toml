@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/shed_macros"]
+resolver = "2"
+
 [package]
 name = "shed"
 description = "A linux shell written in rust"
@@ -10,6 +14,7 @@ edition = "2024"
 strip = true
 
 [dependencies]
+shed_macros = { path = "./crates/shed_macros" }
 ariadne = "0.6.0"
 bitflags = { version = "2.11.1", features = ["serde"] }
 chrono = "0.4.44"

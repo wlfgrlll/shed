@@ -1,11 +1,9 @@
 use chrono::{DateTime, Local};
 
-use crate::{
-  builtin::join_raw_args,
+use super::{
+  Shed,
   getopt::{Opt, OptSpec},
-  outln, sherr,
-  state::util::read_meta,
-  status_msg, system_msg,
+  join_raw_args, outln, sherr, status_msg, system_msg,
   util::{ShResult, with_status},
 };
 
@@ -37,7 +35,7 @@ impl super::Builtin for Msg {
 
     if args.argv.is_empty() {
       // argv is empty, maybe they want us to list past messages?
-      read_meta(|m| -> ShResult<()> {
+      Shed::meta(|m| -> ShResult<()> {
         let history = if system {
           m.system_msg_history()
         } else {

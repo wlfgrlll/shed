@@ -31,14 +31,14 @@ use term::{clear_rows, move_cursor_to_end, redraw};
 
 use super::{
   autocmd,
-  expand::{expand_keymap, expand_prompt},
+  expand::{self, expand_keymap, expand_prompt},
   flush_term, key,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
-  motion, sherr,
+  match_loop, motion, parse, procio, sherr, shopt,
   state::{
     self, Shed,
     terminal::{calc_str_width, truncate_with_ellipsis},
-    util::{read_logic, read_shopts, with_term, with_vars, write_meta},
+    util::with_vars,
     vars::{Var, VarFlags, VarKind},
   },
   status_msg,
@@ -168,7 +168,7 @@ pub(super) struct StatusLine {
 
 impl StatusLine {
   pub fn new() -> Self {
-    let (left_raw, middle_raw, right_raw) = read_shopts(|o| {
+    let (left_raw, middle_raw, right_raw) = Shed::shopts(|o| {
       let s = &o.statline;
       (
         s.left_string.clone(),
@@ -176,11 +176,11 @@ impl StatusLine {
         s.right_string.clone(),
       )
     });
-    let saved_status = state::util::get_status();
+    let saved_status = state::Shed::get_status();
     let left = expand_prompt(&left_raw).unwrap_or(left_raw.clone());
     let middle = expand_prompt(&middle_raw).unwrap_or(middle_raw.clone());
     let right = expand_prompt(&right_raw).unwrap_or(right_raw.clone());
-    state::util::set_status(saved_status);
+    state::Shed::set_status(saved_status);
 
     Self {
       left,
@@ -256,7 +256,7 @@ impl Prompt {
       return Self::default();
     };
     // PS1 expansion may involve running commands (e.g., for \h or \W), which can modify shell state
-    let saved_status = state::util::get_status();
+    let saved_status = state::Shed::get_status();
 
     let Ok(ps1_expanded) = expand_prompt(&ps1_raw) else {
       return Self::default();
@@ -270,7 +270,7 @@ impl Prompt {
       .flatten();
 
     // Restore shell state after prompt expansion, since it may have been modified by command substitutions in the prompt
-    state::util::set_status(saved_status);
+    state::Shed::set_status(saved_status);
 
     autocmd!(PostPrompt);
 
@@ -288,9 +288,9 @@ impl Prompt {
     &self.ps1_expanded
   }
   fn refresh_now(&mut self) {
-    let saved_status = state::util::get_status();
+    let saved_status = state::Shed::get_status();
     *self = Self::new();
-    state::util::set_status(saved_status);
+    state::Shed::set_status(saved_status);
     self.dirty = false;
   }
 
@@ -401,7 +401,7 @@ impl ShedLine {
   }
 
   fn new_private(prompt: Prompt, with_hist: bool) -> ShResult<Self> {
-    let statline = read_shopts(|o| o.statline.enable).then(StatusLine::new);
+    let statline = Shed::shopts(|o| o.statline.enable).then(StatusLine::new);
 
     let history = if with_hist {
       if let Some(conn) = state::util::get_db_conn() {
@@ -417,7 +417,7 @@ impl ShedLine {
     } else {
       History::empty("ex_history")
     };
-    let mode = if read_shopts(|o| o.set.vi) {
+    let mode = if Shed::shopts(|o| o.set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
       Box::new(Emacs::new()) as Box<dyn EditMode>
@@ -517,7 +517,7 @@ impl ShedLine {
       line.refresh();
     }
     self.editor = Default::default();
-    let mut mode = if read_shopts(|o| o.set.vi) {
+    let mut mode = if Shed::shopts(|o| o.set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
       Box::new(Emacs::new()) as Box<dyn EditMode>
@@ -528,7 +528,7 @@ impl ShedLine {
       self.old_layout = None;
     }
     if self.statline.is_none() {
-      self.statline = read_shopts(|o| o.statline.enable).then(StatusLine::new);
+      self.statline = Shed::shopts(|o| o.statline.enable).then(StatusLine::new);
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
@@ -562,9 +562,9 @@ impl ShedLine {
 
   /// This method ensures that the editing mode (Vi or Emacs) matches the 'vi' option, and switches modes if necessary.
   pub fn fix_editing_mode(&mut self) {
-    if read_shopts(|o| o.set.vi) && self.mode.report_mode() == ModeReport::Emacs {
+    if Shed::shopts(|o| o.set.vi) && self.mode.report_mode() == ModeReport::Emacs {
       self.swap_mode(&mut (Box::new(ViInsert::new()) as Box<dyn EditMode>));
-    } else if !read_shopts(|o| o.set.vi) && self.mode.report_mode() != ModeReport::Emacs {
+    } else if !Shed::shopts(|o| o.set.vi) && self.mode.report_mode() != ModeReport::Emacs {
       self.swap_mode(&mut (Box::new(Emacs::new()) as Box<dyn EditMode>));
     }
   }
@@ -726,7 +726,7 @@ impl ShedLine {
     let keymap_flags = self.curr_keymap_flags();
     self.pending_keymap.push(key.clone());
 
-    let mut matches = read_logic(|l| l.keymaps_filtered(keymap_flags, &self.pending_keymap));
+    let mut matches = Shed::logic(|l| l.keymaps_filtered(keymap_flags, &self.pending_keymap));
     let is_exact =
       matches.len() == 1 && matches[0].compare(&self.pending_keymap) == KeyMapMatch::IsExact;
 
@@ -795,7 +795,7 @@ impl ShedLine {
       self.needs_redraw = false;
     }
     let line_data = self.get_line_data();
-    write_meta(|m| m.notify_line_edit(line_data)).ok();
+    Shed::meta_mut(|m| m.notify_line_edit(line_data)).ok();
 
     Ok(ReadlineEvent::Pending)
   }
@@ -947,7 +947,7 @@ impl ShedLine {
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
-          with_term(|t| t.send_bell()).ok();
+          Shed::term_mut(|t| t.send_bell()).ok();
         }
       }
     }
@@ -1009,7 +1009,7 @@ impl ShedLine {
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
-          with_term(|t| t.send_bell()).ok();
+          Shed::term_mut(|t| t.send_bell()).ok();
         }
       }
     }
@@ -1033,7 +1033,7 @@ impl ShedLine {
     if let Some(layout) = &self.old_layout {
       move_cursor_to_end(layout)?;
     }
-    if read_shopts(|o| o.line.trim_on_submit) {
+    if Shed::shopts(|o| o.line.trim_on_submit) {
       self.editor.trim();
     }
     write_term!("\n").ok();
@@ -1083,7 +1083,7 @@ impl ShedLine {
     if self.should_grab_history(&cmd) {
       let offset = cmd.history_scroll_offset().unwrap();
 
-      if read_shopts(|o| o.prompt.hist_cat)
+      if Shed::shopts(|o| o.prompt.hist_cat)
         && cmd
           .flags
           .intersects(CmdFlags::HAS_SHIFT | CmdFlags::HAS_CTRL)
@@ -1178,7 +1178,7 @@ impl ShedLine {
 
     self.exec_cmd(cmd, false)?;
 
-    if let Some(keys) = write_meta(|m| m.take_pending_widget_keys()) {
+    if let Some(keys) = Shed::meta_mut(|m| m.take_pending_widget_keys()) {
       self.replay_keys(keys, false)?;
     }
     let after = self.editor.joined();
@@ -1187,7 +1187,7 @@ impl ShedLine {
     if before != after {
       self.history.mark_mask_stale();
     } else if before == after && has_edit_verb {
-      with_term(|t| t.send_bell()).ok();
+      Shed::term_mut(|t| t.send_bell()).ok();
     } else if before_cursor == after_cursor && is_ctrl_d_motion {
       if self.ctrl_d_warning_counter == 3 || self.editor.is_empty() {
         // our silly user is spamming ctrl+d for some reason
@@ -1250,17 +1250,17 @@ impl ShedLine {
         // scrolling the whole region's worth of content into scrollback and
         // parking the cursor at the bottom of the region. The next redraw
         // renders the prompt at the bottom, above the status line.
-        if let Some((top, bottom)) = with_term(|t| t.scroll_region()) {
+        if let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region()) {
           let region_height = (bottom.saturating_sub(top) + 1) as usize;
-          with_term(|t| t.scroll_up(region_height)).ok();
-          with_term(|t| t.move_cursor_abs(bottom, 1));
+          Shed::term_mut(|t| t.scroll_up(region_height)).ok();
+          Shed::term_mut(|t| t.move_cursor_abs(bottom, 1));
           self.old_layout = None; // stale after manual cursor move
           self.needs_redraw = true;
           return Ok(None);
         }
 
         // Original behavior: scroll just enough to put the prompt at row 1.
-        let cursor_row = with_term(|t| t.get_cursor_pos())
+        let cursor_row = Shed::term_mut(|t| t.get_cursor_pos())
           .ok()
           .flatten()
           .map(|(r, _)| r.0)
@@ -1272,7 +1272,7 @@ impl ShedLine {
         let scroll_amount = prompt_top.saturating_sub(1);
 
         if scroll_amount > 0 {
-          with_term(|t| t.scroll_up(scroll_amount)).ok();
+          Shed::term_mut(|t| t.scroll_up(scroll_amount)).ok();
           // Move cursor up to track the prompt's new position
           flush_term!("\x1b[{scroll_amount}A")?;
         }
@@ -1317,7 +1317,7 @@ impl ShedLine {
           self.update_editor_hint();
 
           Ok(None)
-        } else if self.should_submit()? || !read_shopts(|o| o.line.linebreak_on_incomplete) {
+        } else if self.should_submit()? || !Shed::shopts(|o| o.line.linebreak_on_incomplete) {
           self.submit()
         } else {
           self.run_cmd(cmd)
@@ -1329,7 +1329,7 @@ impl ShedLine {
 
   fn get_layout(&mut self, line: &str) -> Layout {
     let to_cursor = self.editor.window_slice_to_cursor().unwrap_or_default();
-    let cols = with_term(|t| t.t_cols());
+    let cols = Shed::term(|t| t.t_cols());
     Layout::from_parts(cols, self.prompt.get_ps1(), &to_cursor, line)
   }
   fn scroll_history_virtual(&mut self, cmd: EditCmd) {
@@ -1414,7 +1414,7 @@ impl ShedLine {
         // if count >= 0, we are scrolling down
         // but if we are here, it means we are already at the pending command,
         // so return and bell
-        with_term(|t| t.send_bell()).ok();
+        Shed::term_mut(|t| t.send_bell()).ok();
         return;
       }
       // We are scrolling up from a pending command
@@ -1443,7 +1443,7 @@ impl ShedLine {
       // If we are here it should mean we are on our pending command
       // And the user tried to scroll history down
       // Since there is no "future" history, we should just bell and do nothing
-      with_term(|t| t.send_bell()).ok();
+      Shed::term_mut(|t| t.send_bell()).ok();
       return;
     }
     let clamp = self.mode.clamp_cursor();
@@ -1508,7 +1508,7 @@ impl ShedLine {
         prompt_string_right.map(|psr| psr.lines().next().unwrap_or_default().to_string());
     }
 
-    let t_cols = with_term(|t| t.t_cols());
+    let t_cols = Shed::term(|t| t.t_cols());
     let row0_used = self
       .prompt
       .get_ps1()
@@ -1555,7 +1555,7 @@ impl ShedLine {
 
       let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
 
-      if with_term(|t| t.scroll_region()).is_some() {
+      if Shed::term(|t| t.scroll_region()).is_some() {
         let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
         let mut new_h = new_layout.end.row as i32 + predicted_overlay_rows as i32;
         if has_sub_editor {
@@ -1576,7 +1576,7 @@ impl ShedLine {
             let scroll_needed = diff_u.saturating_sub(consume);
             if scroll_needed > 0 {
               // pushes existing content upward
-              with_term(|t| t.scroll_up(scroll_needed as usize)).ok();
+              Shed::term_mut(|t| t.scroll_up(scroll_needed as usize)).ok();
             }
             // take needed space
             write_term!("\x1b[{diff_u}A")?;
@@ -1681,9 +1681,9 @@ impl ShedLine {
     if let Some(statline) = self.statline.as_mut()
       && !final_draw
     {
-      let cols = with_term(|t| t.t_cols());
+      let cols = Shed::term(|t| t.t_cols());
       let rendered = statline.render(cols);
-      with_term(|t| t.draw_status_line(&rendered));
+      Shed::term_mut(|t| t.draw_status_line(&rendered));
     }
 
     // write sub-prompts for stuff like ex mode
@@ -1717,7 +1717,7 @@ impl ShedLine {
       write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
     }
 
-    while let Some(msg) = write_meta(|m| m.pop_status_message()) {
+    while let Some(msg) = Shed::meta_mut(|m| m.pop_status_message()) {
       let now = Instant::now();
       self.status_msgs.push_back((msg, now));
     }
@@ -1733,7 +1733,7 @@ impl ShedLine {
           // even if the user isn't typing.
           let diff = 5000.0 - time.elapsed().as_millis() as f64;
           let timeout = PollTimeout::try_from(diff.max(0.0) as i32).unwrap_or(PollTimeout::NONE);
-          write_meta(|m| m.set_poll_timeout(Some(timeout)));
+          Shed::meta_mut(|m| m.set_poll_timeout(Some(timeout)));
           // Reserved row is single-line; if the message has multiple lines,
           // show only the first one.
           msg.lines().next().unwrap_or("").to_string()
@@ -1744,7 +1744,7 @@ impl ShedLine {
       } else {
         String::new()
       };
-      with_term(|t| t.draw_status_message(&content));
+      Shed::term_mut(|t| t.draw_status_message(&content));
     }
 
     self.old_layout = Some(new_layout);
@@ -1816,7 +1816,7 @@ impl ShedLine {
         Verb::ExMode => Box::new(ViEx::new(self.editor.is_selecting())),
 
         Verb::VerbatimMode => {
-          with_term(|t| t.verbatim_single(true));
+          Shed::term_mut(|t| t.verbatim_single(true));
           Box::new(ViVerbatim::new().with_count(count as u16))
         }
 

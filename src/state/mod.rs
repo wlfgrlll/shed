@@ -1,29 +1,27 @@
 use rusqlite::Connection;
 use std::{
   cell::RefCell,
+  collections::VecDeque,
   os::fd::BorrowedFd,
   sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicI32},
+    atomic::{AtomicI32, Ordering},
   },
 };
 
 use super::{
-  autocmd, keys, match_loop, parse, sherr, shopt, signal,
-  util::{ShErr, ShResult},
+  WtStat, autocmd, keys, match_loop, parse, procio, readline, sherr, shopt, signal,
+  state::vars::{VarFlags, VarKind},
+  util::{ShErr, ShErrKind, ShResult},
 };
 
-pub(super) mod jobs;
+pub mod jobs;
 pub(super) mod logic;
 pub(super) mod meta;
 pub(super) mod scopes;
 pub(super) mod terminal;
 pub(super) mod util;
 pub(super) mod vars;
-pub(super) use util::get_status;
-
-pub(super) static INTERACTIVE: AtomicBool = AtomicBool::new(false);
-pub(super) static STATUS_CODE: AtomicI32 = AtomicI32::new(0);
 
 thread_local! {
   static SHED: Shed = Shed::new();
@@ -43,7 +41,7 @@ pub(super) struct Shed {
   terminal: RefCell<terminal::Terminal>,
   shopts: RefCell<shopt::ShOpts>,
   db_conn: OnceLock<Option<Arc<Connection>>>,
-  status_code: i32,
+  status_code: AtomicI32,
 
   #[cfg(test)]
   saved: RefCell<Option<Box<Self>>>,
@@ -59,7 +57,7 @@ impl Shed {
       terminal: RefCell::new(terminal::Terminal::new()),
       shopts: RefCell::new(shopt::ShOpts::default()),
       db_conn: OnceLock::new(),
-      status_code: 0,
+      status_code: AtomicI32::new(0),
 
       #[cfg(test)]
       saved: RefCell::new(None),
@@ -131,6 +129,60 @@ impl Shed {
     SHED.with(|shed| f(&mut shed.shopts.borrow_mut()))
   }
 
+  #[track_caller]
+  pub fn term<T, F: FnOnce(&terminal::Terminal) -> T>(f: F) -> T {
+    let caller = std::panic::Location::caller();
+    SHED.with(|shed| {
+      let term = shed
+        .terminal
+        .try_borrow()
+        .unwrap_or_else(|_| panic!("with_term: RefCell already borrowed (called from {caller})"));
+      f(&term)
+    })
+  }
+  #[track_caller]
+  pub fn term_mut<T, F: FnOnce(&mut terminal::Terminal) -> T>(f: F) -> T {
+    let caller = std::panic::Location::caller();
+    SHED.with(|shed| {
+      let mut term = shed
+        .terminal
+        .try_borrow_mut()
+        .unwrap_or_else(|_| panic!("with_term: RefCell already borrowed (called from {caller})"));
+      f(&mut term)
+    })
+  }
+
+  pub fn get_status() -> i32 {
+    SHED.with(|shed| shed.status_code.load(Ordering::Relaxed))
+  }
+  pub fn set_status(code: i32) {
+    SHED.with(|shed| shed.status_code.store(code, Ordering::Relaxed));
+  }
+  pub fn set_status_from_bool(code: bool) {
+    Self::set_status(if code { 0 } else { 1 })
+  }
+  pub fn set_pipe_status(stats: &[WtStat]) -> ShResult<()> {
+    if let Some(pipe_status) = jobs::Job::pipe_status(stats) {
+      let pipe_status = pipe_status
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect::<VecDeque<String>>();
+
+      Self::vars_mut(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::empty()))?;
+    }
+    Ok(())
+  }
+
+  #[cfg(test)]
+  pub fn save_state() {
+    SHED.with(|shed| shed.save())
+  }
+
+  #[cfg(test)]
+  pub fn restore_state() {
+    SHED.with(|shed| shed.restore())
+  }
+
   #[cfg(test)]
   fn clone_db_conn(&self) -> OnceLock<Option<Arc<Connection>>> {
     let lock = OnceLock::new();
@@ -159,7 +211,7 @@ impl Shed {
       db_conn: self.clone_db_conn(),
       terminal: RefCell::new(self.terminal.borrow().clone()),
       saved: RefCell::new(None),
-      status_code: self.status_code,
+      status_code: AtomicI32::new(self.status_code.load(Ordering::Relaxed)),
     };
     *self.saved.borrow_mut() = Some(Box::new(saved));
   }

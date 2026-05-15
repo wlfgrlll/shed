@@ -288,7 +288,7 @@ mod tests {
   fn push_no_array_name() {
     let _guard = TestGuard::new();
     test_input("push").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== fpush =====================
@@ -361,7 +361,7 @@ mod tests {
     set_arr("arr", &[]);
 
     test_input("pop arr").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   #[test]
@@ -369,7 +369,7 @@ mod tests {
     let _guard = TestGuard::new();
 
     test_input("pop nosucharray").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   // ===================== fpop =====================
@@ -496,10 +496,10 @@ mod tests {
     set_arr("arr", &["x", "y"]);
 
     test_input("pop arr").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
     test_input("pop arr").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
     test_input("pop arr").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 }

@@ -8,11 +8,7 @@ use super::{
   out, outln,
   readline::{BashCompSpec, Candidate, CompContext, CompSpec},
   sherr,
-  state::{
-    Shed,
-    util::{read_meta, write_meta},
-    vars::VarKind,
-  },
+  state::{Shed, vars::VarKind},
   with_status,
 };
 
@@ -76,7 +72,7 @@ impl super::Builtin for Complete {
 
     if comp_opts.flags.contains(CompFlags::PRINT) {
       if args.argv.is_empty() {
-        read_meta(|m| -> ShResult<()> {
+        Shed::meta(|m| -> ShResult<()> {
           let specs = m.comp_specs().values();
           for spec in specs {
             outln!("{}", spec.source());
@@ -84,7 +80,7 @@ impl super::Builtin for Complete {
           Ok(())
         })?;
       } else {
-        read_meta(|m| -> ShResult<()> {
+        Shed::meta(|m| -> ShResult<()> {
           for (cmd, _) in &args.argv {
             if let Some(spec) = m.comp_specs().get(cmd) {
               out!("{}", spec.source());
@@ -98,7 +94,7 @@ impl super::Builtin for Complete {
     }
 
     if comp_opts.flags.contains(CompFlags::REMOVE) {
-      write_meta(|m| {
+      Shed::meta_mut(|m| {
         for (cmd, _) in &args.argv {
           m.remove_comp_spec(cmd);
         }
@@ -117,7 +113,7 @@ impl super::Builtin for Complete {
     let comp_spec = BashCompSpec::from_comp_opts(comp_opts).with_source(src);
 
     for (cmd, _) in args.argv {
-      write_meta(|m| m.set_comp_spec(cmd, Box::new(comp_spec.clone())));
+      Shed::meta_mut(|m| m.set_comp_spec(cmd, Box::new(comp_spec.clone())));
     }
 
     with_status(0)
@@ -269,7 +265,7 @@ impl super::Builtin for Compadd {
       }
     }
 
-    write_meta(|m| {
+    Shed::meta_mut(|m| {
       for candidate in described {
         m.comp_add(candidate);
       }
@@ -353,7 +349,6 @@ mod tests {
   use crate::{
     state::{
       self, Shed,
-      util::{read_meta, write_meta},
       vars::{VarFlags, VarKind},
     },
     tests::testutil::{TestGuard, test_input},
@@ -368,7 +363,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -W 'foo bar baz' mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
   }
 
@@ -377,7 +372,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -f mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
   }
 
@@ -386,7 +381,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -d mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
   }
 
@@ -395,8 +390,8 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -W 'x y' cmd1 cmd2").unwrap();
 
-    assert!(read_meta(|m| m.get_comp_spec("cmd1")).is_some());
-    assert!(read_meta(|m| m.get_comp_spec("cmd2")).is_some());
+    assert!(Shed::meta(|m| m.get_comp_spec("cmd1")).is_some());
+    assert!(Shed::meta(|m| m.get_comp_spec("cmd2")).is_some());
   }
 
   #[test]
@@ -404,7 +399,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -F _my_comp mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
   }
 
@@ -413,7 +408,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("complete -f -d -v mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
   }
 
@@ -423,7 +418,7 @@ mod tests {
     test_input("complete -W 'old' mycmd").unwrap();
     test_input("complete -W 'new' mycmd").unwrap();
 
-    let spec = read_meta(|m| m.get_comp_spec("mycmd"));
+    let spec = Shed::meta(|m| m.get_comp_spec("mycmd"));
     assert!(spec.is_some());
     // Verify the source reflects the latest registration
     assert!(spec.unwrap().source().contains("new"));
@@ -433,7 +428,7 @@ mod tests {
   fn complete_no_command_fails() {
     let _g = TestGuard::new();
     test_input("complete -W 'foo'").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== complete -r: Removal =====================
@@ -442,10 +437,10 @@ mod tests {
   fn complete_remove_spec() {
     let _g = TestGuard::new();
     test_input("complete -W 'foo' mycmd").unwrap();
-    assert!(read_meta(|m| m.get_comp_spec("mycmd")).is_some());
+    assert!(Shed::meta(|m| m.get_comp_spec("mycmd")).is_some());
 
     test_input("complete -r mycmd").unwrap();
-    assert!(read_meta(|m| m.get_comp_spec("mycmd")).is_none());
+    assert!(Shed::meta(|m| m.get_comp_spec("mycmd")).is_none());
   }
 
   #[test]
@@ -455,8 +450,8 @@ mod tests {
     test_input("complete -W 'b' cmd2").unwrap();
 
     test_input("complete -r cmd1 cmd2").unwrap();
-    assert!(read_meta(|m| m.get_comp_spec("cmd1")).is_none());
-    assert!(read_meta(|m| m.get_comp_spec("cmd2")).is_none());
+    assert!(Shed::meta(|m| m.get_comp_spec("cmd1")).is_none());
+    assert!(Shed::meta(|m| m.get_comp_spec("cmd2")).is_none());
   }
 
   #[test]
@@ -464,7 +459,7 @@ mod tests {
     let _g = TestGuard::new();
     // Removing a spec that doesn't exist should not error
     test_input("complete -r nosuchcmd").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== complete -p: Print =====================
@@ -500,21 +495,21 @@ mod tests {
   fn complete_option_default() {
     let _g = TestGuard::new();
     test_input("complete -o default -W 'foo' mycmd").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn complete_option_dirnames() {
     let _g = TestGuard::new();
     test_input("complete -o dirnames -W 'foo' mycmd").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn complete_option_invalid() {
     let _g = TestGuard::new();
     test_input("complete -o bogus -W 'foo' mycmd").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== compgen -W: Word list =====================
@@ -669,14 +664,14 @@ mod tests {
   fn complete_status_zero() {
     let _g = TestGuard::new();
     test_input("complete -W 'x' mycmd").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn compgen_status_zero() {
     let _g = TestGuard::new();
     test_input("compgen -W 'hello'").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== compadd =====================
@@ -685,7 +680,7 @@ mod tests {
   fn compadd_basic_words() {
     let _g = TestGuard::new();
     test_input("compadd a b c").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["a", "b", "c"]);
     for c in &cands {
@@ -698,7 +693,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("compadd a b").unwrap();
     test_input("compadd c d").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["a", "b", "c", "d"]);
   }
@@ -708,8 +703,8 @@ mod tests {
     // After draining, a fresh take should return empty.
     let _g = TestGuard::new();
     test_input("compadd x y").unwrap();
-    let _ = write_meta(|m| m.take_comp_candidates());
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let _ = Shed::meta_mut(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert!(cands.is_empty(), "candidates should reset after take");
   }
 
@@ -717,7 +712,7 @@ mod tests {
   fn compadd_prefix() {
     let _g = TestGuard::new();
     test_input("compadd -P 'pre_' a b").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["pre_a", "pre_b"]);
   }
@@ -726,7 +721,7 @@ mod tests {
   fn compadd_suffix() {
     let _g = TestGuard::new();
     test_input("compadd -S '_suf' a b").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["a_suf", "b_suf"]);
   }
@@ -735,7 +730,7 @@ mod tests {
   fn compadd_prefix_and_suffix() {
     let _g = TestGuard::new();
     test_input("compadd -P 'p.' -S '=' x y").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["p.x=", "p.y="]);
   }
@@ -745,7 +740,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("words=(alpha beta gamma)").unwrap();
     test_input("compadd -a words").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["alpha", "beta", "gamma"]);
   }
@@ -756,7 +751,7 @@ mod tests {
     test_input("words=(a b c)").unwrap();
     test_input("descs=(\"first\" \"second\" \"third\")").unwrap();
     test_input("compadd -d descs -a words").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 3);
     assert_eq!(cands[0].content(), "a");
     assert_eq!(cands[0].desc(), Some("first"));
@@ -773,7 +768,7 @@ mod tests {
     test_input("words=(a b)").unwrap();
     test_input("descs=(\"first\" \"second\" \"third\")").unwrap();
     test_input("compadd -d descs -a words").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 2);
     assert_eq!(cands[0].desc(), Some("first"));
     assert_eq!(cands[1].desc(), Some("second"));
@@ -786,7 +781,7 @@ mod tests {
     test_input("words=(a b c d)").unwrap();
     test_input("descs=(\"only\")").unwrap();
     test_input("compadd -d descs -a words").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 4);
     assert_eq!(cands[0].desc(), Some("only"));
     assert_eq!(cands[1].desc(), None);
@@ -799,7 +794,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("words=(x y)").unwrap();
     test_input("compadd -P 'opt.' -S '=' -a words").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["opt.x=", "opt.y="]);
   }
@@ -808,7 +803,7 @@ mod tests {
   fn compadd_status_zero() {
     let _g = TestGuard::new();
     test_input("compadd a b c").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== compadd -A (assoc-array source) =====================
@@ -818,7 +813,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A m=([alpha]=\"first letter\" [beta]=\"second letter\")").unwrap();
     test_input("compadd -A m").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 2);
     let map: std::collections::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
@@ -833,7 +828,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A m=([gamma]=g [alpha]=a [beta]=b)").unwrap();
     test_input("compadd -A m").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let order: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(order, vec!["gamma", "alpha", "beta"]);
   }
@@ -843,7 +838,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A m=([n]=normal [i]=insert)").unwrap();
     test_input("compadd -P '-' -S 'X' -A m").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let map: std::collections::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
     assert_eq!(map["-nX"], Some("normal"));
@@ -858,7 +853,7 @@ mod tests {
     test_input("descs=(\"P desc\" \"Q desc\")").unwrap();
     test_input("declare -A m=([r]=\"R desc\" [s]=\"S desc\")").unwrap();
     test_input("compadd -a words -d descs -A m").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 4);
     let map: std::collections::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
@@ -874,7 +869,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A m=([y]=yes [n]=no)").unwrap();
     test_input("compadd -A m maybe").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert_eq!(cands.len(), 3);
     let contents: std::collections::HashSet<&str> = cands.iter().map(|c| c.content()).collect();
     assert!(contents.contains("y"));
@@ -887,7 +882,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A m").unwrap();
     test_input("compadd -A m").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     assert!(cands.is_empty(), "got {cands:?}");
   }
 
@@ -897,7 +892,7 @@ mod tests {
     // doesn't exist at all) should just contribute nothing.
     let _g = TestGuard::new();
     test_input("compadd -A nonexistent_var fallback").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["fallback"]);
   }
@@ -909,7 +904,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("not_assoc=hello").unwrap();
     test_input("compadd -A not_assoc fallback").unwrap();
-    let cands = write_meta(|m| m.take_comp_candidates());
+    let cands = Shed::meta_mut(|m| m.take_comp_candidates());
     let contents: Vec<&str> = cands.iter().map(|c| c.content()).collect();
     assert_eq!(contents, vec!["fallback"]);
   }

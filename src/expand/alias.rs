@@ -1,8 +1,10 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::keys::{KeyCode, KeyEvent, ModKeys};
-use crate::parse::lex::{LexFlags, LexStream, Tk, TkFlags};
-use crate::state::{util::read_logic, util::read_shopts};
+use super::{
+  keys::{KeyCode, KeyEvent, ModKeys},
+  parse::lex::{LexFlags, LexStream, Tk, TkFlags},
+  state::Shed,
+};
 
 struct AliasExpander<'a> {
   input: String,
@@ -41,7 +43,7 @@ impl<'a> AliasExpander<'a> {
         continue;
       }
 
-      let Some(alias) = read_logic(|l| l.aliases().get(word).cloned()) else {
+      let Some(alias) = Shed::logic(|l| l.aliases().get(word).cloned()) else {
         continue;
       };
 
@@ -113,7 +115,7 @@ pub fn expand_keymap(s: &str) -> Vec<KeyEvent> {
             }
             '>' => {
               if alias.eq_ignore_ascii_case("leader") {
-                let mut leader = read_shopts(|o| o.prompt.leader.clone());
+                let mut leader = Shed::shopts(|o| o.prompt.leader.clone());
                 if leader == "\\" {
                   leader.push('\\');
                 }
@@ -178,7 +180,6 @@ pub fn parse_key_alias(alias: &str) -> Option<KeyEvent> {
 mod tests {
   use super::*;
   use crate::parse::lex::Span;
-  use crate::state::util::write_logic;
   use crate::tests::testutil::TestGuard;
 
   // ===================== parse_key_alias =====================
@@ -318,7 +319,7 @@ mod tests {
   fn alias_simple() {
     let _guard = TestGuard::new();
     let dummy_span = Span::default();
-    write_logic(|l| l.insert_alias("ll", "ls -la", dummy_span.clone()));
+    Shed::logic_mut(|l| l.insert_alias("ll", "ls -la", dummy_span.clone()));
 
     let result = expand_aliases("ll".to_string());
     assert_eq!(result, "ls -la");
@@ -328,7 +329,7 @@ mod tests {
   fn alias_circular_prevention() {
     let _guard = TestGuard::new();
     let dummy_span = Span::default();
-    write_logic(|l| l.insert_alias("foo", "foo --verbose", dummy_span.clone()));
+    Shed::logic_mut(|l| l.insert_alias("foo", "foo --verbose", dummy_span.clone()));
 
     let result = expand_aliases("foo".to_string());
     // After first expansion: "foo --verbose", then "foo" is in already_expanded

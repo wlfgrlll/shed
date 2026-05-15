@@ -15,15 +15,17 @@ pub(super) use escape::{
   as_var_val_display, escape_glob, escape_str, read_hex, read_octal, read_stty_escape,
   unescape_heredoc, unescape_str,
 };
-use markers::strip_markers;
 pub(super) use prompt::expand_prompt;
 pub(super) use util::{expand_case_pattern, glob_to_regex};
 pub(super) use var::{expand_glob, expand_raw, expand_raw_inner};
 
 use super::{
-  match_loop,
-  parse::lex::{Tk, TkFlags, TkRule},
-  state::{self, util::read_shopts},
+  Shed, keys, match_loop,
+  parse::{
+    self,
+    lex::{Tk, TkFlags, TkRule},
+  },
+  state, status_msg,
   util::{ShResult, ShResultExt},
 };
 
@@ -136,7 +138,7 @@ impl Expander {
       );
     }
 
-    let nullglob = read_shopts(|o| o.core.nullglob);
+    let nullglob = Shed::shopts(|o| o.core.nullglob);
     let mut glob_words = Vec::with_capacity(words.len());
 
     for word in words {
@@ -150,7 +152,7 @@ impl Expander {
       }
 
       for exp in expansions {
-        let exp = crate::expand::var::restore_glob_prefix(&word, exp);
+        let exp = var::restore_glob_prefix(&word, exp);
         glob_words.push(escape::strip_escape_markers(&exp));
       }
     }
@@ -160,11 +162,11 @@ impl Expander {
   pub fn expand_no_side_effects(&mut self) -> ShResult<String> {
     self.allow_side_effects = false;
     let raw = self.expand_inner()?;
-    Ok(strip_markers(&raw))
+    Ok(markers::strip_markers(&raw))
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
-    Ok(strip_markers(&raw))
+    Ok(markers::strip_markers(&raw))
   }
   pub fn expand_for_glob(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;

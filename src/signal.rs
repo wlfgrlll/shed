@@ -14,14 +14,11 @@ use nix::{
 
 use super::{
   autocmd,
-  jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
   parse::execute::exec_nonint,
   sherr,
+  state::jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
   state::logic::TrapTarget,
-  state::{
-    self, Shed, util::read_logic, util::with_vars, util::write_meta, vars::Var, vars::VarFlags,
-    vars::VarKind,
-  },
+  state::{Shed, util::with_vars, vars::Var, vars::VarFlags, vars::VarKind},
   util::ShResult,
 };
 
@@ -129,7 +126,7 @@ pub fn check_signals() -> ShResult<()> {
 
   let got_signal = |sig: Signal| -> bool { pending & (1 << sig as u64) != 0 };
   let run_trap = |sig: Signal| -> ShResult<()> {
-    if let Some(command) = read_logic(|l| l.get_trap(TrapTarget::Signal(sig))) {
+    if let Some(command) = Shed::logic(|l| l.get_trap(TrapTarget::Signal(sig))) {
       exec_nonint(command, Some("trap".into()))?;
     }
     Ok(())
@@ -163,7 +160,7 @@ pub fn check_signals() -> ShResult<()> {
   if got_signal(Signal::SIGTERM) {
     // POSIX says, if we are interactive, sigterm does nothing
     // if we are not interactive, sigterm kills the shell
-    if !state::INTERACTIVE.load(Ordering::SeqCst) {
+    if !Shed::term(|t| t.interactive()) {
       SHOULD_QUIT.store(true, Ordering::SeqCst);
       QUIT_CODE.store(SIG_EXIT_OFFSET + Signal::SIGTERM as i32, Ordering::SeqCst);
     }
@@ -455,10 +452,10 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
 
         if job.notify() {
           let job_complete_msg = job.display(&job_order, JobCmdFlags::PIDS).to_string();
-          write_meta(|m| m.post_system_message(job_complete_msg));
+          Shed::meta_mut(|m| m.post_system_message(job_complete_msg));
         }
 
-        write_meta(|m| m.notify_job_complete(&job)).ok();
+        Shed::meta_mut(|m| m.notify_job_complete(&job)).ok();
       }
     }
   }

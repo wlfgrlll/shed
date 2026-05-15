@@ -1,12 +1,12 @@
 use std::os::fd::AsRawFd;
 
-use crate::expand::arithmetic::expand_arithmetic_wrapped;
-use crate::parse::execute::exec_nonint;
+use super::{Shed, arithmetic::expand_arithmetic_wrapped, parse::execute::exec_nonint};
+
 use crate::procio::{
   RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string,
 };
 use crate::sherr;
-use crate::state::{self, util::with_term, util::write_meta};
+use crate::state;
 use crate::util::{ShErrKind, ShResult};
 
 use nix::errno::Errno;
@@ -54,7 +54,7 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
       unsafe { nix::libc::_exit(0) };
     }
     ForkResult::Parent { .. } => {
-      write_meta(|m| m.save_procsub_fd(register_fd));
+      Shed::meta_mut(|m| m.save_procsub_fd(register_fd));
       // Do not wait; process may run in background
       Ok(path)
     }
@@ -70,7 +70,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      with_term(|t| t.detach_tty()); // close tty fd
+      Shed::term_mut(|t| t.detach_tty()); // close tty fd
       let redir: RedirSet = RedirSpec::dup(wpipe.as_raw_fd(), 1, RedirType::Output).into();
       let _redir_guard = redir.apply()?;
 
@@ -81,7 +81,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
         e.print_error();
         unsafe { nix::libc::_exit(1) };
       }
-      let status = state::util::get_status();
+      let status = state::Shed::get_status();
       unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
@@ -102,7 +102,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
       match status {
         WtStat::Exited(_, code) => {
-          state::util::set_status(code);
+          state::Shed::set_status(code);
           Ok(output.trim_end_matches('\n').to_string())
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),

@@ -1,23 +1,23 @@
 mod markup;
 mod pager;
 
+use markup::StyledHelp;
+use pager::{HelpPager, PagerEvent};
+
 use std::{
   env,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
 };
 
-use crate::{
-  builtin::help::{
-    markup::StyledHelp,
-    pager::{HelpPager, PagerEvent},
-  },
+use super::{
+  Shed,
   getopt::{Opt, OptSpec},
-  outln,
+  keys, outln,
   parse::lex::Span,
-  readline::ScoredCandidate,
-  sherr,
-  state::{util::with_term, util::write_meta},
+  procio,
+  readline::{self, ScoredCandidate},
+  sherr, state,
   util::{ShResult, with_status},
 };
 
@@ -83,7 +83,7 @@ impl super::Builtin for Help {
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let _guard = scopeguard::guard((), |_| {
-      write_meta(|m| m.disable_welcome_message()).unwrap();
+      Shed::meta_mut(|m| m.disable_welcome_message()).unwrap();
     });
     let mut argv = args.argv.into_iter().peekable();
     let list_tags =
@@ -240,13 +240,13 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
   let mut pager = 0usize; // index
 
   // now we use the same input pattern as in main.rs
-  let Some(tty) = with_term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
+  let Some(tty) = Shed::term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
     return Ok(()); // no tty, just return
   };
   let tty_fd = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty) }, PollFlags::POLLIN);
 
   // restores terminal state on drop
-  let _tui_guard = with_term(|t| t.prepare_for_pager());
+  let _tui_guard = Shed::term_mut(|t| t.prepare_for_pager());
 
   loop {
     let res = {

@@ -10,6 +10,8 @@ use crate::parse::lex::Span;
 // ScopeGuard - RAII variable scope management
 // ============================================================================
 
+/// Execute commands registered by `defer`
+/// Drop variables registered by `local`
 fn guard_drop(_: ()) {
   let mut deferred = Shed::vars_mut(|v| v.cur_scope_mut().take_deferred_cmds());
 
@@ -32,7 +34,8 @@ pub fn scope_guard(args: Option<Vec<(String, Span)>>) -> impl Drop {
   guard((), guard_drop)
 }
 
-/// Descend into a new variable scope.
+/// Descend into a new variable scope, without using a new argv
+/// This is used for stuff like brace groups,
 ///
 /// The `local` builtin uses this scope to store its variables.
 /// The `defer` builtin registers commands to run when this drops.

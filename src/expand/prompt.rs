@@ -1,13 +1,6 @@
 use std::path::PathBuf;
 
-use crate::expand::subshell::expand_cmd_sub;
-use crate::match_loop;
-use crate::state;
-use crate::state::Shed;
-use crate::state::util::read_shopts;
-use crate::state::{util::read_logic, util::write_meta};
-use crate::status_msg;
-use crate::util::ShResult;
+use super::{ShResult, match_loop, state, state::Shed, status_msg, subshell::expand_cmd_sub};
 use crate::util::ansi_from_description;
 
 use nix::sys::wait::WaitStatus as WtStat;
@@ -272,7 +265,7 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
                   tokens.push(PromptTk::Text(format!("\\@{{{func_name}")));
                 } else {
                   // End of unbraced function name
-                  let func_exists = read_logic(|l| l.get_func(&func_name).is_some());
+                  let func_exists = Shed::logic(|l| l.get_func(&func_name).is_some());
                   if func_exists {
                     tokens.push(PromptTk::Function(func_name.clone()));
                   } else {
@@ -284,7 +277,7 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
             });
             // Handle end-of-input: function name collected but loop ended without pushing
             if !handled && !func_name.is_empty() {
-              let func_exists = read_logic(|l| l.get_func(&func_name).is_some());
+              let func_exists = Shed::logic(|l| l.get_func(&func_name).is_some());
               if func_exists {
                 tokens.push(PromptTk::Function(func_name));
               } else {
@@ -380,13 +373,13 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::RuntimeMillis => {
-      if let Some(runtime) = write_meta(|m| m.get_time()) {
+      if let Some(runtime) = Shed::meta_mut(|m| m.get_time()) {
         let runtime_millis = runtime.as_millis().to_string();
         result.push_str(&runtime_millis);
       }
     }
     PromptTk::RuntimeFormatted => {
-      if let Some(runtime) = write_meta(|m| m.get_time()) {
+      if let Some(runtime) = Shed::meta_mut(|m| m.get_time()) {
         let runtime_fmt = format_cmd_runtime(runtime);
         result.push_str(&runtime_fmt);
       }
@@ -408,7 +401,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       let pathbuf = PathBuf::from(&pwd);
       let mut segments = pathbuf.iter().count();
       let mut path_iter = pathbuf.iter();
-      let max_segments = read_shopts(|s| s.prompt.trunc_prompt_path);
+      let max_segments = Shed::shopts(|s| s.prompt.trunc_prompt_path);
       while segments > max_segments {
         path_iter.next();
         segments -= 1;

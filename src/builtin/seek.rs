@@ -208,7 +208,7 @@ mod tests {
     let _g = TestGuard::new();
 
     test_input("seek 99 0").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -216,9 +216,9 @@ mod tests {
     let _g = TestGuard::new();
 
     test_input("seek").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
 
     test_input("seek 9").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

@@ -17,7 +17,6 @@ use super::{
   sherr, signal,
   state::{
     self,
-    util::with_term,
     vars::{VarFlags, VarKind},
   },
   util::{ShErrKind, ShResult, ShResultExt, with_status},
@@ -81,9 +80,9 @@ impl super::Builtin for Read {
     }
 
     let _guard = if flags.contains(ReadFlags::NO_ECHO) {
-      with_term(|t| t.cooked_no_echo_guard())?
+      Shed::term_mut(|t| t.cooked_no_echo_guard())?
     } else {
-      with_term(|t| t.cooked_mode_guard())?
+      Shed::term_mut(|t| t.cooked_mode_guard())?
     };
     let input = read_bytes(
       delim,
@@ -117,14 +116,14 @@ fn read_bytes(
 
   loop {
     if poll(&mut [poll_fd.clone()], timeout)? == 0 {
-      state::util::set_status(1);
+      state::Shed::set_status(1);
       return String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}")); // timeout
     }
 
     let mut in_buf = [0u8; 1];
     match read(stdin_fileno(), &mut in_buf) {
       Ok(0) => {
-        state::util::set_status(1);
+        state::Shed::set_status(1);
         let ret =
           String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))?;
         return Ok(ret); // EOF
@@ -147,7 +146,7 @@ fn read_bytes(
       }
       Err(Errno::EINTR) => {
         if signal::sigint_pending() {
-          state::util::set_status(130);
+          state::Shed::set_status(130);
           return Ok(String::new());
         }
         continue;
@@ -156,7 +155,7 @@ fn read_bytes(
     }
   }
 
-  state::util::set_status(0);
+  state::Shed::set_status(0);
   String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))
 }
 
@@ -201,7 +200,7 @@ impl super::Builtin for ReadKey {
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    if !with_term(|t| t.isatty()) {
+    if !Shed::term(|t| t.isatty()) {
       return with_status(1);
     }
     let mut whitelist = None;
@@ -221,8 +220,8 @@ impl super::Builtin for ReadKey {
     }
 
     let key = {
-      let _raw = with_term(|t| t.raw_mode_guard());
-      if let Err(e) = with_term(|t| t.read()) {
+      let _raw = Shed::term_mut(|t| t.raw_mode_guard());
+      if let Err(e) = Shed::term_mut(|t| t.read()) {
         match e.kind() {
           ShErrKind::LoopBreak(_) => return with_status(1),
           ShErrKind::LoopContinue(_) => return with_status(0),
@@ -230,7 +229,7 @@ impl super::Builtin for ReadKey {
         }
       }
 
-      let mut keys = with_term(|t| t.drain_keys())?;
+      let mut keys = Shed::term_mut(|t| t.drain_keys())?;
       if keys.is_empty() {
         return with_status(1);
       }
@@ -353,7 +352,7 @@ mod tests {
   fn read_status_zero() {
     let _g = TestGuard::new();
     test_input("read < <(echo hello)").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -361,6 +360,6 @@ mod tests {
     let _g = TestGuard::new();
     // Empty input / EOF should set status 1
     test_input("read < <(echo -n '')").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 }

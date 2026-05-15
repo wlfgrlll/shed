@@ -2,10 +2,10 @@ use std::{fmt::Write, ops::Range};
 
 use yansi::Paint;
 
-use crate::{
-  readline::context::{CtxTk, CtxTkRule, get_context_tokens},
+use super::{
+  Shed,
+  context::{CtxTk, CtxTkRule, get_context_tokens},
   shopt::ShOptHighlight,
-  state::util::read_shopts,
   util::{PaletteEntry, style_from_description},
 };
 
@@ -28,7 +28,7 @@ impl Palette {
     let get_color = |desc: &str| -> PaletteEntry {
       style_from_description(desc).unwrap_or_else(|_| PaletteEntry::new())
     };
-    read_shopts(|o| {
+    Shed::shopts(|o| {
       let ShOptHighlight {
         string,
         keyword,
@@ -325,7 +325,7 @@ mod tests {
   use super::*;
 
   /// A palette with distinct, easy-to-spot codes for assertions.
-  /// Avoids `Palette::new()` which calls `read_shopts`.
+  /// Avoids `Palette::new()` which calls `Shed::shopts`.
   fn test_palette() -> Palette {
     Palette {
       string: PaletteEntry::new().yellow(),

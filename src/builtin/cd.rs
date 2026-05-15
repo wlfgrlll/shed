@@ -173,7 +173,7 @@ pub mod tests {
 
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Error Cases =====================
@@ -182,7 +182,7 @@ pub mod tests {
   fn cd_nonexistent_dir_fails() {
     let _g = TestGuard::new();
     test_input("cd /nonexistent_path_that_does_not_exist_xyz").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -193,7 +193,7 @@ pub mod tests {
     fs::write(&file_path, "hello").unwrap();
 
     test_input(format!("cd {}", file_path.display())).ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Multiple cd =====================

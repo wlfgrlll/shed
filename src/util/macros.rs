@@ -1,30 +1,30 @@
 /// Write to the internal Terminal buffer
 ///
 /// The given input will be buffered, meaning it won't be sent to the terminal until Terminal::flush() is called
-/// Note that this calls with_term() internally.
+/// Note that this calls Shed::term_mut() internally.
 /// DO NOT call this from within any of the state module accessors (e.g. read_logic, write_meta, etc) as that will cause a deadlock.
 #[macro_export]
 macro_rules! write_term {
   ($($arg:tt)*) => {{
     use std::io::Write;
-    $crate::state::util::with_term(|t| write!(t, $($arg)*))
+    $crate::state::Shed::term_mut(|t| write!(t, $($arg)*))
   }};
 }
 
 /// Write to the internal Terminal buffer, and then flush it
 ///
 /// This sends the given format args directly to the terminal.
-/// Note that this calls with_term() internally.
+/// Note that this calls Shed::term() internally.
 /// DO NOT call this from within any of the state module accessors (e.g. read_logic, write_meta, etc) as that will cause a deadlock.
 #[macro_export]
 macro_rules! flush_term {
   () => {
     use std::io::Write;
-    $crate::state::util::with_term(|t| t.flush())
+    $crate::state::Shed::term_mut(|t| t.flush())
   };
   ($($arg:tt)*) => {{
     use std::io::Write;
-    $crate::state::util::with_term(|t| -> $crate::util::ShResult<()> {
+    $crate::state::Shed::term_mut(|t| -> $crate::util::ShResult<()> {
       write!(t, $($arg)*)?;
       t.flush()?;
       Ok(())
@@ -395,11 +395,11 @@ macro_rules! writefd {
 /// Post a status message to the shell's status line.
 ///
 /// This is intended for transient messages that should be visible to the user but not take up space in the terminal output, such as "File saved" or "Syntax error on line 3".
-/// NOTE: This calls `write_meta()` internally. Calling this inside of a `write_meta()` closure will cause a RefCell panic.
+/// NOTE: This calls `Shed::meta_mut()` internally. Calling this inside of a `Shed::meta_mut()` closure will cause a RefCell panic.
 #[macro_export]
 macro_rules! status_msg {
   ($($arg:tt)*) => {{
-    $crate::state::util::write_meta(|m| m.post_status_message(format!($($arg)*)))
+    $crate::state::Shed::meta_mut(|m| m.post_status_message(format!($($arg)*)))
   }};
 }
 
@@ -409,7 +409,7 @@ macro_rules! status_msg {
 #[macro_export]
 macro_rules! system_msg {
   ($($arg:tt)*) => {{
-    $crate::state::util::write_meta(|m| m.post_system_message(format!($($arg)*)))
+    $crate::state::Shed::meta_mut(|m| m.post_system_message(format!($($arg)*)))
   }};
 }
 
@@ -418,8 +418,8 @@ macro_rules! system_msg {
 macro_rules! autocmd {
   ($kind:ident) => {{
     let post_cmds =
-      $crate::state::util::read_logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
-    let saved_status = $crate::state::util::get_status();
+      $crate::state::Shed::logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
+    let saved_status = $crate::state::Shed::get_status();
     for cmd in post_cmds {
       if let Err(e) =
         $crate::parse::execute::exec_nonint(cmd.command().to_string(), Some("autocmd".into()))
@@ -427,6 +427,6 @@ macro_rules! autocmd {
         e.print_error();
       }
     }
-    $crate::state::util::set_status(saved_status);
+    $crate::state::Shed::set_status(saved_status);
   }};
 }

@@ -20,7 +20,7 @@ pub(super) use error::{ShErr, ShErrKind, ShResult, ShResultExt, get_context};
 
 pub(super) use strops::{
   QuoteState, ends_with_unescaped, expand_ansi_c, format_mode, format_size, has_unescaped,
-  scan_braces, scan_parens, split_at_unescaped, split_case_pat, split_tk,
+  rfind_unescaped, scan_braces, scan_parens, split_at_unescaped, split_case_pat, split_tk,
 };
 
 pub(super) struct FdWriter<'a>(pub BorrowedFd<'a>);
@@ -47,6 +47,6 @@ pub(super) fn ordered<T: Ord>(start: T, end: T) -> (T, T) {
 ///
 /// It's easy to forget to set the status code, this helps with that
 pub(super) fn with_status(code: i32) -> ShResult<()> {
-  state::util::set_status(code);
+  state::Shed::set_status(code);
   Ok(())
 }

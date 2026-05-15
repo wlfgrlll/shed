@@ -1,9 +1,7 @@
 use super::{
-  ShResult,
+  ShResult, Shed,
   getopt::{Opt, OptSpec},
-  sherr,
-  state::util::write_logic,
-  with_status,
+  sherr, with_status,
 };
 
 use super::keys::{KeyMap, KeyMapFlags};
@@ -56,7 +54,7 @@ impl super::Builtin for KeyMapBuiltin {
     }
 
     if let Some(keys) = remove {
-      write_logic(|l| l.remove_keymap(&keys));
+      Shed::logic_mut(|l| l.remove_keymap(&keys));
       return with_status(0);
     }
 
@@ -80,7 +78,7 @@ impl super::Builtin for KeyMapBuiltin {
       action: action.clone(),
     };
 
-    write_logic(|l| l.insert_keymap(keymap));
+    Shed::logic_mut(|l| l.insert_keymap(keymap));
 
     with_status(0)
   }
@@ -91,7 +89,7 @@ mod tests {
   use crate::{
     expand::expand_keymap,
     keys::{KeyMap, KeyMapFlags, KeyMapMatch},
-    state::{self, util::read_logic},
+    state::{self, Shed},
     tests::testutil::{TestGuard, test_input},
   };
 
@@ -137,7 +135,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("keymap -n jk '<ESC>'").unwrap();
 
-    let maps = read_logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
+    let maps = Shed::logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
     assert!(!maps.is_empty());
   }
 
@@ -146,7 +144,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("keymap -i jk '<ESC>'").unwrap();
 
-    let maps = read_logic(|l| l.keymaps_filtered(KeyMapFlags::INSERT, &expand_keymap("jk")));
+    let maps = Shed::logic(|l| l.keymaps_filtered(KeyMapFlags::INSERT, &expand_keymap("jk")));
     assert!(!maps.is_empty());
   }
 
@@ -156,7 +154,7 @@ mod tests {
     test_input("keymap -n jk '<ESC>'").unwrap();
     test_input("keymap -n jk 'dd'").unwrap();
 
-    let maps = read_logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
+    let maps = Shed::logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
     assert_eq!(maps.len(), 1);
     assert_eq!(maps[0].action, "dd");
   }
@@ -167,7 +165,7 @@ mod tests {
     test_input("keymap -n jk '<ESC>'").unwrap();
     test_input("keymap -n --remove jk").unwrap();
 
-    let maps = read_logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
+    let maps = Shed::logic(|l| l.keymaps_filtered(KeyMapFlags::NORMAL, &expand_keymap("jk")));
     assert!(maps.is_empty());
   }
 
@@ -175,7 +173,7 @@ mod tests {
   fn keymap_status_zero() {
     let _g = TestGuard::new();
     test_input("keymap -n jk '<ESC>'").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Error cases =====================
@@ -184,13 +182,13 @@ mod tests {
   fn keymap_missing_keys() {
     let _g = TestGuard::new();
     test_input("keymap -n").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn keymap_missing_action() {
     let _g = TestGuard::new();
     test_input("keymap -n jk").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

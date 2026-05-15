@@ -4,7 +4,7 @@ use super::{
   getopt::{Opt, OptArg, OptSpec},
   parse::lex::Span,
   sherr,
-  state::{self, Shed, util::read_meta, util::write_meta, vars::VarFlags, vars::VarKind},
+  state::{self, Shed, vars::VarFlags, vars::VarKind},
   util::{ShErr, ShResult, ShResultExt, with_status},
 };
 
@@ -132,14 +132,14 @@ fn getopts_inner(
   let arr_idx = opt_index.saturating_sub(1);
 
   let Some(arg) = argv.get(arr_idx) else {
-    state::util::set_status(1);
+    state::Shed::set_status(1);
     return Ok(());
   };
 
   // "--" stops option processing
   if arg.as_str() == "--" {
     advance_optind(opt_index, 1)?;
-    write_meta(|m| m.reset_getopts_char_offset());
+    Shed::meta_mut(|m| m.reset_getopts_char_offset());
     return with_status(1);
   }
 
@@ -153,11 +153,11 @@ fn getopts_inner(
     return with_status(1);
   }
 
-  let char_idx = read_meta(|m| m.getopts_char_offset());
+  let char_idx = Shed::meta(|m| m.getopts_char_offset());
   let Some(ch) = opt_str.chars().nth(char_idx) else {
     // Ran out of chars in this arg (shouldn't normally happen),
     // advance to next arg and signal done for this call
-    write_meta(|m| m.reset_getopts_char_offset());
+    Shed::meta_mut(|m| m.reset_getopts_char_offset());
     advance_optind(opt_index, 1)?;
     return with_status(1);
   };
@@ -168,10 +168,10 @@ fn getopts_inner(
   // arg, or reset offset and bump OPTIND to the next arg.
   let advance_one_char = |last: bool| -> ShResult<()> {
     if last {
-      write_meta(|m| m.reset_getopts_char_offset());
+      Shed::meta_mut(|m| m.reset_getopts_char_offset());
       advance_optind(opt_index, 1)?;
     } else {
-      write_meta(|m| m.inc_getopts_char_offset());
+      Shed::meta_mut(|m| m.inc_getopts_char_offset());
     }
     Ok(())
   };
@@ -190,15 +190,15 @@ fn getopts_inner(
         )
         .print_error();
       }
-      state::util::set_status(0);
+      state::Shed::set_status(0);
     }
     OptMatch::IsMatch => {
       advance_one_char(last_char_in_arg)?;
       Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str(ch.to_string()), VarFlags::empty()))?;
-      state::util::set_status(0);
+      state::Shed::set_status(0);
     }
     OptMatch::WantsArg => {
-      write_meta(|m| m.reset_getopts_char_offset());
+      Shed::meta_mut(|m| m.reset_getopts_char_offset());
 
       if !last_char_in_arg {
         // Remaining chars in this arg are the argument: -bVALUE
@@ -290,7 +290,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("getopts ab opt -a").unwrap();
     assert_eq!(get_var("opt"), "a");
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -382,15 +382,15 @@ mod tests {
 
     test_input("getopts ab opt -a -b").unwrap();
     assert_eq!(get_var("opt"), "a");
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
 
     test_input("getopts ab opt -a -b").unwrap();
     assert_eq!(get_var("opt"), "b");
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
 
     // Third call: no more options
     test_input("getopts ab opt -a -b").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   // ===================== End of options =====================
@@ -399,21 +399,21 @@ mod tests {
   fn getopts_no_options_returns_1() {
     let _g = TestGuard::new();
     test_input("getopts ab opt foo").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   #[test]
   fn getopts_double_dash_stops() {
     let _g = TestGuard::new();
     test_input("getopts ab opt -- -a").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   #[test]
   fn getopts_bare_dash_stops() {
     let _g = TestGuard::new();
     test_input("getopts ab opt -").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   // ===================== Unknown option =====================
@@ -423,7 +423,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("getopts ab opt -z").unwrap();
     assert_eq!(get_var("opt"), "?");
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Silent error mode =====================
@@ -459,13 +459,13 @@ mod tests {
   fn getopts_missing_spec() {
     let _g = TestGuard::new();
     test_input("getopts").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn getopts_missing_varname() {
     let _g = TestGuard::new();
     test_input("getopts ab").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

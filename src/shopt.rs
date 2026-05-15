@@ -2,18 +2,20 @@ use std::{fmt::Display, str::FromStr};
 
 use nix::unistd::write;
 
+use shed_macros::ShOptGroup;
+
 use super::{
   expand::expand_keymap,
   parse::lex::Span,
   procio::stderr_fileno,
   sherr,
-  state::{Shed, util::read_shopts},
+  state::Shed,
   two_way_display,
   util::{ShErr, ShResult, ansi_from_description},
 };
 
 pub fn xtrace_print(argv: &[(String, Span)]) {
-  if read_shopts(|o| o.set.xtrace) {
+  if Shed::shopts(|o| o.set.xtrace) {
     let words = argv
       .iter()
       .map(|(s, _)| s.to_string())
@@ -40,123 +42,6 @@ two_way_display! {ShedBellStyle,
   Audible <=> "audible";
   Visible <=> "visible";
   Disable <=> "disable";
-}
-
-/// Generates a shopt group struct with `set`, `get`, `Display`, and `Default` impls.
-///
-/// Doc comments on each field become the description shown by `shopt get`.
-/// Every field type must implement `FromStr + Display`.
-///
-/// Additionally creates a line generator for the default `.shedrc` file.
-///
-/// Optional per-field validation: `#[validate(|val| expr)]` runs after parsing
-/// and must return `Result<(), String>` where the error string is the message.
-macro_rules! shopt_group {
-  (
-    $(#[$struct_meta:meta])*
-    pub struct $name:ident ($group_name:literal) {
-      $(
-        $(#[doc = $desc:literal])*
-        $(#[validate($validator:expr)])?
-        $field:ident : $ty:ty = $default:expr
-      ),* $(,)?
-    }
-  ) => {
-    $(#[$struct_meta])*
-    pub struct $name {
-      $(pub $field: $ty,)*
-    }
-
-    impl Default for $name {
-      fn default() -> Self {
-        Self {
-          $($field: $default,)*
-        }
-      }
-    }
-
-    impl $name {
-      pub fn set(&mut self, opt: &str, val: &str) -> ShResult<()> {
-        match opt {
-          $(
-            stringify!($field) => {
-              let parsed = val.parse::<$ty>().map_err(|_| {
-                sherr!(
-                  SyntaxErr,
-                  "shopt: invalid value '{}' for {}.{}", val, $group_name, opt,
-                )
-              })?;
-              $(
-                let validate: fn(&$ty) -> Result<(), String> = $validator;
-                if let Err(e) = validate(&parsed).map_err(|msg| sherr!(SyntaxErr, "shopt: {msg}")) {
-                  $crate::state::util::set_status(2);
-                  return Err(e);
-                }
-              )?
-              self.$field = parsed;
-            }
-          )*
-          _ => {
-            return Err(sherr!(
-              SyntaxErr,
-              "shopt: unexpected '{}' option '{opt}'", $group_name,
-            ));
-          }
-        }
-        Ok(())
-      }
-
-      pub fn get(&self, query: &str) -> ShResult<Option<String>> {
-        if query.is_empty() {
-          return Ok(Some(format!("{self}")));
-        }
-        match query {
-          $(
-            stringify!($field) => {
-              let desc = concat!($($desc, "\n",)*);
-              let output = format!("{}{}", desc, self.$field);
-              Ok(Some(output))
-            }
-          )*
-          _ => Err(sherr!(
-            SyntaxErr,
-            "shopt: unexpected '{}' option '{query}'", $group_name,
-          )),
-        }
-      }
-
-      pub fn generate_rc_lines() -> Vec<String> {
-        let defaults = Self::default();
-        let mut lines = vec![];
-        $(
-          let desc = concat!($($desc,)*);
-          let val = $crate::expand::as_var_val_display(&defaults.$field.to_string());
-          let entry = format!(
-            "shopt {}.{}={}",
-            $group_name,
-            stringify!($field),
-            val,
-          );
-          if !desc.is_empty() {
-            lines.push(format!("{:<50} # {}", entry, desc.trim()));
-          } else {
-            lines.push(entry);
-          }
-        )*
-        lines
-      }
-    }
-
-    impl Display for $name {
-      fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let output = [
-          $(format!("{}.{}={}", $group_name, stringify!($field),
-            $crate::expand::as_var_val_display(&self.$field.to_string())),)*
-        ];
-        writeln!(f, "{}", output.join("\n"))
-      }
-    }
-  };
 }
 
 #[derive(Clone, Debug)]
@@ -300,69 +185,101 @@ fn validate_viewport_height(v: &String) -> Result<(), String> {
   }
 }
 
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptLine ("line") {
-    /// Whether to automatically insert a newline when the input is incomplete
-    linebreak_on_incomplete: bool = true,
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "line"]
+pub struct ShOptLine {
+  /// Whether to automatically insert a newline when the input is incomplete
+  #[default(true)]
+  pub linebreak_on_incomplete: bool,
 
-    /// The maximum height of the line editor viewport window. Can be a positive number or a percentage of terminal height like "50%"
-    #[validate(validate_viewport_height)]
-    viewport_height: String = "50%".to_string(),
+  /// The maximum height of the line editor viewport window. Can be a positive number or a percentage of terminal height like "50%"
+  #[validate(validate_viewport_height)]
+  #[default("50%".to_string())]
+  pub viewport_height: String,
 
-    /// If enabled, trims leading/trailing whitespace on submitting a command
-    trim_on_submit: bool = true,
+  /// If enabled, trims leading/trailing whitespace on submitting a command
+  #[default(true)]
+  pub trim_on_submit: bool,
 
-    /// Whether to display line numbers in multiline input
-    line_numbers: bool = true,
+  /// Whether to display line numbers in multiline input
+  #[default(true)]
+  pub line_numbers: bool,
 
-    /// The line offset from the top or bottom of the viewport to trigger scrolling
-    scroll_offset: usize = 2,
+  /// The line offset from the top or bottom of the viewport to trigger scrolling
+  #[default(2)]
+  pub scroll_offset: usize,
 
-    /// The number of spaces a tab character represents in the line editor
-    tab_width: usize = 4,
+  /// The number of spaces a tab character represents in the line editor
+  #[default(4)]
+  pub tab_width: usize,
 
-    /// Whether to automatically indent new lines in multiline commands
-    auto_indent: bool = true,
+  /// Whether to automatically indent new lines in multiline commands
+  #[default(true)]
+  pub auto_indent: bool,
 
-    /// Whether to suggest commands from history as commands are typed
-    auto_suggest: bool = true,
+  /// Whether to suggest commands from history as commands are typed
+  #[default(true)]
+  pub auto_suggest: bool,
 
-    /// A command to use when text is yanked into the '+' register
-    clipboard_cmd: String = "".to_string(),
-  }
+  /// A command to use when text is yanked into the '+' register
+  #[default("".to_string())]
+  pub clipboard_cmd: String,
 }
 
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptSet ("set") {
-    /// If set, the shell will remember the full path of commands and use that information to speed up command lookup
-    hashall: bool = true,
-    /// Enables modal line editing mode.
-    vi: bool = false,
-    /// If set, all variables that are assigned will be automatically exported to the environment of subsequently executed commands
-    allexport: bool = false,
-    /// If set, the shell will exit immediately if any command exits with a non-zero status, with some exceptions
-    errexit: bool = false,
-    /// If set, '>' and '>>' redirections will fail if the target file already exists
-    noclobber: bool = false,
-    /// If set, jobs run in their own process groups, and report status before the next prompt.
-    monitor: bool = true,
-    /// If set, filename expansion (globbing) is disabled
-    noglob: bool = false,
-    /// If set, the shell will not execute any interpreted commands. Useful for testing scripts.
-    noexec: bool = false,
-    /// If set, function definitions will not be written to command history.
-    nolog: bool = false,
-    /// If set, the shell will print job status info asynchronously when jobs exit or are stopped
-    notify: bool = false,
-    /// If set, attempting to expand an unset variable besides '$*' or '@' is an error
-    nounset: bool = false,
-    /// If set, the shell will write it's input to stderr as it is read.
-    verbose: bool = false,
-    /// If set, the shell will write a trace for each command after it is expanded but before it is executed.
-    xtrace: bool = false,
-  }
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "set"]
+pub struct ShOptSet {
+  /// If set, the shell will remember the full path of commands and use that information to speed up command lookup
+  #[default(true)]
+  pub hashall: bool,
+
+  /// Enables modal line editing mode.
+  #[default(false)]
+  pub vi: bool,
+
+  /// If set, all variables that are assigned will be automatically exported to the environment of subsequently executed commands
+  #[default(false)]
+  pub allexport: bool,
+
+  /// If set, the shell will exit immediately if any command exits with a non-zero status, with some exceptions
+  #[default(false)]
+  pub errexit: bool,
+
+  /// If set, '>' and '>>' redirections will fail if the target file already exists
+  #[default(false)]
+  pub noclobber: bool,
+
+  /// If set, jobs run in their own process groups, and report status before the next prompt.
+  #[default(true)]
+  pub monitor: bool,
+
+  /// If set, filename expansion (globbing) is disabled
+  #[default(false)]
+  pub noglob: bool,
+
+  /// If set, the shell will not execute any interpreted commands. Useful for testing scripts.
+  #[default(false)]
+  pub noexec: bool,
+
+  /// If set, function definitions will not be written to command history.
+  #[default(false)]
+  pub nolog: bool,
+
+  /// If set, the shell will print job status info asynchronously when jobs exit or are stopped
+  #[default(false)]
+  pub notify: bool,
+
+  /// If set, attempting to expand an unset variable besides '$*' or '@' is an error
+  #[default(false)]
+  pub nounset: bool,
+
+  /// If set, the shell will write it's input to stderr as it is read.
+  #[default(false)]
+  pub verbose: bool,
+
+  /// If set, the shell will write a trace for each command after it is expanded but before it is executed.
+  #[default(false)]
+  pub xtrace: bool,
 }
 
 fn validate_max_hist(v: &isize) -> Result<(), String> {
@@ -381,48 +298,55 @@ fn validate_bell_style(v: &String) -> Result<(), String> {
   }
 }
 
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptCore ("core") {
-    /// Include hidden files in glob patterns
-    dotglob: bool = false,
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "core"]
+pub struct ShOptCore {
+  /// Include hidden files in glob patterns
+  #[default(false)]
+  pub dotglob: bool,
 
-    /// Globs with no matches expand to nothing instead of the original string
-    nullglob: bool = false,
+  /// Globs with no matches expand to nothing instead of the original string
+  #[default(false)]
+  pub nullglob: bool,
 
-    /// Allow navigation to directories by passing the directory as a command directly
-    autocd: bool = false,
+  /// Allow navigation to directories by passing the directory as a command directly
+  #[default(false)]
+  pub autocd: bool,
 
-    /// Ignore consecutive duplicate command history entries
-    hist_ignore_dupes: bool = true,
+  /// Ignore consecutive duplicate command history entries
+  #[default(true)]
+  pub hist_ignore_dupes: bool,
 
-    /// Maximum number of entries in the command history file (-1 for unlimited)
-    #[validate(validate_max_hist)]
-    max_hist: isize = 10_000,
+  /// Maximum number of entries in the command history file (-1 for unlimited)
+  #[validate(validate_max_hist)]
+  #[default(10_000isize)]
+  pub max_hist: isize,
 
-    /// Whether or not to allow comments in interactive mode
-    interactive_comments: bool = true,
+  /// Whether or not to allow comments in interactive mode
+  #[default(true)]
+  pub interactive_comments: bool,
 
-    /// Whether or not to automatically save commands to the command history file
-    auto_hist: bool = true,
+  /// Whether or not to automatically save commands to the command history file
+  #[default(true)]
+  pub auto_hist: bool,
 
-    /// Whether or not to allow shed to trigger the terminal bell
-    bell_enabled: bool = true,
+  /// Whether or not to allow shed to trigger the terminal bell
+  #[default(true)]
+  pub bell_enabled: bool,
 
-    /// Maximum limit of recursive shell function calls
-    max_recurse_depth: usize = 1000,
+  /// Maximum limit of recursive shell function calls
+  #[default(1000usize)]
+  pub max_recurse_depth: usize,
 
-    /// Whether echo expands escape sequences by default
-    xpg_echo: bool = false,
+  /// Whether echo expands escape sequences by default
+  #[default(false)]
+  pub xpg_echo: bool,
 
-    /// Whether to use a visible or audible bell
-    #[validate(validate_bell_style)]
-    bell_style: String = "audible".to_string(),
-  }
+  /// Whether to use a visible or audible bell
+  #[validate(validate_bell_style)]
+  #[default("audible".to_string())]
+  pub bell_style: String,
 }
-// TODO: new . behavior idea
-// TODO: bell style
-// TODO: lines(line)
 
 #[allow(clippy::ptr_arg)]
 fn validate_leader(v: &String) -> Result<(), String> {
@@ -432,51 +356,62 @@ fn validate_leader(v: &String) -> Result<(), String> {
     Ok(())
   }
 }
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptPrompt ("prompt") {
-    /// Maximum number of path segments used in the '\W' prompt escape sequence
-    trunc_prompt_path: usize = 4,
 
-    /// Maximum number of completion candidates displayed upon pressing tab
-    comp_limit: usize = 100,
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "prompt"]
+pub struct ShOptPrompt {
+  /// Maximum number of path segments used in the '\W' prompt escape sequence
+  #[default(4usize)]
+  pub trunc_prompt_path: usize,
 
-    /// The leader key sequence used in keymap bindings
-    #[validate(validate_leader)]
-    leader: String = "<Space>".to_string(),
+  /// Maximum number of completion candidates displayed upon pressing tab
+  #[default(100usize)]
+  pub comp_limit: usize,
 
-    /// Command to execute as a screensaver after idle timeout
-    screensaver_cmd: String = String::new(),
+  /// The leader key sequence used in keymap bindings
+  #[validate(validate_leader)]
+  #[default("<Space>".to_string())]
+  pub leader: String,
 
-    /// Idle time in seconds before running screensaver_cmd (0 = disabled)
-    screensaver_idle_time: usize = 0,
+  /// Command to execute as a screensaver after idle timeout
+  #[default(String::new())]
+  pub screensaver_cmd: String,
 
-    /// Whether tab completion matching is case-insensitive
-    completion_ignore_case: bool = false,
+  /// Idle time in seconds before running screensaver_cmd (0 = disabled)
+  #[default(0usize)]
+  pub screensaver_idle_time: usize,
 
-    /// If set, enables history concatenation with Shift+Up/Down
-    hist_cat: bool = true,
+  /// Whether tab completion matching is case-insensitive
+  #[default(false)]
+  pub completion_ignore_case: bool,
 
-    /// If set, expands aliases on the prompt instead of after submitting
-    expand_aliases: bool = true,
-  }
+  /// If set, enables history concatenation with Shift+Up/Down
+  #[default(true)]
+  pub hist_cat: bool,
+
+  /// If set, expands aliases on the prompt instead of after submitting
+  #[default(true)]
+  pub expand_aliases: bool,
 }
 
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptStatLine ("statline") {
-    /// Whether to enable the status line
-    enable: bool = true,
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "statline"]
+pub struct ShOptStatLine {
+  /// Whether to enable the status line
+  #[default(true)]
+  pub enable: bool,
 
-    /// The raw string used for the left side of the status line.
-    left_string: String = "".into(),
+  /// The raw string used for the left side of the status line.
+  #[default(String::new())]
+  pub left_string: String,
 
-    /// The raw string used for the middle of the status line.
-    middle_string: String = "".into(),
+  /// The raw string used for the middle of the status line.
+  #[default(String::new())]
+  pub middle_string: String,
 
-    /// The raw string used for the right side of the status line.
-    right_string: String = "".into(),
-  }
+  /// The raw string used for the right side of the status line.
+  #[default(String::new())]
+  pub right_string: String,
 }
 
 fn validate_color(v: &String) -> Result<(), String> {
@@ -487,59 +422,71 @@ fn validate_color(v: &String) -> Result<(), String> {
   }
 }
 
-shopt_group! {
-  #[derive(Clone, Debug)]
-  pub struct ShOptHighlight ("highlight") {
-    /// Whether to enable syntax highlighting in the line editor
-    enable: bool = true,
+#[derive(Clone, Debug, ShOptGroup)]
+#[group_name = "highlight"]
+pub struct ShOptHighlight {
+  /// Whether to enable syntax highlighting in the line editor
+  #[default(true)]
+  pub enable: bool,
 
-    /// Whether to underline valid paths. Can be slow on network mounts.
-    check_files: bool = true,
+  /// Whether to underline valid paths. Can be slow on network mounts.
+  #[default(true)]
+  pub check_files: bool,
 
-    /// The color used for highlighting strings
-    #[validate(validate_color)]
-    string: String = "yellow".into(),
+  /// The color used for highlighting strings
+  #[validate(validate_color)]
+  #[default("yellow".to_string())]
+  pub string: String,
 
-    /// The color used for highlighting keywords like 'if' and 'for'
-    #[validate(validate_color)]
-    keyword: String = "yellow".into(),
+  /// The color used for highlighting keywords like 'if' and 'for'
+  #[validate(validate_color)]
+  #[default("yellow".to_string())]
+  pub keyword: String,
 
-    /// The color used for highlighting valid commands
-    #[validate(validate_color)]
-    valid_command: String = "green".into(),
+  /// The color used for highlighting valid commands
+  #[validate(validate_color)]
+  #[default("green".to_string())]
+  pub valid_command: String,
 
-    /// The color used for highlighting invalid commands
-    #[validate(validate_color)]
-    invalid_command: String = "bold red".into(),
+  /// The color used for highlighting invalid commands
+  #[validate(validate_color)]
+  #[default("bold red".to_string())]
+  pub invalid_command: String,
 
-    /// The color used for highlighting control flow keywords like 'break' and 'return'
-    #[validate(validate_color)]
-    control_flow_keyword: String = "magenta".into(),
+  /// The color used for highlighting control flow keywords like 'break' and 'return'
+  #[validate(validate_color)]
+  #[default("magenta".to_string())]
+  pub control_flow_keyword: String,
 
-    /// The color used for highlighting command arguments
-    #[validate(validate_color)]
-    argument: String = "white".into(),
+  /// The color used for highlighting command arguments
+  #[validate(validate_color)]
+  #[default("white".to_string())]
+  pub argument: String,
 
-    /// The color used for highlighting arguments that refer to existing files
-    #[validate(validate_color)]
-    argument_file: String = "underline white".into(),
+  /// The color used for highlighting arguments that refer to existing files
+  #[validate(validate_color)]
+  #[default("underline white".to_string())]
+  pub argument_file: String,
 
-    /// The color used for highlighting variables
-    #[validate(validate_color)]
-    variable: String = "cyan".into(),
+  /// The color used for highlighting variables
+  #[validate(validate_color)]
+  #[default("cyan".to_string())]
+  pub variable: String,
 
-    /// The color used for highlighting operators like pipes and redirects
-    #[validate(validate_color)]
-    operator: String = "bold magenta".into(),
+  /// The color used for highlighting operators like pipes and redirects
+  #[validate(validate_color)]
+  #[default("bold magenta".to_string())]
+  pub operator: String,
 
-    /// The color used for highlighting comments
-    #[validate(validate_color)]
-    comment: String = "italic bright black".into(),
+  /// The color used for highlighting comments
+  #[validate(validate_color)]
+  #[default("italic bright black".to_string())]
+  pub comment: String,
 
-    /// The color used for highlighting glob characters
-    #[validate(validate_color)]
-    glob: String = "bright cyan".into(),
-  }
+  /// The color used for highlighting glob characters
+  #[validate(validate_color)]
+  #[default("bright cyan".to_string())]
+  pub glob: String,
 }
 
 #[cfg(test)]

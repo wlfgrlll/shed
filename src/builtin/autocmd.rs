@@ -1,11 +1,8 @@
 use super::{
-  ShResult,
+  ShResult, Shed,
   getopt::{Opt, OptSpec},
   sherr,
-  state::{
-    logic::{AutoCmd, AutoCmdKind},
-    util::write_logic,
-  },
+  state::logic::{AutoCmd, AutoCmdKind},
   with_status,
 };
 
@@ -40,7 +37,7 @@ impl super::Builtin for AutoCmdBuiltin {
     };
 
     if clear {
-      write_logic(|l| l.clear_autocmds(autocmd_kind));
+      Shed::logic_mut(|l| l.clear_autocmds(autocmd_kind));
       return with_status(0);
     }
 
@@ -53,7 +50,7 @@ impl super::Builtin for AutoCmdBuiltin {
 
     let autocmd = AutoCmd::new(autocmd_kind, autocmd_cmd.clone());
 
-    write_logic(|l| l.insert_autocmd(autocmd));
+    Shed::logic_mut(|l| l.insert_autocmd(autocmd));
 
     with_status(0)
   }
@@ -62,7 +59,7 @@ impl super::Builtin for AutoCmdBuiltin {
 #[cfg(test)]
 mod tests {
   use crate::{
-    state::{self, logic::AutoCmdKind, util::read_logic},
+    state::{self, Shed, logic::AutoCmdKind},
     tests::testutil::{TestGuard, test_input},
   };
 
@@ -73,7 +70,7 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("autocmd pre-cmd 'echo hello'").unwrap();
 
-    let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
+    let cmds = Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].command(), "echo hello");
   }
@@ -83,7 +80,7 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("autocmd post-cmd 'echo done'").unwrap();
 
-    let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
+    let cmds = Shed::logic(|l| l.get_autocmds(AutoCmdKind::PostCmd));
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].command(), "echo done");
   }
@@ -94,7 +91,7 @@ mod tests {
     test_input("autocmd pre-cmd 'echo first'").unwrap();
     test_input("autocmd pre-cmd 'echo second'").unwrap();
 
-    let cmds = read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
+    let cmds = Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd));
     assert_eq!(cmds.len(), 2);
     assert_eq!(cmds[0].command(), "echo first");
     assert_eq!(cmds[1].command(), "echo second");
@@ -106,9 +103,12 @@ mod tests {
     test_input("autocmd pre-cmd 'echo pre'").unwrap();
     test_input("autocmd post-cmd 'echo post'").unwrap();
 
-    assert_eq!(read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(), 1);
     assert_eq!(
-      read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd)).len(),
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(),
+      1
+    );
+    assert_eq!(
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PostCmd)).len(),
       1
     );
   }
@@ -120,10 +120,16 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("autocmd pre-cmd 'echo a'").unwrap();
     test_input("autocmd pre-cmd 'echo b'").unwrap();
-    assert_eq!(read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(), 2);
+    assert_eq!(
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(),
+      2
+    );
 
     test_input("autocmd -c pre-cmd").unwrap();
-    assert_eq!(read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(), 0);
+    assert_eq!(
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(),
+      0
+    );
   }
 
   #[test]
@@ -133,9 +139,12 @@ mod tests {
     test_input("autocmd post-cmd 'echo post'").unwrap();
 
     test_input("autocmd -c pre-cmd").unwrap();
-    assert_eq!(read_logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(), 0);
     assert_eq!(
-      read_logic(|l| l.get_autocmds(AutoCmdKind::PostCmd)).len(),
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PreCmd)).len(),
+      0
+    );
+    assert_eq!(
+      Shed::logic(|l| l.get_autocmds(AutoCmdKind::PostCmd)).len(),
       1
     );
   }
@@ -145,7 +154,7 @@ mod tests {
     let _guard = TestGuard::new();
     // Clearing when nothing is registered should not error
     test_input("autocmd -c pre-cmd").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Error Cases =====================
@@ -154,21 +163,21 @@ mod tests {
   fn missing_kind() {
     let _guard = TestGuard::new();
     test_input("autocmd").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn invalid_kind() {
     let _guard = TestGuard::new();
     test_input("autocmd not-a-real-kind 'echo hi'").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn missing_command() {
     let _guard = TestGuard::new();
     test_input("autocmd pre-cmd").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== All valid kind strings =====================
@@ -220,11 +229,11 @@ mod tests {
     test_input("autocmd post-change-dir 'false'").unwrap();
 
     test_input("true").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
 
     test_input("cd /tmp").unwrap();
     // cd itself succeeds, autocmd runs `false` but status should be
     // restored to cd's success
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

@@ -351,14 +351,14 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -e {} ]]", file.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_exists_false() {
     let _g = TestGuard::new();
     test_input("[[ -e /tmp/__no_such_file_test_rs__ ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -366,7 +366,7 @@ mod tests {
     let _g = TestGuard::new();
     let dir = TempDir::new().unwrap();
     test_input(format!("[[ -d {} ]]", dir.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -374,7 +374,7 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -d {} ]]", file.path().display())).unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -382,7 +382,7 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -f {} ]]", file.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -390,7 +390,7 @@ mod tests {
     let _g = TestGuard::new();
     let dir = TempDir::new().unwrap();
     test_input(format!("[[ -f {} ]]", dir.path().display())).unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -398,7 +398,7 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -r {} ]]", file.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -406,7 +406,7 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -w {} ]]", file.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -415,7 +415,7 @@ mod tests {
     let file = NamedTempFile::new().unwrap();
     fs::write(file.path(), "content").unwrap();
     test_input(format!("[[ -s {} ]]", file.path().display())).unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -423,7 +423,7 @@ mod tests {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
     test_input(format!("[[ -s {} ]]", file.path().display())).unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Unary: string tests =====================
@@ -432,28 +432,28 @@ mod tests {
   fn test_non_null_true() {
     let _g = TestGuard::new();
     test_input("[[ -n hello ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_non_null_empty() {
     let _g = TestGuard::new();
     test_input("[[ -n '' ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_null_true() {
     let _g = TestGuard::new();
     test_input("[[ -z '' ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_null_false() {
     let _g = TestGuard::new();
     test_input("[[ -z hello ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Binary: string comparison =====================
@@ -462,42 +462,42 @@ mod tests {
   fn test_string_eq() {
     let _g = TestGuard::new();
     test_input("[[ hello == hello ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_string_eq_false() {
     let _g = TestGuard::new();
     test_input("[[ hello == world ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_string_neq() {
     let _g = TestGuard::new();
     test_input("[[ hello != world ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_string_neq_false() {
     let _g = TestGuard::new();
     test_input("[[ hello != hello ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_string_glob_match() {
     let _g = TestGuard::new();
     test_input("[[ hello == hel* ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_string_glob_no_match() {
     let _g = TestGuard::new();
     test_input("[[ hello == wor* ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Binary: integer comparison =====================
@@ -506,63 +506,63 @@ mod tests {
   fn test_int_eq() {
     let _g = TestGuard::new();
     test_input("[[ 42 -eq 42 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_eq_false() {
     let _g = TestGuard::new();
     test_input("[[ 42 -eq 43 ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_ne() {
     let _g = TestGuard::new();
     test_input("[[ 1 -ne 2 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_gt() {
     let _g = TestGuard::new();
     test_input("[[ 10 -gt 5 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_gt_false() {
     let _g = TestGuard::new();
     test_input("[[ 5 -gt 10 ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_lt() {
     let _g = TestGuard::new();
     test_input("[[ 5 -lt 10 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_ge() {
     let _g = TestGuard::new();
     test_input("[[ 10 -ge 10 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_le() {
     let _g = TestGuard::new();
     test_input("[[ 5 -le 5 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_int_negative() {
     let _g = TestGuard::new();
     test_input("[[ -5 -lt 0 ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -578,14 +578,14 @@ mod tests {
   fn test_regex_match() {
     let _g = TestGuard::new();
     test_input("[[ hello123 =~ ^hello[0-9]+$ ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_regex_no_match() {
     let _g = TestGuard::new();
     test_input("[[ goodbye =~ ^hello ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Conjuncts =====================
@@ -594,35 +594,35 @@ mod tests {
   fn test_and_both_true() {
     let _g = TestGuard::new();
     test_input("[[ -n hello && -n world ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn no_glob_expansion() {
     let _g = TestGuard::new();
     test_input("[[ 'hello*' == hello* ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_and_first_false() {
     let _g = TestGuard::new();
     test_input("[[ -z hello && -n world ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_or_first_true() {
     let _g = TestGuard::new();
     test_input("[[ -n hello || -z hello ]]").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn test_or_both_false() {
     let _g = TestGuard::new();
     test_input("[[ -z hello || -z world ]]").unwrap();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Pure: operator parsing =====================

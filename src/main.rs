@@ -5,7 +5,6 @@
   clippy::result_large_err
 )]
 use std::collections::VecDeque;
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::net::UnixStream;
@@ -18,6 +17,7 @@ use nix::errno::Errno;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::{FchmodatFlags, fchmodat};
+use nix::sys::wait::WaitStatus as WtStat;
 use nix::unistd::{Pid, isatty, read, write};
 use scopeguard::defer;
 use smallvec::SmallVec;
@@ -38,9 +38,8 @@ use crate::state::Shed;
 use crate::state::logic::TrapTarget;
 use crate::state::{
   meta::LineHeader, meta::QueryHeader, meta::ShedSocket, meta::SocketRequest, meta::StatusHeader,
-  terminal::TermGuard, util::generate_default_rc, util::rc_file_path, util::read_logic,
-  util::read_meta, util::read_shopts, util::source_env, util::source_login, util::source_rc,
-  util::with_term, util::write_meta, util::write_shopts, vars::VarKind,
+  terminal::TermGuard, util::generate_default_rc, util::rc_file_path, util::source_env,
+  util::source_login, util::source_rc, vars::VarKind,
 };
 use crate::util::{ShErrKind, ShResult};
 use clap::Parser;
@@ -48,7 +47,6 @@ use clap::Parser;
 pub mod builtin;
 pub mod expand;
 pub mod getopt;
-pub mod jobs;
 pub mod parse;
 pub mod procio;
 pub mod readline;
@@ -169,22 +167,7 @@ fn setup_panic_handler() {
 
 fn setup() -> Option<ShedArgs> {
   yansi::enable();
-  let pid = Pid::this();
-  if let Ok(log_file) = OpenOptions::new()
-    .create(true)
-    .truncate(true)
-    .open(format!("/tmp/shed{pid}.log"))
-  {
-    env_logger::Builder::from_default_env()
-      .target(env_logger::Target::Pipe(Box::new(log_file)))
-      .init();
-  } else {
-    env_logger::init();
-  }
-  let _guard = scopeguard::guard(pid, |pid| {
-    let _ = std::fs::remove_file(format!("/tmp/shed{pid}.log"));
-  });
-
+  env_logger::init();
   setup_panic_handler();
   state::util::set_ver_info().ok();
   state::util::set_sh_lvl().ok();
@@ -213,10 +196,10 @@ fn setup() -> Option<ShedArgs> {
 
   for set_opt in &args.set {
     if set_opt == "emacs" {
-      write_shopts(|o| o.query("set.vi=false")).ok();
+      Shed::shopts_mut(|o| o.query("set.vi=false")).ok();
       continue;
     }
-    write_shopts(|o| o.query(&format!("set.{set_opt}=true"))).ok();
+    Shed::shopts_mut(|o| o.query(&format!("set.{set_opt}=true"))).ok();
   }
 
   do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, state::util::init_db_conn);
@@ -240,7 +223,7 @@ fn main() -> ExitCode {
 }
 
 fn tear_down() -> ExitCode {
-  if let Some(trap) = read_logic(|l| l.get_trap(TrapTarget::Exit))
+  if let Some(trap) = Shed::logic(|l| l.get_trap(TrapTarget::Exit))
     && let Err(e) = exec_nonint(trap, Some("trap".into()))
   {
     e.print_error();
@@ -263,7 +246,7 @@ fn tear_down() -> ExitCode {
     errln!("\nexit");
   }
 
-  with_term(|t| t.reset_for_exit());
+  Shed::term_mut(|t| t.reset_for_exit());
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
 }
@@ -398,7 +381,7 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
     log::info!("Window size change detected, updating readline dimensions");
     // Restore cursor to saved row before clearing, since the terminal
     // may have moved it during resize/rewrap
-    with_term(|t| t.update_t_dims());
+    Shed::term_mut(|t| t.update_t_dims());
     readline.mark_dirty();
   }
 
@@ -424,17 +407,17 @@ fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
   let timeout = if !readline.pending_keymap().is_empty() {
     // wait for more keymap keys
     PollTimeout::from(1000u16)
-  } else if let Some(timeout) = write_meta(|m| m.take_poll_timeout()) {
+  } else if let Some(timeout) = Shed::meta_mut(|m| m.take_poll_timeout()) {
     // something gave us an explicit poll timeout to use.
     // usually this means there is a status message showing.
     // after the timeout, it will trigger a redraw that clears
     // the status message.
     timeout
   } else {
-    let screensaver_cmd = read_shopts(|o| o.prompt.screensaver_cmd.clone())
+    let screensaver_cmd = Shed::shopts(|o| o.prompt.screensaver_cmd.clone())
       .trim()
       .to_string();
-    let screensaver_idle_time = read_shopts(|o| o.prompt.screensaver_idle_time);
+    let screensaver_idle_time = Shed::shopts(|o| o.prompt.screensaver_idle_time);
     if screensaver_idle_time == 0 || screensaver_cmd.is_empty() {
       // no screensaver stuff, set no timeout
       PollTimeout::NONE
@@ -448,17 +431,17 @@ fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
 }
 
 fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
-  let raw_mode = with_term(|t| t.setup_terminal())?;
+  let raw_mode = Shed::term_mut(|t| t.setup_terminal())?;
+  let _interactive_mode = Shed::term_mut(|t| t.interactive_guard(true));
 
   sig_setup(args.login_shell);
-  crate::state::INTERACTIVE.store(true, Ordering::SeqCst);
 
-  write_meta(|m| {
+  Shed::meta_mut(|m| {
     m.ensure_meta_table()?;
     m.create_socket()
   })?;
 
-  if let Some(msg) = read_meta(|m| m.welcome_message(args.welcome)) {
+  if let Some(msg) = Shed::meta(|m| m.welcome_message(args.welcome)) {
     outln!("\n{msg}\n\n");
   }
 
@@ -488,10 +471,10 @@ fn interactive_setup(args: ShedArgs) -> ShResult<TermGuard> {
     errln!("\n{welcome}\n\n");
   }
 
-  if read_shopts(|o| o.statline.enable) {
+  if Shed::shopts(|o| o.statline.enable) {
     // statline enabled, reserve scroll region rows
     // also move the cursor down there too
-    with_term(|t| -> ShResult<()> {
+    Shed::term_mut(|t| -> ShResult<()> {
       let bottom = (t.t_rows() as u16).saturating_sub(2).max(1);
       t.set_scroll_region(1, bottom)?;
       t.move_cursor_abs(bottom, 1);
@@ -524,24 +507,22 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
       }
     }
   };
-
   if let Some(keys) = script_keys {
     return run_script_keys(&mut readline, keys);
   }
 
-  let mut vi_mode = read_shopts(|o| o.set.vi);
+  let mut vi_mode = Shed::shopts(|o| o.set.vi);
   let mut socket_mode = ShedSocket::mode();
 
   let mut poll_fds: SmallVec<[PollFd; 2]> = SmallVec::new();
-  let Some(tty_fd) = with_term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
+  let Some(tty_fd) = Shed::term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
     errln!("Failed to access terminal file descriptor");
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "terminal access failed",));
   };
-
   let tty_poll = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty_fd) }, PollFlags::POLLIN);
 
-  let socket_fd = write_meta(|m| m.get_socket().map(|s| s.as_raw_fd()));
+  let socket_fd = Shed::meta_mut(|m| m.get_socket().map(|s| s.as_raw_fd()));
   let socket_poll =
     socket_fd.map(|fd| PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN));
 
@@ -556,13 +537,13 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
       poll_fds.push(fd.clone());
     }
 
-    if read_shopts(|o| o.set.vi) != vi_mode {
+    if Shed::shopts(|o| o.set.vi) != vi_mode {
       // the editing mode option changed.
       // we have to make sure the edit mode reflects the option now
       readline.fix_editing_mode();
 
       vi_mode = !vi_mode; // and toggle this
-    } else if read_meta(|m| m.num_subscribers()) == 0 && readline.in_insert_mode() {
+    } else if Shed::meta(|m| m.num_subscribers()) == 0 && readline.in_insert_mode() {
       // we are in remote mode with no consumers for our broadcasted input.
       // That effectively soft locks the shell, so let's fix that
       readline.fix_editing_mode();
@@ -573,7 +554,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
     }
 
     let (timeout, exec_if_timeout) = get_poll_timeout(&mut readline);
-    with_term(|t| t.flush())?;
+    Shed::term_mut(|t| t.flush())?;
 
     match poll(&mut poll_fds, timeout) {
       Ok(0) => {
@@ -583,11 +564,11 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
         {
           // don't exec screensaver if we have a pending command
           let prepared = ReadlineEvent::Line(cmd.clone());
-          let _guard = scopeguard::guard(read_shopts(|o| o.core.auto_hist), |opt| {
+          let _guard = scopeguard::guard(Shed::shopts(|o| o.core.auto_hist), |opt| {
             // restores old auto_hist value
-            write_shopts(|o| o.core.auto_hist = opt);
+            Shed::shopts_mut(|o| o.core.auto_hist = opt);
           });
-          write_shopts(|o| o.core.auto_hist = false); // don't save screensaver command to history
+          Shed::shopts_mut(|o| o.core.auto_hist = false); // don't save screensaver command to history
 
           autocmd!(OnScreensaverExec);
           let res = {
@@ -630,7 +611,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
         return Ok(());
       }
       if revents.contains(PollFlags::POLLIN) {
-        match with_term(|t| t.read()) {
+        match Shed::term_mut(|t| t.read()) {
           Ok(_) => { /* data read, will be processed below */ }
           Err(e) => match e.kind() {
             ShErrKind::LoopBreak(_) => break,
@@ -650,7 +631,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
       .and_then(|fd| fd.revents())
       .is_some_and(|r| r.contains(PollFlags::POLLIN))
     {
-      let requests = write_meta(|m| m.read_socket())?;
+      let requests = Shed::meta_mut(|m| m.read_socket())?;
       for (conn, req) in requests {
         let res = handle_socket_request(conn, req, &mut readline).transpose();
         if let Some(event) = res
@@ -662,7 +643,7 @@ fn shed_interactive(args: ShedArgs, script_keys: Option<Vec<KeyEvent>>) -> ShRes
     }
 
     // Process the input that we read above
-    let keys = with_term(|t| t.drain_keys())?;
+    let keys = Shed::term_mut(|t| t.drain_keys())?;
     let event = readline.process_input(keys);
 
     match handle_readline_event(&mut readline, event)? {
@@ -714,7 +695,7 @@ fn handle_readline_event(
 ) -> ShResult<bool> {
   match event {
     Ok(ReadlineEvent::Line(input)) => {
-      let token = read_shopts(|s| s.core.auto_hist)
+      let token = Shed::shopts(|s| s.core.auto_hist)
         .then(|| readline.history_mut().push(input.clone()).ok().flatten())
         .flatten(); // token is used as a stable identifier for the command in the history
 
@@ -722,17 +703,17 @@ fn handle_readline_event(
       autocmd!(PreCmd);
 
       let cmd_start = Instant::now();
-      write_meta(|m| m.start_timer());
+      Shed::meta_mut(|m| m.start_timer());
 
-      with_term(|t| t.emit_osc_exec_start()).ok();
+      Shed::term_mut(|t| t.emit_osc_exec_start()).ok();
 
       let res = {
         // _guard restores terminal state on drop
-        let _guard = with_term(|t| t.prepare_for_exec())?;
+        let _guard = Shed::term_mut(|t| t.prepare_for_exec())?;
         exec_int(input.clone(), Some("<stdin>".into()))
       };
 
-      with_term(|t| t.emit_osc_exec_end(state::util::get_status())).ok();
+      Shed::term_mut(|t| t.emit_osc_exec_end(state::Shed::get_status())).ok();
 
       if let Err(e) = res {
         match e.kind() {
@@ -755,13 +736,13 @@ fn handle_readline_event(
       }
       let command_run_time = cmd_start.elapsed();
       log::info!("Command executed in {:.2?}", command_run_time);
-      let runtime = write_meta(|m| m.stop_timer());
+      let runtime = Shed::meta_mut(|m| m.stop_timer());
 
       autocmd!(PostCmd);
 
-      let was_func_def = write_meta(|m| m.take_last_was_func_def());
-      let should_write = read_shopts(|o| o.core.auto_hist)
-        && (!was_func_def || !read_shopts(|o| o.set.nolog))
+      let was_func_def = Shed::meta_mut(|m| m.take_last_was_func_def());
+      let should_write = Shed::shopts(|o| o.core.auto_hist)
+        && (!was_func_def || !Shed::shopts(|o| o.set.nolog))
         && !builtin::fixcmd::NO_HIST_SAVE.swap(false, Ordering::SeqCst)
         && !input.is_empty();
 
@@ -773,17 +754,17 @@ fn handle_readline_event(
           .delete("WHERE token = ?1", rusqlite::params![token.to_string()])?;
       }
 
-      if read_shopts(|s| s.core.auto_hist)
+      if Shed::shopts(|s| s.core.auto_hist)
         && should_write
         && let Some(token) = token
         && let Err(e) = readline
           .history_mut()
-          .set_status(token, runtime, state::util::get_status())
+          .set_status(token, runtime, state::Shed::get_status())
       {
         e.print_error();
       }
 
-      with_term(|t| t.fix_cursor_column())?;
+      Shed::term_mut(|t| t.fix_cursor_column())?;
       write_term!("\n\r")?;
 
       // Reset for next command with fresh prompt
@@ -817,7 +798,7 @@ fn handle_readline_event(
 
 fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
   let keymap_flags = readline.curr_keymap_flags();
-  let matches = read_logic(|l| l.keymaps_filtered(keymap_flags, readline.pending_keymap()));
+  let matches = Shed::logic(|l| l.keymaps_filtered(keymap_flags, readline.pending_keymap()));
   // If there's an exact match, fire it; otherwise flush as normal keys
   let exact = matches
     .iter()
@@ -859,7 +840,7 @@ fn handle_socket_request(
       write(&conn, b"ok\n").ok();
     }
     SocketRequest::Subscribe => {
-      write_meta(|m| m.push_subscriber(conn));
+      Shed::meta_mut(|m| m.push_subscriber(conn));
     }
     SocketRequest::RefreshPrompt => {
       kill(Pid::this(), Signal::SIGUSR1)?;
@@ -972,9 +953,9 @@ fn handle_socket_request(
         let mut responses = vec![];
         for header in headers {
           match header {
-            StatusHeader::ExitCode => responses.push(state::util::get_status().to_string()),
+            StatusHeader::ExitCode => responses.push(state::Shed::get_status().to_string()),
             StatusHeader::CommandName => {
-              if let Some(job) = read_meta(|m| m.last_job().cloned())
+              if let Some(job) = Shed::meta(|m| m.last_job().cloned())
                 && let Some(cmd) = job.name()
               {
                 responses.push(cmd.to_string());
@@ -983,14 +964,14 @@ fn handle_socket_request(
               }
             }
             StatusHeader::Runtime => {
-              let Some(dur) = write_meta(|m| m.get_time()) else {
+              let Some(dur) = Shed::meta_mut(|m| m.get_time()) else {
                 responses.push("".to_string());
                 continue;
               };
               responses.push(format!("{}", dur.as_millis()));
             }
             StatusHeader::Pid => {
-              let Some(job) = write_meta(|m| m.last_job().cloned()) else {
+              let Some(job) = Shed::meta_mut(|m| m.last_job().cloned()) else {
                 responses.push("".to_string());
                 continue;
               };
@@ -1003,7 +984,7 @@ fn handle_socket_request(
               );
             }
             StatusHeader::Pgid => {
-              let Some(job) = write_meta(|m| m.last_job().cloned()) else {
+              let Some(job) = Shed::meta_mut(|m| m.last_job().cloned()) else {
                 responses.push("".to_string());
                 continue;
               };

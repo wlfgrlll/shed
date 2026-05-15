@@ -2,7 +2,7 @@ use std::fmt::{self, Display};
 use std::str::FromStr;
 
 use super::{
-  KeyCode as K, KeyEvent as E, ModKeys as M, ShResult,
+  KeyCode as K, KeyEvent as E, ModKeys as M, ShResult, Shed,
   editcmd::{self, CmdFlags, Direction, EditCmd, Motion, To, Verb, Word},
   history::History,
   key,

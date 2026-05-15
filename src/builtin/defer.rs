@@ -142,6 +142,6 @@ mod tests {
   fn defer_status_zero() {
     let _g = TestGuard::new();
     test_input("defer 'echo unused'").unwrap();
-    assert_eq!(crate::state::util::get_status(), 0);
+    assert_eq!(crate::state::Shed::get_status(), 0);
   }
 }

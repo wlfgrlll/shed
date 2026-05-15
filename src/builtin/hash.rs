@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
 use super::{
+  Shed,
   expand::as_var_val_display,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{self, meta::MetaTab, meta::Utility, util::read_meta, util::write_meta},
+  state::{self, meta::MetaTab, meta::Utility},
   util::{ShResult, with_status},
 };
 
@@ -26,7 +27,7 @@ impl super::Builtin for Hash {
     }
 
     if args.argv.is_empty() && args.opts.is_empty() {
-      let cmds: Vec<Rc<Utility>> = read_meta(|m| m.cached_utils().collect());
+      let cmds: Vec<Rc<Utility>> = Shed::meta(|m| m.cached_utils().collect());
       for cmd in cmds {
         if let state::meta::UtilKind::Command(path) = cmd.kind() {
           let path = as_var_val_display(&path.to_string_lossy());
@@ -36,7 +37,7 @@ impl super::Builtin for Hash {
       }
     }
 
-    write_meta(|m| {
+    Shed::meta_mut(|m| {
       if clear {
         m.clear_cache();
       }
@@ -47,7 +48,7 @@ impl super::Builtin for Hash {
 
     let path_cmds = MetaTab::get_cmds_in_path();
 
-    write_meta(|m| {
+    Shed::meta_mut(|m| {
       for (arg, span) in args.argv {
         if let Some(cmd) = path_cmds.iter().find(|cmd| cmd.name() == arg) {
           m.cache_util(Rc::clone(cmd));

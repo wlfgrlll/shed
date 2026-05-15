@@ -18,15 +18,15 @@ use nix::{
   unistd::{ForkResult, fork, write},
 };
 
-use crate::{
+use super::{
+  Shed,
   expand::Expander,
   match_loop,
   parse::{
     execute::exec_nonint,
     lex::{Span, Tk, TkFlags},
   },
-  sherr,
-  state::{self, util::read_shopts},
+  sherr, state,
   util::{ShErr, ShErrKind, ShResult},
 };
 
@@ -735,7 +735,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
         e.print_error();
         unsafe { nix::libc::_exit(1) };
       }
-      let status = state::util::get_status();
+      let status = state::Shed::get_status();
       unsafe { nix::libc::_exit(status) };
     }
     ForkResult::Parent { child } => {
@@ -763,7 +763,7 @@ pub fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
 
       match status {
         WtStat::Exited(_, code) => {
-          state::util::set_status(code);
+          state::Shed::set_status(code);
           Ok(captured)
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),
@@ -777,7 +777,7 @@ pub fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShResult<Fil
   let result = match class {
     RedirType::Input => OpenOptions::new().read(true).open(Path::new(&path)),
     RedirType::Output => {
-      if read_shopts(|o| o.set.noclobber) && path.is_file() {
+      if Shed::shopts(|o| o.set.noclobber) && path.is_file() {
         return Err(sherr!(
           ExecFail,
           "shopt core.noclobber is set, refusing to overwrite existing file `{}`",
@@ -945,12 +945,12 @@ pub mod tests {
     test_input("false | cat").unwrap();
 
     // Pipeline exit status is the last command
-    let status = crate::state::util::get_status();
+    let status = crate::state::Shed::get_status();
     assert_eq!(status, 0);
 
     test_input("cat < /dev/null | false").unwrap();
 
-    let status = crate::state::util::get_status();
+    let status = crate::state::Shed::get_status();
     assert_ne!(status, 0);
   }
 

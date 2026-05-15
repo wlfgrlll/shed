@@ -3,16 +3,17 @@ use std::{collections::VecDeque, fmt::Display, ops::Range};
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
+use super::{
+  Shed,
+  context::{CtxTkRule, get_context_tokens},
+  editcmd,
+  editcmd::{EditCmd, Motion, Verb},
   expand::{expand_alias_with_pos, markers},
-  match_loop,
+  highlight,
+  history::History,
+  match_loop, parse,
   parse::lex::{LexFlags, LexStream, TkFlags, TkRule},
-  readline::{
-    context::{CtxTkRule, get_context_tokens},
-    editcmd::{EditCmd, Motion, Verb},
-    history::History,
-  },
-  state::util::{read_logic, read_shopts, write_meta},
+  procio, sherr, state, status_msg,
   util::{QuoteState, ShResult, ordered},
 };
 
@@ -153,7 +154,7 @@ impl LineBuf {
 
     if is_separator
       && !self.grapheme_before_cursor().is_none_or(|gr| gr.is_ws())
-      && read_shopts(|o| o.prompt.expand_aliases)
+      && Shed::shopts(|o| o.prompt.expand_aliases)
     {
       self.attempt_alias_expansion();
     }
@@ -270,7 +271,7 @@ impl LineBuf {
     let tk_start = last.span.start();
     let word = last.as_str();
 
-    if let Some(alias) = read_logic(|l| l.aliases().get(word).cloned())
+    if let Some(alias) = Shed::logic(|l| l.aliases().get(word).cloned())
       && let alias = alias.to_string()
       && !raw[tk_start..].starts_with(&alias)
     {
@@ -519,7 +520,7 @@ impl LineBuf {
   pub fn search_match_spans(&self) -> Vec<Range<usize>> {
     if let Some(pat) = self.pending_search.as_ref()
       && !pat.is_empty()
-      && let Ok(re) = write_meta(|m| m.get_regex(pat.clone()))
+      && let Ok(re) = Shed::meta_mut(|m| m.get_regex(pat.clone()))
     {
       let buf = self.joined();
       let positions = self.byte_positions();
@@ -544,7 +545,7 @@ impl Display for LineBuf {
     // Layer 1: search match highlighting
     if let Some(pat) = self.pending_search.as_ref()
       && !pat.is_empty()
-      && let Ok(re) = write_meta(|m| m.get_regex(pat.clone()))
+      && let Ok(re) = Shed::meta_mut(|m| m.get_regex(pat.clone()))
     {
       let buf = self.joined();
       // Collect (start_pos, end_pos) pairs first, then insert in reverse

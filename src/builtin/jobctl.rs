@@ -6,11 +6,11 @@ use nix::{
 use crate::{
   builtin::BuiltinArgs,
   getopt::{Opt, OptSpec},
-  jobs::{JobCmdFlags, JobID, wait_bg},
   out, outln,
   parse::lex::Span,
   sherr,
   signal::parse_signal,
+  state::jobs::{JobCmdFlags, JobID, wait_bg},
   state::{self, Shed},
   util::{ShResult, ShResultExt, with_status},
 };

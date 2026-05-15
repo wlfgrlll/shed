@@ -4,14 +4,15 @@ use std::{
 
 use bitflags::bitflags;
 
-use crate::{
+use super::{
+  Shed,
   expand::{expand_raw_inner, markers::strip_markers, unescape_str},
   match_loop,
   parse::{
     execute::{in_cd_path, is_in_path},
     lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
   },
-  state::{self, util::get_exec_wrappers, util::read_meta, util::read_shopts, vars::ShellParam},
+  state::{self, util::get_exec_wrappers, vars::ShellParam},
   util::{QuoteState, has_unescaped, split_at_unescaped},
 };
 
@@ -133,7 +134,8 @@ fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
 /// 3. All directories in PATH environment variable
 /// 4. Shell functions and aliases in the current shell state
 fn is_valid(command: Tk) -> bool {
-  if read_shopts(|s| s.core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone()) {
+  if Shed::shopts(|s| s.core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone())
+  {
     // this is a directory and autocd is enabled
     return true;
   }
@@ -158,7 +160,7 @@ fn is_valid_cmd(command: Tk) -> bool {
     // this is a file that is executable by someone
     meta.permissions().mode() & 0o111 != 0
   } else {
-    read_meta(|m| m.cache_contains(&name))
+    Shed::meta(|m| m.cache_contains(&name))
   }
 }
 
@@ -643,7 +645,7 @@ impl CtxTk {
 /// Check if a given path refers to a file or is a prefix of an existing filename
 fn check_path_exists(path: &str) -> bool {
   // NOTE: keep an eye on this. this might have pretty significant overhead on network mounts
-  if !read_shopts(|o| o.highlight.check_files) {
+  if !Shed::shopts(|o| o.highlight.check_files) {
     return false;
   }
 

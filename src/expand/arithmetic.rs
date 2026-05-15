@@ -1060,7 +1060,7 @@ impl ArithTk {
           return Err(sherr!(
             ParseErr,
             "Unexpected token during arithmetic evaluation: '{:?}'",
-            tokens[i],
+            &tokens[i],
           ));
         }
       }

@@ -11,11 +11,13 @@ use lex::{LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule};
 use std::fmt::Display;
 
 use super::{
-  builtin, errln, expand, jobs,
+  builtin, errln, expand,
   parse::lex::clean_input,
   procio,
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
-  sherr, shopt, signal, state, util,
+  sherr, shopt, signal, state,
+  state::jobs,
+  util,
   util::{ShErr, ShResult, split_tk},
 };
 

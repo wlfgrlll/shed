@@ -1,4 +1,4 @@
-use crate::state::{terminal::CursorStyle, util::with_term};
+use super::{CursorStyle, Shed};
 
 /*
  * These two structs get their own module because the public API is the only way
@@ -163,13 +163,13 @@ impl Default for TermGuard {
 
 impl Drop for TermGuard {
   fn drop(&mut self) {
-    // if we are not active, that means we are still inside of with_term()
+    // if we are not active, that means we are still inside of Shed::term_mut()
     if !self.active {
       return;
     }
 
     // which means this call would result in a RefCell panic
-    with_term(|t| t.load_state(self).ok());
+    Shed::term_mut(|t| t.load_state(self).ok());
   }
 }
 

@@ -9,6 +9,7 @@ use std::{
 use bitflags::bitflags;
 
 use crate::{
+  Shed,
   builtin::BUILTIN_NAMES,
   match_loop,
   readline::Pos,
@@ -917,7 +918,8 @@ impl LexStream {
         self,
         pos,
         span_start..pos,
-        "Heredoc delimiter '{delim}' not found",
+        "Heredoc delimiter '{}' not found",
+        delim
       ))
     }
   }
@@ -1400,7 +1402,7 @@ impl Iterator for LexStream {
       }
       '#'
         if !self.flags.contains(LexFlags::INTERACTIVE)
-          || crate::state::util::read_shopts(|s| s.core.interactive_comments) =>
+          || Shed::shopts(|s| s.core.interactive_comments) =>
       {
         let ch_idx = self.cursor;
         self.inc_cursor(1);

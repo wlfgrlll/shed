@@ -15,9 +15,7 @@ use crate::{
     editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
     linebuf::{Line, Lines, MotionKind, Pos, ordered},
   },
-  state::{
-    Shed, util::read_shopts, util::with_term, util::write_meta, vars::VarFlags, vars::VarKind,
-  },
+  state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg,
   util::{ShResult, format_size, var_ctx_guard},
   verb,
@@ -97,7 +95,7 @@ impl super::LineBuf {
   ) -> ShResult<()> {
     let line_nums = self.lines_for_address(range.as_ref())?;
 
-    let re = match write_meta(|m| m.get_regex(old.to_string())) {
+    let re = match Shed::meta_mut(|m| m.get_regex(old.to_string())) {
       Ok(re) => re,
       Err(e) => {
         status_msg!("{e}");
@@ -304,7 +302,7 @@ impl super::LineBuf {
         };
         self.cursor.pos = self.cursor.pos + cursor_offset;
         self.fix_cursor();
-        if read_shopts(|o| o.line.auto_indent) {
+        if Shed::shopts(|o| o.line.auto_indent) {
           self.equalize_rows(line_range.collect());
         }
       }
@@ -517,7 +515,7 @@ impl super::LineBuf {
       Some(capture_command(sh_cmd, Some(stdin))?)
     } else {
       defer!(autocmd!(PostCmd));
-      let _guard = with_term(|t| t.cooked_mode_guard());
+      let _guard = Shed::term_mut(|t| t.cooked_mode_guard());
       exec_int(sh_cmd.to_string(), Some("<ex-mode-cmd>".into()))?;
       None
     };
@@ -564,7 +562,7 @@ impl super::LineBuf {
       self.set_anchor_from_flat(anchor);
     }
     if !keys.is_empty() {
-      write_meta(|m| m.set_pending_widget_keys(&keys))
+      Shed::meta_mut(|m| m.set_pending_widget_keys(&keys))
     }
     Ok(output)
   }

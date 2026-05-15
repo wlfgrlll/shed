@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{
   expand::as_var_val_display,
   match_loop, outln, sherr,
-  state::{Shed, util::write_shopts, vars::VarKind},
+  state::{Shed, vars::VarKind},
   util::{ShErr, ShResult, ShResultExt, with_status},
 };
 use bitflags::bitflags;
@@ -125,7 +125,7 @@ impl FromStr for SetFlags {
 pub fn build_set_call(readable: bool) -> String {
   // I hope you like iterators :)
 
-  let opts = write_shopts(|o| o.query("set").unwrap().unwrap());
+  let opts = Shed::shopts_mut(|o| o.query("set").unwrap().unwrap());
   if !readable {
     let mut call = String::from("set ");
 
@@ -304,7 +304,7 @@ impl super::Builtin for Set {
             }
             None => {
               if should_set && flags.is_empty() {
-                write_shopts(|o| o.set = Default::default());
+                Shed::shopts_mut(|o| o.set = Default::default());
                 continue;
               }
             }
@@ -313,10 +313,12 @@ impl super::Builtin for Set {
             let opt_val = if should_set { "true" } else { "false" };
             if &opt == "emacs" {
               let opt_val = if should_set { "false" } else { "true" };
-              write_shopts(|o| o.query(&format!("set.vi={opt_val}"))).promote_err(span.clone())?;
+              Shed::shopts_mut(|o| o.query(&format!("set.vi={opt_val}")))
+                .promote_err(span.clone())?;
               continue;
             }
-            write_shopts(|o| o.query(&format!("set.{opt}={opt_val}"))).promote_err(span.clone())?;
+            Shed::shopts_mut(|o| o.query(&format!("set.{opt}={opt_val}")))
+              .promote_err(span.clone())?;
           }
         }
         Some(_) => pos_args.push(arg),

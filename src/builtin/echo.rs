@@ -1,9 +1,8 @@
 use super::{
-  Builtin, ShResult,
+  Builtin, ShResult, Shed,
   expand::expand_prompt,
   getopt::{Opt, OptSpec},
   out,
-  state::util::read_shopts,
   util::ShResultExt,
   util::expand_ansi_c,
   with_status,
@@ -30,7 +29,7 @@ impl Builtin for Echo {
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let xpg_echo = read_shopts(|o| o.core.xpg_echo);
+    let xpg_echo = Shed::shopts(|o| o.core.xpg_echo);
     let mut flags = EchoFlags::empty();
     if xpg_echo {
       flags |= EchoFlags::USE_ESCAPE;
@@ -74,7 +73,7 @@ impl Builtin for Echo {
 
 #[cfg(test)]
 mod tests {
-  use crate::state::{self, util::write_shopts};
+  use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
@@ -105,7 +104,7 @@ mod tests {
   fn echo_status_zero() {
     let _g = TestGuard::new();
     test_input("echo hello").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Integration: -n flag =====================
@@ -157,7 +156,7 @@ mod tests {
   #[test]
   fn echo_xpg_echo_expands_by_default() {
     let guard = TestGuard::new();
-    write_shopts(|o| o.core.xpg_echo = true);
+    Shed::shopts_mut(|o| o.core.xpg_echo = true);
 
     test_input("echo 'hello\\nworld'").unwrap();
     let out = guard.read_output();
@@ -167,7 +166,7 @@ mod tests {
   #[test]
   fn echo_xpg_echo_suppressed_by_big_e() {
     let guard = TestGuard::new();
-    write_shopts(|o| o.core.xpg_echo = true);
+    Shed::shopts_mut(|o| o.core.xpg_echo = true);
 
     test_input("echo -E 'hello\\nworld'").unwrap();
     let out = guard.read_output();
@@ -177,7 +176,7 @@ mod tests {
   #[test]
   fn echo_small_e_overrides_without_xpg() {
     let guard = TestGuard::new();
-    write_shopts(|o| o.core.xpg_echo = false);
+    Shed::shopts_mut(|o| o.core.xpg_echo = false);
 
     test_input("echo -e 'a\\tb'").unwrap();
     let out = guard.read_output();
@@ -187,7 +186,7 @@ mod tests {
   #[test]
   fn echo_big_e_noop_without_xpg() {
     let guard = TestGuard::new();
-    write_shopts(|o| o.core.xpg_echo = false);
+    Shed::shopts_mut(|o| o.core.xpg_echo = false);
 
     // -E without xpg_echo is a no-op - escapes already off
     test_input("echo -E 'hello\\nworld'").unwrap();
@@ -208,7 +207,7 @@ mod tests {
   #[test]
   fn echo_xpg_n_suppresses_newline() {
     let guard = TestGuard::new();
-    write_shopts(|o| o.core.xpg_echo = true);
+    Shed::shopts_mut(|o| o.core.xpg_echo = true);
 
     test_input("echo -n 'hello\\nworld'").unwrap();
     let out = guard.read_output();

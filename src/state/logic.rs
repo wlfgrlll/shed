@@ -1,7 +1,5 @@
 use nix::sys::signal::Signal;
 
-use super::{util::write_meta, *};
-
 use std::{
   collections::HashMap,
   fmt::{self, Display},
@@ -9,6 +7,7 @@ use std::{
 };
 
 use super::{
+  ShErr, Shed,
   keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
   parse::{Node, lex::Span},
   signal::parse_signal,
@@ -185,7 +184,7 @@ impl LogTab {
     entry.push(cmd);
   }
   pub fn get_autocmds(&self, kind: AutoCmdKind) -> Vec<AutoCmd> {
-    write_meta(|m| m.notify_autocmd(kind)).ok();
+    Shed::meta_mut(|m| m.notify_autocmd(kind)).ok();
     self.autocmds.get(&kind).cloned().unwrap_or_default()
   }
   pub fn clear_autocmds(&mut self, kind: AutoCmdKind) {

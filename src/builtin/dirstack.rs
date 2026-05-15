@@ -1,10 +1,10 @@
 use std::{env, path::PathBuf};
 
 use super::{
-  ShResult, Span,
+  ShResult, Shed, Span,
   getopt::{Opt, OptSpec},
   out, outln, sherr,
-  state::util::{change_dir, read_meta, write_meta},
+  state::util::change_dir,
   util::ShResultExt,
   with_status,
 };
@@ -66,7 +66,7 @@ impl super::Builtin for PushDir {
 
     if let Some(idx) = parsed.index {
       let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-      let new_cwd = write_meta(|m| {
+      let new_cwd = Shed::meta_mut(|m| {
         let dirs = m.dirs_mut();
         dirs.push_front(cwd);
         match idx {
@@ -85,7 +85,7 @@ impl super::Builtin for PushDir {
     } else if let Some(dir) = parsed.dir {
       let old_dir = env::current_dir()?;
       if old_dir != dir {
-        write_meta(|m| m.push_dir(old_dir));
+        Shed::meta_mut(|m| m.push_dir(old_dir));
       }
 
       if parsed.no_cd {
@@ -113,7 +113,7 @@ impl super::Builtin for PopDir {
       match idx {
         StackIdx::FromTop(0) => {
           // +0 is same as plain popd: pop top, cd to it
-          let dir = write_meta(|m| m.pop_dir());
+          let dir = Shed::meta_mut(|m| m.pop_dir());
           if !parsed.no_cd {
             if let Some(dir) = dir {
               change_dir(&dir).promote_err(blame)?;
@@ -127,7 +127,7 @@ impl super::Builtin for PopDir {
         }
         StackIdx::FromTop(n) => {
           // +N (N>0): remove (N-1)th stored entry, no cd
-          write_meta(|m| {
+          Shed::meta_mut(|m| {
             let dirs = m.dirs_mut();
             let idx = n - 1;
             if idx >= dirs.len() {
@@ -141,7 +141,7 @@ impl super::Builtin for PopDir {
           })?;
         }
         StackIdx::FromBottom(n) => {
-          write_meta(|m| -> ShResult<()> {
+          Shed::meta_mut(|m| -> ShResult<()> {
             let dirs = m.dirs_mut();
             let actual = dirs.len().checked_sub(n + 1).ok_or_else(|| {
               sherr!(
@@ -156,7 +156,7 @@ impl super::Builtin for PopDir {
       }
       print_dirs()?;
     } else {
-      let dir = write_meta(|m| m.pop_dir());
+      let dir = Shed::meta_mut(|m| m.pop_dir());
 
       if parsed.no_cd {
         return with_status(0);
@@ -227,11 +227,11 @@ impl super::Builtin for Dirs {
     }
 
     if clear_stack {
-      write_meta(|m| m.dirs_mut().clear());
+      Shed::meta_mut(|m| m.dirs_mut().clear());
       return Ok(());
     }
 
-    let mut dirs: Vec<String> = read_meta(|m| {
+    let mut dirs: Vec<String> = Shed::meta(|m| {
       let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
       let stack = [current_dir]
         .into_iter()
@@ -302,7 +302,7 @@ enum StackIdx {
 
 fn print_dirs() -> ShResult<()> {
   let current_dir = env::current_dir()?;
-  let dirs_iter = read_meta(|m| m.dirs().clone().into_iter());
+  let dirs_iter = Shed::meta(|m| m.dirs().clone().into_iter());
   let all_dirs = [current_dir]
     .into_iter()
     .chain(dirs_iter)
@@ -361,7 +361,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
 #[cfg(test)]
 pub mod tests {
   use crate::{
-    state::{self, util::read_meta},
+    Shed, state,
     tests::testutil::{TestGuard, test_input},
   };
   use pretty_assertions::{assert_eq, assert_ne};
@@ -380,7 +380,7 @@ pub mod tests {
     assert_ne!(new_dir, current_dir);
     assert_eq!(new_dir, PathBuf::from("/tmp"));
 
-    let dir_stack = read_meta(|m| m.dirs().clone());
+    let dir_stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(dir_stack.len(), 1);
     assert_eq!(dir_stack[0], current_dir);
 
@@ -398,7 +398,7 @@ pub mod tests {
 
     test_input(format!("pushd {tempdir_raw}")).unwrap();
 
-    let dir_stack = read_meta(|m| m.dirs().clone());
+    let dir_stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(dir_stack.len(), 1);
     assert_eq!(dir_stack[0], current_dir);
 
@@ -418,7 +418,7 @@ pub mod tests {
     let _g = TestGuard::new();
 
     test_input("popd").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -435,7 +435,7 @@ pub mod tests {
     g.read_output();
 
     assert_eq!(env::current_dir().unwrap(), path2);
-    let stack = read_meta(|m| m.dirs().clone());
+    let stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(stack.len(), 2);
     assert_eq!(stack[0], path1);
     assert_eq!(stack[1], original);
@@ -446,7 +446,7 @@ pub mod tests {
     test_input("popd").unwrap();
     assert_eq!(env::current_dir().unwrap(), original);
 
-    let stack = read_meta(|m| m.dirs().clone());
+    let stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(stack.len(), 0);
   }
 
@@ -470,7 +470,7 @@ pub mod tests {
     test_input("pushd +1").unwrap();
     assert_eq!(env::current_dir().unwrap(), path1);
 
-    let stack = read_meta(|m| m.dirs().clone());
+    let stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(stack.len(), 2);
     assert_eq!(stack[0], original);
     assert_eq!(stack[1], path2);
@@ -495,10 +495,10 @@ pub mod tests {
     let tmp = TempDir::new().unwrap();
 
     test_input(format!("pushd {}", tmp.path().display())).unwrap();
-    assert_eq!(read_meta(|m| m.dirs().len()), 1);
+    assert_eq!(Shed::meta(|m| m.dirs().len()), 1);
 
     test_input("dirs -c").unwrap();
-    assert_eq!(read_meta(|m| m.dirs().len()), 0);
+    assert_eq!(Shed::meta(|m| m.dirs().len()), 0);
   }
 
   #[test]
@@ -542,7 +542,7 @@ pub mod tests {
     test_input("popd +1").unwrap();
     assert_eq!(env::current_dir().unwrap(), path2); // no cd
 
-    let stack = read_meta(|m| m.dirs().clone());
+    let stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(stack.len(), 1);
     assert_eq!(stack[0], original);
   }
@@ -552,6 +552,6 @@ pub mod tests {
     let _g = TestGuard::new();
 
     test_input("pushd /nonexistent_dir_12345").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

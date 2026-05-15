@@ -3,21 +3,18 @@ use std::io::Write;
 use nix::unistd::{isatty, write};
 use regex::Regex;
 
-use crate::{
-  builtin::help::{
-    StyledHelp,
-    markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
-  },
+use crate::write_term;
+
+use super::{
+  ShResult, Shed, StyledHelp,
   keys::KeyEvent,
+  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   procio::stdout_fileno,
   readline::{Direction, SimpleEditor},
   state::terminal::calc_str_width,
-  state::util::with_term,
-  util::ShResult,
-  write_term,
 };
 
-pub enum PagerEvent {
+pub(super) enum PagerEvent {
   Continue,
   Back,
   Forward,
@@ -25,14 +22,14 @@ pub enum PagerEvent {
   Exit,
 }
 
-pub enum PagerCmd {
+pub(super) enum PagerCmd {
   Scroll(isize), // line offset
   TopOfPage,
   BottomOfPage,
 }
 
 #[derive(Default, Debug)]
-pub struct SearchQuery {
+struct SearchQuery {
   editor: SimpleEditor,
   dir: Direction,
   results: Vec<(usize, usize)>, // spans
@@ -59,7 +56,7 @@ struct ClickableRef {
   ref_idx: usize,
 }
 
-pub struct HelpPager {
+pub(super) struct HelpPager {
   search: SearchQuery,
   ref_keys: Vec<(usize, char)>,
   cross_refs: Vec<MarkedSpan>, // spans
@@ -103,8 +100,8 @@ impl HelpPager {
 
   pub fn cross_refs_in_viewport(&self) -> Vec<usize> {
     let top = self.scroll_offset;
-    let t_rows = with_term(|t| t.t_rows());
-    let bottom = top + t_rows as usize;
+    let t_rows = Shed::term(|t| t.t_rows());
+    let bottom = top + t_rows;
 
     let first = self
       .cross_refs
@@ -124,7 +121,7 @@ impl HelpPager {
 
   pub fn display(&mut self) -> ShResult<()> {
     write_term!("\x1b[H")?;
-    let height = with_term(|t| t.t_rows());
+    let height = Shed::term(|t| t.t_rows());
 
     // Build click map for cross-references in viewport
     self.click_refs.clear();
@@ -132,7 +129,7 @@ impl HelpPager {
     let content_str = self.content.content();
     for (idx, c_ref) in self.cross_refs.iter().enumerate() {
       let line_no = c_ref.line_no(content_str);
-      if line_no < scroll || line_no >= scroll + height as usize {
+      if line_no < scroll || line_no >= scroll + height {
         continue;
       }
       let screen_row = line_no - scroll; // 1-based terminal rows
@@ -170,7 +167,7 @@ impl HelpPager {
     let content_lines: Vec<_> = content
       .lines()
       .skip(self.scroll_offset)
-      .take(height as usize)
+      .take(height)
       .collect();
 
     for (i, line) in content_lines.iter().enumerate() {
@@ -201,7 +198,7 @@ impl HelpPager {
       write_term!("{line}\x1b[K\n").ok();
     }
 
-    for _ in content_lines.len()..height as usize {
+    for _ in content_lines.len()..height {
       write_term!("\x1b[1;34m~\x1b[0m\x1b[K\n").ok(); // draw tildes on empty lines
     }
 
@@ -220,13 +217,13 @@ impl HelpPager {
       write_term!("\x1b[1;7;4m {prefix}{query} \x1b[0m",).ok();
     }
 
-    with_term(|t| t.flush())?;
+    Shed::term_mut(|t| t.flush())?;
     Ok(())
   }
 
   pub fn handle_input(&mut self) -> ShResult<PagerEvent> {
-    with_term(|t| t.read())?;
-    let keys = with_term(|t| t.drain_keys())?;
+    Shed::term_mut(|t| t.read())?;
+    let keys = Shed::term_mut(|t| t.drain_keys())?;
 
     let mut res = PagerEvent::Continue;
     for key in keys {
@@ -359,7 +356,7 @@ impl HelpPager {
   }
 
   pub fn max_scroll(&self) -> usize {
-    let t_rows = with_term(|t| t.t_rows());
+    let t_rows = Shed::term(|t| t.t_rows());
     self.content().lines().count().saturating_sub(t_rows)
   }
 
@@ -494,9 +491,9 @@ impl HelpPager {
         self.scroll_offset = 0;
       }
       PagerCmd::BottomOfPage => {
-        let rows = with_term(|t| t.t_rows());
+        let rows = Shed::term(|t| t.t_rows());
         let n_lines = self.content().lines().count();
-        self.scroll_offset = n_lines.saturating_sub(rows as usize);
+        self.scroll_offset = n_lines.saturating_sub(rows);
       }
     }
 
@@ -504,7 +501,7 @@ impl HelpPager {
   }
 }
 
-pub struct HintChars {
+struct HintChars {
   seq: String,
 }
 

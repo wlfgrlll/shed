@@ -1,16 +1,12 @@
-use crate::{
-  readline::editmode::EditMode,
-  state::{terminal::CursorStyle, util::write_meta},
+use super::{
+  CmdReplay, E as KeyEvent, EditCmd, EditMode, ModeReport, Shed, state::terminal::CursorStyle,
 };
 
-pub struct RemoteMode;
+pub(crate) struct RemoteMode;
 
 impl EditMode for RemoteMode {
-  fn handle_key(
-    &mut self,
-    key: crate::keys::KeyEvent,
-  ) -> Option<crate::readline::editcmd::EditCmd> {
-    write_meta(|m| m.notify_key_event(key)).ok()?;
+  fn handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
+    Shed::meta_mut(|m| m.notify_key_event(key)).ok()?;
     None
   }
 
@@ -18,7 +14,7 @@ impl EditMode for RemoteMode {
     false
   }
 
-  fn as_replay(&self) -> Option<super::CmdReplay> {
+  fn as_replay(&self) -> Option<CmdReplay> {
     None
   }
 
@@ -34,7 +30,7 @@ impl EditMode for RemoteMode {
     false
   }
 
-  fn report_mode(&self) -> super::ModeReport {
+  fn report_mode(&self) -> ModeReport {
     super::ModeReport::Remote
   }
 }

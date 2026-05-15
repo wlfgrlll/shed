@@ -179,7 +179,7 @@ impl super::Builtin for FixCmd {
       fc_edit(hist, opts).promote_err(span)?;
     }
 
-    state::util::set_status(0);
+    state::Shed::set_status(0);
     Ok(())
   }
 }

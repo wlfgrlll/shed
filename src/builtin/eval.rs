@@ -40,14 +40,14 @@ mod tests {
   fn eval_no_args_succeeds() {
     let _g = TestGuard::new();
     test_input("eval").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn eval_status_zero() {
     let _g = TestGuard::new();
     test_input("eval true").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== Joins args =====================
@@ -111,6 +111,6 @@ mod tests {
   fn eval_propagates_failure_status() {
     let _g = TestGuard::new();
     let _ = test_input("eval false");
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

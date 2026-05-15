@@ -1,12 +1,8 @@
 #![allow(non_snake_case)]
 
-use crate::{
-  key,
-  parse::lex::Span,
-  readline::{Prompt, ShedLine},
-  state::{util::with_term, util::write_logic, util::write_shopts},
-  tests::testutil::TestGuard,
-};
+use super::{Prompt, Shed, ShedLine, key, parse::lex::Span};
+
+use crate::tests::testutil::TestGuard;
 
 /// Tests for our vim logic emulation. Each test consists of an initial text, a sequence of keys to feed, and the expected final text and cursor position.
 macro_rules! vi_test {
@@ -14,13 +10,13 @@ macro_rules! vi_test {
     $(#[test]
       fn $name() {
         let (mut vi, _g) = test_vi($input);
-        with_term(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
-        let keys = with_term(|t| t.drain_keys()).unwrap();
+        Shed::term_mut(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
+        let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
         vi.process_input(keys).unwrap();
 
         for byte in $op.as_bytes() {
-          with_term(|t| t.feed_bytes(&[*byte]));
-          let keys = with_term(|t| t.drain_keys()).unwrap();
+          Shed::term_mut(|t| t.feed_bytes(&[*byte]));
+          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
           vi.process_input(keys).unwrap();
         }
         assert_eq!(vi.editor.joined(), $expected_text);
@@ -269,7 +265,7 @@ vi_test! {
 // ===================== Vi Tests =====================
 
 fn test_vi(initial: &str) -> (ShedLine, TestGuard) {
-  write_shopts(|o| o.set.vi = true);
+  Shed::shopts_mut(|o| o.set.vi = true);
   let g = TestGuard::new();
   let prompt = Prompt::default();
   let vi = ShedLine::new_no_hist(prompt).unwrap().with_initial(initial);
@@ -291,11 +287,11 @@ fn vi_auto_indent() {
   ];
 
   for (i, line) in lines.iter().enumerate() {
-    with_term(|t| t.feed_bytes(line.as_bytes()));
+    Shed::term_mut(|t| t.feed_bytes(line.as_bytes()));
     if i != lines.len() - 1 {
-      with_term(|t| t.feed_bytes(b"\r"));
+      Shed::term_mut(|t| t.feed_bytes(b"\r"));
     }
-    let keys = with_term(|t| t.drain_keys()).unwrap();
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     vi.process_input(keys).unwrap();
   }
 
@@ -321,11 +317,11 @@ fn vi_auto_indent_siblings() {
   ];
 
   for (i, line) in lines.iter().enumerate() {
-    with_term(|t| t.feed_bytes(line.as_bytes()));
+    Shed::term_mut(|t| t.feed_bytes(line.as_bytes()));
     if i != lines.len() - 1 {
-      with_term(|t| t.feed_bytes(b"\r"));
+      Shed::term_mut(|t| t.feed_bytes(b"\r"));
     }
-    let keys = with_term(|t| t.drain_keys()).unwrap();
+    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
     vi.process_input(keys).unwrap();
   }
 
@@ -340,8 +336,8 @@ fn vi_auto_indent_funcdef() {
   let (mut vi, _g) = test_vi("");
 
   let bytes = b"func_def() {}";
-  with_term(|t| t.feed_bytes(bytes));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(bytes));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   vi.process_input(keys).unwrap();
   vi.process_input(vec![key!(Esc)]).unwrap();
   vi.process_input(vec![key!('i')]).unwrap();
@@ -356,8 +352,8 @@ fn vi_func_def_is_finished() {
   let (mut vi, _g) = test_vi("");
 
   let bytes = b"func_def() {\r}\r";
-  with_term(|t| t.feed_bytes(bytes));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(bytes));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   vi.process_input(keys).unwrap();
   assert_eq!(vi.editor.joined(), "");
 }
@@ -367,8 +363,8 @@ fn case_stmt_is_finished() {
   let (mut vi, _g) = test_vi("");
 
   let bytes = b"case foo in\rfoo)\rcase bar in\rbar)\recho foo\r;;\resac\r;;\resac\r";
-  with_term(|t| t.feed_bytes(bytes));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(bytes));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   vi.process_input(keys).unwrap();
   assert_eq!(vi.editor.joined(), "");
 }
@@ -380,13 +376,13 @@ fn hist_expansion_test(commands: &[&str], input: &str, expected: &str) {
   for cmd in commands {
     line.history.push(cmd.to_string()).unwrap();
   }
-  line.history.refresh_hist_entries_sync();
+  line.history.refresh_hist_entries();
   line.history.update_search_mask(None);
 
   assert_eq!(line.history.masked_entries().len(), commands.len());
 
-  with_term(|t| t.feed_bytes(input.as_bytes()));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   line.process_input(keys).unwrap();
 
   // After process_input with \r, if expansion happened the buffer
@@ -411,8 +407,8 @@ fn hist_no_expansion_test(commands: &[&str], input: &str) {
   line.history.update_search_mask(None);
 
   // Feed input without pressing Enter
-  with_term(|t| t.feed_bytes(input.as_bytes()));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   line.process_input(keys).unwrap();
 
   let before = line.editor.joined();
@@ -773,7 +769,7 @@ fn hist_restore_ids_are_contiguous() {
 
 fn setup_aliases(aliases: &[(&str, &str)]) {
   let span = Span::default();
-  write_logic(|l| {
+  Shed::logic_mut(|l| {
     for (name, body) in aliases {
       l.insert_alias(name, body, span.clone());
     }
@@ -782,14 +778,14 @@ fn setup_aliases(aliases: &[(&str, &str)]) {
 
 fn alias_expansion_test(aliases: &[(&str, &str)], input: &str, expected: &str) {
   let _g = TestGuard::new();
-  write_shopts(|o| o.prompt.expand_aliases = true);
+  Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
   setup_aliases(aliases);
 
   let prompt = Prompt::default();
   let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
-  with_term(|t| t.feed_bytes(input.as_bytes()));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   line.process_input(keys).unwrap();
 
   let joined = line.editor.joined();
@@ -798,14 +794,14 @@ fn alias_expansion_test(aliases: &[(&str, &str)], input: &str, expected: &str) {
 
 fn alias_no_expansion_test(aliases: &[(&str, &str)], input: &str) {
   let _g = TestGuard::new();
-  write_shopts(|o| o.prompt.expand_aliases = true);
+  Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
   setup_aliases(aliases);
 
   let prompt = Prompt::default();
   let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
-  with_term(|t| t.feed_bytes(input.as_bytes()));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   line.process_input(keys).unwrap();
 
   let before = line.editor.joined();
@@ -867,14 +863,14 @@ fn alias_single_char_body() {
 #[test]
 fn alias_no_expand_when_disabled() {
   let _g = TestGuard::new();
-  write_shopts(|o| o.prompt.expand_aliases = false);
+  Shed::shopts_mut(|o| o.prompt.expand_aliases = false);
   setup_aliases(&[("gc", "git commit")]);
 
   let prompt = Prompt::default();
   let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
-  with_term(|t| t.feed_bytes(b"gc "));
-  let keys = with_term(|t| t.drain_keys()).unwrap();
+  Shed::term_mut(|t| t.feed_bytes(b"gc "));
+  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
   line.process_input(keys).unwrap();
 
   let joined = line.editor.joined();

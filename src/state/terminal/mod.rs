@@ -30,13 +30,12 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use vte::Perform;
 
-use crate::{
+use super::{
+  ShErr, ShErrKind, ShResult, Shed,
   keys::{KeyCode, KeyEvent, ModKeys},
   procio::move_high,
   readline::Pos,
   sherr,
-  state::util::{read_shopts, with_term},
-  util::{ShErr, ShErrKind, ShResult},
 };
 
 pub fn calc_str_width(s: &str) -> usize {
@@ -774,7 +773,7 @@ impl Display for CursorStyle {
 pub(crate) struct FlushGuard;
 impl Drop for FlushGuard {
   fn drop(&mut self) {
-    with_term(|t| t.flush()).ok();
+    Shed::term_mut(|t| t.flush()).ok();
   }
 }
 
@@ -994,8 +993,6 @@ impl Terminal {
       self.toggle_kitty_proto(true)?;
     }
     self.query_caps()?;
-
-    log::debug!("Terminal capabilities: {:?}", self.term_caps);
     Ok(guard.activate())
   }
 
@@ -1282,7 +1279,7 @@ impl Terminal {
   }
 
   pub fn send_bell(&mut self) -> ShResult<()> {
-    if read_shopts(|o| o.core.bell_enabled) {
+    if Shed::shopts(|o| o.core.bell_enabled) {
       // we use a cooldown because I don't like having my ears assaulted by 1 million bells
       // whenever i finish clearing the line using backspace.
       let now = Instant::now();
@@ -1442,7 +1439,6 @@ impl Terminal {
       tcgetattr(tty).map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
     f(&mut raw);
-
     tcsetattr(tty, termios::SetArg::TCSANOW, &raw)
       .map_err(|e| sherr!(InternalErr, "Failed to set terminal attributes: {e}"))?;
 

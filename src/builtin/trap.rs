@@ -1,8 +1,8 @@
 use super::{
-  errln,
+  Shed, errln,
   expand::as_var_val_display,
   outln,
-  state::{logic::TrapTarget, util::read_logic, util::write_logic},
+  state::logic::TrapTarget,
   util::{ShResult, ShResultExt, with_status},
 };
 
@@ -10,7 +10,7 @@ pub(super) struct Trap;
 impl super::Builtin for Trap {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      read_logic(|l| -> ShResult<()> {
+      Shed::logic(|l| -> ShResult<()> {
         for l in l.traps() {
           let target = l.0;
           let command = as_var_val_display(l.1);
@@ -35,9 +35,9 @@ impl super::Builtin for Trap {
 
     for target in targets {
       if &command == "-" {
-        write_logic(|l| l.remove_trap(target))
+        Shed::logic_mut(|l| l.remove_trap(target))
       } else {
-        write_logic(|l| l.insert_trap(target, command.clone()))
+        Shed::logic_mut(|l| l.insert_trap(target, command.clone()))
       }
     }
 
@@ -48,7 +48,7 @@ impl super::Builtin for Trap {
 #[cfg(test)]
 mod tests {
   use crate::state::logic::TrapTarget;
-  use crate::state::{self, util::read_logic};
+  use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
   use nix::sys::signal::Signal;
   use std::str::FromStr;
@@ -122,7 +122,7 @@ mod tests {
   fn trap_registers_exit() {
     let _g = TestGuard::new();
     test_input("trap 'echo bye' EXIT").unwrap();
-    let cmd = read_logic(|l| l.get_trap(TrapTarget::Exit));
+    let cmd = Shed::logic(|l| l.get_trap(TrapTarget::Exit));
     assert_eq!(cmd.unwrap(), "echo bye");
   }
 
@@ -130,7 +130,7 @@ mod tests {
   fn trap_registers_signal() {
     let _g = TestGuard::new();
     test_input("trap 'echo caught' INT").unwrap();
-    let cmd = read_logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGINT)));
+    let cmd = Shed::logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGINT)));
     assert_eq!(cmd.unwrap(), "echo caught");
   }
 
@@ -138,8 +138,8 @@ mod tests {
   fn trap_multiple_signals() {
     let _g = TestGuard::new();
     test_input("trap 'handle' INT TERM").unwrap();
-    let int = read_logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGINT)));
-    let term = read_logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGTERM)));
+    let int = Shed::logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGINT)));
+    let term = Shed::logic(|l| l.get_trap(TrapTarget::Signal(Signal::SIGTERM)));
     assert_eq!(int.unwrap(), "handle");
     assert_eq!(term.unwrap(), "handle");
   }
@@ -148,9 +148,9 @@ mod tests {
   fn trap_remove() {
     let _g = TestGuard::new();
     test_input("trap 'echo hi' EXIT").unwrap();
-    assert!(read_logic(|l| l.get_trap(TrapTarget::Exit)).is_some());
+    assert!(Shed::logic(|l| l.get_trap(TrapTarget::Exit)).is_some());
     test_input("trap - EXIT").unwrap();
-    assert!(read_logic(|l| l.get_trap(TrapTarget::Exit)).is_none());
+    assert!(Shed::logic(|l| l.get_trap(TrapTarget::Exit)).is_none());
   }
 
   #[test]
@@ -170,14 +170,14 @@ mod tests {
     let _g = TestGuard::new();
     // Single arg prints usage and sets status 1
     test_input("trap 'echo hi'").unwrap();
-    assert_eq!(state::util::get_status(), 1);
+    assert_eq!(state::Shed::get_status(), 1);
   }
 
   #[test]
   fn trap_invalid_signal() {
     let _g = TestGuard::new();
     test_input("trap 'echo hi' BOGUS").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Status =====================
@@ -186,6 +186,6 @@ mod tests {
   fn trap_status_zero() {
     let _g = TestGuard::new();
     test_input("trap 'echo bye' EXIT").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

@@ -1,14 +1,12 @@
-use super::*;
-
 use std::{
   collections::{HashMap, VecDeque, hash_map::Entry},
-  sync::atomic::Ordering,
   time::{Duration, Instant},
 };
 
-use super::util::{read_meta, read_shopts};
-use super::vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab};
-use crate::{sherr, util::ShResult};
+use super::{
+  ShResult, Shed, sherr,
+  vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab},
+};
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
@@ -211,7 +209,7 @@ impl ScopeStack {
   pub fn get_magic_var(&self, var_name: &str) -> Option<String> {
     match var_name {
       "SECONDS" => {
-        let shell_time = read_meta(|m| m.shell_time());
+        let shell_time = Shed::meta(|m| m.shell_time());
         let secs = Instant::now().duration_since(shell_time).as_secs();
         Some(secs.to_string())
       }
@@ -233,10 +231,10 @@ impl ScopeStack {
         let random = rand::random_range(0..32768);
         Some(random.to_string())
       }
-      "?" => Some(get_status().to_string()),
+      "?" => Some(Shed::get_status().to_string()),
       "-" => {
         let mut set_string = String::new();
-        read_shopts(|o| {
+        Shed::shopts(|o| {
           if o.set.allexport {
             set_string.push('a');
           }
@@ -255,7 +253,7 @@ impl ScopeStack {
           if o.set.hashall {
             set_string.push('h');
           }
-          if INTERACTIVE.load(Ordering::SeqCst) {
+          if Shed::term(|t| t.interactive()) {
             set_string.push('i');
           }
           if o.set.monitor {

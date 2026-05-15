@@ -1,26 +1,21 @@
 use super::{SHED, Shed};
 
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::HashMap,
   fs::OpenOptions,
   io::{Read, Write},
   path::{Path, PathBuf},
   rc::Rc,
-  sync::{Arc, atomic::Ordering},
+  sync::Arc,
 };
 
-use nix::{
-  sys::wait::WaitStatus as WtStat,
-  unistd::{User, getuid},
-};
+use nix::unistd::{User, getuid};
 use rusqlite::Connection;
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-  ShResult, autocmd,
-  logic::LogTab,
-  match_loop,
+  ShResult, autocmd, match_loop,
   meta::{MetaTab, UtilKind, Utility},
   parse::{
     execute::exec_nonint,
@@ -28,10 +23,9 @@ use super::{
   },
   sherr,
   shopt::ShOpts,
-  terminal::Terminal,
   vars::{ArrIndex, VarFlags, VarKind},
 };
-use crate::{jobs::Job, state::vars::Var};
+use crate::state::vars::Var;
 
 /// Parse `arr[idx]` into (name, raw_index_expr). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
@@ -103,55 +97,6 @@ pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<Arr
  * With these, we can access shell state anywhere without threading a state object through every function.
  * However, we must be mindful of what the callstack looks like when we call them, to avoid re-entrancy issues.
  */
-
-pub fn read_meta<T, F: FnOnce(&MetaTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&shed.meta.borrow()))
-}
-
-/// Write to the meta table
-pub fn write_meta<T, F: FnOnce(&mut MetaTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&mut shed.meta.borrow_mut()))
-}
-
-/// Read from the logic table
-pub fn read_logic<T, F: FnOnce(&LogTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&shed.logic.borrow()))
-}
-
-/// Write to the logic table
-pub fn write_logic<T, F: FnOnce(&mut LogTab) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&mut shed.logic.borrow_mut()))
-}
-
-pub fn read_shopts<T, F: FnOnce(&ShOpts) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&shed.shopts.borrow()))
-}
-
-pub fn write_shopts<T, F: FnOnce(&mut ShOpts) -> T>(f: F) -> T {
-  SHED.with(|shed| f(&mut shed.shopts.borrow_mut()))
-}
-
-#[track_caller]
-pub fn with_term<T, F: FnOnce(&mut Terminal) -> T>(f: F) -> T {
-  let caller = std::panic::Location::caller();
-  SHED.with(|shed| {
-    let mut term = shed
-      .terminal
-      .try_borrow_mut()
-      .unwrap_or_else(|_| panic!("with_term: RefCell already borrowed (called from {caller})"));
-    f(&mut term)
-  })
-}
-
-#[cfg(test)]
-pub fn save_state() {
-  SHED.with(|shed| shed.save())
-}
-
-#[cfg(test)]
-pub fn restore_state() {
-  SHED.with(|shed| shed.restore())
-}
 
 /// Query the SQLite database.
 ///
@@ -248,29 +193,8 @@ pub fn get_time_fmt() -> String {
   std::env::var("TIMEFMT").unwrap_or_else(|_| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
 }
 
-pub fn get_status() -> i32 {
-  super::STATUS_CODE.load(Ordering::Relaxed)
-}
-pub fn set_status(code: i32) {
-  super::STATUS_CODE.store(code, Ordering::Relaxed);
-}
-pub fn set_status_from_bool(code: bool) {
-  super::STATUS_CODE.store(if code { 0 } else { 1 }, Ordering::Relaxed);
-}
-pub fn set_pipe_status(stats: &[WtStat]) -> ShResult<()> {
-  if let Some(pipe_status) = Job::pipe_status(stats) {
-    let pipe_status = pipe_status
-      .into_iter()
-      .map(|s| s.to_string())
-      .collect::<VecDeque<String>>();
-
-    Shed::vars_mut(|v| v.set_var("PIPESTATUS", VarKind::Arr(pipe_status), VarFlags::empty()))?;
-  }
-  Ok(())
-}
-
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
-  if read_shopts(|o| o.set.hashall) {
+  if Shed::shopts(|o| o.set.hashall) {
     which_util(cmd)
       .filter(|u| matches!(u.kind(), UtilKind::Command(_) | UtilKind::File(_)))
       .map(|u| {
@@ -293,30 +217,30 @@ pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
 
 pub fn which_util(name: &str) -> Option<Rc<Utility>> {
   // Check in shell resolution order: alias > function > builtin > cached command > PATH
-  if read_logic(|l| l.get_alias(name).is_some()) {
+  if Shed::logic(|l| l.get_alias(name).is_some()) {
     return Some(Rc::new(Utility::alias(name.to_string())));
   }
-  if read_logic(|l| l.get_func(name).is_some()) {
+  if Shed::logic(|l| l.get_func(name).is_some()) {
     return Some(Rc::new(Utility::function(name.to_string())));
   }
   if crate::builtin::lookup_builtin(name).is_some() {
     return Some(Rc::new(Utility::builtin(name.to_string())));
   }
   // For external commands, check cache first, then scan PATH
-  read_meta(|m| m.get_cached_cmd(name)).or_else(|| {
+  Shed::meta(|m| m.get_cached_cmd(name)).or_else(|| {
     MetaTab::get_cmds_in_path()
       .into_iter()
       .chain(MetaTab::get_exec_files_in_cwd())
       .find(|u| u.name() == name)
-      .inspect(|u| write_meta(|m| m.cache_util(Rc::clone(u))))
+      .inspect(|u| Shed::meta_mut(|m| m.cache_util(Rc::clone(u))))
   })
 }
 
 pub fn try_hash() {
-  if read_shopts(|o| o.set.hashall) {
-    write_meta(|m| m.try_rehash_utils());
+  if Shed::shopts(|o| o.set.hashall) {
+    Shed::meta_mut(|m| m.try_rehash_utils());
   } else {
-    write_meta(|m| m.clear_cache());
+    Shed::meta_mut(|m| m.clear_cache());
   }
 }
 

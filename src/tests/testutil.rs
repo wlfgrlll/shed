@@ -29,13 +29,13 @@ macro_rules! assert_output {
 macro_rules! assert_status_eq {
   ($expected_status:expr) => {
     {
-      assert_eq!(state::util::get_status(), $expected_status);
+      assert_eq!(state::Shed::get_status(), $expected_status);
     }
 
   };
   ($expected_status:expr, $($args:tt)+) => {
     {
-      assert_eq!(state::util::get_status(), $expected_status, $($args)+);
+      assert_eq!(state::Shed::get_status(), $expected_status, $($args)+);
     }
   }
 }
@@ -44,13 +44,13 @@ macro_rules! assert_status_eq {
 macro_rules! assert_status_ne {
   ($expected_status:expr) => {
     {
-      assert_ne!(state::util::get_status(), $expected_status);
+      assert_ne!(state::Shed::get_status(), $expected_status);
     }
 
   };
   ($expected_status:expr, $($args:tt)+) => {
     {
-      assert_ne!(state::util::get_status(), $expected_status, $($args)+);
+      assert_ne!(state::Shed::get_status(), $expected_status, $($args)+);
     }
   }
 }
@@ -60,7 +60,7 @@ use crate::{
   parse::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
   procio::{RedirGuard, RedirSet, RedirSpec, RedirType},
   readline::{restore_registers, save_registers},
-  state::{self, meta::MetaTab, util::with_term},
+  state::{self, Shed, meta::MetaTab},
   util::ShResult,
 };
 
@@ -106,11 +106,13 @@ impl TestGuard {
   pub fn new() -> Self {
     let pty = openpty(None, None).unwrap();
     let (pty_master, pty_slave) = (pty.master, pty.slave);
+    let master_raw = pty_master.as_raw_fd();
+
     let mut attrs = tcgetattr(&pty_slave).unwrap();
     attrs.output_flags &= !OutputFlags::ONLCR;
     tcsetattr(&pty_slave, SetArg::TCSANOW, &attrs).unwrap();
-    let master_raw = pty_master.as_raw_fd();
-    with_term(|t| t.set_fd_for_testing(Some(pty_slave.as_raw_fd())));
+
+    Shed::term_mut(|t| t.set_fd_for_testing(Some(pty_slave.as_raw_fd())));
 
     // we need this arc mutex and read handle because large test outputs
     // will cause the test to hang if we try to do everything on one thread.
@@ -153,7 +155,7 @@ impl TestGuard {
 
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();
-    state::util::save_state();
+    state::Shed::save_state();
     state::util::try_hash();
     save_registers();
     Self {
@@ -243,7 +245,7 @@ impl Drop for TestGuard {
     for cleanup in self.cleanups.drain(..).rev() {
       cleanup();
     }
-    state::util::restore_state();
+    state::Shed::restore_state();
     restore_registers();
   }
 }

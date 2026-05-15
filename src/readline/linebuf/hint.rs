@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::state::util::read_shopts;
-
-use super::{Lines, Pos};
+use super::{Lines, Pos, Shed};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Hint {
@@ -160,7 +158,7 @@ impl super::LineBuf {
       return;
     }
 
-    if !read_shopts(|o| o.line.auto_suggest) {
+    if !Shed::shopts(|o| o.line.auto_suggest) {
       self.hint = None;
       return;
     }

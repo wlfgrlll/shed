@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{
+use super::{
   expand::expand_arithmetic,
   getopt::{Opt, OptSpec, get_opts_from_tokens_raw},
   outln,
@@ -8,7 +8,6 @@ use crate::{
   sherr,
   state::{
     Shed,
-    util::read_logic,
     vars::{VarFlags, VarKind, display_as_var, display_env_vars, display_local, display_readonly},
   },
   util::{ShResult, ShResultExt, split_at_unescaped, with_status},
@@ -186,7 +185,7 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
     }
     IntrospectMode::FunctionsFull => {
       let names: Vec<&str> = argv.iter().map(|(n, _)| n.as_str()).collect();
-      let dump = read_logic(|l| {
+      let dump = Shed::logic(|l| {
         let mut out = String::new();
         let mut entries: Vec<_> = l.funcs().iter().collect();
         entries.sort_by_key(|(k, _)| (*k).clone());
@@ -205,7 +204,7 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
     }
     IntrospectMode::FunctionNames => {
       let names: Vec<&str> = argv.iter().map(|(n, _)| n.as_str()).collect();
-      let dump = read_logic(|l| {
+      let dump = Shed::logic(|l| {
         let mut keys: Vec<_> = l.funcs().keys().cloned().collect();
         keys.sort();
         keys
@@ -394,7 +393,7 @@ mod tests {
   fn readonly_status_zero() {
     let _g = TestGuard::new();
     test_input("readonly x=1").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== unset =====================
@@ -422,7 +421,7 @@ mod tests {
   fn unset_nonexistent_fails() {
     let _g = TestGuard::new();
     test_input("unset __no_such_var__").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -430,7 +429,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("readonly myvar=protected").unwrap();
     test_input("unset myvar").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
     assert_eq!(Shed::vars(|v| v.get_var("myvar")), "protected");
   }
 
@@ -439,7 +438,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("x=1").unwrap();
     test_input("unset x").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== export =====================
@@ -493,7 +492,7 @@ mod tests {
   fn export_status_zero() {
     let _g = TestGuard::new();
     test_input("export SHED_ST=1").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
     unsafe { std::env::remove_var("SHED_ST") };
   }
 
@@ -547,7 +546,7 @@ mod tests {
   fn local_status_zero() {
     let _g = TestGuard::new();
     test_input("local z=1").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   // ===================== array literal assignments =====================
@@ -809,7 +808,7 @@ mod tests {
     let _ = test_input("declare -p nonexistent_var");
     // exec_nonint catches the error and propagates via exit status
     // rather than returning Err, so check the status.
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]

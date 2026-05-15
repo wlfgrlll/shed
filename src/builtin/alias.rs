@@ -1,6 +1,5 @@
 use super::{
-  ShResult, outln, sherr,
-  state::util::{read_logic, write_logic},
+  ShResult, Shed, outln, sherr,
   state::vars::{display_as_var, display_as_vars},
   varcmds::split_assignment_raw,
   with_status,
@@ -10,7 +9,7 @@ pub(super) struct Alias;
 impl super::Builtin for Alias {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      let output = read_logic(|l| display_as_vars(l.aliases().iter()));
+      let output = Shed::logic(|l| display_as_vars(l.aliases().iter()));
       outln!("{output}");
 
       return with_status(0);
@@ -26,8 +25,8 @@ impl super::Builtin for Alias {
       }
 
       if let Some(value) = value {
-        write_logic(|l| l.insert_alias(&name, &value, span.clone()));
-      } else if let Some(alias) = read_logic(|l| l.get_alias(&name)) {
+        Shed::logic_mut(|l| l.insert_alias(&name, &value, span.clone()));
+      } else if let Some(alias) = Shed::logic(|l| l.get_alias(&name)) {
         outln!("{}", display_as_var(name, alias.body()));
       } else {
         return Err(sherr!(
@@ -45,20 +44,20 @@ pub(super) struct Unalias;
 impl super::Builtin for Unalias {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
-      let output = read_logic(|l| display_as_vars(l.aliases().iter()));
+      let output = Shed::logic(|l| display_as_vars(l.aliases().iter()));
       outln!("{output}");
 
       return with_status(0);
     }
 
     for (arg, span) in args.argv {
-      if read_logic(|l| l.get_alias(&arg)).is_none() {
+      if Shed::logic(|l| l.get_alias(&arg)).is_none() {
         return Err(sherr!(
           SyntaxErr @ span,
           "unalias: alias '{arg}' not found",
         ));
       };
-      write_logic(|l| l.remove_alias(&arg));
+      Shed::logic_mut(|l| l.remove_alias(&arg));
     }
 
     with_status(0)
@@ -68,7 +67,7 @@ impl super::Builtin for Unalias {
 #[cfg(test)]
 mod tests {
   use crate::{
-    state::{self, util::read_logic},
+    state::{self, Shed},
     tests::testutil::{TestGuard, test_input},
   };
   use pretty_assertions::assert_eq;
@@ -78,7 +77,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("alias ll='ls -la'").unwrap();
 
-    let alias = read_logic(|l| l.get_alias("ll"));
+    let alias = Shed::logic(|l| l.get_alias("ll"));
     assert!(alias.is_some());
     assert_eq!(alias.unwrap().body(), "ls -la");
 
@@ -93,8 +92,8 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("alias a='echo a' b='echo b'").unwrap();
 
-    assert_eq!(read_logic(|l| l.get_alias("a")).unwrap().body(), "echo a");
-    assert_eq!(read_logic(|l| l.get_alias("b")).unwrap().body(), "echo b");
+    assert_eq!(Shed::logic(|l| l.get_alias("a")).unwrap().body(), "echo a");
+    assert_eq!(Shed::logic(|l| l.get_alias("b")).unwrap().body(), "echo b");
   }
 
   #[test]
@@ -103,7 +102,7 @@ mod tests {
     test_input("alias x='first'").unwrap();
     test_input("alias x='second'").unwrap();
 
-    assert_eq!(read_logic(|l| l.get_alias("x")).unwrap().body(), "second");
+    assert_eq!(Shed::logic(|l| l.get_alias("x")).unwrap().body(), "second");
   }
 
   #[test]
@@ -128,21 +127,21 @@ mod tests {
   fn alias_reserved_name_command() {
     let _guard = TestGuard::new();
     test_input("alias command='something'").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn alias_reserved_name_builtin() {
     let _guard = TestGuard::new();
     test_input("alias builtin='something'").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
   fn alias_missing_equals() {
     let _guard = TestGuard::new();
     test_input("alias noequals").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -171,17 +170,17 @@ mod tests {
   fn unalias_removes() {
     let _guard = TestGuard::new();
     test_input("alias tmp='something'").unwrap();
-    assert!(read_logic(|l| l.get_alias("tmp")).is_some());
+    assert!(Shed::logic(|l| l.get_alias("tmp")).is_some());
 
     test_input("unalias tmp").unwrap();
-    assert!(read_logic(|l| l.get_alias("tmp")).is_none());
+    assert!(Shed::logic(|l| l.get_alias("tmp")).is_none());
   }
 
   #[test]
   fn unalias_nonexistent() {
     let _guard = TestGuard::new();
     test_input("unalias nosuchalias").ok();
-    assert_ne!(state::util::get_status(), 0);
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   #[test]
@@ -190,9 +189,9 @@ mod tests {
     test_input("alias a='1' b='2' c='3'").unwrap();
     test_input("unalias a c").unwrap();
 
-    assert!(read_logic(|l| l.get_alias("a")).is_none());
-    assert!(read_logic(|l| l.get_alias("b")).is_some());
-    assert!(read_logic(|l| l.get_alias("c")).is_none());
+    assert!(Shed::logic(|l| l.get_alias("a")).is_none());
+    assert!(Shed::logic(|l| l.get_alias("b")).is_some());
+    assert!(Shed::logic(|l| l.get_alias("c")).is_none());
   }
 
   #[test]
@@ -212,7 +211,7 @@ mod tests {
     let _guard = TestGuard::new();
     test_input("alias empty=''").unwrap();
 
-    let alias = read_logic(|l| l.get_alias("empty"));
+    let alias = Shed::logic(|l| l.get_alias("empty"));
     assert!(alias.is_some());
     assert_eq!(alias.unwrap().body(), "");
   }
@@ -221,9 +220,9 @@ mod tests {
   fn alias_status_zero() {
     let _guard = TestGuard::new();
     test_input("alias ok='true'").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
 
     test_input("unalias ok").unwrap();
-    assert_eq!(state::util::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 }

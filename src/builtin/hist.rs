@@ -7,13 +7,12 @@ use std::{
 use chrono::Utc;
 use chrono_english::{Dialect, Interval, parse_date_string};
 
-use crate::{
-  errln,
+use super::{
+  Shed, errln,
   getopt::{Opt, OptSpec},
   outln,
   readline::{HistEntry, History, import_history},
-  sherr,
-  state::{self, util::write_meta},
+  sherr, state,
   util::{ShResult, ShResultExt, with_status},
 };
 
@@ -60,6 +59,7 @@ pub struct HistQuery {
   no_numbers: bool,
   reverse: bool,
   json: bool,
+  pull: bool,
   count: bool,
   delete: bool,
   restore: bool,
@@ -253,7 +253,7 @@ impl HistQuery {
 
     match &self.matches {
       (Some(pat), not) => {
-        let re = match write_meta(|m| m.get_regex(pat.clone())) {
+        let re = match Shed::meta_mut(|m| m.get_regex(pat.clone())) {
           Ok(re) => re,
           Err(e) => return Err(sherr!(ParseErr, "{e}")),
         };
@@ -358,6 +358,7 @@ impl HistQuery {
           "delete" => new.delete = true,
           "restore" => new.restore = true,
           "json" => new.json = true,
+          "pull" => new.pull = true,
           _ => {}
         },
         Opt::Short('n') => new.no_numbers = true,
@@ -446,6 +447,7 @@ impl super::Builtin for Hist {
       OptSpec::flag("count"),
       OptSpec::flag("not"),
       OptSpec::flag("json"),
+      OptSpec::flag("pull"),
       OptSpec::flag('n'),
       OptSpec::flag('r'),
       OptSpec::single_arg("after"),
@@ -488,6 +490,12 @@ impl super::Builtin for Hist {
     if query.restore {
       let num_restored = hist.restore_backup()?;
       errln!("hist: restored {num_restored} entries from backup.");
+
+      return with_status(0);
+    }
+
+    if query.pull {
+      hist.refresh_hist_entries();
 
       return with_status(0);
     }
