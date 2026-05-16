@@ -26,6 +26,17 @@ macro_rules! assert_output {
 }
 
 #[macro_export]
+macro_rules! assert_file {
+  ($path:expr, $($arg:tt)*) => {{
+    use std::fmt::Write;
+    let content = std::fs::read_to_string($path).expect("assert_file: could not read file");
+    let mut expected = String::new();
+    write!(&mut expected, $($arg)*).unwrap();
+    assert_eq!(content, expected);
+  }};
+}
+
+#[macro_export]
 macro_rules! assert_status_eq {
   ($expected_status:expr) => {
     {
@@ -175,6 +186,25 @@ impl TestGuard {
 
   pub fn add_cleanup(&mut self, f: impl FnOnce() + 'static) {
     self.cleanups.push(Box::new(f));
+  }
+
+  /// Create a unique temp directory and cd into it.
+  /// The directory is deleted and cwd is restored on drop.
+  pub fn in_temp_dir(&mut self) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+      "shed_test_{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    env::set_current_dir(&dir).unwrap();
+    let dir_clone = dir.clone();
+    self.add_cleanup(move || {
+      std::fs::remove_dir_all(&dir_clone).ok();
+    });
+    dir
   }
 
   pub fn feed_stdin(&mut self, data: &[u8]) {

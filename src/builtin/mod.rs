@@ -51,7 +51,6 @@ mod test; // [[ ]] thing
 mod times;
 mod trap;
 mod varcmds;
-mod flog;
 
 use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
 pub(super) use test::double_bracket_test;

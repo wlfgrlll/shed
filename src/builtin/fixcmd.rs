@@ -196,7 +196,8 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
   let mut should_push;
 
-  Shed::meta_mut(|m| m.no_hist_save());
+  Shed::meta_mut(|m| m.set_no_hist_save());
+
   for (_, entry) in entries {
     let old_cmd = entry.command;
     let mut new_cmd = String::new();

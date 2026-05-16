@@ -231,6 +231,10 @@ impl History {
   }
 
   fn init_db(conn: &Connection, table: &str) -> rusqlite::Result<()> {
+    let mut user_version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
+    if user_version == Self::USER_VERSION {
+      return Ok(());
+    }
     conn.execute_batch(&format!(
       r#"
 			CREATE TABLE IF NOT EXISTS {table} (
@@ -247,7 +251,6 @@ impl History {
 		"#
     ))?;
 
-    let mut user_version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i32>(0))?;
     while user_version < Self::USER_VERSION {
       match user_version {
         0 => {

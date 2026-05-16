@@ -779,6 +779,7 @@ impl LexStream {
           };
           let mut tk = self.get_token(start..line_start, rule);
           tk.flags |= TkFlags::IS_HEREDOC | flags;
+          log::debug!("heredoc lex: delim={:?} body={:?}", delim, tk.span.as_str());
           self.heredoc_skip = Some(pos);
           self.update_cursor(cursor_after_delim);
           return Ok(Some(tk));

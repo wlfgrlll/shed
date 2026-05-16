@@ -168,7 +168,8 @@ impl Node {
     Span::from_span_source(
       first_tk.span.range().start..last_tk.span.range().end,
       first_tk.span.span_source().clone(),
-    ).at(first_tk.span.pos())
+    )
+    .at(first_tk.span.pos())
   }
 }
 

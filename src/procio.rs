@@ -188,20 +188,22 @@ impl RedirBldr {
       RedirTarget::Close => Ok(RedirSpec::close(fd)),
       RedirTarget::Fd(src_fd) if class.is_dup_op() => Ok(RedirSpec::dup(src_fd, fd, class)),
       RedirTarget::HereDoc { body, flags } => {
+        log::debug!("heredoc body: {:?}", body);
         // Strip leading tabs per line BEFORE expansion (POSIX order).
         let mut buf = if flags.contains(TkFlags::TAB_HEREDOC) {
-          let trailing_nl = body.ends_with('\n');
           let stripped: Vec<&str> = body
             .lines()
             .map(|line| line.trim_start_matches('\t'))
             .collect();
           let mut s = stripped.join("\n");
-          if trailing_nl {
+          s.push('\n');
+          s
+        } else {
+          let mut s = body;
+          if !s.ends_with('\n') {
             s.push('\n');
           }
           s
-        } else {
-          body
         };
 
         if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {

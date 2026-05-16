@@ -25,6 +25,13 @@ macro_rules! __test_setup_vars {
 }
 
 #[macro_export]
+macro_rules! __test_setup_files {
+  ($guard:expr, [$($path:literal => $content:expr),* $(,)?]) => {
+    $($guard.with_file($path, $content);)*
+  };
+}
+
+#[macro_export]
 macro_rules! __test_setup_params {
   ([$($value:literal),* $(,)?]) => {
     $crate::state::Shed::vars_mut(|v| {
@@ -1293,7 +1300,262 @@ mod redirection_2_7 {
    * or for any command. Redirection operators can be used with numbers representing file descriptors.
    */
 
-  // TODO: make a good test fixture for this.
+  macro_rules! test_files {
+    ($($name:ident: $input:expr => $file:expr => $content:expr;)*) => {
+      $(#[test]
+      fn $name() {
+        let dir_path;
+        let file_path;
+        {
+          let mut g = $crate::tests::testutil::TestGuard::new();
+          let dir = g.in_temp_dir();
+          dir_path = dir.clone();
+          $crate::eval::execute::exec_nonint(
+            $input.to_string(),
+            Some("test_input".into())
+          ).unwrap();
+          let filename = dir.join($file);
+          file_path = filename.clone();
+          let file_content = ::std::fs::read_to_string(filename).unwrap();
+          assert_eq!(file_content, $content);
+        }
+        assert!(!dir_path.exists(), "temp dir should have been cleaned up");
+        assert!(!file_path.exists(), "temp file should have been cleaned up");
+      })*
+    };
+  }
+
+  mod _1_redirect_input {
+    /*
+     * §2.7.1 Redirecting Input
+     *
+     * Input redirection shall cause the file whose name results from the expansion of word to be
+     * opened for reading on the designated file descriptor, or standard input if the file
+     * descriptor is not specified.
+     *
+     * [n]<word
+     *
+     * If the number is omitted, the redirection shall refer to standard input (file descriptor 0).
+     */
+
+    macro_rules! with_file {
+      ($input:literal) => {
+        concat!("{ defer rm file.txt; ", $input, "; }")
+      };
+    }
+    test_input! {
+      // < with no n defaults to fd 0 (standard input)
+      redirect_input_basic:
+        with_file!("echo foo > file.txt; read var < file.txt; echo $var")
+        => "foo\n";
+
+      // 0< is explicitly fd 0, identical to <
+      redirect_explicit_fd0:
+        with_file!("echo foo > file.txt; read var 0< file.txt; echo $var")
+        => "foo\n";
+
+      // word undergoes expansion, variable in the filename
+      redirect_word_expansion:
+        with_file!("echo hello > file.txt; f=file.txt; read var < $f; echo $var")
+        => "hello\n";
+
+      // [n]<word with n>0 opens the file on that descriptor
+      redirect_named_fd:
+        with_file!("echo bar > file.txt; read var 4< file.txt <&4; echo $var")
+        => "bar\n";
+    }
+  }
+
+  mod _2_redirect_output {
+    /*
+     * §2.7.2 Redirecting Output
+     *
+     * [n]>word
+     * [n]>|word
+     *
+     * If the number is omitted, the redirection shall refer to standard output (file descriptor 1).
+     * Output redirection using the '>' format shall fail if the noclobber option is set and the
+     * file named by the expansion of word exists and is a regular file. Otherwise, redirection
+     * using the '>' or ">|" formats shall cause the file to be created and opened for output on
+     * the designated file descriptor. If the file does not exist, it shall be created; otherwise,
+     * it shall be truncated to be an empty file after being opened.
+     */
+
+    test_files! {
+      // > with no n defaults to fd 1 (standard output)
+      redirect_output_basic:
+        "echo foo > out.txt"
+        => "out.txt" => "foo\n";
+
+      // 1> is explicitly fd 1, identical to >
+      redirect_explicit_fd1:
+        "echo foo 1> out.txt"
+        => "out.txt" => "foo\n";
+
+      // file is created if it does not exist
+      redirect_creates_file:
+        "echo hello > new.txt"
+        => "new.txt" => "hello\n";
+
+      // existing file is truncated to empty before writing
+      redirect_truncates_existing:
+        "echo original > f.txt; echo new > f.txt"
+        => "f.txt" => "new\n";
+
+      // word undergoes expansion
+      redirect_word_expansion:
+        "f=out.txt; echo content > $f"
+        => "out.txt" => "content\n";
+
+      // noclobber: > still creates a new file
+      noclobber_allows_new_file:
+        "set -C; echo hello > new.txt"
+        => "new.txt" => "hello\n";
+
+      // >| overrides noclobber
+      force_clobber_overrides_noclobber:
+        "echo original > f.txt; set -C; echo new >| f.txt"
+        => "f.txt" => "new\n";
+
+      // >| works when noclobber is not set
+      force_clobber_without_noclobber:
+        "echo original > f.txt; echo new >| f.txt"
+        => "f.txt" => "new\n";
+    }
+
+    #[test]
+    fn noclobber_prevents_overwrite() {
+      // noclobber causes > to return a Rust-level Err, so we can't use test_files! here
+      let mut g = crate::tests::testutil::TestGuard::new();
+      let dir = g.in_temp_dir();
+      crate::eval::execute::exec_nonint(
+        "echo original > protected.txt; set -C; echo new > protected.txt".into(),
+        Some("test_input".into()),
+      )
+      .ok();
+      let content = ::std::fs::read_to_string(dir.join("protected.txt")).unwrap();
+      assert_eq!(content, "original\n");
+    }
+  }
+
+  mod _3_redirect_output_append {
+    /*
+     * §2.7.3 Appending Redirected Output
+     *
+     * Appended output redirection shall cause the file whose name results from the expansion of
+     * word to be opened for output on the designated file descriptor. The file is opened as if the
+     * open() function was called with the O_APPEND flag. If the file does not exist, it shall be
+     * created.
+     *
+     * [n]>>word
+     *
+     * If the number is omitted, the redirection refers to standard output (file descriptor 1).
+     */
+
+    test_files! {
+      // >> with no n defaults to fd 1 (standard output)
+      append_output_basic:
+        "echo first > f.txt; echo second >> f.txt"
+        => "f.txt" => "first\nsecond\n";
+
+      // 1>> is explicitly fd 1, identical to >>
+      append_explicit_fd1:
+        "echo first > f.txt; echo second 1>> f.txt"
+        => "f.txt" => "first\nsecond\n";
+
+      // file is created if it does not exist
+      append_creates_file:
+        "echo hello >> new.txt"
+        => "new.txt" => "hello\n";
+
+      // existing content is preserved (O_APPEND semantics)
+      append_preserves_existing:
+        "echo line1 > f.txt; echo line2 >> f.txt; echo line3 >> f.txt"
+        => "f.txt" => "line1\nline2\nline3\n";
+
+      // word undergoes expansion
+      append_word_expansion:
+        "f=out.txt; echo first > $f; echo second >> $f"
+        => "out.txt" => "first\nsecond\n";
+    }
+  }
+
+  mod _4_here_document {
+    /*
+     * §2.7.4 Here-Document
+     *
+     * [n]<<word        - expand body (parameter, command sub, arithmetic)
+     * [n]<<-word       - same, but strip leading <tab> from each body line and delimiter
+     *
+     * If any part of word is quoted, the delimiter is formed by quote-removal and the
+     * body is not expanded. Otherwise all lines are expanded as if inside double-quotes
+     * (backslash is special before $, `, \, and <newline>; double-quote is NOT special).
+     *
+     * If the number n is omitted the here-document is fed to standard input (fd 0).
+     */
+
+    test_input! {
+      // basic: single line fed to stdin
+      heredoc_basic:
+        "read var <<EOF\nhello\nEOF\necho $var"
+        => "hello\n";
+
+      // unquoted word: parameter expansion is performed on the body
+      heredoc_param_expansion:
+        "X=42\nread var <<EOF\nval$X\nEOF\necho $var"
+        => "val42\n";
+
+      // unquoted word: command substitution is performed on the body
+      heredoc_command_substitution:
+        "read var <<EOF\n$(echo hi)\nEOF\necho $var"
+        => "hi\n";
+
+      // unquoted word: arithmetic expansion is performed on the body
+      heredoc_arithmetic_expansion:
+        "read var <<EOF\n$((1+1))\nEOF\necho $var"
+        => "2\n";
+
+      // single-quoted word: body is not expanded at all
+      heredoc_single_quoted_no_expansion:
+        "X=42\nread var <<'EOF'\n$X\nEOF\necho $var"
+        => "$X\n";
+
+      // double-quoted word: body is not expanded at all
+      heredoc_double_quoted_no_expansion:
+        "X=42\nread var <<\"EOF\"\n$X\nEOF\necho $var"
+        => "$X\n";
+
+      // backslash before $ suppresses expansion (double-quote backslash rules apply)
+      heredoc_backslash_suppresses_dollar:
+        "X=42\nread var <<EOF\n\\$X\nEOF\necho $var"
+        => "$X\n";
+
+      // backslash-backslash produces a single backslash
+      heredoc_backslash_backslash:
+        "read var <<EOF\n\\\\\nEOF\necho $var"
+        => "\\\n";
+
+      // multi-line: brace group reads multiple lines from the same heredoc
+      heredoc_multiline:
+        "{ read a; read b; } <<EOF\nfoo\nbar\nEOF\necho $a $b"
+        => "foo bar\n";
+
+      // <<- strips all leading tabs from each body line
+      heredoc_strip_tabs:
+        "read var <<-EOF\n\thello\n\tEOF\necho $var"
+        => "hello\n";
+
+      // <<- strips tabs from every line; extra tabs produce reduced (not zero) indentation
+      heredoc_strip_tabs_multiple:
+        "{ read a; read b; } <<-EOF\n\tfoo\n\t\tbar\n\tEOF\necho $a $b"
+        => "foo bar\n";
+
+      // <<- does not strip leading spaces, only tabs
+      heredoc_strip_tabs_preserves_spaces:
+        "IFS= read var <<-EOF\n\t  spaced\n\tEOF\necho $var"
+        => "  spaced\n";
+    }
+  }
 }
 
 mod exit_status_2_8 {

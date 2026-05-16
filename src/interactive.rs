@@ -21,7 +21,6 @@ use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
   builtin::{source_builtin_completions, source_builtin_scripts},
   errln,
-  util,
   eval::execute::exec_int,
   lifecycle::first_run_setup,
   outln, sherr,
@@ -35,7 +34,7 @@ use super::{
     terminal::TermGuard,
     util::{rc_file_path, source_login, source_rc},
   },
-  write_term,
+  util, write_term,
 };
 
 fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
@@ -236,7 +235,6 @@ pub(super) fn shed_interactive(
       return Ok(());
     }
 
-
     let (timeout, exec_if_timeout) = get_poll_timeout(&mut readline);
     Shed::term_mut(|t| t.flush())?;
 
@@ -423,11 +421,13 @@ fn handle_readline_event(
 
       autocmd!(PostCmd);
 
+      let no_hist_save = Shed::meta_mut(|m| m.no_hist_save());
+
       let was_func_def = Shed::meta_mut(|m| m.take_last_was_func_def());
-      let should_write = Shed::shopts(|o| o.core.auto_hist)
-        && (!was_func_def || !Shed::shopts(|o| o.set.nolog))
-        && !Shed::meta_mut(|m| m.no_hist_save())
-        && !input.is_empty();
+      let nolog = was_func_def && Shed::shopts(|o| o.set.nolog);
+
+      let should_write =
+        Shed::shopts(|o| o.core.auto_hist) && !nolog && !no_hist_save && !input.is_empty();
 
       if let Some(token) = token
         && !should_write
@@ -452,9 +452,6 @@ fn handle_readline_event(
 
       // Reset for next command with fresh prompt
       readline.reset(true)?;
-
-      let real_end = exec_start.elapsed();
-      log::info!("Total round trip time: {:.2?}", real_end);
       Ok(false)
     }
     Ok(ReadlineEvent::Eof) => {
