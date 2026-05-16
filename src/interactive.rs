@@ -21,10 +21,10 @@ use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
   builtin::{source_builtin_completions, source_builtin_scripts},
   errln,
+  util,
+  eval::execute::exec_int,
   lifecycle::first_run_setup,
-  outln,
-  parse::execute::exec_int,
-  sherr,
+  outln, sherr,
   signal::{
     GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
   },
@@ -211,6 +211,7 @@ pub(super) fn shed_interactive(
   // Main poll loop
   loop {
     state::util::try_hash();
+    util::flog::update_log_level();
     let _flush_guard = state::terminal::FlushGuard; // flushes terminal on drop
 
     poll_fds.clear();
@@ -234,6 +235,7 @@ pub(super) fn shed_interactive(
     if !handle_signals_interactive(&mut readline)? {
       return Ok(());
     }
+
 
     let (timeout, exec_if_timeout) = get_poll_timeout(&mut readline);
     Shed::term_mut(|t| t.flush())?;
@@ -381,7 +383,6 @@ fn handle_readline_event(
         .then(|| readline.history_mut().push(input.clone()).ok().flatten())
         .flatten(); // token is used as a stable identifier for the command in the history
 
-      let exec_start = Instant::now();
       autocmd!(PreCmd);
 
       let cmd_start = Instant::now();
@@ -395,7 +396,7 @@ fn handle_readline_event(
         exec_int(input.clone(), Some("<stdin>".into()))
       };
 
-      Shed::term_mut(|t| t.emit_osc_exec_end(state::Shed::get_status())).ok();
+      Shed::term_mut(|t| t.emit_osc_exec_end(Shed::get_status())).ok();
 
       if let Err(e) = res {
         match e.kind() {

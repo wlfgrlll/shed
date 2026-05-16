@@ -1,11 +1,13 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use super::{CmdReplay, CmdState, EditMode, ModeReport, ParseResult, ViParser, common_cmds};
-use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::readline::editcmd::{CmdFlags, EditCmd, Motion, RegisterName, TextObj, Verb};
-use crate::state::terminal::CursorStyle;
-use crate::{key, motion, verb};
+use super::{
+  CmdReplay, CmdState, E, EditMode, K, M, ModeReport, ParseResult, ViParser, common_cmds,
+  editcmd::{CmdFlags, EditCmd, Motion, RegisterName, TextObj, Verb},
+  key, motion,
+  state::terminal::CursorStyle,
+  verb,
+};
 
 #[derive(Debug)]
 pub struct ViNormal {

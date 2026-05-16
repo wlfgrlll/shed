@@ -1,7 +1,7 @@
 use nix::{errno::Errno, unistd::execvpe};
 
 use super::{
-  parse::execute::ExecArgs,
+  eval::execute::ExecArgs,
   sherr,
   util::{ShResult, with_status},
 };

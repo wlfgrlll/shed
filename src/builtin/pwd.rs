@@ -1,9 +1,6 @@
 use std::env;
 
-use crate::{
-  outln,
-  util::{ShResult, with_status},
-};
+use super::{ShResult, outln, with_status};
 
 pub(super) struct Pwd;
 impl super::Builtin for Pwd {

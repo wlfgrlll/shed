@@ -16,7 +16,7 @@
 macro_rules! __test_setup_vars {
   ([$($var:literal => $value:literal),* $(,)?]) => {
     $(
-      $crate::parse::execute::exec_nonint(
+      $crate::eval::execute::exec_nonint(
         format!("{}='{}'", $var, $value),
         Some("test_input".into())
       ).unwrap();
@@ -45,7 +45,7 @@ macro_rules! test_input {
       fn $name() {
         let g = $crate::tests::testutil::TestGuard::new();
         $setup
-        $crate::parse::execute::exec_nonint(
+        $crate::eval::execute::exec_nonint(
           $input.to_string(),
           Some("test_input".into())
         ).unwrap();
@@ -59,7 +59,7 @@ macro_rules! test_input {
     $(#[test]
       fn $name() {
         let g = $crate::tests::testutil::TestGuard::new();
-        $crate::parse::execute::exec_nonint(
+        $crate::eval::execute::exec_nonint(
           $input.to_string(),
           Some("test_input".into())
         ).unwrap();
@@ -78,7 +78,7 @@ mod shell_intro_2_1 {
    * If the first line of a file of shell commands starts with the characters "#!", the results are unspecified.
    */
 
-  use crate::{assert_output, input, parse::execute::exec_dash_c, tests::testutil::TestGuard};
+  use crate::{assert_output, eval::execute::exec_dash_c, input, tests::testutil::TestGuard};
   use std::{env, io::Write};
 
   #[test]

@@ -179,7 +179,7 @@ impl super::Builtin for PopDir {
 
 pub(super) struct Dirs;
 impl super::Builtin for Dirs {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![
       OptSpec::flag('p'),
       OptSpec::flag('v'),

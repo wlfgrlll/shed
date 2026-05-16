@@ -3,13 +3,13 @@ use std::str::Chars;
 
 use nix::unistd::{Uid, User};
 
+use crate::eval::lex::is_hard_sep;
 use crate::expand::PARAMETERS;
 use crate::expand::escape::escape_str;
 use crate::expand::markers;
 use crate::expand::param::perform_param_expansion;
 use crate::expand::subshell::{expand_cmd_sub, expand_proc_sub};
 use crate::match_loop;
-use crate::parse::lex::is_hard_sep;
 use crate::sherr;
 use crate::state::Shed;
 use crate::util::ShResult;
@@ -391,8 +391,8 @@ mod tests {
   /// Helper: drive the full expansion pipeline (unescape_str → expand_raw →
   /// split_words → expand_glob → strip ESCAPE) on a raw shell word.
   fn expand_words_in(dir: &std::path::Path, raw: &str) -> Vec<String> {
+    use crate::eval::lex::TkFlags;
     use crate::expand::Expander;
-    use crate::parse::lex::TkFlags;
 
     let saved = std::env::current_dir().ok();
     std::env::set_current_dir(dir).unwrap();

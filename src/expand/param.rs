@@ -1,9 +1,9 @@
 use glob::Pattern;
 
+use crate::eval::lex::TkFlags;
 use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
-use crate::parse::lex::TkFlags;
 use crate::sherr;
 use crate::state::{
   Shed, scopes::ScopeStack, vars::ArrIndex, vars::VarFlags, vars::VarKind, vars::VarName,

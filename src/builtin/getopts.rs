@@ -1,8 +1,8 @@
 use std::str::FromStr;
 
 use super::{
+  eval::lex::Span,
   getopt::{Opt, OptArg, OptSpec},
-  parse::lex::Span,
   sherr,
   state::{self, Shed, vars::VarFlags, vars::VarKind},
   util::{ShErr, ShResult, ShResultExt, with_status},
@@ -236,7 +236,7 @@ fn getopts_inner(
 
 #[cfg(test)]
 mod tests {
-  use crate::getopt::OptArg;
+  use crate::builtin::getopt::OptArg;
   use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
 

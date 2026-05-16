@@ -2,8 +2,8 @@ use std::{collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf
 
 use super::{
   Shed,
-  parse::{ConjunctOp, NdRule, Node, TEST_UNARY_OPS, TestCase},
-  sherr,
+  eval::{ConjunctOp, NdRule, Node, TEST_UNARY_OPS, TestCase},
+  expand, sherr,
   state::{vars::VarFlags, vars::VarKind},
   util::{ShErr, ShResult},
 };
@@ -249,11 +249,11 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
             ));
           }
           TestOp::StringEq => {
-            let pattern = crate::expand::glob_to_regex(rhs.trim(), true);
+            let pattern = expand::glob_to_regex(rhs.trim(), true);
             pattern.is_match(lhs.trim())
           }
           TestOp::StringNeq => {
-            let pattern = crate::expand::glob_to_regex(rhs.trim(), true);
+            let pattern = expand::glob_to_regex(rhs.trim(), true);
             !pattern.is_match(lhs.trim())
           }
           TestOp::IntNeq

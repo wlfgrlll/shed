@@ -2,10 +2,9 @@ use std::{iter::Peekable, str::Chars};
 
 use super::{
   error::ShResult,
+  eval::lex::{Span, Tk},
   expand::{read_hex, read_octal, read_stty_escape},
-  match_loop,
-  parse::lex::{Span, Tk},
-  sherr,
+  match_loop, sherr,
 };
 
 /// Used to track whether the lexer is currently inside a quote, and if so, which type

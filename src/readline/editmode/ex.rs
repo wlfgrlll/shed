@@ -7,11 +7,11 @@ use std::vec::IntoIter;
 
 use itertools::{Itertools, PeekingNext};
 
+use crate::eval::lex::TkVecUtils;
+use crate::eval::lex::{self, LexFlags, LexStream, Span, Tk};
 use crate::key;
 use crate::keys::KeyEvent;
 use crate::match_loop;
-use crate::parse::lex::TkVecUtils;
-use crate::parse::lex::{self, LexFlags, LexStream, Span, Tk};
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
   Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg,

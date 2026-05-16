@@ -1,8 +1,9 @@
-use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::keys::{KeyCode as K, KeyEvent as E};
-use crate::readline::editcmd::{CmdFlags, EditCmd, RegisterName, Verb};
-use crate::state::terminal::CursorStyle;
-use crate::verb;
+use super::{
+  CmdReplay, E, EditMode, K, ModeReport, common_cmds,
+  editcmd::{CmdFlags, EditCmd, RegisterName, Verb},
+  state::terminal::CursorStyle,
+  verb,
+};
 
 #[derive(Default, Clone, Debug)]
 pub struct ViVerbatim {

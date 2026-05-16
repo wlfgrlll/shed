@@ -1,17 +1,16 @@
 use ariadne::Span;
 
-use crate::{
+use super::{
+  eval::lex::KEYWORDS,
   getopt::{Opt, OptSpec},
-  outln,
-  parse::lex::KEYWORDS,
-  sherr,
+  outln, sherr,
   state::{self, Shed},
   util::{ShResult, with_status},
 };
 
 pub(super) struct Type;
 impl super::Builtin for Type {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![OptSpec::flag('s')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {

@@ -6,9 +6,9 @@ use nix::{
 };
 
 use super::{
-  ShResult, Shed, errln, expand_keymap, interactive, lifecycle,
-  parse::execute::{exec_dash_c, exec_nonint},
-  procio, sherr,
+  ShResult, Shed, errln,
+  eval::execute::{exec_dash_c, exec_nonint},
+  expand_keymap, interactive, lifecycle, procio, sherr,
   signal::QUIT_CODE,
   state, status_msg,
 };

@@ -1,10 +1,6 @@
 use nix::sys::resource::{UsageWho, getrusage};
 
-use crate::{
-  outln,
-  state::meta::CmdTimer,
-  util::{ShResult, with_status},
-};
+use super::{ShResult, outln, state::meta::CmdTimer, with_status};
 
 pub(super) struct Times;
 impl super::Builtin for Times {

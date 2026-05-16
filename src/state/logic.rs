@@ -8,8 +8,8 @@ use std::{
 
 use super::{
   ShErr, Shed,
+  eval::{Node, lex::Span},
   keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
-  parse::{Node, lex::Span},
   signal::parse_signal,
 };
 

@@ -318,7 +318,7 @@ macro_rules! sherr {
 #[macro_export]
 macro_rules! two_way_display {
 	($name:ident, $($member:ident <=> $val:expr;)*) => {
-		impl Display for $name {
+		impl ::std::fmt::Display for $name {
 			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 				match self {
 					$(Self::$member => write!(f, $val),)*
@@ -326,8 +326,8 @@ macro_rules! two_way_display {
 			}
 		}
 
-		impl FromStr for $name {
-			type Err = ShErr;
+		impl ::std::str::FromStr for $name {
+			type Err = $crate::util::ShErr;
 			fn from_str(s: &str) -> Result<Self, Self::Err> {
 				match s {
 					$($val => Ok(Self::$member),)*
@@ -422,7 +422,7 @@ macro_rules! autocmd {
     let saved_status = $crate::state::Shed::get_status();
     for cmd in post_cmds {
       if let Err(e) =
-        $crate::parse::execute::exec_nonint(cmd.command().to_string(), Some("autocmd".into()))
+        $crate::eval::execute::exec_nonint(cmd.command().to_string(), Some("autocmd".into()))
       {
         e.print_error();
       }

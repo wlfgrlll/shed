@@ -3,13 +3,12 @@ use nix::sys::{
   stat::{Mode, umask},
 };
 
-use crate::{
+use super::{
+  ShResult,
+  eval::lex::Span,
   getopt::{Opt, OptSpec},
-  outln,
-  parse::lex::Span,
-  util::ShResult,
+  outln, sherr, with_status,
 };
-use crate::{sherr, util::with_status};
 
 pub(super) struct ULimit;
 impl super::Builtin for ULimit {

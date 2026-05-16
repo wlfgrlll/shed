@@ -8,13 +8,12 @@ use super::{
   context::{CtxTkRule, get_context_tokens},
   editcmd,
   editcmd::{EditCmd, Motion, Verb},
-  editmode,
+  editmode, eval,
+  eval::lex::{LexFlags, LexStream, TkFlags, TkRule},
   expand::{expand_alias_with_pos, markers},
   highlight,
   history::History,
-  match_loop, motion, parse,
-  parse::lex::{LexFlags, LexStream, TkFlags, TkRule},
-  procio, sherr, stash, state, status_msg, system_msg,
+  match_loop, motion, procio, sherr, stash, state, status_msg, system_msg,
   util::{QuoteState, ShResult, ordered},
 };
 
@@ -30,11 +29,12 @@ mod types;
 mod util;
 mod verb;
 
+pub(crate) use super::util::{Pos, SignedPos};
 pub use char_class::CharClass;
 pub use edit::{Edit, IndentCtx};
 pub use hint::Hint;
 pub use killring::KillRing;
-pub use pos::{Cursor, MotionKind, Pos, SignedPos};
+pub use pos::{Cursor, MotionKind};
 pub use select::{SelectMode, SelectShape};
 pub use types::{Grapheme, Line, Lines};
 pub use util::{rot13_char, toggle_case_char};

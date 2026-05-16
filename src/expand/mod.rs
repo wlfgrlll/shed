@@ -20,12 +20,12 @@ pub(super) use util::{expand_case_pattern, glob_to_regex};
 pub(super) use var::{expand_glob, expand_raw, expand_raw_inner};
 
 use super::{
-  Shed, keys, match_loop,
-  parse::{
+  Shed,
+  eval::{
     self,
     lex::{Tk, TkFlags, TkRule},
   },
-  state, status_msg,
+  keys, match_loop, state, status_msg,
   util::{ShResult, ShResultExt},
 };
 

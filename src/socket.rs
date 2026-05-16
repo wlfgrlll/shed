@@ -6,12 +6,13 @@ use nix::{
 };
 
 use crate::{
-  Hint, LineData, Lines, Pos, ReadlineEvent, ShResult, Shed, ShedLine,
+  Hint, LineData, Lines, ReadlineEvent, ShResult, Shed, ShedLine,
   state::{
     meta::{LineHeader, QueryHeader, SocketRequest, StatusHeader},
     vars::VarKind,
   },
   status_msg, system_msg,
+  util::Pos,
 };
 
 pub(super) fn handle_socket_request(

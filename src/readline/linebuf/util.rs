@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthChar;
 
 use super::{
   CharClass, DEFAULT_VIEWPORT_HEIGHT, Edit, Grapheme, Line, Lines, MotionKind, Pos, SelectMode,
-  ShResult, Shed, editcmd::Motion, highlight, ordered, parse::lex, procio::stdin_fileno, sherr,
+  ShResult, Shed, editcmd::Motion, eval::lex, highlight, ordered, procio::stdin_fileno, sherr,
   state::terminal::get_win_size, status_msg,
 };
 

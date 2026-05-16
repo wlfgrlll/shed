@@ -2,7 +2,7 @@ use std::os::fd::BorrowedFd;
 
 use nix::unistd::{Whence, lseek};
 
-use crate::{
+use super::{
   getopt::{Opt, OptSpec},
   outln, sherr,
   util::{ShResult, with_status},

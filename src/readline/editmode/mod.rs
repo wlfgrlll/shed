@@ -2,12 +2,13 @@ use std::fmt::{self, Display};
 use std::str::FromStr;
 
 use super::{
-  KeyCode as K, KeyEvent as E, ModKeys as M, ShResult, Shed,
+  KeyCode as K, KeyEvent as E, ModKeys as M, ShResult, Shed, SimpleEditor,
   editcmd::{self, CmdFlags, Direction, EditCmd, Motion, To, Verb, Word},
+  history,
   history::History,
   key,
   linebuf::LineBuf,
-  motion, state,
+  motion, state, status_msg,
   util::ShErr,
   verb,
 };

@@ -10,9 +10,10 @@ use std::{
 };
 
 use super::{
-  WtStat, autocmd, keys, match_loop, parse, procio, readline, sherr, signal,
+  WtStat, autocmd, builtin, errln, eval, expand, keys, match_loop, procio, readline, sherr, signal,
   state::vars::{VarFlags, VarKind},
-  util::{ShErr, ShErrKind, ShResult},
+  util::{Pos, ShErr, ShErrKind, ShResult},
+  writefd,
 };
 
 pub mod jobs;

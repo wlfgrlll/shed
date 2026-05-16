@@ -1,12 +1,12 @@
 use bitflags::bitflags;
 
-use crate::{
-  readline::{
-    editmode::ExNode,
-    linebuf::{Grapheme, Pos, SelectShape},
-  },
+use super::{
+  editmode::ExNode,
+  linebuf::{Grapheme, Pos, SelectShape},
   state::Shed,
 };
+
+pub(crate) use super::util::Direction;
 
 use super::{
   editmode::ExNdRule,
@@ -589,13 +589,6 @@ pub enum Word {
 pub enum Bound {
   Inside,
   Around,
-}
-
-#[derive(Default, Debug, Clone, Copy, Eq, PartialEq)]
-pub enum Direction {
-  #[default]
-  Forward,
-  Backward,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

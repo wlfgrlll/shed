@@ -31,11 +31,11 @@ use register::{RegisterContent, append_register, read_register, write_register};
 use term::{clear_rows, move_cursor_to_end, redraw};
 
 use super::{
-  autocmd,
+  autocmd, eval,
   expand::{self, expand_keymap, expand_prompt},
   flush_term, key,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
-  match_loop, motion, parse, procio, sherr,
+  match_loop, motion, procio, sherr,
   state::{
     self, Shed,
     terminal::{calc_str_width, truncate_with_ellipsis},
@@ -536,6 +536,7 @@ impl ShedLine {
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
+
     self.print_line(false)
   }
 
@@ -1546,13 +1547,14 @@ impl ShedLine {
       .try_into()
       .unwrap_or(u16::MAX);
 
-    log::debug!(
-      "print_line: predicted_overlay_rows={predicted_overlay_rows} \
-       prev_displacement={} blank_rows_above={} new_end.row={}",
-      self.overlay_displacement,
-      self.blank_rows_above,
-      new_layout.end.row,
-    );
+    let mut system_msg = String::new();
+    if Shed::meta(|m| m.system_msg_pending()) {
+      use std::fmt::Write as FmtWrite;
+      while let Some(msg) = Shed::meta_mut(|m| m.pop_system_message()) {
+        writeln!(system_msg, "{msg}").ok();
+      }
+    }
+    let system_msg_layout = Layout::from_parts(t_cols, "", &system_msg, &system_msg);
 
     if let Some(layout) = self.old_layout.as_ref() {
       clear_rows(layout)?;
@@ -1561,7 +1563,9 @@ impl ShedLine {
 
       if Shed::term(|t| t.scroll_region()).is_some() {
         let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
-        let mut new_h = new_layout.end.row as i32 + predicted_overlay_rows as i32;
+        let mut new_h = new_layout.end.row as i32
+          + predicted_overlay_rows as i32
+          + system_msg_layout.end.row as i32;
         if has_sub_editor {
           new_h += 1;
         }
@@ -1589,6 +1593,11 @@ impl ShedLine {
           Ordering::Equal => { /* nothing to do */ }
         }
       }
+    }
+
+    if !system_msg.is_empty() {
+      Shed::term_mut(|t| t.clear_under_cursor()).ok();
+      write_term!("\n{system_msg}")?;
     }
 
     redraw(

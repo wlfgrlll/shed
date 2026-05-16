@@ -1,8 +1,10 @@
-use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::readline::editcmd::{Direction, EditCmd, Motion, To, Verb, Word};
-use crate::state::terminal::CursorStyle;
-use crate::{key, motion, verb};
+use super::{
+  CmdReplay, E, EditMode, K, M, ModeReport, common_cmds,
+  editcmd::{Direction, EditCmd, Motion, To, Verb, Word},
+  key, motion,
+  state::terminal::CursorStyle,
+  verb,
+};
 
 #[derive(Default, Debug)]
 pub struct ViReplace {

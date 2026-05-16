@@ -1,11 +1,10 @@
 use std::collections::VecDeque;
 
 use super::{
+  Span, Tk,
   expand::expand_arithmetic,
   getopt::{Opt, OptSpec, get_opts_from_tokens_raw},
-  outln,
-  parse::lex::{Span, Tk},
-  sherr,
+  outln, sherr,
   state::{
     Shed,
     vars::{VarFlags, VarKind, display_as_var, display_env_vars, display_local, display_readonly},
@@ -116,7 +115,7 @@ fn apply_var_decl(opts: &[Opt], argv: Vec<(String, Span)>, base_flags: VarFlags)
 
 pub(super) struct Declare;
 impl super::Builtin for Declare {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![
       OptSpec::flag('i'),
       OptSpec::flag('r'),
@@ -302,7 +301,7 @@ impl super::Builtin for Export {
 
 pub(super) struct Local;
 impl super::Builtin for Local {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![
       OptSpec::flag('i'),
       OptSpec::flag('r'),

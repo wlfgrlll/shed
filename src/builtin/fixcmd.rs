@@ -7,12 +7,13 @@ use std::{
 use tempfile::NamedTempFile;
 
 use super::{
-  Shed, match_loop, out,
-  parse::{
+  Shed,
+  eval::{
     NdRule, Node,
     execute::{Dispatcher, exec_input},
     lex::{Span, Tk},
   },
+  match_loop, out,
   readline::{HistEntry, History},
   sherr,
   shopt_internal::xtrace_print,

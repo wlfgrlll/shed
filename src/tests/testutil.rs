@@ -56,8 +56,8 @@ macro_rules! assert_status_ne {
 }
 
 use crate::{
+  eval::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
   expand::expand_aliases,
-  parse::{NdKind, ParsedSrc, execute::exec_nonint, lex::LexFlags},
   procio::{RedirGuard, RedirSet, RedirSpec, RedirType},
   readline::{restore_registers, save_registers},
   state::{self, Shed, meta::MetaTab},
@@ -246,7 +246,7 @@ impl Drop for TestGuard {
   }
 }
 
-pub(crate) fn get_ast(input: &str) -> ShResult<Vec<crate::parse::Node>> {
+pub(crate) fn get_ast(input: &str) -> ShResult<Vec<crate::eval::Node>> {
   let input = expand_aliases(input.into());
 
   let mut parser = ParsedSrc::new(input.into())
@@ -260,7 +260,7 @@ pub(crate) fn get_ast(input: &str) -> ShResult<Vec<crate::parse::Node>> {
   Ok(parser.extract_nodes())
 }
 
-impl crate::parse::Node {
+impl crate::eval::Node {
   pub fn assert_structure(
     &mut self,
     expected: &mut impl Iterator<Item = NdKind>,

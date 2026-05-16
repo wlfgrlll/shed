@@ -4,8 +4,9 @@ use clap::Parser;
 use nix::unistd::isatty;
 
 use super::{
-  ShResult, Shed, autocmd, errln, outln,
-  parse::execute::exec_nonint,
+  ShResult, Shed, autocmd, errln,
+  eval::execute::exec_nonint,
+  outln,
   procio::{
     self, MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack,
   },
@@ -13,9 +14,10 @@ use super::{
   state::{
     self,
     logic::TrapTarget,
-    util::{generate_default_rc, source_env},
+    util::{self, generate_default_rc, source_env},
   },
   status_msg,
+  util::flog,
 };
 
 #[derive(Parser, Debug)]
@@ -89,10 +91,10 @@ impl ShedArgs {
 
 pub(super) fn setup() -> Option<ShedArgs> {
   yansi::enable();
-  env_logger::init();
   setup_panic_handler();
-  state::util::set_ver_info().ok();
-  state::util::set_sh_lvl().ok();
+  flog::init().ok();
+  util::set_ver_info().ok();
+  util::set_sh_lvl().ok();
 
   let mut args = ShedArgs::parse();
   if std::env::args().next().is_some_and(|a| a.starts_with('-')) {

@@ -10,15 +10,15 @@ use std::{
   path::Path,
 };
 
+use crate::eval::lex::Span;
+
 use super::{
   Shed,
   getopt::{Opt, OptSpec},
-  keys, outln,
-  parse::lex::Span,
-  procio,
+  keys, outln, procio,
   readline::{self, ScoredCandidate},
   sherr, state,
-  util::{ShResult, with_status},
+  util::{Direction, ShResult, with_status},
 };
 
 use markup::TAG_SEQ;
@@ -78,7 +78,7 @@ include_help_pages! {
 
 pub(super) struct Help;
 impl super::Builtin for Help {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![OptSpec::flag("list-tags"), OptSpec::flag('l')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {

@@ -454,3 +454,14 @@ pub fn hex_to_rgb(hex: &str) -> ShResult<(u8, u8, u8)> {
 
   Ok((r, g, b))
 }
+
+pub(crate) fn stylize_loglevel(level: log::Level) -> String {
+  let style = match level {
+    log::Level::Error => style_from_description("red bold").unwrap(),
+    log::Level::Warn => style_from_description("yellow bold").unwrap(),
+    log::Level::Info => style_from_description("green bold").unwrap(),
+    log::Level::Debug => style_from_description("blue bold").unwrap(),
+    log::Level::Trace => style_from_description("magenta bold").unwrap(),
+  };
+  format!("{level}").paint(style.style()).to_string()
+}

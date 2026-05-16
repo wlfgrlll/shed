@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use super::{Prompt, Shed, ShedLine, key, parse::lex::Span};
+use super::{Prompt, Shed, ShedLine, eval::lex::Span, key};
 
 use crate::tests::testutil::TestGuard;
 

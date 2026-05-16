@@ -8,13 +8,11 @@ use std::{
 
 use bitflags::bitflags;
 
-use crate::{
+use super::{
   Shed,
   builtin::BUILTIN_NAMES,
-  match_loop,
-  readline::Pos,
-  sherr,
-  util::{QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
+  match_loop, sherr,
+  util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
 };
 
 pub const KEYWORDS: [&str; 19] = [
@@ -145,6 +143,10 @@ impl Span {
   /// Only use this in the most dire of circumstances
   pub fn set_range(&mut self, range: Range<usize>) {
     self.range = range;
+  }
+
+  pub(crate) fn pos(&self) -> Pos {
+    self.pos
   }
 }
 
@@ -711,7 +713,7 @@ impl LexStream {
       first_char = false;
     }
 
-    // pos is now right after the delimiter word - this is where
+    // pos is now right after the delimiter word, this is where
     // the cursor should return so the rest of the line gets lexed
     let cursor_after_delim = pos;
 

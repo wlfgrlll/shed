@@ -31,19 +31,18 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use vte::Perform;
 
 use super::{
-  ShErr, ShErrKind, ShResult, Shed,
+  Pos, ShErr, ShErrKind, ShResult, Shed,
   keys::{KeyCode, KeyEvent, ModKeys},
   procio::move_high,
-  readline::Pos,
   sherr,
 };
 
-pub fn calc_str_width(s: &str) -> usize {
+pub(crate) fn calc_str_width(s: &str) -> usize {
   let mut esc_seq = 0;
   s.graphemes(true).map(|g| width(g, &mut esc_seq)).sum()
 }
 
-pub fn truncate_visual(s: &str, max_width: usize) -> String {
+pub(crate) fn truncate_visual(s: &str, max_width: usize) -> String {
   let mut out = String::new();
   let mut visible = 0;
   let mut esc_seq = 0u8;
@@ -67,7 +66,7 @@ pub fn truncate_visual(s: &str, max_width: usize) -> String {
   out
 }
 
-pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
+pub(crate) fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
   if calc_str_width(s) <= max_width {
     return s.to_string();
   }
@@ -1461,6 +1460,10 @@ impl Terminal {
   }
 
   pub fn set_cursor_style(&mut self, style: CursorStyle) -> ShResult<()> {
+    if self.cursor_style == style {
+      return Ok(());
+    }
+
     let style_raw = style.to_string();
     self.write_all(style_raw.as_bytes())?;
     self.cursor_style = style;
@@ -1609,6 +1612,11 @@ impl Terminal {
   pub fn detach_tty(&mut self) {
     self.input_buf.clear();
     self.tty = None;
+  }
+
+  pub fn clear_under_cursor(&mut self) -> ShResult<()> {
+    self.input_buf.push_str("\x1b[0J");
+    Ok(())
   }
 
   #[cfg(test)]

@@ -8,7 +8,7 @@ use super::{
 
 pub(super) struct Defer;
 impl super::Builtin for Defer {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![OptSpec::flag('c')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {

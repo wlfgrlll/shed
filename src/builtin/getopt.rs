@@ -3,7 +3,7 @@ use std::fmt;
 use fmt::Display;
 
 use super::{
-  parse::lex::{Span, Tk},
+  eval::lex::{Span, Tk},
   sherr,
   state::shopt::xtrace_print,
   util::ShResult,
@@ -323,7 +323,7 @@ fn sort_tks_raw(
 
 #[cfg(test)]
 mod tests {
-  use crate::parse::lex::{LexFlags, LexStream};
+  use crate::eval::lex::{LexFlags, LexStream};
 
   use super::*;
 

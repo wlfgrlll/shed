@@ -9,10 +9,10 @@ use nix::{
 
 use super::{
   Shed,
+  eval::lex::Span,
   expand::expand_keymap,
   getopt::{Opt, OptSpec},
   out,
-  parse::lex::Span,
   procio::stdin_fileno,
   sherr, signal,
   state::{

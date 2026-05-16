@@ -11,8 +11,8 @@ use bitflags::bitflags;
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use super::util::get_separator;
+use crate::eval::lex::{LexFlags, LexStream, Tk};
 use crate::expand::{as_var_val_display, expand_arithmetic, expand_raw, markers};
-use crate::parse::lex::{LexFlags, LexStream, Tk};
 use crate::procio::stdin_fileno;
 use crate::readline::Candidate;
 use crate::{

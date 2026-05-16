@@ -7,7 +7,7 @@ use super::{
 
 pub(super) struct Shopt;
 impl super::Builtin for Shopt {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![OptSpec::flag('h')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {

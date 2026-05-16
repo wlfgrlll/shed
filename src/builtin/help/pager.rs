@@ -6,11 +6,11 @@ use regex::Regex;
 use crate::write_term;
 
 use super::{
-  ShResult, Shed, StyledHelp,
+  Direction, ShResult, Shed, StyledHelp,
   keys::KeyEvent,
   markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   procio::stdout_fileno,
-  readline::{Direction, SimpleEditor},
+  readline::SimpleEditor,
   state::terminal::calc_str_width,
 };
 

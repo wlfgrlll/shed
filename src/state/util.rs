@@ -15,12 +15,13 @@ use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-  ShResult, autocmd, match_loop,
-  meta::{MetaTab, UtilKind, Utility},
-  parse::{
+  ShResult, autocmd,
+  eval::{
     execute::exec_nonint,
     lex::{LexFlags, LexStream},
   },
+  match_loop,
+  meta::{MetaTab, UtilKind, Utility},
   sherr,
   shopt::ShOpts,
   vars::{ArrIndex, VarFlags, VarKind},

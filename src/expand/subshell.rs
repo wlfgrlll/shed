@@ -1,6 +1,6 @@
 use std::os::fd::AsRawFd;
 
-use super::{Shed, arithmetic::expand_arithmetic_wrapped, parse::execute::exec_nonint};
+use super::{Shed, arithmetic::expand_arithmetic_wrapped, eval::execute::exec_nonint};
 
 use crate::procio::{
   RedirSet, RedirSpec, RedirType, pipes_high, pipes_high_no_cloexec, read_fd_to_string,

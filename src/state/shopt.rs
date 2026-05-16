@@ -1,15 +1,13 @@
-use std::{fmt::Display, str::FromStr};
-
 use nix::unistd::write;
 
 use shed_macros::ShOptGroup;
 
 use crate::{
+  eval::lex::Span,
   expand::expand_keymap,
-  parse::lex::Span,
   procio::stderr_fileno,
   sherr, two_way_display,
-  util::{ShErr, ShResult, ansi_from_description},
+  util::{ShResult, ansi_from_description},
 };
 
 use super::Shed;

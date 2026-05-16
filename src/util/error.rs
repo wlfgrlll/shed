@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
 
-use crate::parse::lex::{Span, SpanSource};
+use crate::eval::lex::{Span, SpanSource};
 use crate::procio::{RedirGuard, stderr_fileno};
 use crate::sherr;
 use crate::util::FdWriter;

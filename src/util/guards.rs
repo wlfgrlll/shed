@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use scopeguard::guard;
 
 use crate::Shed;
-use crate::parse::execute::exec_nonint;
-use crate::parse::lex::Span;
+use crate::eval::execute::exec_nonint;
+use crate::eval::lex::Span;
 
 // ============================================================================
 // ScopeGuard - RAII variable scope management

@@ -1,10 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{
-  sherr,
-  state::util::source_file,
-  util::{ShResult, with_status},
-};
+use super::{ShResult, sherr, state::util::source_file, with_status};
 
 pub(super) struct Source;
 impl super::Builtin for Source {

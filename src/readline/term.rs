@@ -2,7 +2,7 @@ use std::{env, fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{Shed, linebuf::Pos, sherr, state::terminal::width, util::ShResult, write_term};
+use super::{Shed, linebuf::Pos, state::terminal::width, util::ShResult, write_term};
 
 pub fn enumerate_lines(
   s: &str,
@@ -179,19 +179,10 @@ pub fn redraw(
   offset: usize,
   total_buf_lines: usize,
 ) -> ShResult<()> {
-  let err = |_| sherr!(InternalErr, "Failed to write to LineWriter internal buffer");
   write_term!("\x1b[J").ok(); // Clear from cursor to end of screen to erase any remnants of the old line after the prompt
 
   let end = new_layout.end;
   let cursor = new_layout.cursor;
-
-  if Shed::meta(|m| m.system_msg_pending()) {
-    let mut system_msg = String::new();
-    while let Some(msg) = Shed::meta_mut(|m| m.pop_system_message()) {
-      writeln!(system_msg, "{msg}").map_err(err)?;
-    }
-    write_term!("{system_msg}").ok();
-  }
 
   Shed::term_mut(|t| t.emit_osc_prompt_start()).ok();
   if let Ok(prefix) = env::var("SHELL_PROMPT_PREFIX") {

@@ -26,6 +26,7 @@ The following builtins are available:
   `export`      mark variables for export to environment    |builtin-export|
   `false`       return exit status 1                        |builtin-false|
   `fc`          edit and re-exec commands from history      |builtin-fc|
+  `flog`        write a formatted log message               |builtin-flog|
   `fg`          bring a job to the foreground               |builtin-fg|
   `getopts`     parse option flags in scripts               |builtin-getopts|
   `hash`        manage the command location cache           |builtin-hash|
@@ -699,6 +700,56 @@ FC                                               *builtin-fc* *fc*
       `fc -s echo`              re-exec last command starting with "echo"
       `fc -s cat=dog`           re-exec with cat -> dog substitution
       `fc -e vim`               edit last command in vim
+
+==============================================================================
+FLOG                                             *builtin-flog* *flog*
+
+  `flog [-p {prefix}] {level} {message} ...`
+
+  Write a formatted log message to standard error. {level} must be one
+  of `error`, `warn`, `info`, `debug`, or `trace` (case-insensitive).
+  All remaining arguments after {level} are joined with spaces to form
+  the message body.
+
+  `-p {prefix}` / `--prefix {prefix}`
+
+      Format string for the prefix that appears before the message.
+      Supports two classes of placeholders:
+
+      Named placeholders (expanded first) ~
+
+        `{level}`    log level label, styled with color
+        `{source}`   name of the source file or `<stdin>`
+        `{line}`     line number of the `flog` call in the source
+        `{col}`      column of the `flog` call in the source
+
+      Date/time codes (expanded second, via strftime conventions) ~
+
+        `%H`  hour (24-hour clock, 00-23)
+        `%M`  minute (00-59)
+        `%S`  second (00-60)
+        `%Y`  4-digit year
+        `%m`  month (01-12)
+        `%d`  day of month (01-31)
+
+      Any strftime format code accepted by chrono is valid.
+
+  The `SHED_LOG` environment variable controls the minimum level that
+  produces output. A call whose level is below `SHED_LOG` is silently
+  suppressed. This allows scripts to emit `debug` or `trace` calls that
+  are invisible by default and enabled on demand.
+  The hierarchy is as follows:
+
+        `none` > `error` > `warn` > `info` > `debug` > `trace`.
+
+  A `SHED_LOG` value of `none` suppresses all log messages.
+
+  Examples:
+
+      `flog info "starting up"`
+      `flog -p '[%H:%M:%S {level}]' warn "disk usage high"`
+      `flog -p '[{level} {source}:{line}]' error "unexpected value"`
+      `SHED_LOG=debug flog debug "entering loop"`
 
 ==============================================================================
 GETOPTS                                          *builtin-getopts* *getopts*

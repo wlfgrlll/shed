@@ -14,7 +14,7 @@ use nix::{
 
 use super::{
   autocmd,
-  parse::execute::exec_nonint,
+  eval::execute::exec_nonint,
   sherr,
   state::jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
   state::logic::TrapTarget,
@@ -245,7 +245,6 @@ pub fn reset_signals(is_fg: bool) {
         continue;
       }
       if is_fg && (sig == Signal::SIGTTIN || sig == Signal::SIGTTOU) {
-        log::debug!("Not resetting SIGTTIN/SIGTTOU in foreground child");
         continue;
       }
       let _ = sigaction(sig, &default);

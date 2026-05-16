@@ -20,13 +20,12 @@ use nix::{
 
 use super::{
   Shed,
-  expand::Expander,
-  match_loop,
-  parse::{
+  eval::{
     execute::exec_nonint,
     lex::{Span, Tk, TkFlags},
   },
-  sherr, state,
+  expand::Expander,
+  match_loop, sherr, state,
   util::{ShErr, ShErrKind, ShResult},
 };
 

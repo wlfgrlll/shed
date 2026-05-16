@@ -7,23 +7,21 @@
 
 use state::Shed;
 
-use std::process::ExitCode;
-use std::sync::atomic::Ordering;
+use std::{process::ExitCode, sync::atomic::Ordering};
 
 use expand::expand_keymap;
 use keys::KeyEvent;
 use nix::sys::wait::WaitStatus as WtStat;
-use readline::{Hint, LineData, Lines, Pos, Prompt, ReadlineEvent, ShedLine};
+use readline::{Hint, LineData, Lines, Prompt, ReadlineEvent, ShedLine};
 use signal::QUIT_CODE;
 use util::{ShErrKind, ShResult};
 
 pub(crate) mod builtin;
+pub(crate) mod eval;
 pub(crate) mod expand;
-pub(crate) mod getopt;
 pub(crate) mod input;
 pub(crate) mod interactive;
 pub(crate) mod lifecycle;
-pub(crate) mod parse;
 pub(crate) mod procio;
 pub(crate) mod readline;
 pub(crate) mod signal;
@@ -41,6 +39,7 @@ fn main() -> ExitCode {
   let Some(args) = lifecycle::setup() else {
     return ExitCode::SUCCESS;
   };
+  log::info!("starting shed");
 
   if let Err(e) = input::dispatch_input(args) {
     e.print_error();

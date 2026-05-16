@@ -1,8 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use super::{
+  eval::lex::{LexFlags, LexStream, Tk, TkFlags},
   keys::{KeyCode, KeyEvent, ModKeys},
-  parse::lex::{LexFlags, LexStream, Tk, TkFlags},
   state::Shed,
 };
 
@@ -179,7 +179,7 @@ pub fn parse_key_alias(alias: &str) -> Option<KeyEvent> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::parse::lex::Span;
+  use crate::eval::lex::Span;
   use crate::tests::testutil::TestGuard;
 
   // ===================== parse_key_alias =====================

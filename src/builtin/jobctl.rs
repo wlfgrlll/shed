@@ -3,12 +3,11 @@ use nix::{
   unistd::{Pid, getpgrp},
 };
 
-use crate::{
-  builtin::BuiltinArgs,
+use super::{
+  BuiltinArgs,
+  eval::lex::Span,
   getopt::{Opt, OptSpec},
-  out, outln,
-  parse::lex::Span,
-  sherr,
+  out, outln, sherr,
   signal::parse_signal,
   state::jobs::{JobCmdFlags, JobID, wait_bg},
   state::{self, Shed},
@@ -130,7 +129,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
 
 pub(super) struct Jobs;
 impl super::Builtin for Jobs {
-  fn opts(&self) -> Vec<crate::getopt::OptSpec> {
+  fn opts(&self) -> Vec<OptSpec> {
     vec![
       OptSpec::flag('l'),
       OptSpec::flag('p'),

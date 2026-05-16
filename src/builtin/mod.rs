@@ -2,15 +2,13 @@ use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 
 use super::{
-  errln, expand,
-  getopt::{self, Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict},
-  keys, match_loop, out, outln,
-  parse::{
+  errln,
+  eval::{
     self, NdFlags, NdRule, Node,
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
     lex::{Span, Tk},
   },
-  procio,
+  expand, keys, match_loop, out, outln, procio,
   procio::RedirSet,
   readline, sherr, signal, state,
   state::{Shed, jobs::ChildProc, shopt as shopt_internal},
@@ -26,10 +24,12 @@ mod complete;
 mod defer;
 mod dirstack;
 mod echo;
-mod eval;
+mod evaluate;
 mod exec;
 mod fixcmd;
+mod flog;
 mod flowctl;
+mod getopt;
 mod getopts;
 mod hash;
 mod help;
@@ -51,7 +51,9 @@ mod test; // [[ ]] thing
 mod times;
 mod trap;
 mod varcmds;
+mod flog;
 
+use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
 pub(super) use test::double_bracket_test;
 
 /// Embed a completion script directly in the binary.
@@ -74,7 +76,7 @@ macro_rules! register_scripts {
 
     pub fn source_builtin_scripts() {
       for (path, src) in SCRIPTS {
-        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
+        if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
           e.print_error();
         }
       }
@@ -86,7 +88,7 @@ macro_rules! register_scripts {
       fn builtin_functions_pass() {
         let failures: Vec<&str> = super::SCRIPTS.iter()
           .filter(|(path,src)| {
-            $crate::parse::execute::exec_nonint(
+            $crate::eval::execute::exec_nonint(
               src.to_string(),
               Some(format!("{path}").into())
             ).is_err()
@@ -107,7 +109,7 @@ macro_rules! register_completions {
 
     pub fn source_builtin_completions() {
       for (name, src) in COMPLETIONS {
-        if let Err(e) = $crate::parse::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into())) {
+        if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into())) {
           e.print_error();
         }
       }
@@ -119,7 +121,7 @@ macro_rules! register_completions {
       fn builtin_completions_pass() {
         let failures: Vec<&str> = super::COMPLETIONS.iter()
           .filter(|(name,src)| {
-            $crate::parse::execute::exec_nonint(
+            $crate::eval::execute::exec_nonint(
               src.to_string(),
               Some(format!("{name} comp").into())
             ).is_err()
@@ -200,13 +202,14 @@ register_builtins! {
   "dirs"     => dirstack::Dirs,
   "disown"   => jobctl::Disown,
   "echo"     => echo::Echo,
-  "eval"     => eval::Eval,
+  "eval"     => evaluate::Eval,
   "exec"     => exec::Exec,
   "exit"     => flowctl::Exit,
   "export"   => varcmds::Export,
   "false"    => False,
   "fc"       => fixcmd::FixCmd,
   "fg"       => jobctl::Fg,
+  "flog"     => flog::Flog,
   "fpop"     => arrops::FrontPop,
   "fpush"    => arrops::FrontPush,
   "getopts"  => getopts::GetOpts,

@@ -16,22 +16,20 @@ use std::{
   time::{Duration, Instant, SystemTime},
 };
 
-use crate::{
+use super::{
+  ShErr, ShResult, Shed,
   builtin::BUILTIN_NAMES,
+  errln,
   expand::{expand_keymap, glob_to_regex},
+  jobs::Job,
   keys::KeyEvent,
+  logic::AutoCmdKind,
   match_loop,
   procio::MIN_INTERNAL_FD,
   readline::{Candidate, CompSpec, LineData},
   sherr,
-  state::jobs::Job,
-  state::{
-    Shed,
-    logic::AutoCmdKind,
-    util::query_db,
-    vars::{VarFlags, VarKind},
-  },
-  util::{ShErr, ShResult},
+  util::query_db,
+  vars::{VarFlags, VarKind},
   writefd,
 };
 use itertools::{Itertools, izip};
@@ -811,6 +809,9 @@ impl Drop for FuncGuard {
 pub(crate) struct MetaTab {
   // Time when the shell was started, used for calculating shell uptime
   shell_time: Instant,
+  // whether or not we initially started as an interactive shell
+  // not to be confused with interactive context guarding with Terminal and TermGuard
+  interactive_shell: bool,
 
   // command running duration
   runtime_start: Option<Instant>,
@@ -868,6 +869,7 @@ impl Clone for MetaTab {
   fn clone(&self) -> Self {
     Self {
       shell_time: self.shell_time,
+      interactive_shell: self.interactive_shell,
       runtime_start: self.runtime_start,
       runtime_stop: self.runtime_stop,
       socket: self.socket.clone(),
@@ -901,6 +903,7 @@ impl Default for MetaTab {
   fn default() -> Self {
     Self {
       shell_time: Instant::now(),
+      interactive_shell: nix::unistd::isatty(procio::stdin_fileno()).unwrap_or(false),
       runtime_start: None,
       runtime_stop: None,
       socket: None,
@@ -957,11 +960,12 @@ impl MetaTab {
     self.procsub_stack.push(vec![]);
     ProcSubGuard
   }
+  pub fn set_no_hist_save(&mut self) {
+    self.ignore_hist = true;
+  }
 
   pub fn no_hist_save(&mut self) -> bool {
-    let val = self.ignore_hist;
-    self.ignore_hist = !val;
-    val
+    std::mem::take(&mut self.ignore_hist)
   }
 
   pub fn pop_procsub_frame(&mut self) {
@@ -1507,7 +1511,11 @@ impl MetaTab {
   }
   pub fn post_system_message(&mut self, message: String) {
     let now = SystemTime::now();
-    self.system_msg.push_back((now, message));
+    if self.interactive_shell {
+      self.system_msg.push_back((now, message));
+    } else {
+      errln!("non-int: {message}");
+    }
   }
   pub fn pop_system_message(&mut self) -> Option<String> {
     let (time, msg) = self.system_msg.pop_front()?;

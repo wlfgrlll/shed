@@ -6,12 +6,12 @@ use bitflags::bitflags;
 
 use super::{
   Shed,
-  expand::{expand_raw_inner, markers::strip_markers, unescape_str},
-  match_loop,
-  parse::{
+  eval::{
     execute::{in_cd_path, is_in_path},
     lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
   },
+  expand::{expand_raw_inner, markers::strip_markers, unescape_str},
+  match_loop,
   state::{self, util::get_exec_wrappers, vars::ShellParam},
   util::{QuoteState, has_unescaped, split_at_unescaped},
 };

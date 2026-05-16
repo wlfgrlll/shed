@@ -1,20 +1,30 @@
 mod error;
+pub mod flog;
 mod guards;
 mod macros;
+mod pos;
 mod strops;
 mod ui;
 
 use crate::state;
 use std::os::fd::BorrowedFd;
 
-use super::{expand, match_loop, parse, sherr};
+use super::{Shed, eval, expand, match_loop, sherr};
 
+pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
+pub(super) use pos::{Pos, SignedPos};
 pub(super) use ui::{
   BOT_LEFT, BOT_RIGHT, HOR_LINE, PaletteEntry, TOP_LEFT, TOP_RIGHT, TREE_LEFT, TREE_RIGHT,
   VERT_LINE, ansi_from_description, pad_line, pad_line_into, style_from_description,
+  stylize_loglevel,
 };
 
-pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
+#[derive(Default, Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum Direction {
+  #[default]
+  Forward,
+  Backward,
+}
 
 pub(super) use error::{ShErr, ShErrKind, ShResult, ShResultExt, get_context};
 

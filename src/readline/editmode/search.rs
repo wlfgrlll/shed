@@ -1,14 +1,8 @@
-use crate::{
-  key,
-  keys::KeyEvent,
-  motion,
-  readline::{
-    SimpleEditor,
-    editcmd::{CmdFlags, Direction, EditCmd, Motion},
-    editmode::{CmdReplay, EditMode, ModeReport},
-    history::History,
-    linebuf::LineBuf,
-  },
+use super::{
+  CmdReplay, E as KeyEvent, EditMode, LineBuf, ModeReport, SimpleEditor,
+  editcmd::{CmdFlags, Direction, EditCmd, Motion},
+  history::History,
+  key, motion,
   state::terminal::CursorStyle,
   status_msg,
 };

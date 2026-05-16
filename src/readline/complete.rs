@@ -11,13 +11,13 @@ use nix::sys::signal::Signal;
 
 use crate::{
   builtin::BUILTIN_NAMES,
+  eval::{execute::exec_nonint, lex::Span},
   expand::{
     as_var_val_display, escape_glob, escape_str, expand_raw_inner, markers::strip_markers,
     unescape_str,
   },
   key,
   keys::{KeyCode as C, KeyEvent as K},
-  parse::{execute::exec_nonint, lex::Span},
   readline::{
     context::{CtxTk, CtxTkRule, get_context_tokens},
     editmode::{EditMode, ViInsert},

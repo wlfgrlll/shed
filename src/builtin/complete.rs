@@ -2,6 +2,7 @@ use itertools::{EitherOrBoth, Itertools};
 
 use super::{
   Dispatcher, NdRule, Node, ShResult,
+  eval::lex::Span,
   getopt::{Opt, OptSpec},
   out, outln,
   readline::{BashCompSpec, Candidate, CompContext, CompFlags, CompOptFlags, CompOpts, CompSpec},
@@ -241,7 +242,7 @@ impl super::Builtin for Compadd {
   }
 }
 
-fn build_source(opts: &[Opt], argv: &[(String, crate::parse::lex::Span)]) -> String {
+fn build_source(opts: &[Opt], argv: &[(String, Span)]) -> String {
   let mut parts: Vec<String> = vec!["complete".into()];
   for opt in opts {
     match opt {
@@ -284,7 +285,7 @@ pub fn get_comp_opts(opts: Vec<Opt>) -> ShResult<CompOpts> {
         "space" => comp_opts.opt_flags |= CompOptFlags::SPACE,
         "nospace" => comp_opts.opt_flags &= !CompOptFlags::SPACE,
         _ => {
-          let span: crate::parse::lex::Span = Default::default();
+          let span: crate::eval::lex::Span = Default::default();
           return Err(sherr!(
             InvalidOpt @ span,
             "complete: invalid option: {opt_flag}"
