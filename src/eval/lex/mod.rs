@@ -83,7 +83,7 @@ impl Display for SpanSource {
 }
 
 #[derive(Clone, PartialEq, Default, Debug)]
-/// A slice of some source text. Ultimately wraps an Rc<String>, which means these are cheap to clone.
+/// A slice of some source text. Ultimately wraps an `Rc<str>`, which means these are cheap to clone.
 ///
 /// Load-bearing struct. Used extensively throughout the codebase for slicing shell input for various reasons (error reporting, tab completion, etc)
 pub(crate) struct Span {
@@ -327,25 +327,96 @@ bitflags! {
 }
 
 pub fn clean_input(input: &str) -> String {
-  let mut chars = input.chars().peekable();
+  let input = input.to_string();
+  let mut chars = input.char_indices().peekable();
   let mut output = String::new();
   let mut in_squote = false;
-  match_loop!(chars.next() => ch, {
+  // FIFO queue: heredocs on the same line are consumed in order
+  let mut heredoc_queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+  match_loop!(chars.next() => (i,ch) => ch, {
     '\'' => {
       in_squote = !in_squote;
       output.push(ch);
     }
-    '\\' if !in_squote && chars.peek() == Some(&'\n') => {
+    '\\' if !in_squote && chars.peek().is_some_and(|(_,c)| *c == '\n') => {
       chars.next();
-      while chars.peek().is_some_and(|c| c.is_whitespace() && *c != '\n') {
+      while chars.peek().is_some_and(|(_,c)| c.is_whitespace() && *c != '\n') {
         chars.next();
       }
     }
     '\r' => {
-      if chars.peek() == Some(&'\n') {
+      if let Some(&(_, '\n')) = chars.peek() {
         chars.next();
       }
       output.push('\n');
+    }
+    '\n' if !heredoc_queue.is_empty() => {
+      output.push('\n');
+      let delim = heredoc_queue.pop_front().unwrap();
+      // Strip leading '-' (<<- style) to get the bare delimiter word
+      let match_delim = delim.trim_start_matches('-');
+      let start = i + 1;
+      let mut end = start;
+      for line in input[start..].split('\n') {
+        output.push_str(line);
+        output.push('\n');
+        end += line.len() + 1;
+        if line.trim_start_matches('\t') == match_delim {
+          // Advance chars iterator past all bytes we just copied
+          while chars.peek().is_some_and(|&(j, _)| j < end) {
+            chars.next();
+          }
+          break;
+        }
+      }
+    }
+    '<' if !in_squote && chars.peek().is_some_and(|(_,c)| *c == '<') => {
+      output.push(ch);
+      let (_, second) = chars.next().unwrap();
+      output.push(second);
+
+      // <<< is a here-string — no multi-line body, don't push to queue
+      if chars.peek().is_some_and(|(_,c)| *c == '<') {
+        let (_, third) = chars.next().unwrap();
+        output.push(third);
+      } else {
+        // Skip optional '-' for <<-
+        let mut tab_strip = false;
+        if chars.peek().is_some_and(|(_,c)| *c == '-') {
+          tab_strip = true;
+        }
+
+        // Skip horizontal whitespace between << and delimiter
+        while chars.peek().is_some_and(|(_,c)| *c == ' ' || *c == '\t') {
+          let (_, wc) = chars.next().unwrap();
+          output.push(wc);
+        }
+
+        // Collect delimiter word, stripping quotes for the match key
+        let mut delim = String::new();
+        if tab_strip {
+          delim.push('-');
+        }
+        let mut in_dquote = false;
+        let mut in_squote_inner = false;
+        while let Some(&(_, c)) = chars.peek() {
+          match c {
+            '\'' if !in_dquote => in_squote_inner = !in_squote_inner,
+            '"' if !in_squote_inner => in_dquote = !in_dquote,
+            c if (c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>')) && !in_dquote && !in_squote_inner => break,
+            _ => {}
+          }
+          // Add to match key only if it's not a quote character
+          if c != '\'' && c != '"' {
+            delim.push(c);
+          }
+          output.push(c);
+          chars.next();
+        }
+        if !delim.trim_start_matches('-').is_empty() {
+          heredoc_queue.push_back(delim);
+        }
+      }
     }
     _ => output.push(ch),
   });
@@ -801,6 +872,7 @@ impl LexStream {
         end_delim: Some(end_delim),
       };
       let mut tk = self.get_token(start..line_start, rule);
+      log::debug!("heredoc lex: delim={:?} body={:?}", delim, tk.span.as_str());
       tk.flags |= TkFlags::IS_HEREDOC | flags;
       self.heredoc_skip = Some(pos);
       self.update_cursor(cursor_after_delim);

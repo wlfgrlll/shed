@@ -85,8 +85,17 @@ mod shell_intro_2_1 {
    * If the first line of a file of shell commands starts with the characters "#!", the results are unspecified.
    */
 
-  use crate::{assert_output, eval::execute::exec_dash_c, input, tests::testutil::TestGuard};
-  use std::{env, io::Write};
+  use crate::{
+    assert_output,
+    eval::execute::exec_dash_c,
+    input,
+    state::{
+      Shed,
+      vars::{VarFlags, VarKind},
+    },
+    tests::testutil::TestGuard,
+  };
+  use std::io::Write;
 
   #[test]
   fn test_input_script() {
@@ -170,7 +179,7 @@ mod shell_intro_2_1 {
     exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
     assert_output!(g, "a b c\n");
 
-    unsafe { env::set_var("IFS", ":") };
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
     exec_dash_c("echo \"$*\"".into(), args.clone()).unwrap();
     assert_output!(g, "a:b:c\n");
   }
@@ -1495,65 +1504,57 @@ mod redirection_2_7 {
      */
 
     test_input! {
-      // basic: single line fed to stdin
       heredoc_basic:
         "read var <<EOF\nhello\nEOF\necho $var"
         => "hello\n";
 
-      // unquoted word: parameter expansion is performed on the body
       heredoc_param_expansion:
         "X=42\nread var <<EOF\nval$X\nEOF\necho $var"
         => "val42\n";
 
-      // unquoted word: command substitution is performed on the body
       heredoc_command_substitution:
         "read var <<EOF\n$(echo hi)\nEOF\necho $var"
         => "hi\n";
 
-      // unquoted word: arithmetic expansion is performed on the body
       heredoc_arithmetic_expansion:
         "read var <<EOF\n$((1+1))\nEOF\necho $var"
         => "2\n";
 
-      // single-quoted word: body is not expanded at all
       heredoc_single_quoted_no_expansion:
         "X=42\nread var <<'EOF'\n$X\nEOF\necho $var"
         => "$X\n";
 
-      // double-quoted word: body is not expanded at all
       heredoc_double_quoted_no_expansion:
         "X=42\nread var <<\"EOF\"\n$X\nEOF\necho $var"
         => "$X\n";
 
-      // backslash before $ suppresses expansion (double-quote backslash rules apply)
       heredoc_backslash_suppresses_dollar:
         "X=42\nread var <<EOF\n\\$X\nEOF\necho $var"
         => "$X\n";
 
-      // backslash-backslash produces a single backslash
       heredoc_backslash_backslash:
-        "read var <<EOF\n\\\\\nEOF\necho $var"
+        "read -r var <<EOF\n\\\\\nEOF\necho $var"
         => "\\\n";
 
-      // multi-line: brace group reads multiple lines from the same heredoc
       heredoc_multiline:
         "{ read a; read b; } <<EOF\nfoo\nbar\nEOF\necho $a $b"
         => "foo bar\n";
 
-      // <<- strips all leading tabs from each body line
       heredoc_strip_tabs:
         "read var <<-EOF\n\thello\n\tEOF\necho $var"
         => "hello\n";
 
-      // <<- strips tabs from every line; extra tabs produce reduced (not zero) indentation
       heredoc_strip_tabs_multiple:
         "{ read a; read b; } <<-EOF\n\tfoo\n\t\tbar\n\tEOF\necho $a $b"
         => "foo bar\n";
 
-      // <<- does not strip leading spaces, only tabs
       heredoc_strip_tabs_preserves_spaces:
-        "IFS= read var <<-EOF\n\t  spaced\n\tEOF\necho $var"
+        "export IFS=''; read var <<-EOF\n\t  spaced\n\tEOF\necho $var"
         => "  spaced\n";
+
+      heredoc_multiple:
+        "cat <<A; cat <<B\nfoo\nA\nbar\nB"
+        => "foo\nbar\n";
     }
   }
 }

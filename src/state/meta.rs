@@ -903,7 +903,7 @@ impl Default for MetaTab {
   fn default() -> Self {
     Self {
       shell_time: Instant::now(),
-      interactive_shell: nix::unistd::isatty(procio::stdin_fileno()).unwrap_or(false),
+      interactive_shell: false,
       runtime_start: None,
       runtime_stop: None,
       socket: None,
@@ -1509,12 +1509,18 @@ impl MetaTab {
   pub fn take_comp_candidates(&mut self) -> Vec<Candidate> {
     std::mem::take(&mut self.comp_add_candidates)
   }
+  pub fn set_interactive_shell(&mut self, interactive: bool) {
+    self.interactive_shell = interactive;
+  }
+  pub fn interactive_shell(&self) -> bool {
+    self.interactive_shell
+  }
   pub fn post_system_message(&mut self, message: String) {
     let now = SystemTime::now();
     if self.interactive_shell {
       self.system_msg.push_back((now, message));
     } else {
-      errln!("non-int: {message}");
+      errln!("{message}");
     }
   }
   pub fn pop_system_message(&mut self) -> Option<String> {

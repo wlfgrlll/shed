@@ -8,7 +8,10 @@ use super::{
   Line, Lines, MotionKind, Pos, ShResult, autocmd,
   editcmd::{Anchor, Cmd, EditCmd, ReadSrc, StashArgs, StashListArg, Verb, WriteDest},
   editmode::{AddressRange, ExNdRule, ExNode, SubFlags},
-  eval::execute::{exec_int, exec_nonint},
+  eval::{
+    execute::{exec_int, exec_nonint},
+    lex::TkFlags,
+  },
   motion, ordered,
   procio::{RedirSet, RedirSpec, capture_command},
   stash::{Stash, StashedCmd},
@@ -391,6 +394,7 @@ impl super::LineBuf {
         let spec = RedirSpec::Buffer {
           fd: STDIN_FILENO,
           buf,
+          flags: TkFlags::empty(),
         };
 
         let redirs = RedirSet::from(spec);

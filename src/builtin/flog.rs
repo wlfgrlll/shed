@@ -5,7 +5,7 @@ use super::{
   expand::markers,
   getopt::{Opt, OptSpec},
   join_raw_arg_iter, match_loop, sherr,
-  util::{flog, stylize_loglevel},
+  util::stylize_loglevel,
   with_status,
 };
 
@@ -29,9 +29,8 @@ impl super::Builtin for Flog {
       return Err(sherr!(ExecFail @ span, "Invalid log level"));
     };
 
-    flog::update_log_level();
-
-    if level > log::max_level() {
+    let cur_level = Self::get_log_level().unwrap_or(log::Level::Error);
+    if level > cur_level {
       return with_status(0);
     }
 
@@ -103,5 +102,10 @@ impl Flog {
       .replace(markers::ESCAPE, "%");
 
     out
+  }
+
+  fn get_log_level() -> Option<log::Level> {
+    let level = Shed::vars(|v| v.get_var("FLOG_LEVEL")).to_ascii_uppercase();
+    level.parse::<log::Level>().ok()
   }
 }

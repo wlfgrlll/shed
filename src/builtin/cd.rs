@@ -139,7 +139,14 @@ pub mod tests {
   fn cd_no_args_goes_home() {
     let _g = TestGuard::new();
     let temp_dir = TempDir::new().unwrap();
-    unsafe { env::set_var("HOME", temp_dir.path()) };
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "HOME",
+        VarKind::Str(temp_dir.path().display().to_string()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
 
     test_input("cd").unwrap();
 

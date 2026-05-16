@@ -169,6 +169,7 @@ pub(super) fn shed_interactive(
 ) -> ShResult<()> {
   let _raw_mode = interactive_setup(args)?;
   state::util::try_hash();
+  Shed::meta_mut(|m| m.set_interactive_shell(true));
 
   let mut readline = match ShedLine::new(Prompt::new()) {
     Ok(rl) => rl,

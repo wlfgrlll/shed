@@ -152,12 +152,10 @@ fn is_valid_cmd(command: Tk) -> bool {
   };
   let cmd_path = Path::new(&name);
 
-  if cmd_path.is_absolute() {
-    // the user has given us an absolute path
+  if cmd_path.is_absolute() || name.starts_with("./") || name.starts_with("../") {
     let Ok(meta) = cmd_path.metadata() else {
       return false;
     };
-    // this is a file that is executable by someone
     meta.permissions().mode() & 0o111 != 0
   } else {
     Shed::meta(|m| m.cache_contains(&name))

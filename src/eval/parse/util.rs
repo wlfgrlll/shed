@@ -92,7 +92,9 @@ impl ParseStream {
     })
   }
   pub(super) fn check_redir(&self) -> bool {
-    self.peek_tk().is_some_and(|tk| tk.class == TkRule::Redir)
+    self
+      .peek_tk()
+      .is_some_and(|tk| matches!(tk.class, TkRule::Redir | TkRule::HereDoc { .. }))
   }
 }
 

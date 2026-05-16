@@ -629,12 +629,28 @@ fn complete_builtins(start: &str) -> Vec<Candidate> {
 }
 
 fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
+  if let Some(stripped) = start.strip_prefix("./") {
+    return Shed::meta(|m| {
+      m.cached_utils()
+        .filter(|u| matches!(u.kind(), state::meta::UtilKind::File(_)))
+        .map(Candidate::from)
+        .filter(|c| c.is_match(stripped))
+        .map(|mut c| {
+          c.content = format!("./{}", c.content);
+          c
+        })
+        .collect()
+    });
+  }
+
   let mut candidates: Vec<Candidate> = Shed::meta(|m| {
     m.cached_utils()
       .map(Candidate::from)
       .filter(|c| c.is_match(start))
       .collect()
   });
+
+  log::debug!("After utilities, candidates are: {:?}", candidates);
 
   if Shed::shopts(|o| o.core.autocd) {
     let dirs = complete_dirs(start, cursor_pos);
@@ -707,7 +723,7 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
         // rfind_unescaped handles escaped slashes in filenames; unescaped_pre needs
         // plain rfind since it is already unescaped.
         let typed_dir_end = rfind_unescaped(prefix, '/').map(|i| i + 1).unwrap_or(0);
-        let raw_dir_end = unescaped_pre.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let raw_dir_end = raw.rfind('/').map(|i| i + 1).unwrap_or(0);
 
         let filename_raw = &raw[raw_dir_end..];
         let middle = filename_raw

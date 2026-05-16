@@ -1,7 +1,6 @@
 use std::{io::Write, path::PathBuf, process::ExitCode, sync::atomic::Ordering};
 
 use clap::Parser;
-use nix::unistd::isatty;
 
 use super::{
   ShResult, Shed, autocmd, errln,
@@ -196,7 +195,7 @@ pub(super) fn tear_down() -> ExitCode {
   Shed::jobs_mut(|j| j.hang_up());
 
   let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
-  if code == 0 && isatty(procio::stdin_fileno()).unwrap_or_default() {
+  if code == 0 && Shed::meta(|m| m.interactive_shell()) {
     errln!("\nexit");
   }
 

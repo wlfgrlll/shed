@@ -191,30 +191,26 @@ impl RedirBldr {
         log::debug!("heredoc body: {:?}", body);
         // Strip leading tabs per line BEFORE expansion (POSIX order).
         let mut buf = if flags.contains(TkFlags::TAB_HEREDOC) {
-          let stripped: Vec<&str> = body
-            .lines()
-            .map(|line| line.trim_start_matches('\t'))
-            .collect();
-          let mut s = stripped.join("\n");
-          s.push('\n');
-          s
+          if body.is_empty() {
+            String::new()
+          } else {
+            let stripped: Vec<&str> = body
+              .lines()
+              .map(|line| line.trim_start_matches('\t'))
+              .collect();
+            let mut s = stripped.join("\n");
+            s.push('\n');
+            s
+          }
         } else {
           let mut s = body;
-          if !s.ends_with('\n') {
+          if !s.is_empty() && !s.ends_with('\n') {
             s.push('\n');
           }
           s
         };
 
-        if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
-          buf = Expander::from_raw(&buf, flags)?
-            .expand()?
-            .into_iter()
-            .next()
-            .unwrap_or_default();
-        }
-
-        RedirSpec::buffer(fd, buf)
+        RedirSpec::buffer(fd, buf, flags)
       }
       _ => Err(
         sherr!(ParseErr, "Invalid redirection target for redirection type")
@@ -411,6 +407,7 @@ pub(super) enum RedirSpec {
   Buffer {
     fd: RawFd,
     buf: String,
+    flags: TkFlags,
   },
 }
 
@@ -424,8 +421,8 @@ impl RedirSpec {
   pub fn close(fd: RawFd) -> Self {
     Self::Close { fd }
   }
-  pub fn buffer(fd: RawFd, buf: String) -> ShResult<Self> {
-    Ok(Self::Buffer { fd, buf })
+  pub fn buffer(fd: RawFd, buf: String, flags: TkFlags) -> ShResult<Self> {
+    Ok(Self::Buffer { fd, buf, flags })
   }
   pub fn target_fd(&self) -> RawFd {
     match self {
@@ -470,12 +467,20 @@ impl RedirSpec {
         Ok(Redir::new(to, owned))
       }
       RedirSpec::Close { fd } => Ok(Redir::close(fd)),
-      RedirSpec::Buffer { fd, buf } => {
+      RedirSpec::Buffer { fd, mut buf, flags } => {
         use nix::sys::memfd::{MFdFlags, memfd_create};
         use std::io::{Seek, SeekFrom, Write};
 
         let owned = memfd_create(c"shed_heredoc", MFdFlags::MFD_CLOEXEC)
           .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
+
+        if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
+          buf = Expander::from_raw(&buf, flags)?
+            .expand()?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        }
 
         let mut file = std::fs::File::from(owned);
         file

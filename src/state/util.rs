@@ -175,23 +175,24 @@ pub fn get_comp_wordbreaks() -> String {
 ///
 /// Used mainly for joining strings
 pub fn get_separator() -> String {
-  std::env::var("IFS")
-    .unwrap_or(String::from(" "))
+  let separators = get_separators();
+  separators
     .graphemes(true)
     .next()
-    .map(|ch| ch.to_string())
     .unwrap_or_default()
+    .to_string()
 }
 
 /// Get the entire IFS variable
 ///
 /// Used mainly for splitting strings
 pub fn get_separators() -> String {
-  std::env::var("IFS").unwrap_or(String::from(" \t\n"))
+  Shed::vars(|v| v.try_get_var("IFS")).unwrap_or(String::from(" \t\n"))
 }
 
 pub fn get_time_fmt() -> String {
-  std::env::var("TIMEFMT").unwrap_or_else(|_| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
+  Shed::vars(|v| v.try_get_var("TIMEFMT"))
+    .unwrap_or_else(|| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
 }
 
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
@@ -246,11 +247,9 @@ pub fn try_hash() {
 }
 
 pub fn rc_file_path() -> Option<PathBuf> {
-  if let Ok(path) = std::env::var("SHED_RC") {
-    Some(PathBuf::from(path))
-  } else {
-    get_home().map(|home| home.join(".shedrc"))
-  }
+  Shed::vars(|v| v.try_get_var("SHED_RC"))
+    .map(PathBuf::from)
+    .or_else(|| get_home().map(|home| home.join(".shedrc")))
 }
 
 pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
@@ -259,6 +258,7 @@ pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
   if rc_path.exists() {
     return Ok(None);
   }
+  log::info!("Generating default rc file at {}", rc_path.display());
   let mut rc_file = OpenOptions::new()
     .write(true)
     .create(true)
@@ -317,7 +317,7 @@ pub fn source_runtime_file(name: &str, env_var_name: Option<&str>) -> ShResult<(
   }
 
   let path = if let Some(name) = env_var_name
-    && let Ok(path) = std::env::var(name)
+    && let Some(path) = Shed::vars(|v| v.try_get_var(name))
   {
     PathBuf::from(&path)
   } else if let Some(home) = get_home() {
@@ -447,8 +447,7 @@ pub fn open_db_conn() -> ShResult<Connection> {
 }
 
 pub fn get_home() -> Option<PathBuf> {
-  std::env::var("HOME")
-    .ok()
+  Shed::vars(|v| v.try_get_var("HOME"))
     .map(PathBuf::from)
     .or_else(|| User::from_uid(getuid()).ok().flatten().map(|u| u.dir))
 }

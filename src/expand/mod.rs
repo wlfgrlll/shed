@@ -306,9 +306,7 @@ mod tests {
   #[test]
   fn word_split_custom_ifs() {
     let _guard = TestGuard::new();
-    unsafe {
-      std::env::set_var("IFS", ":");
-    }
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     let mut exp = Expander {
       allow_side_effects: true,
@@ -324,9 +322,7 @@ mod tests {
   #[test]
   fn word_split_empty_ifs() {
     let _guard = TestGuard::new();
-    unsafe {
-      std::env::set_var("IFS", "");
-    }
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str("".into()), VarFlags::empty())).unwrap();
 
     let mut exp = Expander {
       allow_side_effects: true,
@@ -392,9 +388,7 @@ mod tests {
   #[test]
   fn word_split_escaped_custom_ifs() {
     let _guard = TestGuard::new();
-    unsafe {
-      std::env::set_var("IFS", ":");
-    }
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     let raw = format!("a{}b:c", unescape_str("\\:"));
     let mut exp = Expander {

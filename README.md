@@ -8,7 +8,7 @@ A Linux shell written in Rust. The name is a nod to the original Unix utilities 
 
 ## Why shed?
 
-I started working on `shed` because I have yet to find an unopinionated shell with genuinely smooth out-of-the-box line editing features. Bash and zsh are both POSIX compliant in their syntax, but bash's readline and zsh's zle are both really clunky to work with (in my opinion). Fish has pretty decent line editing, but wants me to learn their scripting language instead of the one that everyone else uses. There just wasn't a perfect solution. I didn't feel like I (or anyone else) should have to choose between a shell that respects my muscle memory and a shell that has good interactive UX.
+I started working on `shed` because I have yet to find an unopinionated shell with genuinely smooth out-of-the-box line editing features. `bash` and `zsh` are both POSIX compliant in their syntax, but bash's readline and zsh's zle are both really clunky to work with (in my opinion). `fish` has pretty decent line editing, but wants me to learn their scripting language instead of the one that everyone else uses. There just wasn't a perfect solution. `shed` is the answer I came up with for this problem.
 
 ## Features
 
@@ -18,25 +18,28 @@ I started working on `shed` because I have yet to find an unopinionated shell wi
 
 ---
 
-### Fuzzy Tab Completion/History Search
-
-`shed` comes with fuzzy completion and history searching out of the box. It has it's own internal fuzzyfinder implementation, so `fzf` is not a dependency.
-
-<img width="931" height="537" alt="file" src="https://github.com/user-attachments/assets/f078857a-e781-46f1-8bf3-06317f1d6ccb" />
-
----
-
 ### Interactive Documentation
 
-`shed` ships with documentation for all of its builtin commands, unique features, and POSIX stuff thats easy to forget like parameter expansion. This documentation is accessible via the `help` builtin.
+`shed` ships with documentation for all of its builtin utilities, unique features, common commands, and POSIX stuff that's easy to forget like parameter expansion. This documentation is accessible via the `help` builtin.
 
-The help topics are opened in an interactive pager, and contain links to other topics that can be followed, similar to a wiki. Pressing Tab labels onscreen links and pressing the key next to them jumps to that topic.
+The help topics are opened in a custom interactive pager that uses a basic hypertext markup language. The content contains links to other topics that can be clicked on, or navigated to by using Tab to show link hints.
 
 Examples:
 ```bash
-help params.txt # opens params.txt
-help cd         # opens builtins.txt and jumps to the 'cd' entry
+help params     # opens the params page
+help cd         # opens the builtins page and jumps to the 'cd' entry
 ```
+
+Additionally, the help pages can be reached using `ex mode` like `:h some-topic`. This allows you to open the pager without losing the command that you're currently editing. Really convenient for when you forget what the `tar` flags do.
+
+---
+
+
+### Fuzzy Tab Completion/History Search
+
+`shed` comes with fuzzy completion and history searching out of the box. It has its own internal fuzzyfinder implementation, so `fzf` is not a dependency.
+
+<img width="931" height="537" alt="file" src="https://github.com/user-attachments/assets/f078857a-e781-46f1-8bf3-06317f1d6ccb" />
 
 ---
 
@@ -46,10 +49,13 @@ The `keymap` builtin lets you bind key sequences to actions in any editor mode:
 
 ```sh
 keymap -i 'jk' '<Esc>'                           # exit insert mode with jk
+keymap -n '<leader>a' 'ggVG'                     # select all with leader + a in normal mode
 keymap -n '<C-L>' '<CMD>clear<CR>'               # Ctrl+L runs clear in normal mode
 keymap -e '<C-O>' '<CMD>my_function<CR>'         # Ctrl+O runs a shell function in emacs mode
 keymap -n 'ys' '<CMD>function1<CR><CMD>function2<CR>' # Chain two functions together
-keymap -i '<C-P>' '<CMD>w!wl-copy<CR>'           # Ctrl+P pipes the buffer content to the clipboard
+keymap -v '<C-x>' '<CMD>!wl-copy<CR>'            # Ctrl+X cuts the current visual selection to the clipboard
+keymap -v '<C-c>' '<CMD>!tee >(wl-copy)<CR>'     # Ctrl+C copies the current visual selection to the clipboard
+keymap -i '<C-v>' '<CMD>r!wl-paste<CR>'          # Ctrl+V in insert mode pastes from the clipboard
 ```
 
 Mode flags: `-n` normal, `-i` insert, `-v` visual, `-x` ex, `-o` operator-pending, `-r` replace, `-e` emacs. Flags can be combined (`-ni` binds in both normal and insert).
@@ -100,7 +106,7 @@ Use `-c` to clear all autocmds for an event. Context variables (e.g. `$NEW_DIR`,
 ### Command History
 
 `shed` uses an `sqlite` database to store your command history. While this is slightly heavier than the usual flat text file approach used by shells like `bash` and `zsh`, it has some advantages:
-* Shared across sessions: All open `shed` instances read from and write to the same history in real time - commands entered in one terminal are immediately available in all the others.
+* Shared across sessions: All open `shed` instances read from and write to the same history in real time - commands entered in one terminal are immediately available in all the others via `hist --pull` or `Ctrl + R` history searching.
 * Queryable: Power users can query the database directly with any SQLite tool for custom analysis, rather than needing a custom history file parser
 * Richer metadata: Each entry stores timestamp, working directory, runtime duration in milliseconds, and exit code.
 * Safe writes: SQLite's transaction model means a hard kill mid-write won't leave your history file in a broken state.
@@ -131,6 +137,23 @@ shopt highlight.operator="bold magenta"
 ```
 
 Style descriptions support named colors, `bright` variants, modifiers (`bold`, `italic`, `underline`, `dim`, `strikethrough`), hex colors (`#rrggbb`), and backgrounds with `on`. Raw ANSI escapes are also accepted.
+
+---
+
+### Status Line
+
+`shed` provides an api for implementing your own status line, using the `shopt statline.*`:
+
+```sh
+shopt statline.enable=true # enables the status line, anchors the prompt to it
+shopt statline.left_string="\u@\h"
+shopt statline.middle_string='$?'
+shopt statline.right_string=""
+```
+
+The status line strings expand prompt escape sequences.
+
+An example implementation of a `shed` status line can be found [here](./examples/status_line.sh).
 
 ---
 
@@ -278,7 +301,8 @@ pkgs = import nixpkgs {
 ## Known issues
 
 * The expanded content from the `PSR` variable doesn't work well with multi-line content
-* The line editor hasn't been optimized for very large buffers yet (1000+ lines or so), so its pretty slow/unpredictable with those.
+* The line editor hasn't been optimized for very large buffers yet (3000+ lines or so), so its pretty slow/unpredictable with those.
+* Aliases can't be used in the same script that defines them.
 
 ## AI Usage
 
