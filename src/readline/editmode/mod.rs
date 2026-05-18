@@ -8,7 +8,7 @@ use super::{
   history::History,
   key,
   linebuf::LineBuf,
-  motion, state, status_msg,
+  motion, register, state, status_msg,
   util::ShErr,
   verb,
 };

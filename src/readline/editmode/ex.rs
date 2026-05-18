@@ -14,12 +14,12 @@ use crate::keys::KeyEvent;
 use crate::match_loop;
 use crate::readline::SimpleEditor;
 use crate::readline::editcmd::{
-  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, RegisterName, StashArgs, StashListArg,
-  Verb, WriteDest,
+  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, StashArgs, StashListArg, Verb, WriteDest,
 };
 use crate::readline::editmode::{EditMode, ModeReport};
 use crate::readline::history::History;
 use crate::readline::linebuf::LineBuf;
+use crate::readline::register::RegisterName;
 use crate::state::terminal::CursorStyle;
 use crate::util::ShResult;
 use crate::{status_msg, verb};

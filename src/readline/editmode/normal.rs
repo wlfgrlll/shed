@@ -3,8 +3,9 @@ use std::str::Chars;
 
 use super::{
   CmdReplay, CmdState, E, EditMode, K, M, ModeReport, ParseResult, ViParser, common_cmds,
-  editcmd::{CmdFlags, EditCmd, Motion, RegisterName, TextObj, Verb},
+  editcmd::{CmdFlags, EditCmd, Motion, TextObj, Verb},
   key, motion,
+  register::RegisterName,
   state::terminal::CursorStyle,
   verb,
 };

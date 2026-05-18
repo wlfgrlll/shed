@@ -8,62 +8,7 @@ use super::{
 
 pub(crate) use super::util::Direction;
 
-use super::{
-  editmode::ExNdRule,
-  register::{RegisterContent, append_register, read_register, write_register},
-};
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct RegisterName {
-  name: Option<char>,
-  append: bool,
-}
-
-impl RegisterName {
-  pub fn new(name: Option<char>) -> Self {
-    let Some(ch) = name else {
-      return Self::default();
-    };
-
-    let append = ch.is_uppercase();
-    let name = ch.to_ascii_lowercase();
-    Self {
-      name: Some(name),
-      append,
-    }
-  }
-  pub fn name(&self) -> Option<char> {
-    self.name
-  }
-  pub fn is_none(&self) -> bool {
-    self.name.is_none()
-  }
-  pub fn write_to_register(&self, buf: RegisterContent) {
-    if self.append {
-      append_register(self.name, buf);
-    } else {
-      write_register(self.name, buf);
-    }
-  }
-  pub fn read_from_register(&self) -> Option<RegisterContent> {
-    read_register(self.name)
-  }
-}
-
-impl Default for RegisterName {
-  fn default() -> Self {
-    Self {
-      name: None,
-      append: false,
-    }
-  }
-}
-
-impl From<char> for RegisterName {
-  fn from(value: char) -> Self {
-    Self::new(Some(value))
-  }
-}
+use super::{editmode::ExNdRule, register::RegisterName};
 
 bitflags! {
   #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]

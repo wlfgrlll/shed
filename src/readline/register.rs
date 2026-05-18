@@ -1,45 +1,111 @@
-use std::{fmt::Display, sync::Mutex};
+use std::{cell::RefCell, collections::HashMap, fmt::Display};
 
 use itertools::Itertools;
 
 use crate::{expand::expand_keymap, keys::KeyEvent, readline::linebuf::Line};
 
-pub static REGISTERS: Mutex<Registers> = Mutex::new(Registers::new());
+thread_local! {
+  pub static REGISTERS: RefCell<Registers> = RefCell::new(Registers::new());
 
-#[cfg(test)]
-pub static SAVED_REGISTERS: Mutex<Option<Registers>> = Mutex::new(None);
+  #[cfg(test)]
+  pub static SAVED_REGISTERS: RefCell<Option<Registers>> = const { RefCell::new(None) };
+}
 
 #[cfg(test)]
 pub fn save_registers() {
-  let mut saved = SAVED_REGISTERS.lock().unwrap();
-  *saved = Some(REGISTERS.lock().unwrap().clone());
+  SAVED_REGISTERS.with(|saved| {
+    let mut saved = saved.borrow_mut();
+    *saved = Some(REGISTERS.with(|regs| regs.borrow().clone()));
+  });
 }
 
 #[cfg(test)]
 pub fn restore_registers() {
-  let mut saved = SAVED_REGISTERS.lock().unwrap();
-  if let Some(ref registers) = *saved {
-    *REGISTERS.lock().unwrap() = registers.clone();
-  }
-  *saved = None;
+  SAVED_REGISTERS.with(|saved| {
+    let mut saved = saved.borrow_mut();
+    if let Some(regs) = saved.take() {
+      REGISTERS.with(|r| *r.borrow_mut() = regs);
+    }
+  });
 }
 
 pub(super) fn read_register(ch: Option<char>) -> Option<RegisterContent> {
-  let lock = REGISTERS.lock().unwrap();
-  lock.get_reg(ch).map(|r| r.content().clone())
+  REGISTERS.with(|regs| regs.borrow().get_reg(ch).map(|r| r.content().clone()))
 }
 
 pub(super) fn write_register(ch: Option<char>, buf: RegisterContent) {
-  let mut lock = REGISTERS.lock().unwrap();
-  if let Some(r) = lock.get_reg_mut(ch) {
-    r.write(buf)
-  }
+  REGISTERS.with(|regs| {
+    if let Some(r) = regs.borrow_mut().get_reg_mut(ch) {
+      r.write(buf);
+    }
+  });
 }
 
 pub(super) fn append_register(ch: Option<char>, buf: RegisterContent) {
-  let mut lock = REGISTERS.lock().unwrap();
-  if let Some(r) = lock.get_reg_mut(ch) {
-    r.append(buf)
+  REGISTERS.with(|regs| {
+    if let Some(r) = regs.borrow_mut().get_reg_mut(ch) {
+      r.append(buf);
+    }
+  });
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RegisterName {
+  name: Option<char>,
+  append: bool,
+}
+
+impl RegisterName {
+  pub fn new(name: Option<char>) -> Self {
+    let Some(ch) = name else {
+      return Self::default();
+    };
+
+    let append = ch.is_uppercase();
+    let name = ch.to_ascii_lowercase();
+    Self {
+      name: Some(name),
+      append,
+    }
+  }
+  pub fn name(&self) -> Option<char> {
+    self.name
+  }
+  pub fn display(&self) -> Option<char> {
+    let name = self.name?;
+    if self.append {
+      Some(name.to_ascii_uppercase())
+    } else {
+      Some(name)
+    }
+  }
+  pub fn is_none(&self) -> bool {
+    self.name.is_none()
+  }
+  pub fn write_to_register(&self, buf: RegisterContent) {
+    if self.append {
+      append_register(self.name, buf);
+    } else {
+      write_register(self.name, buf);
+    }
+  }
+  pub fn read_from_register(&self) -> Option<RegisterContent> {
+    read_register(self.name)
+  }
+}
+
+impl Default for RegisterName {
+  fn default() -> Self {
+    Self {
+      name: None,
+      append: false,
+    }
+  }
+}
+
+impl From<char> for RegisterName {
+  fn from(value: char) -> Self {
+    Self::new(Some(value))
   }
 }
 
@@ -78,135 +144,34 @@ impl Display for RegisterContent {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct Registers {
-  default: Register,
-  a: Register,
-  b: Register,
-  c: Register,
-  d: Register,
-  e: Register,
-  f: Register,
-  g: Register,
-  h: Register,
-  i: Register,
-  j: Register,
-  k: Register,
-  l: Register,
-  m: Register,
-  n: Register,
-  o: Register,
-  p: Register,
-  q: Register,
-  r: Register,
-  s: Register,
-  t: Register,
-  u: Register,
-  v: Register,
-  w: Register,
-  x: Register,
-  y: Register,
-  z: Register,
-}
+pub struct Registers(HashMap<char, Register>);
 
 impl Registers {
-  pub const fn new() -> Self {
-    Self {
-      default: Register::new(),
-      a: Register::new(),
-      b: Register::new(),
-      c: Register::new(),
-      d: Register::new(),
-      e: Register::new(),
-      f: Register::new(),
-      g: Register::new(),
-      h: Register::new(),
-      i: Register::new(),
-      j: Register::new(),
-      k: Register::new(),
-      l: Register::new(),
-      m: Register::new(),
-      n: Register::new(),
-      o: Register::new(),
-      p: Register::new(),
-      q: Register::new(),
-      r: Register::new(),
-      s: Register::new(),
-      t: Register::new(),
-      u: Register::new(),
-      v: Register::new(),
-      w: Register::new(),
-      x: Register::new(),
-      y: Register::new(),
-      z: Register::new(),
+  pub fn new() -> Self {
+    let mut regs = HashMap::new();
+    for c in 'a'..='z' {
+      regs.insert(c, Register::default());
     }
+    regs.insert('"', Register::default()); // 'default' register
+    Self(regs)
   }
-  pub fn get_reg(&self, ch: Option<char>) -> Option<&Register> {
-    let Some(ch) = ch else {
-      return Some(&self.default);
+  pub fn get_reg(&self, name: Option<char>) -> Option<&Register> {
+    let key = match name {
+      None | Some('"') => '"',
+      Some(c) if c.is_ascii_alphabetic() => c.to_ascii_lowercase(),
+      _ => return None,
     };
-    match ch {
-      'a' => Some(&self.a),
-      'b' => Some(&self.b),
-      'c' => Some(&self.c),
-      'd' => Some(&self.d),
-      'e' => Some(&self.e),
-      'f' => Some(&self.f),
-      'g' => Some(&self.g),
-      'h' => Some(&self.h),
-      'i' => Some(&self.i),
-      'j' => Some(&self.j),
-      'k' => Some(&self.k),
-      'l' => Some(&self.l),
-      'm' => Some(&self.m),
-      'n' => Some(&self.n),
-      'o' => Some(&self.o),
-      'p' => Some(&self.p),
-      'q' => Some(&self.q),
-      'r' => Some(&self.r),
-      's' => Some(&self.s),
-      't' => Some(&self.t),
-      'u' => Some(&self.u),
-      'v' => Some(&self.v),
-      'w' => Some(&self.w),
-      'x' => Some(&self.x),
-      'y' => Some(&self.y),
-      'z' => Some(&self.z),
-      _ => None,
-    }
+
+    self.0.get(&key.to_ascii_lowercase())
   }
-  pub fn get_reg_mut(&mut self, ch: Option<char>) -> Option<&mut Register> {
-    let Some(ch) = ch else {
-      return Some(&mut self.default);
+  pub fn get_reg_mut(&mut self, name: Option<char>) -> Option<&mut Register> {
+    let key = match name {
+      None | Some('"') => '"',
+      Some(c) if c.is_ascii_alphabetic() => c.to_ascii_lowercase(),
+      _ => return None,
     };
-    match ch {
-      'a' => Some(&mut self.a),
-      'b' => Some(&mut self.b),
-      'c' => Some(&mut self.c),
-      'd' => Some(&mut self.d),
-      'e' => Some(&mut self.e),
-      'f' => Some(&mut self.f),
-      'g' => Some(&mut self.g),
-      'h' => Some(&mut self.h),
-      'i' => Some(&mut self.i),
-      'j' => Some(&mut self.j),
-      'k' => Some(&mut self.k),
-      'l' => Some(&mut self.l),
-      'm' => Some(&mut self.m),
-      'n' => Some(&mut self.n),
-      'o' => Some(&mut self.o),
-      'p' => Some(&mut self.p),
-      'q' => Some(&mut self.q),
-      'r' => Some(&mut self.r),
-      's' => Some(&mut self.s),
-      't' => Some(&mut self.t),
-      'u' => Some(&mut self.u),
-      'v' => Some(&mut self.v),
-      'w' => Some(&mut self.w),
-      'x' => Some(&mut self.x),
-      'y' => Some(&mut self.y),
-      'z' => Some(&mut self.z),
-      _ => None,
-    }
+
+    self.0.get_mut(&key.to_ascii_lowercase())
   }
 }
 
@@ -216,11 +181,6 @@ pub struct Register {
 }
 
 impl Register {
-  pub const fn new() -> Self {
-    Self {
-      content: RegisterContent::Empty,
-    }
-  }
   pub fn content(&self) -> &RegisterContent {
     &self.content
   }

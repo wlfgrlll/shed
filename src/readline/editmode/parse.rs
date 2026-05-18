@@ -4,11 +4,11 @@ use crate::{
   motion,
   readline::{
     editcmd::{
-      Anchor, Bound, Cmd, CmdFlags, Dest, Direction, EditCmd, Motion, RegisterName, TextObj, Verb,
-      Word,
+      Anchor, Bound, Cmd, CmdFlags, Dest, Direction, EditCmd, Motion, TextObj, Verb, Word,
     },
     editmode::CmdState,
     linebuf::Grapheme,
+    register::RegisterName,
   },
   verb,
 };

@@ -21,13 +21,14 @@ pub(super) mod stash;
 mod term;
 
 use complete::{CompResponse, Completer, FuzzyCompleter, FuzzySelector, SelectorResponse};
-use editcmd::{Cmd, CmdFlags, EditCmd, Motion, RegisterName, Verb, invert_char_motion};
+use editcmd::{Cmd, CmdFlags, EditCmd, Motion, Verb, invert_char_motion};
 use editmode::{
   CmdReplay, EditMode, Emacs, RemoteMode, ViEx, ViInsert, ViNormal, ViReplace, ViSearch,
   ViSearchRev, ViVerbatim, ViVisual,
 };
 use linebuf::LineBuf;
-use register::{RegisterContent, append_register, read_register, write_register};
+use register::RegisterContent;
+use register::RegisterName;
 use term::{clear_rows, move_cursor_to_end, redraw};
 
 use super::{

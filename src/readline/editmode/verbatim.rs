@@ -1,6 +1,7 @@
 use super::{
   CmdReplay, E, EditMode, K, ModeReport, common_cmds,
-  editcmd::{CmdFlags, EditCmd, RegisterName, Verb},
+  editcmd::{CmdFlags, EditCmd, Verb},
+  register::RegisterName,
   state::terminal::CursorStyle,
   verb,
 };
