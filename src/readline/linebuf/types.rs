@@ -315,6 +315,11 @@ impl Lines {
 
       // drain common characters
       self[0].0.drain(..common_chars);
+    } else if common_lines > 0 {
+      // every line matched on the hint's prefix, and there is no partial match at the boundary.
+      // the remaining content is just complete lines, so we have to add an empty line for those
+      // to attach to, otherwise it attaches to our last line.
+      self.0.insert(0, Line::default());
     }
 
     if self.iter().all(|l| l.is_empty()) {

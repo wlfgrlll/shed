@@ -9,13 +9,6 @@ pub enum Hint {
 }
 
 impl Hint {
-  pub fn set_lines(&mut self, new_lines: Lines) {
-    match self {
-      Self::Override(lines) | Self::History(lines) => {
-        *lines = new_lines;
-      }
-    }
-  }
   pub fn lines(&self) -> &Lines {
     match self {
       Self::Override(lines) | Self::History(lines) => lines,
@@ -88,46 +81,58 @@ impl super::LineBuf {
   where
     F: FnOnce(&mut Self) -> T,
   {
-    let mut hint = self.hint.take();
-    let mut old_end_pos = self.end_pos();
+    let Some(hint) = self.hint.as_mut() else {
+      return f(self);
+    };
+    let last_row = self.lines.len().saturating_sub(1);
 
-    if self.cursor.exclusive {
-      old_end_pos = old_end_pos.col_add(1);
-    }
+    // find end of the buffer, start of the hint
+    let first_hint_pos = Pos::new(
+      last_row,
+      self.lines.get(last_row).map(|l| l.len()).unwrap_or(0),
+    );
 
-    if let Some(h) = hint.as_mut()
-      && let Some(mut hint_lines) = h.take_lines().strip_prefix_lines(&self.lines)
-    {
-      self.lines.attach_lines(&mut hint_lines);
-    }
+    // replace our buffer with the full hint
+    self.lines = hint.lines().clone();
+
+    // track old/new cursor position
     let old_cursor_pos = self.cursor.pos;
-
-    let result = f(self);
-
+    let result = f(self); // do our operation
     let new_cursor_pos = self.cursor.pos;
 
-    if let Some(mut hint) = hint {
-      let is_past_end = if self.cursor.exclusive {
-        new_cursor_pos >= old_end_pos
-      } else {
-        new_cursor_pos > old_end_pos
-      };
-      let split_pos = if new_cursor_pos > old_cursor_pos && is_past_end {
-        // our cursor moved into the hint.
-        let old_len = self.count_graphemes();
-        self.attempt_alias_expansion();
-        let new_len = self.count_graphemes();
-        let delta = new_len as isize - old_len as isize;
+    // figure out if we moved into the hint
+    let is_past_end = if self.cursor.exclusive {
+      new_cursor_pos >= first_hint_pos
+    } else {
+      new_cursor_pos > first_hint_pos
+    };
+
+    // figure out where to split the buffer
+    let split_pos = if new_cursor_pos > old_cursor_pos && is_past_end {
+      // our cursor moved into the hint
+      // so we split on the cursor's new position
+      let old_len = self.count_graphemes();
+      self.attempt_alias_expansion();
+      let new_len = self.count_graphemes();
+      let delta = new_len as isize - old_len as isize;
+
+      if self.cursor.exclusive {
         new_cursor_pos.col_add_signed(delta + 1)
       } else {
-        old_end_pos
-      };
-
-      let hint_lines = self.lines.split_lines_at(split_pos);
-      if !hint_lines.is_empty() {
-        hint.set_lines(hint_lines);
-        self.hint = Some(hint);
+        new_cursor_pos.col_add_signed(delta)
       }
+    } else {
+      // the cursor did not move into the hint
+      // so we split on the hint's first grapheme
+      first_hint_pos
+    };
+
+    // do the split
+    // hint only changes if it becomes empty.
+    // buffer changes to end at the cursor's new position.
+    let hint_lines = self.lines.split_lines_at(split_pos);
+    if hint_lines.is_empty() {
+      self.hint = None;
     }
 
     result
