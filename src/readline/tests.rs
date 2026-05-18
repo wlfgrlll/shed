@@ -32,241 +32,244 @@ macro_rules! vi_test {
 // Why can't I marry a programming language
 vi_test! {
   // test function name    // initial buffer                // command sequence      // final buffer, cursor position
-  vi_dw_basic              : "hello world"                  => "dw"                  => "world", 0;
-  vi_dw_middle             : "one two three"                => "wdw"                 => "one three", 4;
-  vi_dd_whole_line         : "hello world"                  => "dd"                  => "", 0;
-  vi_x_single              : "hello"                        => "x"                   => "ello", 0;
-  vi_x_middle              : "hello"                        => "llx"                 => "helo", 2;
-  vi_X_backdelete          : "hello"                        => "llX"                 => "hllo", 1;
-  vi_h_motion              : "hello"                        => "$h"                  => "hello", 3;
-  vi_l_motion              : "hello"                        => "l"                   => "hello", 1;
-  vi_h_at_start            : "hello"                        => "h"                   => "hello", 0;
-  vi_l_at_end              : "hello"                        => "$l"                  => "hello", 4;
-  vi_w_forward             : "one two three"                => "w"                   => "one two three", 4;
-  vi_b_backward            : "one two three"                => "$b"                  => "one two three", 8;
-  vi_e_end                 : "one two three"                => "e"                   => "one two three", 2;
-  vi_ge_back_end           : "one two three"                => "$ge"                 => "one two three", 6;
-  vi_w_punctuation         : "foo.bar baz"                  => "w"                   => "foo.bar baz", 3;
-  vi_e_punctuation         : "foo.bar baz"                  => "e"                   => "foo.bar baz", 2;
-  vi_b_punctuation         : "foo.bar baz"                  => "$b"                  => "foo.bar baz", 8;
-  vi_w_at_eol              : "hello"                        => "$w"                  => "hello", 4;
-  vi_b_at_bol              : "hello"                        => "b"                   => "hello", 0;
-  vi_W_forward             : "foo.bar baz"                  => "W"                   => "foo.bar baz", 8;
-  vi_B_backward            : "foo.bar baz"                  => "$B"                  => "foo.bar baz", 8;
-  vi_E_end                 : "foo.bar baz"                  => "E"                   => "foo.bar baz", 6;
-  vi_gE_back_end           : "one two three"                => "$gE"                 => "one two three", 6;
-  vi_W_skip_punct          : "one-two three"                => "W"                   => "one-two three", 8;
-  vi_B_skip_punct          : "one two-three"                => "$B"                  => "one two-three", 4;
-  vi_E_skip_punct          : "one-two three"                => "E"                   => "one-two three", 6;
-  vi_dW_big                : "foo.bar baz"                  => "dW"                  => "baz", 0;
-  vi_cW_big                : "foo.bar baz"                  => "cWx\x1b"             => "x baz", 0;
-  vi_zero_bol              : "  hello"                      => "$0"                  => "  hello", 0;
-  vi_caret_first_char      : "  hello"                      => "$^"                  => "  hello", 2;
-  vi_dollar_eol            : "hello world"                  => "$"                   => "hello world", 10;
-  vi_g_last_nonws          : "hello   "                     => "g_"                  => "hello   ", 4;
-  vi_g_no_trailing         : "hello"                        => "g_"                  => "hello", 4;
-  vi_pipe_column           : "hello world"                  => "6|"                  => "hello world", 5;
-  vi_pipe_col1             : "hello world"                  => "1|"                  => "hello world", 0;
-  vi_I_insert_front        : "  hello"                      => "Iworld \x1b"         => "  world hello", 7;
-  vi_A_append_end          : "hello"                        => "A world\x1b"         => "hello world", 10;
-  vi_f_find                : "hello world"                  => "fo"                  => "hello world", 4;
-  vi_F_find_back           : "hello world"                  => "$Fo"                 => "hello world", 7;
-  vi_t_till                : "hello world"                  => "tw"                  => "hello world", 5;
-  vi_T_till_back           : "hello world"                  => "$To"                 => "hello world", 8;
-  vi_f_no_match            : "hello"                        => "fz"                  => "hello", 0;
-  vi_semicolon_repeat      : "abcabc"                       => "fa;;"                => "abcabc", 3;
-  vi_comma_reverse         : "abcabc"                       => "fa;;,"               => "abcabc", 0;
-  vi_df_semicolon          : "abcabc"                       => "fa;;dfa"             => "abcabc", 3;
-  vi_t_at_target           : "aab"                          => "lta"                 => "aab", 1;
-  vi_D_to_end              : "hello world"                  => "wD"                  => "hello ", 5;
-  vi_d_dollar              : "hello world"                  => "wd$"                 => "hello ", 5;
-  vi_d0_to_start           : "hello world"                  => "$d0"                 => "d", 0;
-  vi_dw_multiple           : "one two three"                => "d2w"                 => "three", 0;
-  vi_dt_char               : "hello world"                  => "dtw"                 => "world", 0;
-  vi_df_char               : "hello world"                  => "dfw"                 => "orld", 0;
-  vi_dh_back               : "hello"                        => "lldh"                => "hllo", 1;
-  vi_dl_forward            : "hello"                        => "dl"                  => "ello", 0;
-  vi_dge_back_end          : "one two three"                => "$dge"                => "one tw", 5;
-  vi_dG_to_end             : "hello world"                  => "dG"                  => "", 0;
-  vi_dgg_to_start          : "hello world"                  => "$dgg"                => "", 0;
-  vi_d_semicolon           : "abcabc"                       => "fad;"                => "abcabc", 3;
-  vi_cw_basic              : "hello world"                  => "cwfoo\x1b"           => "foo world", 2;
-  vi_C_to_end              : "hello world"                  => "wCfoo\x1b"           => "hello foo", 8;
-  vi_cc_whole              : "hello world"                  => "ccfoo\x1b"           => "foo", 2;
-  vi_ct_char               : "hello world"                  => "ctwfoo\x1b"          => "fooworld", 2;
-  vi_s_single              : "hello"                        => "sfoo\x1b"            => "fooello", 2;
-  vi_S_whole_line          : "hello world"                  => "Sfoo\x1b"            => "foo", 2;
-  vi_cl_forward            : "hello"                        => "clX\x1b"             => "Xello", 0;
-  vi_ch_backward           : "hello"                        => "llchX\x1b"           => "hXllo", 1;
-  vi_cb_word_back          : "hello world"                  => "$cbfoo\x1b"          => "hello food", 8;
-  vi_ce_word_end           : "hello world"                  => "cefoo\x1b"           => "foo world", 2;
-  vi_c0_to_start           : "hello world"                  => "wc0foo\x1b"          => "fooworld", 2;
-  vi_yw_p_basic            : "hello world"                  => "ywwP"                => "hello hello world", 11;
-  vi_dw_p_paste            : "hello world"                  => "dwP"                 => "hello world", 5;
-  vi_dd_p_paste            : "hello world"                  => "ddp"                 => "\nhello world", 1;
-  vi_y_dollar_p            : "hello world"                  => "wy$P"                => "hello worldworld", 10;
-  vi_ye_p                  : "hello world"                  => "yewP"                => "hello helloworld", 10;
-  vi_yy_p                  : "hello world"                  => "yyp"                 => "hello world\nhello world", 12;
-  vi_Y_p                   : "hello world"                  => "Yp"                  => "hhello worldello world", 11;
-  vi_p_after_x             : "hello"                        => "xp"                  => "ehllo", 1;
-  vi_P_before              : "hello"                        => "llxP"                => "hello", 2;
-  vi_paste_empty           : "hello"                        => "p"                   => "hello", 0;
-  vi_r_replace             : "hello"                        => "ra"                  => "aello", 0;
-  vi_r_middle              : "hello"                        => "llra"                => "healo", 2;
-  vi_r_at_end              : "hello"                        => "$ra"                 => "hella", 4;
-  vi_r_space               : "hello"                        => "r "                  => " ello", 0;
-  vi_r_with_count          : "hello"                        => "3rx"                 => "xxxlo", 2;
-  vi_tilde_single          : "hello"                        => "~"                   => "Hello", 1;
-  vi_tilde_count           : "hello"                        => "3~"                  => "HELlo", 3;
-  vi_tilde_at_end          : "HELLO"                        => "$~"                  => "HELLo", 4;
-  vi_tilde_mixed           : "hElLo"                        => "5~"                  => "HeLlO", 4;
-  vi_gu_word               : "HELLO world"                  => "guw"                 => "hello world", 0;
-  vi_gU_word               : "hello WORLD"                  => "gUw"                 => "HELLO WORLD", 0;
-  vi_gu_dollar             : "HELLO WORLD"                  => "gu$"                 => "hello world", 0;
-  vi_gU_dollar             : "hello world"                  => "gU$"                 => "HELLO WORLD", 0;
-  vi_gu_0                  : "HELLO WORLD"                  => "$gu0"                => "hello worlD", 0;
-  vi_gU_0                  : "hello world"                  => "$gU0"                => "HELLO WORLd", 0;
-  vi_gtilde_word           : "hello WORLD"                  => "g~w"                 => "HELLO WORLD", 0;
-  vi_gtilde_dollar         : "hello WORLD"                  => "g~$"                 => "HELLO world", 0;
-  vi_diw_inner             : "one two three"                => "wdiw"                => "one  three", 4;
-  vi_ciw_replace           : "hello world"                  => "ciwfoo\x1b"          => "foo world", 2;
-  vi_daw_around            : "one two three"                => "wdaw"                => "one three", 4;
-  vi_yiw_p                 : "hello world"                  => "yiwAp \x1bp"         => "hello worldp hello", 17;
-  vi_diW_big_inner         : "one-two three"                => "diW"                 => " three", 0;
-  vi_daW_big_around        : "one two-three end"            => "wdaW"                => "one end", 4;
-  vi_ciW_big               : "one-two three"                => "ciWx\x1b"            => "x three", 0;
-  vi_di_dquote             : "one \"two\" three"            => "f\"di\""             => "one \"\" three", 5;
-  vi_da_dquote             : "one \"two\" three"            => "f\"da\""             => "one three", 4;
-  vi_ci_dquote             : "one \"two\" three"            => "f\"ci\"x\x1b"        => "one \"x\" three", 5;
-  vi_di_squote             : "one 'two' three"              => "f'di'"               => "one '' three", 5;
-  vi_da_squote             : "one 'two' three"              => "f'da'"               => "one three", 4;
-  vi_di_backtick           : "one `two` three"              => "f`di`"               => "one `` three", 5;
-  vi_da_backtick           : "one `two` three"              => "f`da`"               => "one three", 4;
-  vi_ci_dquote_empty       : "one \"\" three"               => "f\"ci\"x\x1b"        => "one \"x\" three", 5;
-  vi_di_paren              : "one (two) three"              => "f(di("               => "one () three", 5;
-  vi_da_paren              : "one (two) three"              => "f(da("               => "one  three", 4;
-  vi_ci_paren              : "one (two) three"              => "f(ci(x\x1b"          => "one (x) three", 5;
-  vi_di_brace              : "one {two} three"              => "f{di{"               => "one {} three", 5;
-  vi_da_brace              : "one {two} three"              => "f{da{"               => "one  three", 4;
-  vi_di_bracket            : "one [two] three"              => "f[di["               => "one [] three", 5;
-  vi_da_bracket            : "one [two] three"              => "f[da["               => "one  three", 4;
-  vi_di_angle              : "one <two> three"              => "f<di<"               => "one <> three", 5;
-  vi_da_angle              : "one <two> three"              => "f<da<"               => "one  three", 4;
-  vi_di_paren_nested       : "fn(a, (b, c))"                => "f(di("               => "fn()", 3;
-  vi_di_paren_empty        : "fn() end"                     => "f(di("               => "fn() end", 3;
-  vi_dib_alias             : "one (two) three"              => "f(dib"               => "one () three", 5;
-  vi_diB_alias             : "one {two} three"              => "f{diB"               => "one {} three", 5;
-  vi_percent_paren         : "(hello) world"                => "%"                   => "(hello) world", 6;
-  vi_percent_brace         : "{hello} world"                => "%"                   => "{hello} world", 6;
-  vi_percent_bracket       : "[hello] world"                => "%"                   => "[hello] world", 6;
-  vi_percent_from_close    : "(hello) world"                => "f)%"                 => "(hello) world", 0;
-  vi_d_percent_paren       : "(hello) world"                => "d%"                  => " world", 0;
-  vi_to_paren_fwd          : "foo (bar) baz"                => "])"                  => "foo (bar) baz", 8;
-  vi_to_paren_bkwd         : "foo (bar) baz"                => "f)[("                => "foo (bar) baz", 4;
-  vi_to_brace_fwd          : "foo {bar} baz"                => "]}"                  => "foo {bar} baz", 8;
-  vi_to_brace_bkwd         : "foo {bar} baz"                => "f}[{"                => "foo {bar} baz", 4;
-  vi_to_paren_nested       : "((a)(b)) end"                 => "])"                  => "((a)(b)) end", 7;
-  vi_to_brace_nested       : "{{a}{b}} end"                 => "]}"                  => "{{a}{b}} end", 7;
-  vi_d_to_paren_fwd        : "foo (bar) baz"                => "wd])"                => "foo  baz", 4;
-  vi_d_to_brace_fwd        : "foo {bar} baz"                => "wd]}"                => "foo  baz", 4;
-  vi_to_paren_no_match     : "foo bar baz"                  => "])"                  => "foo bar baz", 0;
-  vi_to_brace_no_match     : "foo bar baz"                  => "]}"                  => "foo bar baz", 0;
-  vi_i_insert              : "hello"                        => "iX\x1b"              => "Xhello", 0;
-  vi_a_append              : "hello"                        => "aX\x1b"              => "hXello", 1;
-  vi_I_front               : "  hello"                      => "IX\x1b"              => "  Xhello", 2;
-  vi_A_end                 : "hello"                        => "AX\x1b"              => "helloX", 5;
-  vi_o_open_below          : "hello"                        => "oworld\x1b"          => "hello\nworld", 10;
-  vi_O_open_above          : "hello"                        => "Oworld\x1b"          => "world\nhello", 4;
-  vi_empty_input           : ""                             => "i hello\x1b"         => " hello", 5;
-  vi_insert_escape         : "hello"                        => "aX\x1b"              => "hXello", 1;
-  vi_ctrl_w_del_word       : "hello world"                  => "A\x17\x1b"           => "hello ", 5;
-  vi_ctrl_h_backspace      : "hello"                        => "A\x08\x1b"           => "hell", 3;
-  vi_u_undo_delete         : "hello world"                  => "dwu"                 => "hello world", 0;
-  vi_u_undo_change         : "hello world"                  => "ciwfoo\x1bu"         => "hello world", 0;
-  vi_u_undo_x              : "hello"                        => "xu"                  => "hello", 0;
-  vi_ctrl_r_redo           : "hello"                        => "xu\x12"              => "ello", 0;
-  vi_u_multiple            : "hello world"                  => "xdwu"                => "ello world", 0;
-  vi_redo_after_undo       : "hello world"                  => "dwu\x12"             => "world", 0;
-  vi_dot_repeat_x          : "hello"                        => "x."                  => "llo", 0;
-  vi_dot_repeat_dw         : "one two three"                => "dw."                 => "three", 0;
-  vi_dot_repeat_cw         : "one two three"                => "cwfoo\x1bw."         => "foo foo three", 6;
-  vi_dot_repeat_r          : "hello"                        => "ra.."                => "aello", 0;
-  vi_dot_repeat_s          : "hello"                        => "sX\x1bl."            => "XXllo", 1;
-  vi_count_h               : "hello world"                  => "$3h"                 => "hello world", 7;
-  vi_count_l               : "hello world"                  => "3l"                  => "hello world", 3;
-  vi_count_w               : "one two three four"           => "2w"                  => "one two three four", 8;
-  vi_count_b               : "one two three four"           => "$2b"                 => "one two three four", 8;
-  vi_count_x               : "hello"                        => "3x"                  => "lo", 0;
-  vi_count_dw              : "one two three four"           => "2dw"                 => "three four", 0;
-  vi_verb_count_motion     : "one two three four"           => "d2w"                 => "three four", 0;
-  vi_count_s               : "hello"                        => "3sX\x1b"             => "Xlo", 0;
-  vi_indent_line           : "hello"                        => ">>"                  => "\thello", 1;
-  vi_dedent_line           : "\thello"                      => "<<"                  => "hello", 0;
-  vi_indent_double         : "hello"                        => ">>>>"                => "\t\thello", 2;
-  vi_J_join_lines          : "hello\nworld"                 => "J"                   => "hello world", 5;
-  vi_v_u_lower             : "HELLO"                        => "vlllu"               => "hellO", 0;
-  vi_v_U_upper             : "hello"                        => "vlllU"               => "HELLo", 0;
-  vi_v_d_delete            : "hello world"                  => "vwwd"                => "", 0;
-  vi_v_x_delete            : "hello world"                  => "vwwx"                => "", 0;
-  vi_v_c_change            : "hello world"                  => "vwcfoo\x1b"          => "fooorld", 2;
-  vi_v_y_p_yank            : "hello world"                  => "vwyAp \x1bp"         => "hello worldp hello w", 19;
-  vi_v_dollar_d            : "hello world"                  => "wv$d"                => "hello ", 5;
-  vi_v_0_d                 : "hello world"                  => "$v0d"                => "", 0;
-  vi_ve_d                  : "hello world"                  => "ved"                 => " world", 0;
-  vi_v_o_swap              : "hello world"                  => "vllod"               => "lo world", 0;
-  vi_v_r_replace           : "hello"                        => "vlllrx"              => "xxxxo", 0;
-  vi_v_tilde_case          : "hello"                        => "vlll~"               => "HELLo", 0;
-  vi_V_d_delete            : "hello world"                  => "Vd"                  => "", 0;
-  vi_V_y_p                 : "hello world"                  => "Vyp"                 => "hello world\nhello world", 12;
-  vi_V_S_change            : "hello world"                  => "VSfoo\x1b"           => "foo", 2;
-  vi_ctrl_a_inc            : "num 5 end"                    => "w\x01"               => "num 6 end", 4;
-  vi_ctrl_x_dec            : "num 5 end"                    => "w\x18"               => "num 4 end", 4;
-  vi_ctrl_a_negative       : "num -3 end"                   => "w\x01"               => "num -2 end", 5;
-  vi_ctrl_x_to_neg         : "num 0 end"                    => "w\x18"               => "num -1 end", 5;
-  vi_ctrl_a_count          : "num 5 end"                    => "w3\x01"              => "num 8 end", 4;
-  vi_ctrl_a_width          : "num -00001 end"               => "w\x01"               => "num 00000 end", 8;
-  vi_delete_empty          : ""                             => "x"                   => "", 0;
-  vi_undo_on_empty         : ""                             => "u"                   => "", 0;
-  vi_w_single_char         : "a b c"                        => "w"                   => "a b c", 2;
-  vi_dw_last_word          : "hello"                        => "dw"                  => "", 0;
-  vi_dollar_single         : "h"                            => "$"                   => "h", 0;
-  vi_caret_no_ws           : "hello"                        => "$^"                  => "hello", 0;
-  vi_f_last_char           : "hello"                        => "fo"                  => "hello", 4;
-  vi_r_on_space            : "hello world"                  => "5|r-"                => "hell- world", 4;
-  vi_vw_doesnt_crash       : ""                             => "vw"                  => "", 0;
-  vi_indent_cursor_pos     : "echo foo"                     => ">>"                  => "\techo foo", 1;
-  vi_join_indent_lines     : "echo foo\n\t\techo bar"       => "J"                   => "echo foo echo bar", 8;
-  vi_cw_stays_on_line      : "echo foo\necho bar"           => "wcw"                 => "echo \necho bar", 5;
-  vi_ex_sub_simple         : "echo foo\necho bar"           => ":%s/foo/bar/\r"      => "echo bar\necho bar", 0;
-  vi_ex_global_simple      : "echo foo\necho bar\necho biz" => ":g/echo/normal!dw\r" => "foo\nbar\nbiz", 8;
-  vi_ex_sub_first_only     : "foo foo foo"                  => ":s/foo/X/\r"         => "X foo foo", 0;
-  vi_ex_sub_global_flag    : "foo foo foo"                  => ":s/foo/X/g\r"        => "X X X", 0;
-  vi_ex_sub_line_range     : "foo\nfoo\nfoo"                => ":2,3s/foo/bar/\r"    => "foo\nbar\nbar", 0;
-  vi_ex_sub_single_line    : "hello\nworld"                 => ":1s/hello/hi/\r"     => "hi\nworld", 0;
-  vi_ex_repeat_sub         : "foo\nfoo"                     => ":s/foo/bar/\rj:s\r"  => "bar\nbar", 4;
-  vi_ex_repeat_sub_all     : "foo\nfoo\nfoo"                => ":s/foo/bar/\r :%s\r" => "bar\nbar\nbar", 0;
-  vi_ex_delete_cur         : "hello\nworld"                 => ":d\r"                => "world", 0;
-  vi_ex_delete_all         : "hello\nworld"                 => ":%d\r"               => "", 0;
-  vi_ex_delete_range       : "line1\nline2\nline3"          => ":1,2d\r"             => "line3", 0;
-  vi_ex_global_delete      : "echo foo\nls\necho bar"       => ":g/echo/d\r"         => "ls", 0;
-  vi_ex_global_sub         : "foo bar\nfoo baz\nkeep"       => ":g/foo/s/foo/X/\r"   => "X bar\nX baz\nkeep", 0;
-  vi_ex_normal_range       : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
-  vi_ex_repeat_global      : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
-  vi_visual_dot_repeat     : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
-  vi_visual_replace        : "echo ./barbiz/baz buzz"       => "wvEdwvep"            => "echo  ./barbiz/baz", 17;
-  vi_n_char_search_f       : "foo=(bar biz bam)"            => "d2fb"                => "iz bam)", 0;
-  vi_n_char_search_t       : "foo=(bar biz bam)"            => "d2tb"                => "biz bam)", 0;
-  vi_n_char_search_bkwd_f  : "foo=(bar biz bam)"            => "$d2Fb"               => "foo=(bar )", 9;
-  vi_n_char_search_bkwd_t  : "foo=(bar biz bam)"            => "$d2Tb"               => "foo=(bar b)", 10;
-  vi_count_search_fwd      : "foo=(bar biz bam)"            => "2/b\rx"              => "foo=(bar iz bam)", 9;
-  vi_count_search_bkwd     : "foo=(bar biz bam)"            => "3?b\rx"              => "foo=(ar biz bam)", 5;
-  vi_count_n_fwd           : "foo=(bar biz bam)"            => "/b\r2nx"             => "foo=(bar biz am)", 13;
-  vi_count_n_bkwd          : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
-  vi_macro_record          : "foo bar biz"                  => "qacwbam\x1bwqQQ"     => "bam bam bam", 10;
-  vi_macro_double          : "foo BAR biz BAM"              => "qag~wwqqbguwwq@a@b"  => "FOO bar BIZ bam", 14;
+  dw_basic                 : "hello world"                  => "dw"                  => "world", 0;
+  dw_middle                : "one two three"                => "wdw"                 => "one three", 4;
+  dd_whole_line            : "hello world"                  => "dd"                  => "", 0;
+  x_single                 : "hello"                        => "x"                   => "ello", 0;
+  x_middle                 : "hello"                        => "llx"                 => "helo", 2;
+  X_backdelete             : "hello"                        => "llX"                 => "hllo", 1;
+  h_motion                 : "hello"                        => "$h"                  => "hello", 3;
+  l_motion                 : "hello"                        => "l"                   => "hello", 1;
+  h_at_start               : "hello"                        => "h"                   => "hello", 0;
+  l_at_end                 : "hello"                        => "$l"                  => "hello", 4;
+  w_forward                : "one two three"                => "w"                   => "one two three", 4;
+  b_backward               : "one two three"                => "$b"                  => "one two three", 8;
+  e_end                    : "one two three"                => "e"                   => "one two three", 2;
+  ge_back_end              : "one two three"                => "$ge"                 => "one two three", 6;
+  w_punctuation            : "foo.bar baz"                  => "w"                   => "foo.bar baz", 3;
+  e_punctuation            : "foo.bar baz"                  => "e"                   => "foo.bar baz", 2;
+  b_punctuation            : "foo.bar baz"                  => "$b"                  => "foo.bar baz", 8;
+  w_at_eol                 : "hello"                        => "$w"                  => "hello", 4;
+  b_at_bol                 : "hello"                        => "b"                   => "hello", 0;
+  W_forward                : "foo.bar baz"                  => "W"                   => "foo.bar baz", 8;
+  B_backward               : "foo.bar baz"                  => "$B"                  => "foo.bar baz", 8;
+  E_end                    : "foo.bar baz"                  => "E"                   => "foo.bar baz", 6;
+  gE_back_end              : "one two three"                => "$gE"                 => "one two three", 6;
+  W_skip_punct             : "one-two three"                => "W"                   => "one-two three", 8;
+  B_skip_punct             : "one two-three"                => "$B"                  => "one two-three", 4;
+  E_skip_punct             : "one-two three"                => "E"                   => "one-two three", 6;
+  dW_big                   : "foo.bar baz"                  => "dW"                  => "baz", 0;
+  cW_big                   : "foo.bar baz"                  => "cWx\x1b"             => "x baz", 0;
+  zero_bol                 : "  hello"                      => "$0"                  => "  hello", 0;
+  caret_first_char         : "  hello"                      => "$^"                  => "  hello", 2;
+  dollar_eol               : "hello world"                  => "$"                   => "hello world", 10;
+  g_last_nonws             : "hello   "                     => "g_"                  => "hello   ", 4;
+  g_no_trailing            : "hello"                        => "g_"                  => "hello", 4;
+  pipe_column              : "hello world"                  => "6|"                  => "hello world", 5;
+  pipe_col1                : "hello world"                  => "1|"                  => "hello world", 0;
+  I_insert_front           : "  hello"                      => "Iworld \x1b"         => "  world hello", 7;
+  A_append_end             : "hello"                        => "A world\x1b"         => "hello world", 10;
+  f_find                   : "hello world"                  => "fo"                  => "hello world", 4;
+  F_find_back              : "hello world"                  => "$Fo"                 => "hello world", 7;
+  t_till                   : "hello world"                  => "tw"                  => "hello world", 5;
+  T_till_back              : "hello world"                  => "$To"                 => "hello world", 8;
+  f_no_match               : "hello"                        => "fz"                  => "hello", 0;
+  semicolon_repeat         : "abcabc"                       => "fa;;"                => "abcabc", 3;
+  comma_reverse            : "abcabc"                       => "fa;;,"               => "abcabc", 0;
+  df_semicolon             : "abcabc"                       => "fa;;dfa"             => "abcabc", 3;
+  t_at_target              : "aab"                          => "lta"                 => "aab", 1;
+  D_to_end                 : "hello world"                  => "wD"                  => "hello ", 5;
+  d_dollar                 : "hello world"                  => "wd$"                 => "hello ", 5;
+  d0_to_start              : "hello world"                  => "$d0"                 => "d", 0;
+  dw_multiple              : "one two three"                => "d2w"                 => "three", 0;
+  dt_char                  : "hello world"                  => "dtw"                 => "world", 0;
+  df_char                  : "hello world"                  => "dfw"                 => "orld", 0;
+  dh_back                  : "hello"                        => "lldh"                => "hllo", 1;
+  dl_forward               : "hello"                        => "dl"                  => "ello", 0;
+  dge_back_end             : "one two three"                => "$dge"                => "one tw", 5;
+  dG_to_end                : "hello world"                  => "dG"                  => "", 0;
+  dgg_to_start             : "hello world"                  => "$dgg"                => "", 0;
+  d_semicolon              : "abcabc"                       => "fad;"                => "abcabc", 3;
+  cw_basic                 : "hello world"                  => "cwfoo\x1b"           => "foo world", 2;
+  C_to_end                 : "hello world"                  => "wCfoo\x1b"           => "hello foo", 8;
+  cc_whole                 : "hello world"                  => "ccfoo\x1b"           => "foo", 2;
+  ct_char                  : "hello world"                  => "ctwfoo\x1b"          => "fooworld", 2;
+  s_single                 : "hello"                        => "sfoo\x1b"            => "fooello", 2;
+  S_whole_line             : "hello world"                  => "Sfoo\x1b"            => "foo", 2;
+  cl_forward               : "hello"                        => "clX\x1b"             => "Xello", 0;
+  ch_backward              : "hello"                        => "llchX\x1b"           => "hXllo", 1;
+  cb_word_back             : "hello world"                  => "$cbfoo\x1b"          => "hello food", 8;
+  ce_word_end              : "hello world"                  => "cefoo\x1b"           => "foo world", 2;
+  c0_to_start              : "hello world"                  => "wc0foo\x1b"          => "fooworld", 2;
+  yw_p_basic               : "hello world"                  => "ywwP"                => "hello hello world", 11;
+  dw_p_paste               : "hello world"                  => "dwP"                 => "hello world", 5;
+  dd_p_paste               : "hello world"                  => "ddp"                 => "\nhello world", 1;
+  y_dollar_p               : "hello world"                  => "wy$P"                => "hello worldworld", 10;
+  ye_p                     : "hello world"                  => "yewP"                => "hello helloworld", 10;
+  yy_p                     : "hello world"                  => "yyp"                 => "hello world\nhello world", 12;
+  Y_p                      : "hello world"                  => "Yp"                  => "hhello worldello world", 11;
+  p_after_x                : "hello"                        => "xp"                  => "ehllo", 1;
+  P_before                 : "hello"                        => "llxP"                => "hello", 2;
+  paste_empty              : "hello"                        => "p"                   => "hello", 0;
+  r_replace                : "hello"                        => "ra"                  => "aello", 0;
+  r_middle                 : "hello"                        => "llra"                => "healo", 2;
+  r_at_end                 : "hello"                        => "$ra"                 => "hella", 4;
+  r_space                  : "hello"                        => "r "                  => " ello", 0;
+  r_with_count             : "hello"                        => "3rx"                 => "xxxlo", 2;
+  tilde_single             : "hello"                        => "~"                   => "Hello", 1;
+  tilde_count              : "hello"                        => "3~"                  => "HELlo", 3;
+  tilde_at_end             : "HELLO"                        => "$~"                  => "HELLo", 4;
+  tilde_mixed              : "hElLo"                        => "5~"                  => "HeLlO", 4;
+  gu_word                  : "HELLO world"                  => "guw"                 => "hello world", 0;
+  gU_word                  : "hello WORLD"                  => "gUw"                 => "HELLO WORLD", 0;
+  gu_dollar                : "HELLO WORLD"                  => "gu$"                 => "hello world", 0;
+  gU_dollar                : "hello world"                  => "gU$"                 => "HELLO WORLD", 0;
+  gu_0                     : "HELLO WORLD"                  => "$gu0"                => "hello worlD", 0;
+  gU_0                     : "hello world"                  => "$gU0"                => "HELLO WORLd", 0;
+  gtilde_word              : "hello WORLD"                  => "g~w"                 => "HELLO WORLD", 0;
+  gtilde_dollar            : "hello WORLD"                  => "g~$"                 => "HELLO world", 0;
+  diw_inner                : "one two three"                => "wdiw"                => "one  three", 4;
+  ciw_replace              : "hello world"                  => "ciwfoo\x1b"          => "foo world", 2;
+  daw_around               : "one two three"                => "wdaw"                => "one three", 4;
+  yiw_p                    : "hello world"                  => "yiwAp \x1bp"         => "hello worldp hello", 17;
+  diW_big_inner            : "one-two three"                => "diW"                 => " three", 0;
+  daW_big_around           : "one two-three end"            => "wdaW"                => "one end", 4;
+  ciW_big                  : "one-two three"                => "ciWx\x1b"            => "x three", 0;
+  di_dquote                : "one \"two\" three"            => "f\"di\""             => "one \"\" three", 5;
+  da_dquote                : "one \"two\" three"            => "f\"da\""             => "one three", 4;
+  ci_dquote                : "one \"two\" three"            => "f\"ci\"x\x1b"        => "one \"x\" three", 5;
+  di_squote                : "one 'two' three"              => "f'di'"               => "one '' three", 5;
+  da_squote                : "one 'two' three"              => "f'da'"               => "one three", 4;
+  di_backtick              : "one `two` three"              => "f`di`"               => "one `` three", 5;
+  da_backtick              : "one `two` three"              => "f`da`"               => "one three", 4;
+  ci_dquote_empty          : "one \"\" three"               => "f\"ci\"x\x1b"        => "one \"x\" three", 5;
+  di_paren                 : "one (two) three"              => "f(di("               => "one () three", 5;
+  da_paren                 : "one (two) three"              => "f(da("               => "one  three", 4;
+  ci_paren                 : "one (two) three"              => "f(ci(x\x1b"          => "one (x) three", 5;
+  di_brace                 : "one {two} three"              => "f{di{"               => "one {} three", 5;
+  da_brace                 : "one {two} three"              => "f{da{"               => "one  three", 4;
+  di_bracket               : "one [two] three"              => "f[di["               => "one [] three", 5;
+  da_bracket               : "one [two] three"              => "f[da["               => "one  three", 4;
+  di_angle                 : "one <two> three"              => "f<di<"               => "one <> three", 5;
+  da_angle                 : "one <two> three"              => "f<da<"               => "one  three", 4;
+  di_paren_nested          : "fn(a, (b, c))"                => "f(di("               => "fn()", 3;
+  di_paren_empty           : "fn() end"                     => "f(di("               => "fn() end", 3;
+  dib_alias                : "one (two) three"              => "f(dib"               => "one () three", 5;
+  diB_alias                : "one {two} three"              => "f{diB"               => "one {} three", 5;
+  percent_paren            : "(hello) world"                => "%"                   => "(hello) world", 6;
+  percent_brace            : "{hello} world"                => "%"                   => "{hello} world", 6;
+  percent_bracket          : "[hello] world"                => "%"                   => "[hello] world", 6;
+  percent_from_close       : "(hello) world"                => "f)%"                 => "(hello) world", 0;
+  d_percent_paren          : "(hello) world"                => "d%"                  => " world", 0;
+  to_paren_fwd             : "foo (bar) baz"                => "])"                  => "foo (bar) baz", 8;
+  to_paren_bkwd            : "foo (bar) baz"                => "f)[("                => "foo (bar) baz", 4;
+  to_brace_fwd             : "foo {bar} baz"                => "]}"                  => "foo {bar} baz", 8;
+  to_brace_bkwd            : "foo {bar} baz"                => "f}[{"                => "foo {bar} baz", 4;
+  to_paren_nested          : "((a)(b)) end"                 => "])"                  => "((a)(b)) end", 7;
+  to_brace_nested          : "{{a}{b}} end"                 => "]}"                  => "{{a}{b}} end", 7;
+  d_to_paren_fwd           : "foo (bar) baz"                => "wd])"                => "foo  baz", 4;
+  d_to_brace_fwd           : "foo {bar} baz"                => "wd]}"                => "foo  baz", 4;
+  to_paren_no_match        : "foo bar baz"                  => "])"                  => "foo bar baz", 0;
+  to_brace_no_match        : "foo bar baz"                  => "]}"                  => "foo bar baz", 0;
+  i_insert                 : "hello"                        => "iX\x1b"              => "Xhello", 0;
+  a_append                 : "hello"                        => "aX\x1b"              => "hXello", 1;
+  I_front                  : "  hello"                      => "IX\x1b"              => "  Xhello", 2;
+  A_end                    : "hello"                        => "AX\x1b"              => "helloX", 5;
+  o_open_below             : "hello"                        => "oworld\x1b"          => "hello\nworld", 10;
+  O_open_above             : "hello"                        => "Oworld\x1b"          => "world\nhello", 4;
+  empty_input              : ""                             => "i hello\x1b"         => " hello", 5;
+  insert_escape            : "hello"                        => "aX\x1b"              => "hXello", 1;
+  ctrl_w_del_word          : "hello world"                  => "A\x17\x1b"           => "hello ", 5;
+  ctrl_h_backspace         : "hello"                        => "A\x08\x1b"           => "hell", 3;
+  ctrl_o_dw                : "hello world"                  => "i\x0fdw\x1b"         => "world", 0;
+  ctrl_o_x                 : "hello"                        => "i\x0fx\x1b"          => "ello", 0;
+  ctrl_o_motion            : "hello world"                  => "i\x0fwX\x1b"         => "hello Xworld", 6;
+  u_undo_delete            : "hello world"                  => "dwu"                 => "hello world", 0;
+  u_undo_change            : "hello world"                  => "ciwfoo\x1bu"         => "hello world", 0;
+  u_undo_x                 : "hello"                        => "xu"                  => "hello", 0;
+  ctrl_r_redo              : "hello"                        => "xu\x12"              => "ello", 0;
+  u_multiple               : "hello world"                  => "xdwu"                => "ello world", 0;
+  redo_after_undo          : "hello world"                  => "dwu\x12"             => "world", 0;
+  dot_repeat_x             : "hello"                        => "x."                  => "llo", 0;
+  dot_repeat_dw            : "one two three"                => "dw."                 => "three", 0;
+  dot_repeat_cw            : "one two three"                => "cwfoo\x1bw."         => "foo foo three", 6;
+  dot_repeat_r             : "hello"                        => "ra.."                => "aello", 0;
+  dot_repeat_s             : "hello"                        => "sX\x1bl."            => "XXllo", 1;
+  count_h                  : "hello world"                  => "$3h"                 => "hello world", 7;
+  count_l                  : "hello world"                  => "3l"                  => "hello world", 3;
+  count_w                  : "one two three four"           => "2w"                  => "one two three four", 8;
+  count_b                  : "one two three four"           => "$2b"                 => "one two three four", 8;
+  count_x                  : "hello"                        => "3x"                  => "lo", 0;
+  count_dw                 : "one two three four"           => "2dw"                 => "three four", 0;
+  verb_count_motion        : "one two three four"           => "d2w"                 => "three four", 0;
+  count_s                  : "hello"                        => "3sX\x1b"             => "Xlo", 0;
+  indent_line              : "hello"                        => ">>"                  => "\thello", 1;
+  dedent_line              : "\thello"                      => "<<"                  => "hello", 0;
+  indent_double            : "hello"                        => ">>>>"                => "\t\thello", 2;
+  J_join_lines             : "hello\nworld"                 => "J"                   => "hello world", 5;
+  v_u_lower                : "HELLO"                        => "vlllu"               => "hellO", 0;
+  v_U_upper                : "hello"                        => "vlllU"               => "HELLo", 0;
+  v_d_delete               : "hello world"                  => "vwwd"                => "", 0;
+  v_x_delete               : "hello world"                  => "vwwx"                => "", 0;
+  v_c_change               : "hello world"                  => "vwcfoo\x1b"          => "fooorld", 2;
+  v_y_p_yank               : "hello world"                  => "vwyAp \x1bp"         => "hello worldp hello w", 19;
+  v_dollar_d               : "hello world"                  => "wv$d"                => "hello ", 5;
+  v_0_d                    : "hello world"                  => "$v0d"                => "", 0;
+  ve_d                     : "hello world"                  => "ved"                 => " world", 0;
+  v_o_swap                 : "hello world"                  => "vllod"               => "lo world", 0;
+  v_r_replace              : "hello"                        => "vlllrx"              => "xxxxo", 0;
+  v_tilde_case             : "hello"                        => "vlll~"               => "HELLo", 0;
+  V_d_delete               : "hello world"                  => "Vd"                  => "", 0;
+  V_y_p                    : "hello world"                  => "Vyp"                 => "hello world\nhello world", 12;
+  V_S_change               : "hello world"                  => "VSfoo\x1b"           => "foo", 2;
+  ctrl_a_inc               : "num 5 end"                    => "w\x01"               => "num 6 end", 4;
+  ctrl_x_dec               : "num 5 end"                    => "w\x18"               => "num 4 end", 4;
+  ctrl_a_negative          : "num -3 end"                   => "w\x01"               => "num -2 end", 5;
+  ctrl_x_to_neg            : "num 0 end"                    => "w\x18"               => "num -1 end", 5;
+  ctrl_a_count             : "num 5 end"                    => "w3\x01"              => "num 8 end", 4;
+  ctrl_a_width             : "num -00001 end"               => "w\x01"               => "num 00000 end", 8;
+  delete_empty             : ""                             => "x"                   => "", 0;
+  undo_on_empty            : ""                             => "u"                   => "", 0;
+  w_single_char            : "a b c"                        => "w"                   => "a b c", 2;
+  dw_last_word             : "hello"                        => "dw"                  => "", 0;
+  dollar_single            : "h"                            => "$"                   => "h", 0;
+  caret_no_ws              : "hello"                        => "$^"                  => "hello", 0;
+  f_last_char              : "hello"                        => "fo"                  => "hello", 4;
+  r_on_space               : "hello world"                  => "5|r-"                => "hell- world", 4;
+  vw_doesnt_crash          : ""                             => "vw"                  => "", 0;
+  indent_cursor_pos        : "echo foo"                     => ">>"                  => "\techo foo", 1;
+  join_indent_lines        : "echo foo\n\t\techo bar"       => "J"                   => "echo foo echo bar", 8;
+  cw_stays_on_line         : "echo foo\necho bar"           => "wcw"                 => "echo \necho bar", 5;
+  ex_sub_simple            : "echo foo\necho bar"           => ":%s/foo/bar/\r"      => "echo bar\necho bar", 0;
+  ex_global_simple         : "echo foo\necho bar\necho biz" => ":g/echo/normal!dw\r" => "foo\nbar\nbiz", 8;
+  ex_sub_first_only        : "foo foo foo"                  => ":s/foo/X/\r"         => "X foo foo", 0;
+  ex_sub_global_flag       : "foo foo foo"                  => ":s/foo/X/g\r"        => "X X X", 0;
+  ex_sub_line_range        : "foo\nfoo\nfoo"                => ":2,3s/foo/bar/\r"    => "foo\nbar\nbar", 0;
+  ex_sub_single_line       : "hello\nworld"                 => ":1s/hello/hi/\r"     => "hi\nworld", 0;
+  ex_repeat_sub            : "foo\nfoo"                     => ":s/foo/bar/\rj:s\r"  => "bar\nbar", 4;
+  ex_repeat_sub_all        : "foo\nfoo\nfoo"                => ":s/foo/bar/\r :%s\r" => "bar\nbar\nbar", 0;
+  ex_delete_cur            : "hello\nworld"                 => ":d\r"                => "world", 0;
+  ex_delete_all            : "hello\nworld"                 => ":%d\r"               => "", 0;
+  ex_delete_range          : "line1\nline2\nline3"          => ":1,2d\r"             => "line3", 0;
+  ex_global_delete         : "echo foo\nls\necho bar"       => ":g/echo/d\r"         => "ls", 0;
+  ex_global_sub            : "foo bar\nfoo baz\nkeep"       => ":g/foo/s/foo/X/\r"   => "X bar\nX baz\nkeep", 0;
+  ex_normal_range          : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
+  ex_repeat_global         : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
+  visual_dot_repeat        : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
+  visual_replace           : "echo ./barbiz/baz buzz"       => "wvEdwvep"            => "echo  ./barbiz/baz", 17;
+  n_char_search_f          : "foo=(bar biz bam)"            => "d2fb"                => "iz bam)", 0;
+  n_char_search_t          : "foo=(bar biz bam)"            => "d2tb"                => "biz bam)", 0;
+  n_char_search_bkwd_f     : "foo=(bar biz bam)"            => "$d2Fb"               => "foo=(bar )", 9;
+  n_char_search_bkwd_t     : "foo=(bar biz bam)"            => "$d2Tb"               => "foo=(bar b)", 10;
+  count_search_fwd         : "foo=(bar biz bam)"            => "2/b\rx"              => "foo=(bar iz bam)", 9;
+  count_search_bkwd        : "foo=(bar biz bam)"            => "3?b\rx"              => "foo=(ar biz bam)", 5;
+  count_n_fwd              : "foo=(bar biz bam)"            => "/b\r2nx"             => "foo=(bar biz am)", 13;
+  count_n_bkwd             : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
+  macro_record             : "foo bar biz"                  => "qacwbam\x1bwqQQ"     => "bam bam bam", 10;
+  macro_double             : "foo BAR biz BAM"              => "qag~wwqqbguwwq@a@b"  => "FOO bar BIZ bam", 14;
 
   // ugly ones go down here
-  vi_ex_nested_global
+  ex_nested_global
     :  "alpha bravo\nalpha charlie\ndelta bravo\ngamma"
     => ":g/alpha/g/bravo/normal!dw\r"
     => "bravo\nalpha charlie\ndelta bravo\ngamma", 0;
@@ -714,33 +717,14 @@ macro_rules! alias_expansion_test {
    ---
    $($name2:ident: $aliases2:expr => $input2:literal);* $(;)?
   ) => {
-    $(#[test]
-      fn $name() {
-        let _g = TestGuard::new();
-        Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
-        Shed::logic_mut(|l| {
-          for (name, body) in $aliases {
-            l.insert_alias(name, body, Span::default());
-          }
-        });
-
-        let prompt = Prompt::default();
-        let mut line = ShedLine::new_no_hist(prompt).unwrap();
-
-        Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
-        let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-        line.process_input(keys).unwrap();
-
-        let joined = line.editor.joined();
-        assert_eq!(joined, $result, "\nInput: {:?}", $input);
-      }
-    )*
+    mod alias {
+      use super::*;
       $(#[test]
-        fn $name2() {
+        fn $name() {
           let _g = TestGuard::new();
           Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
           Shed::logic_mut(|l| {
-            for (name, body) in $aliases2 {
+            for (name, body) in $aliases {
               l.insert_alias(name, body, Span::default());
             }
           });
@@ -748,42 +732,64 @@ macro_rules! alias_expansion_test {
           let prompt = Prompt::default();
           let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
-          Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
+          Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
           let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
           line.process_input(keys).unwrap();
 
-          let before = line.editor.joined();
-          let expanded = line.editor.attempt_alias_expansion();
-          assert!(
-            !expanded,
-            "expected no alias expansion but expansion occurred"
-          );
-          assert_eq!(line.editor.joined(), before);
+          let joined = line.editor.joined();
+          assert_eq!(joined, $result, "\nInput: {:?}", $input);
         }
-    )*
+      )*
+        $(#[test]
+          fn $name2() {
+            let _g = TestGuard::new();
+            Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
+            Shed::logic_mut(|l| {
+              for (name, body) in $aliases2 {
+                l.insert_alias(name, body, Span::default());
+              }
+            });
+
+            let prompt = Prompt::default();
+            let mut line = ShedLine::new_no_hist(prompt).unwrap();
+
+            Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
+            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+            line.process_input(keys).unwrap();
+
+            let before = line.editor.joined();
+            let expanded = line.editor.attempt_alias_expansion();
+            assert!(
+              !expanded,
+              "expected no alias expansion but expansion occurred"
+            );
+            assert_eq!(line.editor.joined(), before);
+          }
+      )*
+    }
   };
 }
 
 alias_expansion_test! {
-  alias_single_char_body      : &[("a", "b")]            => "a "            => "b ";
-  alias_single_char_name      : &[("g", "git")]          => "g "            => "git ";
-  alias_expand_after_semicolon: &[("gc", "git commit")]  => "echo hi; gc "  => "echo hi; git commit ";
-  alias_expansion_with_args   : &[("gc", "git commit")]  => "gc -m 'hello'" => "git commit -m 'hello'";
-  alias_simple_expansion      : &[("ll", "ls -la")]      => "ll "           => "ls -la ";
+  single_char_body      : &[("a", "b")]            => "a "            => "b ";
+  single_char_name      : &[("g", "git")]          => "g "            => "git ";
+  expand_after_semicolon: &[("gc", "git commit")]  => "echo hi; gc "  => "echo hi; git commit ";
+  expansion_with_args   : &[("gc", "git commit")]  => "gc -m 'hello'" => "git commit -m 'hello'";
+  simple_expansion      : &[("ll", "ls -la")]      => "ll "           => "ls -la ";
 
-  alias_recursion_terminates
+  recursion_terminates
     : &[("diff", "diff --color=auto")]
     => "diff "
     => "diff --color=auto ";
 
-  alias_multiple_on_same_line
+  multiple_on_same_line
     : &[("gc", "git commit"), ("gp", "git push")]
     => "gc; gp "
     => "git commit; git push ";
 
   ---
-  alias_no_expand_in_quotes: &[("gc", "git commit")] => "echo 'gc' ";
-  alias_no_expand_in_arg_position: &[("foo", "bar")] => "echo foo ";
+  no_expand_in_quotes: &[("gc", "git commit")] => "echo 'gc' ";
+  no_expand_in_arg_position: &[("foo", "bar")] => "echo foo ";
 }
 
 #[test]
@@ -803,4 +809,152 @@ fn alias_no_expand_when_disabled() {
 
   let joined = line.editor.joined();
   assert_ne!(joined, "git commit");
+}
+
+// ===================== Hint Tests =====================
+//
+// prepopulates some commands into the test harness command history
+// then does line editor stuff that would interact with the hint system
+macro_rules! hint_test {
+  { $($name:ident
+      : $hist:expr
+      => $input:expr
+      => $expected_buf:expr, $expected_hint:expr, $expected_cursor:expr
+    );* $(;)?
+  } => {
+    mod hint {
+      use super::*;
+      $(#[test]
+        fn $name() {
+          Shed::shopts_mut(|o| {
+            o.set.vi = true;
+            o.line.auto_suggest = true;
+          });
+          let (mut line, _g) = test_vi("");
+
+          for cmd in $hist {
+            line.history.push(cmd.to_string()).unwrap();
+          }
+          line.history.refresh_hist_entries();
+          line.history.constrain_entries(None);
+
+          for byte in $input.as_bytes() {
+            Shed::term_mut(|t| t.feed_bytes(&[*byte]));
+            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+            line.process_input(keys).unwrap();
+          }
+
+          assert_eq!(line.editor.joined(), $expected_buf, "buffer mismatch");
+          assert_eq!(
+            line.editor.try_join_hint().unwrap_or_default(),
+            $expected_hint,
+            "hint mismatch"
+          );
+          assert_eq!(line.editor.cursor_to_flat(), $expected_cursor, "cursor mismatch");
+        }
+      )*
+    }
+  };
+}
+
+hint_test! {
+  prefix_suggests_hint
+    : &["echo foo bar"]
+    => "echo"
+    => "echo", "echo foo bar", 4;
+
+  full_accept_by_l
+    : &["echo foo bar"]
+    => "echo\x1bl"
+    => "echo foo bar", "", 11;
+
+  word_accept
+    : &["echo foo bar"]
+    => "echo\x1bw"
+    => "echo f", "echo foo bar", 5;
+
+  escape_preserves_buffer
+    : &["echo foo bar"]
+    => "echo\x1b"
+    => "echo", "echo foo bar", 3;
+
+  word_through_brace
+    : &["flog -p \"[%H:%M:%S {level}\" info foo"]
+    => "flog -p \"[%H:%M:%S {\x1bww"
+    => "flog -p \"[%H:%M:%S {level}", "flog -p \"[%H:%M:%S {level}\" info foo", 25;
+
+  word_across_line_boundary
+    : &["echo foo\necho bar"]
+    => "echo foo\x1bww"
+    => "echo foo\necho b", "echo foo\necho bar", 14;
+
+  back_motion_no_accept
+    : &["echo foo bar"]
+    => "echo\x1bb"
+    => "echo", "echo foo bar", 0;
+
+  j_accepts_downward
+    : &["echo foo\necho bar\necho biz"]
+    => "echo f\x1bj"
+    => "echo foo\necho b", "echo foo\necho bar\necho biz", 14;
+
+  j_accepts_downward_insert_mode_inclusive
+    : &["echo foo\necho bar\necho biz"]
+    => "echo \x0fj" // ctrl+o, j
+    => "echo foo\necho ", "echo foo\necho bar\necho biz", 14;
+
+  hint_constrained
+    : &[
+      "echo foobar",
+      "echo foo",
+      "echo foooooo"
+    ]
+    => "echo foob\x1be"
+    => "echo foobar", "", 10;
+
+  most_recent_wins
+    : &[
+      "echo apple",
+      "echo banana",
+      "echo cherry",
+    ]
+    => "echo "
+    => "echo ", "echo cherry", 5;
+
+  prefix_narrowing
+    : &[
+      "echo apple",
+      "echo banana",
+    ]
+    => "echo a"
+    => "echo a", "echo apple", 6;
+
+  divergence_clears_hint
+    : &[
+      "echo foo bar",
+    ]
+    => "echo z"
+    => "echo z", "", 6;
+
+  exact_buffer_no_hint
+    : &[
+      "echo foo",
+    ]
+    => "echo foo"
+    => "echo foo", "", 8;
+
+  no_match_no_hint
+    : &[
+      "echo foo",
+      "ls -la",
+    ]
+    => "git status"
+    => "git status", "", 10;
+
+  backspace_revives_hint
+    : &[
+      "echo foobar",
+    ]
+    => "echo z\x7f"
+    => "echo ", "echo foobar", 5;
 }
