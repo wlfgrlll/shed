@@ -1,5 +1,6 @@
 use super::{
-  Shed, builtin, errln, expand, match_loop, procio, sherr, signal, state, state::jobs, util, var,
+  Shed, builtin, errln, expand, match_loop, procio, sherr, signal, state, state::jobs,
+  two_way_display, util, var,
 };
 
 pub(super) mod execute;

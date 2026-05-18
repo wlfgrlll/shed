@@ -24,9 +24,8 @@ use super::{
   meta::{MetaTab, UtilKind, Utility},
   sherr,
   shopt::ShOpts,
-  vars::{ArrIndex, VarFlags, VarKind},
+  vars::{ArrIndex, Var, VarFlags, VarKind},
 };
-use crate::state::vars::Var;
 
 /// Parse `arr[idx]` into (name, raw_index_expr). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {

@@ -7,22 +7,21 @@ use std::vec::IntoIter;
 
 use itertools::{Itertools, PeekingNext};
 
-use crate::eval::lex::TkVecUtils;
-use crate::eval::lex::{self, LexFlags, LexStream, Span, Tk};
-use crate::key;
-use crate::keys::KeyEvent;
-use crate::match_loop;
-use crate::readline::SimpleEditor;
-use crate::readline::editcmd::{
-  Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, StashArgs, StashListArg, Verb, WriteDest,
+use super::{
+  EditMode, LineBuf, ModeReport, ShResult, SimpleEditor,
+  editcmd::{
+    Anchor, CmdFlags, EditCmd, LineAddr, Motion, ReadSrc, StashArgs, StashListArg, Verb, WriteDest,
+  },
+  eval::lex::{self, LexFlags, LexStream, Span, Tk, TkVecUtils},
+  history::History,
+  key,
+  keys::KeyEvent,
+  match_loop,
+  register::RegisterName,
+  state::terminal::CursorStyle,
+  status_msg,
 };
-use crate::readline::editmode::{EditMode, ModeReport};
-use crate::readline::history::History;
-use crate::readline::linebuf::LineBuf;
-use crate::readline::register::RegisterName;
-use crate::state::terminal::CursorStyle;
-use crate::util::ShResult;
-use crate::{status_msg, verb};
+use crate::verb;
 use bitflags::bitflags;
 
 bitflags! {

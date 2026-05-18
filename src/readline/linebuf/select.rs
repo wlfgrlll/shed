@@ -1,8 +1,10 @@
 use std::ops::Range;
 
-use crate::readline::editcmd::{LineAddr, Motion};
-
-use super::{Pos, SignedPos, ordered};
+use super::{
+  Pos, SignedPos,
+  editcmd::{LineAddr, Motion},
+  ordered,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelectMode {

@@ -13,7 +13,8 @@ use super::{
   expand::{expand_alias_with_pos, markers},
   highlight,
   history::History,
-  match_loop, motion, procio, sherr, shopt, stash, state, status_msg, system_msg, try_var,
+  match_loop, motion, procio, register, sherr, shopt, stash, state, status_msg, system_msg,
+  try_var,
   util::{QuoteState, ShResult, ordered},
 };
 

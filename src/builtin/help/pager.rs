@@ -3,8 +3,6 @@ use std::io::Write;
 use nix::unistd::{isatty, write};
 use regex::Regex;
 
-use crate::write_term;
-
 use super::{
   Direction, ShResult, Shed, StyledHelp,
   keys::KeyEvent,
@@ -12,6 +10,7 @@ use super::{
   procio::stdout_fileno,
   readline::SimpleEditor,
   state::terminal::calc_str_width,
+  write_term,
 };
 
 pub(super) enum PagerEvent {

@@ -12,11 +12,12 @@ use std::{
 };
 
 use super::{
-  WtStat, autocmd, builtin, eval, expand, keys, match_loop, procio, readline, sherr, signal,
+  WtStat, autocmd, builtin, eval, expand, keys, match_loop, procio, readline, sherr,
+  shopt as shopt_macro, signal,
   state::vars::{VarFlags, VarKind},
-  system_msg, try_var,
+  system_msg, try_var, two_way_display, util as crate_util,
   util::{Pos, ShErr, ShErrKind, ShResult},
-  var, writefd,
+  var, write_term, writefd,
 };
 
 pub mod jobs;

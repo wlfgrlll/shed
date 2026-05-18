@@ -2,9 +2,10 @@ use std::collections::HashSet;
 
 use scopeguard::guard;
 
-use crate::Shed;
-use crate::eval::execute::exec_nonint;
-use crate::eval::lex::Span;
+use super::{
+  Shed,
+  eval::{execute::exec_nonint, lex::Span},
+};
 
 // ============================================================================
 // ScopeGuard - RAII variable scope management

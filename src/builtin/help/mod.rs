@@ -10,15 +10,16 @@ use std::{
   path::Path,
 };
 
-use crate::eval::lex::Span;
-
 use super::{
   Shed,
+  eval::lex::Span,
+  expand,
   getopt::{Opt, OptSpec},
-  keys, outln, procio,
+  keys, match_loop, outln, procio,
   readline::{self, ScoredCandidate},
   sherr, state,
-  util::{Direction, ShResult, with_status},
+  util::{self, Direction, ShResult, with_status},
+  write_term,
 };
 
 use markup::TAG_SEQ;

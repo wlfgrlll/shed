@@ -26,7 +26,7 @@ pub mod tests;
 
 use super::{
   lex::{self, LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule, clean_input},
-  procio, sherr,
+  procio, sherr, two_way_display,
   util::{self as crate_util, ShErr, ShResult},
 };
 

@@ -1,13 +1,11 @@
-use crate::{
+use super::{
+  ShResult,
+  editcmd::{Anchor, Bound, Cmd, Direction, EditCmd, Motion, To, Verb, Word},
   motion,
-  readline::{
-    editcmd::{Anchor, Bound, Cmd, Direction, EditCmd, Motion, To, Verb, Word},
-    register::RegisterContent,
-  },
+  register::RegisterContent,
   status_msg,
-  util::ShResult,
-  verb,
 };
+use crate::verb;
 
 use super::{
   Grapheme, Line, Lines, MotionKind, Pos, SelectMode, killring, ordered, rot13_char,

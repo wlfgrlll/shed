@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use super::{
-  ShResult, match_loop, shopt, state, state::Shed, status_msg, subshell::expand_cmd_sub, var,
+  ShResult, crate_util::ansi_from_description, match_loop, shopt, state, state::Shed, status_msg,
+  subshell::expand_cmd_sub, var,
 };
-use crate::util::ansi_from_description;
 
 use nix::sys::wait::WaitStatus as WtStat;
 

@@ -15,7 +15,7 @@ use scopeguard::defer;
 use yansi::Color;
 
 use super::{
-  Shed,
+  ShResult, Shed,
   logic::AutoCmdKind,
   meta::CmdTimer,
   procio::{stderr_fileno, stdout_fileno},
@@ -25,7 +25,6 @@ use super::{
   util::{get_time_fmt, with_vars},
   vars::ShellParam,
 };
-use crate::util::ShResult;
 
 pub const SIG_EXIT_OFFSET: i32 = 128;
 

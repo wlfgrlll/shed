@@ -9,8 +9,10 @@ use std::{
 use bitflags::bitflags;
 use nix::sys::signal::Signal;
 
-use crate::{
+use super::{
   builtin::BUILTIN_NAMES,
+  context::{CtxTk, CtxTkRule, get_context_tokens},
+  editmode::{EditMode, ViInsert},
   eval::{execute::exec_nonint, lex::Span},
   expand::{
     as_var_val_display, escape_glob, escape_str, expand_raw_inner, markers::strip_markers,
@@ -18,11 +20,7 @@ use crate::{
   },
   key,
   keys::{KeyCode as C, KeyEvent as K},
-  readline::{
-    context::{CtxTk, CtxTkRule, get_context_tokens},
-    editmode::{EditMode, ViInsert},
-    linebuf::LineBuf,
-  },
+  linebuf::LineBuf,
   shopt,
   state::{
     self, Shed,

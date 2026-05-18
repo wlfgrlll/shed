@@ -1,8 +1,12 @@
-use super::{CmdReplay, EditMode, ModeReport, common_cmds};
-use crate::keys::{KeyCode as K, KeyEvent as E, ModKeys as M};
-use crate::readline::editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word};
-use crate::state::terminal::CursorStyle;
-use crate::{key, motion, verb};
+use super::{
+  CmdReplay, EditMode, ModeReport, common_cmds,
+  editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word},
+  key,
+  keys::{KeyCode as K, KeyEvent as E, ModKeys as M},
+  motion,
+  state::terminal::CursorStyle,
+  verb,
+};
 
 #[derive(Default, Clone, Debug)]
 pub(crate) struct Emacs {

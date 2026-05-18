@@ -2,15 +2,11 @@ use nix::unistd::write;
 
 use shed_macros::ShOptGroup;
 
-use crate::{
-  eval::lex::Span,
-  expand::expand_keymap,
-  procio::stderr_fileno,
-  sherr, shopt, two_way_display,
-  util::{ShResult, ansi_from_description},
+use super::{
+  ShResult, Shed, crate_util::ansi_from_description, eval::lex::Span, expand::expand_keymap,
+  procio::stderr_fileno, sherr, two_way_display,
 };
-
-use super::Shed;
+use crate::shopt;
 
 pub(crate) fn xtrace_print(argv: &[(String, Span)]) {
   if shopt!(set.xtrace) {

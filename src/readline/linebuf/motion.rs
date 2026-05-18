@@ -1,13 +1,8 @@
-use crate::{
-  Shed,
-  readline::editcmd::{
-    Bound, Cmd, Dest, Direction, EditCmd, LineAddr, Motion, TextObj, To, Verb, Word,
-  },
-  status_msg,
-  util::ShResult,
+use super::{
+  CharClass, Grapheme, MotionKind, Pos, ShResult, Shed,
+  editcmd::{Bound, Cmd, Dest, Direction, EditCmd, LineAddr, Motion, TextObj, To, Verb, Word},
+  ordered, status_msg,
 };
-
-use super::{CharClass, Grapheme, MotionKind, Pos, ordered};
 
 impl super::LineBuf {
   fn find_delim_match(&mut self) -> Option<MotionKind> {

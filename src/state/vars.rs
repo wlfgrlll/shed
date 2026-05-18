@@ -10,14 +10,14 @@ use std::{
 use bitflags::bitflags;
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
-use super::util::get_separator;
-use crate::eval::lex::{LexFlags, LexStream, Tk};
-use crate::expand::{as_var_val_display, expand_arithmetic, expand_raw, markers};
-use crate::procio::stdin_fileno;
-use crate::readline::Candidate;
-use crate::{
+use super::{
+  ShErr, ShResult,
+  eval::lex::{LexFlags, LexStream, Tk},
+  expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
+  procio::stdin_fileno,
+  readline::Candidate,
   sherr,
-  util::{ShErr, ShResult},
+  util::get_separator,
 };
 
 /// Display key/value pairs as '{key}={value}\n'

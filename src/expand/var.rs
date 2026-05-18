@@ -3,15 +3,16 @@ use std::str::Chars;
 
 use nix::unistd::{Uid, User};
 
-use crate::eval::lex::is_hard_sep;
-use crate::expand::PARAMETERS;
-use crate::expand::escape::escape_str;
-use crate::expand::markers;
-use crate::expand::param::perform_param_expansion;
-use crate::expand::subshell::{expand_cmd_sub, expand_proc_sub};
-use crate::match_loop;
-use crate::util::ShResult;
-use crate::{sherr, shopt, try_var, var};
+use super::{
+  PARAMETERS, ShResult,
+  escape::escape_str,
+  eval::lex::is_hard_sep,
+  markers, match_loop,
+  param::perform_param_expansion,
+  sherr, shopt,
+  subshell::{expand_cmd_sub, expand_proc_sub},
+  try_var, var,
+};
 
 pub fn expand_raw_inner(
   chars: &mut Peekable<Chars<'_>>,

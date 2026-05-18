@@ -1,6 +1,7 @@
-use crate::eval::{ParseFlags, ParsedSrc, lex::LexFlags};
-
-use super::{Grapheme, Line, Lines, Pos};
+use super::{
+  Grapheme, Line, Lines, Pos,
+  eval::{ParseFlags, ParsedSrc, lex::LexFlags},
+};
 
 #[derive(Default, Clone, Debug)]
 pub struct Edit {

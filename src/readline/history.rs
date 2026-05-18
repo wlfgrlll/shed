@@ -358,11 +358,6 @@ impl History {
       table_entries.retain(|e| e.command != command);
       table_entries.push(entry);
     }
-    if let Ok(mut wm) = SEARCH_WATERMARKS.write() {
-      let wm_entry = wm.entry(self.table.clone()).or_insert(0);
-      *wm_entry = (*wm_entry).max(timestamp);
-    }
-
     self.trim_to_max();
     Ok(Some(token))
   }
@@ -707,6 +702,7 @@ impl History {
 
     self.cursor = self.search_mask.len();
     self.virt_cursor = self.cursor;
+    self.mask_stale = false;
   }
 
   pub fn resolve_hist_token(&self, token: &str) -> Option<String> {
@@ -929,6 +925,19 @@ impl History {
     self.search_mask.get(self.virt_cursor)
   }
 
+  pub fn merge_search_entries(&mut self) {
+    let search = SEARCH_ENTRIES
+      .read()
+      .ok()
+      .and_then(|c| c.get(&self.table).cloned());
+    if let Some(entries) = search
+      && let Ok(mut hist) = HIST_ENTRIES.write()
+    {
+      hist.insert(self.table.clone(), entries);
+    }
+    self.mark_mask_stale();
+  }
+
   // Fetch any entries from other sessions added after the watermark and merge
   // them into SEARCH_ENTRIES. Runs synchronously since the delta is small.
   fn sync_search_entries(&self) {
@@ -983,26 +992,32 @@ impl History {
     let mut finder = FuzzySelector::new("History").number_candidates(true);
     finder.set_query(initial.to_string());
 
-    let candidates: Vec<HistEntry> = if initial.is_empty() {
-      all_entries.clone()
+    let candidates: Vec<Candidate> = if initial.is_empty() {
+      all_entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| Candidate::from((i, e.command().to_string())))
+        .collect()
     } else {
-      let filtered: Vec<HistEntry> = all_entries
+      let filtered: Vec<Candidate> = all_entries
         .iter()
-        .filter(|e| e.command().starts_with(initial))
-        .cloned()
+        .enumerate()
+        .filter(|(_, e)| e.command().starts_with(initial))
+        .map(|(i, e)| Candidate::from((i, e.command().to_string())))
         .collect();
+
       if filtered.is_empty() {
         all_entries
+          .into_iter()
+          .enumerate()
+          .map(|(i, e)| Candidate::from((i, e.command().to_string())))
+          .collect()
       } else {
         filtered
       }
     };
 
-    let raw_entries = candidates
-      .into_iter()
-      .enumerate()
-      .map(|(i, ent)| Candidate::from((i, ent.command().to_string())));
-    finder.activate(raw_entries.collect());
+    finder.activate(candidates);
     self.fuzzy_finder = Some(finder);
     None
   }

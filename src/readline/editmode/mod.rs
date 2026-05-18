@@ -4,11 +4,11 @@ use std::str::FromStr;
 use super::{
   KeyCode as K, KeyEvent as E, ModKeys as M, ShResult, Shed, SimpleEditor,
   editcmd::{self, CmdFlags, Direction, EditCmd, Motion, To, Verb, Word},
-  history,
+  eval, history,
   history::History,
-  key,
-  linebuf::LineBuf,
-  motion, register, state, status_msg,
+  key, keys,
+  linebuf::{self, LineBuf},
+  match_loop, motion, register, state, status_msg,
   util::ShErr,
   verb,
 };

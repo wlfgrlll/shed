@@ -5,10 +5,9 @@ use std::{
 
 use regex::Regex;
 
-use crate::{
-  match_loop,
-  readline::history::HistEntry,
-  sherr,
+use super::{
+  history::HistEntry,
+  match_loop, sherr,
   util::{ShResult, ends_with_unescaped},
 };
 

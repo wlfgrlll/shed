@@ -1,10 +1,6 @@
 use regex::Regex;
 
-use crate::expand::escape::unescape_str;
-use crate::expand::markers;
-use crate::expand::var::expand_raw;
-use crate::match_loop;
-use crate::util::ShResult;
+use super::{ShResult, escape::unescape_str, markers, match_loop, var::expand_raw};
 
 /// Expand a case pattern: performs variable/command expansion while preserving
 /// glob metacharacters that were inside quotes as literals (by backslash-escaping them).

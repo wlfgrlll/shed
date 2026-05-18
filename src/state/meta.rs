@@ -18,6 +18,7 @@ use std::{
 use super::{
   ShErr, ShResult, Shed,
   builtin::BUILTIN_NAMES,
+  crate_util as util,
   expand::{expand_keymap, glob_to_regex},
   jobs::Job,
   keys::KeyEvent,
@@ -1057,7 +1058,6 @@ impl MetaTab {
 
     let version = env!("CARGO_PKG_VERSION");
 
-    use crate::util;
     let mut buf = String::new();
 
     // ╭─ shed v0.xx.x ───────────╮

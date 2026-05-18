@@ -7,10 +7,12 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
 
-use crate::eval::lex::{Span, SpanSource};
-use crate::procio::{RedirGuard, stderr_fileno};
-use crate::sherr;
-use crate::util::FdWriter;
+use super::{
+  FdWriter,
+  eval::lex::{Span, SpanSource},
+  procio::{RedirGuard, stderr_fileno},
+  sherr,
+};
 
 pub type ShResult<T> = Result<T, ShErr>;
 

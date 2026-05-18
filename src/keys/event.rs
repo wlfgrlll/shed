@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::util::ShResult;
+use super::ShResult;
 
 // Credit to Rustyline for the design ideas in this module
 // https://github.com/kkawakam/rustyline

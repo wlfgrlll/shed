@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rusqlite::Connection;
 
-use crate::{ShResult, sherr, state};
+use super::{ShResult, sherr, state};
 
 #[derive(Debug)]
 pub(crate) struct StashedCmd {

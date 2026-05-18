@@ -1,15 +1,11 @@
 use std::{iter::Peekable, str::Chars};
 
-use crate::{
+use super::{
+  CmdState,
+  editcmd::{Anchor, Bound, Cmd, CmdFlags, Dest, Direction, EditCmd, Motion, TextObj, Verb, Word},
+  linebuf::Grapheme,
   motion,
-  readline::{
-    editcmd::{
-      Anchor, Bound, Cmd, CmdFlags, Dest, Direction, EditCmd, Motion, TextObj, Verb, Word,
-    },
-    editmode::CmdState,
-    linebuf::Grapheme,
-    register::RegisterName,
-  },
+  register::RegisterName,
   verb,
 };
 

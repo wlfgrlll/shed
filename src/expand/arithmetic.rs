@@ -1,10 +1,16 @@
 use std::str::FromStr;
 
-use crate::expand::escape::unescape_math;
-use crate::expand::var::expand_raw;
-use crate::state::{Shed, vars::VarFlags, vars::VarKind};
-use crate::util::{ShErr, ShResult};
-use crate::{match_loop, sherr, try_var};
+use super::{
+  ShErr, ShResult,
+  escape::unescape_math,
+  match_loop, sherr,
+  state::{
+    Shed,
+    vars::{VarFlags, VarKind},
+  },
+  try_var,
+  var::expand_raw,
+};
 
 #[derive(Debug, Clone)]
 enum ArithOp {

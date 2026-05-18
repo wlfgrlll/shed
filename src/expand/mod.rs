@@ -25,8 +25,8 @@ use super::{
     self,
     lex::{Tk, TkFlags, TkRule},
   },
-  keys, match_loop, shopt, state, status_msg,
-  util::{ShResult, ShResultExt},
+  keys, match_loop, procio, sherr, shopt, state, status_msg, try_var, util as crate_util,
+  util::{QuoteState, ShErr, ShErrKind, ShResult, ShResultExt},
   var,
 };
 

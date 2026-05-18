@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display};
 
 use itertools::Itertools;
 
-use crate::{expand::expand_keymap, keys::KeyEvent, readline::linebuf::Line};
+use super::{expand::expand_keymap, keys::KeyEvent, linebuf::Line};
 
 thread_local! {
   pub static REGISTERS: RefCell<Registers> = RefCell::new(Registers::new());

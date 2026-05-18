@@ -1,9 +1,8 @@
-use crate::two_way_display;
-
 use super::{
   LabelCtx,
   lex::{Span, SpanSource, Tk},
   procio::RedirSpec,
+  two_way_display,
 };
 use ariadne::{Label, Span as AriadneSpan};
 use bitflags::bitflags;

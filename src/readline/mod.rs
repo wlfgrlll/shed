@@ -32,9 +32,9 @@ use register::RegisterName;
 use term::{clear_rows, move_cursor_to_end, redraw};
 
 use super::{
-  autocmd, eval,
+  autocmd, builtin, eval,
   expand::{self, expand_keymap, expand_prompt},
-  flush_term, key,
+  flush_term, key, keys,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
   match_loop, motion, procio, sherr, shopt,
   state::{
@@ -45,7 +45,7 @@ use super::{
   },
   status_msg, system_msg, try_var,
   util::{self, ShResult},
-  verb, write_term,
+  var, verb, write_term,
 };
 
 pub(super) use complete::{
@@ -1422,6 +1422,9 @@ impl ShedLine {
     }
   }
   fn scroll_history_to(&mut self, hist_idx: usize) {
+    let hist = self.focused_history();
+    hist.merge_search_entries();
+    hist.constrain_entries(None);
     let entry = self.focused_history().scroll_to(hist_idx).cloned();
     if entry.is_some() {
       let total = self.focused_history().search_mask_count();

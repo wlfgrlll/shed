@@ -1,6 +1,4 @@
-use crate::write_term;
-
-use super::{CursorStyle, Shed};
+use super::{CursorStyle, Shed, write_term};
 
 /*
  * These two structs get their own module because the public API is the only way

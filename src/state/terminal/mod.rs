@@ -33,9 +33,8 @@ use vte::Perform;
 use super::{
   Pos, ShErr, ShErrKind, ShResult, Shed,
   keys::{KeyCode, KeyEvent, ModKeys},
-  match_loop, procio, sherr, try_var,
+  match_loop, procio, sherr, shopt_macro as shopt, try_var, write_term,
 };
-use crate::shopt;
 
 pub(crate) fn calc_str_width(s: &str) -> usize {
   let mut esc_seq = 0;

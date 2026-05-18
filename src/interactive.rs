@@ -15,13 +15,12 @@ use nix::{
 use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::lifecycle;
-
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
   builtin::{source_builtin_completions, source_builtin_scripts},
   errln,
   eval::execute::exec_int,
+  lifecycle,
   lifecycle::first_run_setup,
   outln, sherr, shopt, shopt_mut,
   signal::{

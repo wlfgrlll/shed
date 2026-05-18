@@ -2,12 +2,7 @@ use std::iter::Peekable;
 use std::ops::Range;
 use std::str::Chars;
 
-use crate::expand::markers;
-use crate::expand::util::is_var_name_ch;
-use crate::try_var;
-use crate::util::QuoteState;
-use crate::util::ShResult;
-use crate::{match_loop, sherr};
+use super::{QuoteState, ShResult, markers, match_loop, sherr, try_var, util::is_var_name_ch};
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.
 pub(super) fn strip_escape_markers(s: &str) -> String {

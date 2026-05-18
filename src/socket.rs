@@ -5,7 +5,7 @@ use nix::{
   unistd::{Pid, write},
 };
 
-use crate::{
+use super::{
   Hint, LineData, Lines, ReadlineEvent, ShResult, Shed, ShedLine,
   state::{
     meta::{LineHeader, QueryHeader, SocketRequest, StatusHeader},
