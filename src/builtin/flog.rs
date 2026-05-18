@@ -4,9 +4,9 @@ use super::{
   ShResult, Shed,
   expand::markers,
   getopt::{Opt, OptSpec},
-  join_raw_arg_iter, match_loop, sherr,
+  join_raw_arg_iter, match_loop, sherr, try_var,
   util::stylize_loglevel,
-  with_status,
+  var, with_status,
 };
 
 pub struct Flog;
@@ -36,7 +36,7 @@ impl super::Builtin for Flog {
 
     let level = stylize_loglevel(level);
 
-    let mut prefix_fmt = "[{level}]".to_string();
+    let mut prefix_fmt = try_var!("FLOG_FMT").unwrap_or_else(|| "[{level}]".to_string());
 
     for opt in args.opts {
       match &opt {
@@ -57,7 +57,7 @@ impl super::Builtin for Flog {
 
     let out = format!("{formatted} {rest}");
 
-    Shed::meta_mut(|m| m.post_system_message(out));
+    Shed::post_system_msg(out);
 
     with_status(0)
   }
@@ -90,7 +90,7 @@ impl Flog {
             let source = source.replace('%', &format!("{}",markers::ESCAPE));
             out.push_str(&source);
           }
-          _ => out.push_str("{fmt_arg}"),
+          _ => out.push_str(&fmt_arg),
         }
       }
       _ => out.push(ch),
@@ -105,7 +105,7 @@ impl Flog {
   }
 
   fn get_log_level() -> Option<log::Level> {
-    let level = Shed::vars(|v| v.get_var("FLOG_LEVEL")).to_ascii_uppercase();
+    let level = var!("FLOG_LEVEL").to_ascii_uppercase();
     level.parse::<log::Level>().ok()
   }
 }

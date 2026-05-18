@@ -1,8 +1,8 @@
 use super::{
-  Builtin, ShResult, Shed,
+  Builtin, ShResult,
   expand::expand_prompt,
   getopt::{Opt, OptSpec},
-  out,
+  out, shopt,
   util::ShResultExt,
   util::expand_ansi_c,
   with_status,
@@ -29,7 +29,7 @@ impl Builtin for Echo {
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let xpg_echo = Shed::shopts(|o| o.core.xpg_echo);
+    let xpg_echo = shopt!(core.xpg_echo);
     let mut flags = EchoFlags::empty();
     if xpg_echo {
       flags |= EchoFlags::USE_ESCAPE;

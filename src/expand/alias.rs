@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use super::{
   eval::lex::{LexFlags, LexStream, Tk, TkFlags},
   keys::{KeyCode, KeyEvent, ModKeys},
+  shopt,
   state::Shed,
 };
 
@@ -115,7 +116,7 @@ pub fn expand_keymap(s: &str) -> Vec<KeyEvent> {
             }
             '>' => {
               if alias.eq_ignore_ascii_case("leader") {
-                let mut leader = Shed::shopts(|o| o.prompt.leader.clone());
+                let mut leader = shopt!(prompt.leader.clone());
                 if leader == "\\" {
                   leader.push('\\');
                 }

@@ -13,7 +13,7 @@ use super::{
   expand::{expand_alias_with_pos, markers},
   highlight,
   history::History,
-  match_loop, motion, procio, sherr, stash, state, status_msg, system_msg,
+  match_loop, motion, procio, sherr, shopt, stash, state, status_msg, system_msg, try_var,
   util::{QuoteState, ShResult, ordered},
 };
 
@@ -155,7 +155,7 @@ impl LineBuf {
 
     if is_separator
       && !self.grapheme_before_cursor().is_none_or(|gr| gr.is_ws())
-      && Shed::shopts(|o| o.prompt.expand_aliases)
+      && shopt!(prompt.expand_aliases)
     {
       self.attempt_alias_expansion();
     }

@@ -5,7 +5,7 @@ use unicode_width::UnicodeWidthChar;
 use super::{
   CharClass, DEFAULT_VIEWPORT_HEIGHT, Edit, Grapheme, Line, Lines, MotionKind, Pos, SelectMode,
   ShResult, Shed, editcmd::Motion, eval::lex, highlight, ordered, procio::stdin_fileno, sherr,
-  state::terminal::get_win_size, status_msg,
+  shopt, state::terminal::get_win_size, status_msg,
 };
 
 use super::char_class::{CharClassIter, CharClassIterRev};
@@ -86,7 +86,7 @@ impl super::LineBuf {
   }
   pub fn update_scroll_offset(&mut self) {
     let height = self.get_viewport_height();
-    let scrolloff = Shed::shopts(|o| o.line.scroll_offset);
+    let scrolloff = shopt!(line.scroll_offset);
     if self.cursor.pos.row < self.scroll_offset + scrolloff {
       self.scroll_offset = self.cursor.pos.row.saturating_sub(scrolloff);
     }
@@ -99,7 +99,7 @@ impl super::LineBuf {
   }
   pub fn display_window_joined(&mut self) -> String {
     let joined = self.joined();
-    let do_hl = Shed::shopts(|s| s.highlight.enable);
+    let do_hl = shopt!(highlight.enable);
     let palette = if do_hl {
       highlight::Palette::new()
     } else {
@@ -788,7 +788,7 @@ impl super::LineBuf {
     self.calc_display_col_for(self.cursor.pos)
   }
   pub(super) fn calc_display_col_for(&self, pos: Pos) -> usize {
-    let tab_width = Shed::shopts(|o| o.line.tab_width);
+    let tab_width = shopt!(line.tab_width);
     let line = self.line(pos.row);
     let mut col = 0;
     for gr in &line.0[..pos.col] {
@@ -852,7 +852,7 @@ impl super::LineBuf {
     positions
   }
   pub(super) fn display_col_to_index(&self, row: usize, target: usize) -> usize {
-    let tab_width = Shed::shopts(|o| o.line.tab_width);
+    let tab_width = shopt!(line.tab_width);
     let line = self.line(row);
     let mut col = 0;
     for (i, gr) in line.0.iter().enumerate() {

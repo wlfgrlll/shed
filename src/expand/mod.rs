@@ -25,8 +25,9 @@ use super::{
     self,
     lex::{Tk, TkFlags, TkRule},
   },
-  keys, match_loop, state, status_msg,
+  keys, match_loop, shopt, state, status_msg,
   util::{ShResult, ShResultExt},
+  var,
 };
 
 pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'];
@@ -138,7 +139,7 @@ impl Expander {
       );
     }
 
-    let nullglob = Shed::shopts(|o| o.core.nullglob);
+    let nullglob = shopt!(core.nullglob);
     let mut glob_words = Vec::with_capacity(words.len());
 
     for word in words {

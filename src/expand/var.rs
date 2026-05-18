@@ -10,9 +10,8 @@ use crate::expand::markers;
 use crate::expand::param::perform_param_expansion;
 use crate::expand::subshell::{expand_cmd_sub, expand_proc_sub};
 use crate::match_loop;
-use crate::sherr;
-use crate::state::Shed;
 use crate::util::ShResult;
+use crate::{sherr, shopt, try_var, var};
 
 pub fn expand_raw_inner(
   chars: &mut Peekable<Chars<'_>>,
@@ -160,7 +159,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     ch if var_name.is_empty() && (PARAMETERS.contains(&ch) || ch.is_ascii_digit()) => {
       chars.next();
       let parameter = ch.to_string();
-      let val = Shed::vars(|v| v.get_var(&parameter));
+      let val = var!(&parameter);
 
       if (ch == '@' || ch == '*') && val.is_empty() {
         return Ok(markers::NULL_EXPAND.to_string());
@@ -169,8 +168,8 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       return Ok(val);
     }
     ch if is_hard_sep(ch) || !(ch.is_alphanumeric() || ch == '_') => {
-      let val = Shed::vars(|v| v.try_get_var(&var_name));
-      if val.is_none() && Shed::shopts(|o| o.set.nounset) {
+      let val = try_var!(&var_name);
+      if val.is_none() && shopt!(set.nounset) {
         return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
       }
       return Ok(val.unwrap_or_default());
@@ -181,8 +180,8 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     }
   });
   if !var_name.is_empty() {
-    let val = Shed::vars(|v| v.try_get_var(&var_name));
-    if val.is_none() && Shed::shopts(|o| o.set.nounset) {
+    let val = try_var!(&var_name);
+    if val.is_none() && shopt!(set.nounset) {
       return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
     }
     Ok(val.unwrap_or_default())
@@ -204,13 +203,13 @@ pub fn restore_glob_prefix(pattern: &str, mut result: String) -> String {
 pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
   let mut words = vec![];
 
-  if !raw.contains(['*', '?', '[']) || Shed::shopts(|o| o.set.noglob) {
+  if !raw.contains(['*', '?', '[']) || shopt!(set.noglob) {
     return Ok(vec![raw.to_string()]);
   }
   let escaped = super::escape_glob(raw, true);
 
   let opts = glob::MatchOptions {
-    require_literal_leading_dot: !Shed::shopts(|s| s.core.dotglob),
+    require_literal_leading_dot: !shopt!(core.dotglob),
     ..Default::default()
   };
   for entry in

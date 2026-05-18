@@ -160,7 +160,7 @@ pub fn check_signals() -> ShResult<()> {
   if got_signal(Signal::SIGTERM) {
     // POSIX says, if we are interactive, sigterm does nothing
     // if we are not interactive, sigterm kills the shell
-    if !Shed::term(|t| t.interactive()) {
+    if !Shed::meta(|m| m.interactive_shell()) {
       SHOULD_QUIT.store(true, Ordering::SeqCst);
       QUIT_CODE.store(SIG_EXIT_OFFSET + Signal::SIGTERM as i32, Ordering::SeqCst);
     }
@@ -451,7 +451,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
 
         if job.notify() {
           let job_complete_msg = job.display(&job_order, JobCmdFlags::PIDS).to_string();
-          Shed::meta_mut(|m| m.post_system_message(job_complete_msg));
+          Shed::post_system_msg(job_complete_msg);
         }
 
         Shed::meta_mut(|m| m.notify_job_complete(&job)).ok();

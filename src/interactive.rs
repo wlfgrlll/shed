@@ -23,7 +23,7 @@ use super::{
   errln,
   eval::execute::exec_int,
   lifecycle::first_run_setup,
-  outln, sherr,
+  outln, sherr, shopt, shopt_mut,
   signal::{
     GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
   },
@@ -92,10 +92,8 @@ fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
     // the status message.
     timeout
   } else {
-    let screensaver_cmd = Shed::shopts(|o| o.prompt.screensaver_cmd.clone())
-      .trim()
-      .to_string();
-    let screensaver_idle_time = Shed::shopts(|o| o.prompt.screensaver_idle_time);
+    let screensaver_cmd = shopt!(prompt.screensaver_cmd.clone()).trim().to_string();
+    let screensaver_idle_time = shopt!(prompt.screensaver_idle_time);
     if screensaver_idle_time == 0 || screensaver_cmd.is_empty() {
       // no screensaver stuff, set no timeout
       PollTimeout::NONE
@@ -149,7 +147,7 @@ fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
     errln!("\n{welcome}\n\n");
   }
 
-  if Shed::shopts(|o| o.statline.enable) {
+  if shopt!(statline.enable) {
     // statline enabled, reserve scroll region rows
     // also move the cursor down there too
     Shed::term_mut(|t| -> ShResult<()> {
@@ -193,7 +191,7 @@ pub(super) fn shed_interactive(
     return run_script_keys(&mut readline, keys);
   }
 
-  let mut vi_mode = Shed::shopts(|o| o.set.vi);
+  let mut vi_mode = shopt!(set.vi);
   let mut socket_mode = ShedSocket::mode();
 
   let mut poll_fds: SmallVec<[PollFd; 2]> = SmallVec::new();
@@ -220,7 +218,7 @@ pub(super) fn shed_interactive(
       poll_fds.push(fd.clone());
     }
 
-    if Shed::shopts(|o| o.set.vi) != vi_mode {
+    if shopt!(set.vi) != vi_mode {
       // the editing mode option changed.
       // we have to make sure the edit mode reflects the option now
       readline.fix_editing_mode();
@@ -247,11 +245,11 @@ pub(super) fn shed_interactive(
         {
           // don't exec screensaver if we have a pending command
           let prepared = ReadlineEvent::Line(cmd.clone());
-          let _guard = scopeguard::guard(Shed::shopts(|o| o.core.auto_hist), |opt| {
+          let _guard = scopeguard::guard(shopt!(core.auto_hist), |opt| {
             // restores old auto_hist value
-            Shed::shopts_mut(|o| o.core.auto_hist = opt);
+            shopt_mut!(core.auto_hist = opt);
           });
-          Shed::shopts_mut(|o| o.core.auto_hist = false); // don't save screensaver command to history
+          shopt_mut!(core.auto_hist = false); // don't save screensaver command to history
 
           autocmd!(OnScreensaverExec);
           let res = {
@@ -378,7 +376,7 @@ fn handle_readline_event(
 ) -> ShResult<bool> {
   match event {
     Ok(ReadlineEvent::Line(input)) => {
-      let token = Shed::shopts(|s| s.core.auto_hist)
+      let token = shopt!(core.auto_hist)
         .then(|| readline.history_mut().push(input.clone()).ok().flatten())
         .flatten(); // token is used as a stable identifier for the command in the history
 
@@ -425,10 +423,9 @@ fn handle_readline_event(
       let no_hist_save = Shed::meta_mut(|m| m.no_hist_save());
 
       let was_func_def = Shed::meta_mut(|m| m.take_last_was_func_def());
-      let nolog = was_func_def && Shed::shopts(|o| o.set.nolog);
+      let nolog = was_func_def && shopt!(set.nolog);
 
-      let should_write =
-        Shed::shopts(|o| o.core.auto_hist) && !nolog && !no_hist_save && !input.is_empty();
+      let should_write = shopt!(core.auto_hist) && !nolog && !no_hist_save && !input.is_empty();
 
       if let Some(token) = token
         && !should_write
@@ -438,7 +435,7 @@ fn handle_readline_event(
           .delete("WHERE token = ?1", rusqlite::params![token.to_string()])?;
       }
 
-      if Shed::shopts(|s| s.core.auto_hist)
+      if shopt!(core.auto_hist)
         && should_write
         && let Some(token) = token
         && let Err(e) = readline

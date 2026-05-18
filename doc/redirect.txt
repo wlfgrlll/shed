@@ -51,7 +51,7 @@ to stdout (fd 1) and input redirections default to stdin (fd 0).
       descriptor (default fd 0). The file is created if it does not exist
       but is not truncated.
 
-      Useful with the `seek` builtin for random-access file operations.
+      Useful with the |seek| builtin for random-access file operations.
 
       Example:
         `exec 3<> data.bin`

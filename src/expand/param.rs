@@ -4,12 +4,12 @@ use crate::eval::lex::TkFlags;
 use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
-use crate::sherr;
+use crate::match_loop;
 use crate::state::{
   Shed, scopes::ScopeStack, vars::ArrIndex, vars::VarFlags, vars::VarKind, vars::VarName,
 };
 use crate::util::ShResult;
-use crate::{match_loop, state};
+use crate::{sherr, shopt, var};
 
 #[derive(Debug)]
 pub enum ParamExp {
@@ -165,9 +165,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     let parsed = VarName::parse(var_spec, allow_side_effects)?;
     if let Some(idx) = parsed.index() {
       match idx {
-        crate::state::vars::ArrIndex::AllSplit
-        | crate::state::vars::ArrIndex::AllJoined
-        | crate::state::vars::ArrIndex::ArgCount => {
+        ArrIndex::AllSplit | ArrIndex::AllJoined | ArrIndex::ArgCount => {
           let var = Shed::vars(|v| v.get_var_meta(parsed.name()));
           return Ok(
             match var.kind() {
@@ -254,9 +252,9 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     // this allows scripts to do stuff like "while foo=${foo#bar}" or just generally check
     // whether a parameter expansion did anything without needing verbose checks like [[ "$foo" != "${foo#bar}" ]]
     if old != new {
-      state::Shed::set_status(0);
+      Shed::set_status(0);
     } else {
-      state::Shed::set_status(1);
+      Shed::set_status(1);
     }
   };
 
@@ -372,10 +370,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       ParamExp::SliceOpen(pos) => {
         let value = Shed::vars(get);
         if let Some(substr) = value.get(pos..) {
-          state::Shed::set_status(0);
+          Shed::set_status(0);
           Ok(substr.to_string())
         } else {
-          state::Shed::set_status(1);
+          Shed::set_status(1);
           Ok(value)
         }
       }
@@ -383,10 +381,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let value = Shed::vars(get);
         let end = pos.saturating_add(len);
         if let Some(substr) = value.get(pos..end) {
-          state::Shed::set_status(0);
+          Shed::set_status(0);
           Ok(substr.to_string())
         } else {
-          state::Shed::set_status(1);
+          Shed::set_status(1);
           Ok(value)
         }
       }
@@ -399,11 +397,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in 0..=value.len() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(value[i..].to_string());
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value)
       }
       ParamExp::RemLongestPrefix(prefix) => {
@@ -415,11 +413,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(value[i..].to_string());
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value) // no match
       }
       ParamExp::RemShortestSuffix(suffix) => {
@@ -431,11 +429,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(value[..i].to_string());
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value)
       }
       ParamExp::RemLongestSuffix(suffix) => {
@@ -447,11 +445,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in 0..=value.len() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(value[..i].to_string());
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value)
       }
       ParamExp::ReplaceFirstMatch(search, replace) => {
@@ -468,10 +466,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let before = &value[..mat.start()];
           let after = &value[mat.end()..];
           let result = format!("{}{}{}", before, expanded_replace, after);
-          state::Shed::set_status(0);
+          Shed::set_status(0);
           Ok(result)
         } else {
-          state::Shed::set_status(1);
+          Shed::set_status(1);
           Ok(value)
         }
       }
@@ -510,11 +508,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(format!("{}{}", expanded_replace, &value[i..]));
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value)
       }
       ParamExp::ReplaceSuffix(search, replace) => {
@@ -529,11 +527,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
-            state::Shed::set_status(0);
+            Shed::set_status(0);
             return Ok(format!("{}{}", &value[..i], expanded_replace));
           }
         }
-        state::Shed::set_status(1);
+        Shed::set_status(1);
         Ok(value)
       }
       ParamExp::VarNamesWithPrefix(prefix) => {
@@ -557,13 +555,13 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         } else {
           let inner_name = VarName::parse(&inner, allow_side_effects)?;
           let value = Shed::vars(|v| v.resolve_var(&inner_name).unwrap_or_default());
-          Ok(Shed::vars(|v| v.get_var(&value)))
+          Ok(var!(&value))
         }
       }
     }
   } else {
     let var = Shed::vars(try_get);
-    if var.is_none() && Shed::shopts(|o| o.set.nounset) {
+    if var.is_none() && shopt!(set.nounset) {
       return Err(sherr!(NotFound, "Variable '{}' is not set", parsed.name()));
     }
     Ok(var.unwrap_or_default())
@@ -906,7 +904,7 @@ mod tests {
     assert_eq!(result, "assigned");
 
     // Verify it was actually set
-    let val = Shed::vars(|v| v.get_var("NEWVAR"));
+    let val = var!("NEWVAR");
     assert_eq!(val, "assigned");
   }
 

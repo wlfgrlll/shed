@@ -5,13 +5,13 @@ use std::{
   io::Write,
   os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
   sync::LazyLock,
-  time::Instant,
+  time::{Duration, Instant},
 };
 
 mod guard;
 use bitflags::bitflags;
 use guard::Snapshot;
-pub use guard::TermGuard;
+pub(crate) use guard::{SyncOutputGuard, TermGuard};
 
 use itertools::Itertools;
 use nix::{
@@ -33,9 +33,9 @@ use vte::Perform;
 use super::{
   Pos, ShErr, ShErrKind, ShResult, Shed,
   keys::{KeyCode, KeyEvent, ModKeys},
-  procio::move_high,
-  sherr,
+  match_loop, procio, sherr, try_var,
 };
+use crate::shopt;
 
 pub(crate) fn calc_str_width(s: &str) -> usize {
   let mut esc_seq = 0;
@@ -217,7 +217,7 @@ static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
   let fd = open("/dev/tty", OFlag::O_RDWR, Mode::empty()).ok()?;
   // Move the tty fd above the user-accessible range so that
   // `exec 3>&-` and friends don't collide with shell internals.
-  move_high(fd).ok()
+  procio::move_high(fd).ok()
 });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,6 +229,8 @@ pub(crate) struct Cols(pub(crate) usize);
 pub(crate) enum TermEvent {
   Key(KeyEvent),
   CursorPos(Rows, Cols),
+  XtVersion(XtVersion),
+  PrimaryDevAttr,
   KittyKbdFlags,
   Capabilities {
     name: String,
@@ -236,12 +238,136 @@ pub(crate) enum TermEvent {
   },
 }
 
+#[derive(Debug, Clone, Copy)]
+enum DcsKind {
+  XtGetCap,
+  XtVersion,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SemVer {
+  major: Option<u32>,
+  minor: Option<u32>,
+  patch: Option<u32>,
+}
+
+impl Display for SemVer {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match (self.major, self.minor, self.patch) {
+      (Some(major), Some(minor), Some(patch)) => write!(f, "{}.{}.{}", major, minor, patch),
+      (Some(major), Some(minor), None) => write!(f, "{}.{}", major, minor),
+      (Some(major), None, None) => write!(f, "{}", major),
+      _ => write!(f, "unknown"),
+    }
+  }
+}
+
+macro_rules! semver {
+  ($major:expr) => {
+    SemVer {
+      major: Some($major),
+      minor: None,
+      patch: None,
+    }
+  };
+  ($major:expr, $minor:expr) => {
+    SemVer {
+      major: Some($major),
+      minor: Some($minor),
+      patch: None,
+    }
+  };
+  ($major:expr, $minor:expr, $patch:expr) => {
+    SemVer {
+      major: Some($major),
+      minor: Some($minor),
+      patch: Some($patch),
+    }
+  };
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) enum XtVersion {
+  Iterm2(SemVer),
+  Tmux(SemVer),
+  WezTerm,
+  Unknown(String),
+}
+
+#[allow(dead_code)]
+impl XtVersion {
+  pub fn parse(raw: &str) -> Self {
+    Self::parse_iterm2(raw)
+      .or_else(|| Self::parse_tmux(raw))
+      .or_else(|| Self::parse_wezterm(raw))
+      .unwrap_or_else(|| Self::Unknown(raw.to_string()))
+  }
+
+  pub fn has_broken_kitty_kbd(&self) -> bool {
+    let Self::Iterm2(ver) = self else {
+      return false;
+    };
+
+    *ver < semver!(3, 5, 12)
+  }
+
+  pub fn needs_wezterm_workaround(&self) -> bool {
+    matches!(self, Self::WezTerm)
+  }
+
+  pub fn supports_color_theme_reporting(&self) -> bool {
+    let Self::Tmux(ver) = self else { return true };
+
+    *ver >= semver!(3, 7)
+  }
+
+  fn parse_iterm2(raw: &str) -> Option<Self> {
+    let (name, rest) = raw.split_once(' ')?;
+    if name != "iTerm2" {
+      return None;
+    }
+    let mut parts = rest.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    let patch = parts.next()?.parse::<u32>().ok()?;
+    Some(Self::Iterm2(semver!(major, minor, patch)))
+  }
+
+  fn parse_tmux(raw: &str) -> Option<Self> {
+    let (name, rest) = raw.split_once(' ')?;
+    if name != "tmux" {
+      return None;
+    }
+    let mut parts = rest.split('.');
+    // tmux minor may carry a trailing letter (e.g. "3.5a"); take leading digits only.
+    let major = parse_leading_u32(parts.next()?)?;
+    let minor = parse_leading_u32(parts.next()?)?;
+    Some(Self::Tmux(semver!(major, minor)))
+  }
+
+  fn parse_wezterm(raw: &str) -> Option<Self> {
+    raw.starts_with("WezTerm ").then_some(Self::WezTerm)
+  }
+}
+
+fn parse_leading_u32(s: &str) -> Option<u32> {
+  let end = s
+    .bytes()
+    .position(|b| !b.is_ascii_digit())
+    .unwrap_or(s.len());
+  if end == 0 {
+    return None;
+  }
+  s[..end].parse().ok()
+}
+
 #[derive(Debug, Default, Clone)]
 struct EventParser {
   events: VecDeque<TermEvent>,
   ss3_pending: bool,
   dcs_buf: Option<String>,
-  dcs_is_xtgettcap: bool,
+  dcs_kind: Option<DcsKind>,
   dcs_supported: bool,
 }
 
@@ -251,7 +377,7 @@ impl EventParser {
       events: VecDeque::new(),
       ss3_pending: false,
       dcs_buf: None,
-      dcs_is_xtgettcap: false,
+      dcs_kind: None,
       dcs_supported: false,
     }
   }
@@ -266,14 +392,16 @@ impl EventParser {
 
   pub fn parse_term_cap(&mut self) {
     let Some(buf) = self.dcs_buf.take() else {
+      log::trace!("parse_term_cap: no dcs_buf, skipping");
       return;
     };
     let supported = self.dcs_supported;
-    self.dcs_is_xtgettcap = false;
+    self.dcs_kind = None;
     self.dcs_supported = false;
 
     // Only emit when the terminal reported the cap as supported.
     if !supported {
+      log::debug!("XTGETTCAP response: cap unsupported (raw={buf:?})");
       return;
     }
 
@@ -282,11 +410,24 @@ impl EventParser {
       None => (buf.as_str(), None),
     };
     let Some(name) = Self::decode_hex(name_hex) else {
+      log::debug!("XTGETTCAP response: failed to decode name hex {name_hex:?}");
       return;
     };
     let _value = value_hex.and_then(Self::decode_hex);
 
+    log::debug!("XTGETTCAP response: name={name:?} value={_value:?}");
     self.push(TermEvent::Capabilities { name, _value });
+  }
+
+  pub fn parse_xtversion(&mut self) {
+    let Some(buf) = self.dcs_buf.take() else {
+      log::trace!("parse_xtversion: no dcs_buf, skipping");
+      return;
+    };
+    self.dcs_kind = None;
+    let xtver = XtVersion::parse(&buf);
+    log::debug!("XTVERSION response: raw={buf:?} parsed={xtver:?}");
+    self.push(TermEvent::XtVersion(xtver));
   }
 
   pub fn decode_hex(hex: &str) -> Option<String> {
@@ -310,6 +451,7 @@ impl EventParser {
 impl Perform for EventParser {
   #[allow(clippy::single_match)]
   fn hook(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
+    log::trace!("DCS hook: params={params:?}, intermediates={intermediates:?}, action={action:?}");
     let params: Vec<u16> = params
       .iter()
       .map(|p| p.first().copied().unwrap_or(0))
@@ -319,24 +461,37 @@ impl Perform for EventParser {
       ([b'+'], 'r') => {
         let first = params.first().copied().unwrap_or(0);
         self.dcs_supported = first == 1;
-        self.dcs_is_xtgettcap = true;
+        self.dcs_kind = Some(DcsKind::XtGetCap);
 
         self.dcs_buf = Some(String::new());
+        log::trace!(
+          "DCS hook: XTGETTCAP introducer (supported={})",
+          self.dcs_supported
+        );
+      }
+      ([b'>'], '|') => {
+        self.dcs_kind = Some(DcsKind::XtVersion);
+        self.dcs_buf = Some(String::new());
+        log::trace!("DCS hook: XTVERSION introducer");
       }
 
-      _ => (),
+      _ => {
+        log::trace!("DCS hook: unrecognized introducer ({intermediates:?}, {action:?})");
+      }
     }
   }
 
-  fn put(&mut self, _byte: u8) {
+  fn put(&mut self, byte: u8) {
     if let Some(buf) = self.dcs_buf.as_mut() {
-      buf.push(_byte as char);
+      buf.push(byte as char);
     }
   }
 
   fn unhook(&mut self) {
-    if self.dcs_is_xtgettcap {
-      self.parse_term_cap();
+    let Some(kind) = self.dcs_kind else { return };
+    match kind {
+      DcsKind::XtGetCap => self.parse_term_cap(),
+      DcsKind::XtVersion => self.parse_xtversion(),
     }
   }
 
@@ -522,10 +677,8 @@ impl Perform for EventParser {
         };
         TermEvent::Key(KeyEvent(key, mods))
       }
-      ([b'?'], 'u') => {
-        // capabilities response
-        TermEvent::KittyKbdFlags
-      }
+      ([b'?'], 'c') => TermEvent::PrimaryDevAttr,
+      ([b'?'], 'u') => TermEvent::KittyKbdFlags,
       // SGR mouse: CSI < button;x;y M/m (ignore mouse events for now)
       ([b'<'], dir @ ('M' | 'm')) => {
         if dir == 'm' {
@@ -792,6 +945,12 @@ bitflags! {
   }
 }
 
+pub(crate) enum ColorMode {
+  Truecolor,
+  Palette256,
+  Palette16,
+}
+
 /// An abstraction over the terminal that manages terminal attributes, and I/O.
 #[derive(Debug)]
 pub(crate) struct Terminal {
@@ -810,6 +969,7 @@ pub(crate) struct Terminal {
 
   termios_stack: Vec<Termios>,
   term_caps: TermCap,
+  xt_version: Option<XtVersion>,
 
   t_cols: usize,
   t_rows: usize,
@@ -840,6 +1000,7 @@ impl Clone for Terminal {
       interactive: self.interactive,
       termios_stack: self.termios_stack.clone(),
       term_caps: self.term_caps,
+      xt_version: self.xt_version.clone(),
       t_cols: self.t_cols,
       t_rows: self.t_rows,
       scroll_region: self.scroll_region,
@@ -850,11 +1011,21 @@ impl Clone for Terminal {
 }
 
 impl Terminal {
+  pub const CAP_BURST: &str = concat!(
+    "\x1b[?u",
+    "\x1bP+q5375\x1b\\",
+    "\x1bP+q524742\x1b\\",
+    "\x1b[>q",
+    "\x1b[c",
+  );
+  pub const MODIFY_OTHER_KEYS: &str = "\x1b[>4;1m";
+  pub const APPLICATION_KEYPAD: &str = "\x1b=";
+  pub const SYNC_START: &str = "\x1b[?2026h";
+  pub const SYNC_END: &str = "\x1b[?2026l";
   pub const BRACKET_PASTE_ON: &str = "\x1b[?2004h";
   pub const BRACKET_PASTE_OFF: &str = "\x1b[?2004l";
   pub const KITTY_PROTO_ON: &str = "\x1b[>17u";
   pub const KITTY_PROTO_OFF: &str = "\x1b[<u";
-  pub const CAP_QUERY: &str = "\x1b[?u";
   pub const ALT_BUFFER_ENTER: &str = "\x1b[?1049h";
   pub const ALT_BUFFER_EXIT: &str = "\x1b[?1049l";
   pub const CURSOR_HIDE: &str = "\x1b[?25l";
@@ -892,6 +1063,38 @@ impl Terminal {
   pub fn emit_osc_exec_end(&mut self, code: i32) -> ShResult<()> {
     write!(self, "{}", Self::osc_exec_end(code))?;
     Ok(())
+  }
+
+  pub fn color_mode(&self) -> Option<ColorMode> {
+    if !try_var!("NO_COLOR")?.is_empty() {
+      return None;
+    }
+
+    if let Some(val) = try_var!("SHED_COLOR_MODE") {
+      match val.as_str() {
+        "truecolor" | "24bit" => return Some(ColorMode::Truecolor),
+        "256" | "256color" => return Some(ColorMode::Palette256),
+        "16" | "8" => return Some(ColorMode::Palette16),
+        "none" | "off" => return None,
+        _ => {}
+      }
+    }
+
+    if self.term_caps.contains(TermCap::TRUECOLOR) {
+      return Some(ColorMode::Truecolor);
+    }
+
+    if let Some(term) = try_var!("TERM") {
+      if term == "dumb" {
+        return None;
+      }
+
+      if term.contains("256color") {
+        return Some(ColorMode::Palette256);
+      }
+    }
+
+    Some(ColorMode::Palette16)
   }
 
   fn toggle_attr(
@@ -936,6 +1139,7 @@ impl Terminal {
       raw_mode: false,
       termios_stack: vec![],
       term_caps: TermCap::empty(),
+      xt_version: None,
       t_cols: cols as usize,
       t_rows: rows as usize,
       scroll_region: None,
@@ -988,59 +1192,110 @@ impl Terminal {
   pub fn setup_terminal(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
     self.edit_termios(enable_raw_mode)?;
-    if self.check_kitty_kbd_flags()?.is_some() {
+
+    self.query_term_caps()?;
+    if self.term_caps.contains(TermCap::KITTY_KBD_PROTO)
+      && self
+        .xt_version
+        .as_ref()
+        .is_none_or(|v| !v.has_broken_kitty_kbd())
+    {
       self.toggle_kitty_proto(true)?;
+    } else if self
+      .xt_version
+      .as_ref()
+      .is_some_and(|v| v.needs_wezterm_workaround())
+    {
+      self.write_direct(Self::APPLICATION_KEYPAD)?;
+    } else {
+      self.write_direct(Self::MODIFY_OTHER_KEYS)?;
+      self.write_direct(Self::APPLICATION_KEYPAD)?;
     }
-    self.query_caps()?;
+
     Ok(guard.activate())
   }
 
-  pub fn query_caps(&mut self) -> ShResult<()> {
+  pub fn query_term_caps(&mut self) -> ShResult<()> {
     if self.test_mode {
+      log::debug!("query_term_caps: test_mode set, skipping probe");
       return Ok(());
     }
-    let Some(tty) = self.tty() else { return Ok(()) };
+    let Some(tty) = self.tty() else {
+      log::debug!("query_term_caps: no tty, skipping probe");
+      return Ok(());
+    };
     let mut caps = TermCap::empty();
+    log::debug!(
+      "query_term_caps: sending capability burst ({} bytes)",
+      Self::CAP_BURST.len()
+    );
+    self.write_direct(Self::CAP_BURST)?;
 
-    let queries = [("Su", TermCap::SYNC_OUTPUT), ("RGB", TermCap::TRUECOLOR)];
-
-    let mut query_str = String::new();
-    for (name, _) in &queries {
-      // convert name into hex, send to terminal
-      let hex: String = name.bytes().map(|b| format!("{b:02x}")).collect();
-      query_str.push_str(&format!("\x1bP+q{hex}\x1b\\"));
-    }
-
-    self.write_direct(&query_str)?;
-
-    let start = Instant::now();
-    loop {
-      let deadline = 50u128.saturating_sub(start.elapsed().as_millis());
-      if deadline == 0 {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    'outer: while Instant::now() < deadline {
+      let remaining = deadline.saturating_duration_since(Instant::now());
+      let Ok(timeout) = PollTimeout::try_from(remaining) else {
+        log::trace!("query_term_caps: timeout conversion failed, exiting loop");
+        break;
+      };
+      if self.poll(timeout)? == 0 {
+        log::debug!("query_term_caps: poll timeout reached, exiting loop");
         break;
       }
 
-      let timeout = PollTimeout::try_from(deadline as i32).unwrap();
-      if self.poll(timeout)? > 0 {
-        self.reader.read(tty)?;
-        while let Some(event) = self.reader.read_event()? {
-          if let TermEvent::Capabilities { name, _value: _ } = event {
-            for (cap, flag) in &queries {
-              if name == *cap {
-                caps.insert(*flag);
-              }
-            }
+      self.reader.read(tty)?;
+      match_loop!(self.reader.read_event()? => event, {
+        TermEvent::KittyKbdFlags => {
+          log::debug!("query_term_caps: kitty keyboard protocol supported");
+          self.term_caps.insert(TermCap::KITTY_KBD_PROTO);
+        }
+        TermEvent::Capabilities { name, .. } => match name.as_str() {
+          "RGB" => {
+            log::debug!("query_term_caps: TRUECOLOR supported");
+            caps.insert(TermCap::TRUECOLOR);
+          }
+          "Su" => {
+            log::debug!("query_term_caps: SYNC_OUTPUT supported");
+            caps.insert(TermCap::SYNC_OUTPUT);
+          }
+          _ => {
+            log::trace!("query_term_caps: unrecognized cap name {name:?}");
           }
         }
-      }
+        TermEvent::XtVersion(ver) => {
+          log::debug!("query_term_caps: recording xt_version={ver:?}");
+          self.xt_version = Some(ver);
+        }
+        TermEvent::PrimaryDevAttr => {
+          log::debug!("query_term_caps: found DA1");
+          break 'outer
+        }
+        other => {
+          log::trace!("query_term_caps: ignoring event {other:?}");
+        }
+      });
     }
 
-    if env::var("COLORTERM").is_ok_and(|v| v == "truecolor" || v == "24bit") {
+    if let Some(val) = try_var!("COLORTERM")
+      && matches!(val.as_str(), "truecolor" | "24bit")
+    {
+      log::debug!("query_term_caps: COLORTERM environment variable indicates truecolor support");
       caps.insert(TermCap::TRUECOLOR);
     }
 
-    self.term_caps = caps;
+    self.term_caps |= caps;
+
+    log::debug!(
+      "query_term_caps: complete (term_caps={:?}, local_caps={:?}, xt_version={:?})",
+      self.term_caps,
+      caps,
+      self.xt_version
+    );
     Ok(())
+  }
+
+  pub fn term_caps(&self) -> TermCap {
+    self.term_caps
   }
 
   fn save_state(&self) -> Snapshot {
@@ -1145,32 +1400,6 @@ impl Terminal {
     let Some(tty) = self.tty() else { return Ok(0) };
     let poll_fd = PollFd::new(tty, PollFlags::POLLIN);
     Ok(poll(&mut [poll_fd], timeout)?)
-  }
-
-  pub fn check_kitty_kbd_flags(&mut self) -> ShResult<Option<TermEvent>> {
-    if self.test_mode {
-      return Ok(None);
-    }
-    let Some(tty) = self.tty() else {
-      return Ok(None);
-    };
-
-    self.write_direct(Self::CAP_QUERY)?;
-
-    if self.poll(PollTimeout::from(50u8))? == 0 {
-      // timeout - assume we didn't get a response
-      return Ok(None);
-    }
-
-    self.reader.read(tty)?;
-
-    while let Some(event) = self.reader.read_event()? {
-      if let TermEvent::KittyKbdFlags = event {
-        return Ok(Some(event));
-      }
-    }
-
-    Ok(None)
   }
 
   pub fn get_cursor_pos(&mut self) -> ShResult<Option<(Rows, Cols)>> {
@@ -1278,7 +1507,7 @@ impl Terminal {
   }
 
   pub fn send_bell(&mut self) -> ShResult<()> {
-    if Shed::shopts(|o| o.core.bell_enabled) {
+    if shopt!(core.bell_enabled) {
       // we use a cooldown because I don't like having my ears assaulted by 1 million bells
       // whenever i finish clearing the line using backspace.
       let now = Instant::now();

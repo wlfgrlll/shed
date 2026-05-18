@@ -28,6 +28,7 @@ use super::{
     self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, split_case_pat,
     var_ctx_guard, with_status,
   },
+  var,
 };
 
 pub fn in_cd_path(name: Tk) -> bool {
@@ -40,7 +41,7 @@ pub fn in_cd_path(name: Tk) -> bool {
   if Path::new(&name).is_dir() {
     return true;
   }
-  let cd_path = Shed::vars(|v| v.get_var("CDPATH"));
+  let cd_path = var!("CDPATH");
   let entries = cd_path.split(':');
   for entry in entries {
     let full_path = Path::new(entry).join(&name);
@@ -437,6 +438,15 @@ impl Dispatcher {
     }
     Ok(())
   }
+  fn exec_arith(&mut self, arith: Node) -> ShResult<()> {
+    let NdRule::Arithmetic { body } = arith.class else {
+      unreachable!()
+    };
+    let result = expand_arithmetic_wrapped(body.as_str())?;
+    let val: f64 = result.parse().unwrap_or(0.0);
+    state::Shed::set_status_from_bool(val != 0.0);
+    Ok(())
+  }
   pub fn exec_func_def(&mut self, func_def: Node) -> ShResult<()> {
     let blame = func_def.get_span();
     let ctx = func_def.context.clone();
@@ -466,15 +476,6 @@ impl Dispatcher {
     }
 
     state::Shed::set_status(0);
-    Ok(())
-  }
-  fn exec_arith(&mut self, arith: Node) -> ShResult<()> {
-    let NdRule::Arithmetic { body } = arith.class else {
-      unreachable!()
-    };
-    let result = expand_arithmetic_wrapped(body.as_str())?;
-    let val: f64 = result.parse().unwrap_or(0.0);
-    state::Shed::set_status_from_bool(val != 0.0);
     Ok(())
   }
   fn exec_func(&mut self, func: Node) -> ShResult<()> {

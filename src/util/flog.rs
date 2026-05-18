@@ -1,8 +1,6 @@
 use std::cell::Cell;
 
-use crate::{ShResult, sherr};
-
-use super::{Shed, ui};
+use super::{ShResult, sherr, system_msg, ui, var};
 
 thread_local! {
   static IN_META_MUT: Cell<bool> = const { Cell::new(false) };
@@ -15,7 +13,7 @@ pub(crate) fn init() -> ShResult<()> {
 }
 
 pub(crate) fn update_log_level() {
-  let level_raw = Shed::vars(|v| v.get_var("SHED_LOG"));
+  let level_raw = var!("SHED_LOG");
   let level = level_raw
     .parse::<log::LevelFilter>()
     .unwrap_or(log::LevelFilter::Error);
@@ -52,7 +50,7 @@ impl log::Log for Flog {
       format!("[{level}] {args}")
     };
 
-    Shed::meta_mut(|m| m.post_system_message(line));
+    system_msg!("{line}")
   }
   fn flush(&self) {}
 }

@@ -11,7 +11,7 @@ use super::{
     lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
   },
   expand::{expand_raw_inner, markers::strip_markers, unescape_str},
-  match_loop,
+  match_loop, shopt,
   state::{self, util::get_exec_wrappers, vars::ShellParam},
   util::{QuoteState, has_unescaped, split_at_unescaped},
 };
@@ -134,8 +134,7 @@ fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
 /// 3. All directories in PATH environment variable
 /// 4. Shell functions and aliases in the current shell state
 fn is_valid(command: Tk) -> bool {
-  if Shed::shopts(|s| s.core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone())
-  {
+  if shopt!(core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone()) {
     // this is a directory and autocd is enabled
     return true;
   }
@@ -639,7 +638,7 @@ impl CtxTk {
 /// Check if a given path refers to a file or is a prefix of an existing filename
 fn check_path_exists(path: &str) -> bool {
   // NOTE: keep an eye on this. this might have pretty significant overhead on network mounts
-  if !Shed::shopts(|o| o.highlight.check_files) {
+  if !shopt!(highlight.check_files) {
     return false;
   }
 

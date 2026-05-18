@@ -1,5 +1,3 @@
-use chrono::{DateTime, Local};
-
 use super::{
   Shed,
   getopt::{Opt, OptSpec},
@@ -35,22 +33,16 @@ impl super::Builtin for Msg {
 
     if args.argv.is_empty() {
       // argv is empty, maybe they want us to list past messages?
-      Shed::meta(|m| -> ShResult<()> {
-        let history = if system {
-          m.system_msg_history()
-        } else {
-          m.status_msg_history()
-        };
-        for (time, msg) in history {
-          let time: DateTime<Local> = (*time).into();
-          let formatted = time.format("[%H:%M:%S]").to_string();
-          let msg = msg.trim().replace('\n', "\n\t\t"); // aligns multiline messages
+      let history = if system {
+        Shed::system_msg_hist()
+      } else {
+        Shed::status_msg_hist()
+      };
 
-          outln!("{formatted}\t{msg}");
-        }
-
-        Ok(())
-      })?;
+      for msg in history {
+        let formatted = msg.with_timestamp();
+        outln!("{formatted}");
+      }
     }
 
     let (msg, _span) = join_raw_args(args.argv);

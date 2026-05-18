@@ -4,7 +4,7 @@ use crate::expand::escape::unescape_math;
 use crate::expand::var::expand_raw;
 use crate::state::{Shed, vars::VarFlags, vars::VarKind};
 use crate::util::{ShErr, ShResult};
-use crate::{match_loop, sherr};
+use crate::{match_loop, sherr, try_var};
 
 #[derive(Debug, Clone)]
 enum ArithOp {
@@ -125,7 +125,7 @@ impl StackVal {
     match self {
       StackVal::Num(n) => Ok(*n),
       StackVal::Var(name) => {
-        let val = Shed::vars(|v| v.try_get_var(name)).unwrap_or_else(|| "0".into());
+        let val = try_var!(name).unwrap_or_else(|| "0".into());
         val
           .parse::<i64>()
           .map_err(|_| sherr!(ParseErr, "Variable '{name}' does not contain an integer",))
@@ -135,7 +135,7 @@ impl StackVal {
 }
 
 fn read_var_as_i64(name: &str) -> ShResult<i64> {
-  let val = Shed::vars(|v| v.try_get_var(name)).unwrap_or_else(|| "0".into());
+  let val = try_var!(name).unwrap_or_else(|| "0".into());
   val
     .parse::<i64>()
     .map_err(|_| sherr!(ParseErr, "Variable '{name}' does not contain an integer",))
@@ -1234,7 +1234,7 @@ mod tests {
   fn arith_assign() {
     let _g = TestGuard::new();
     arith("(x = 5)");
-    let val = Shed::vars(|v| v.try_get_var("x")).unwrap();
+    let val = try_var!("x").unwrap();
     assert_eq!(val, "5");
   }
 
@@ -1243,7 +1243,7 @@ mod tests {
     let _g = TestGuard::new();
     Shed::vars_mut(|v| v.set_var("x", VarKind::Str("3".into()), VarFlags::empty())).unwrap();
     arith("(x += 2)");
-    let val = Shed::vars(|v| v.try_get_var("x")).unwrap();
+    let val = try_var!("x").unwrap();
     assert_eq!(val, "5");
   }
 
@@ -1251,8 +1251,8 @@ mod tests {
   fn arith_chained_assign() {
     let _g = TestGuard::new();
     arith("(a = b = 7)");
-    let a = Shed::vars(|v| v.try_get_var("a")).unwrap();
-    let b = Shed::vars(|v| v.try_get_var("b")).unwrap();
+    let a = try_var!("a").unwrap();
+    let b = try_var!("b").unwrap();
     assert_eq!(a, "7");
     assert_eq!(b, "7");
   }
@@ -1265,7 +1265,7 @@ mod tests {
     Shed::vars_mut(|v| v.set_var("i", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
     let result = arith("(i++)");
     assert_eq!(result, 5.0); // returns old value
-    let val = Shed::vars(|v| v.try_get_var("i")).unwrap();
+    let val = try_var!("i").unwrap();
     assert_eq!(val, "6");
   }
 
@@ -1275,7 +1275,7 @@ mod tests {
     Shed::vars_mut(|v| v.set_var("i", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
     let result = arith("(++i)");
     assert_eq!(result, 6.0); // returns new value
-    let val = Shed::vars(|v| v.try_get_var("i")).unwrap();
+    let val = try_var!("i").unwrap();
     assert_eq!(val, "6");
   }
 
@@ -1287,7 +1287,7 @@ mod tests {
     // (j=2, j+1) should set j=2 and return 3
     let result = arith("(j=2, j+1)");
     assert_eq!(result, 3.0);
-    let val = Shed::vars(|v| v.try_get_var("j")).unwrap();
+    let val = try_var!("j").unwrap();
     assert_eq!(val, "2");
   }
 
@@ -1296,8 +1296,8 @@ mod tests {
     let _g = TestGuard::new();
     // i=(j=2,j+1) sets j=2, evaluates j+1=3, assigns i=3
     arith("(i=(j=2,j+1))");
-    let i = Shed::vars(|v| v.try_get_var("i")).unwrap();
-    let j = Shed::vars(|v| v.try_get_var("j")).unwrap();
+    let i = try_var!("i").unwrap();
+    let j = try_var!("j").unwrap();
     assert_eq!(i, "3");
     assert_eq!(j, "2");
   }

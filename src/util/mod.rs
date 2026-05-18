@@ -6,10 +6,9 @@ mod pos;
 mod strops;
 mod ui;
 
-use crate::state;
 use std::os::fd::BorrowedFd;
 
-use super::{Shed, eval, expand, match_loop, sherr};
+use super::{Shed, eval, expand, match_loop, sherr, state, system_msg, var, write_term};
 
 pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
 pub(super) use pos::{Pos, SignedPos};

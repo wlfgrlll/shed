@@ -266,6 +266,7 @@ impl super::Builtin for ReadKey {
 mod tests {
   use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
+  use crate::var;
 
   // ===================== Basic read into REPLY =====================
 
@@ -273,7 +274,7 @@ mod tests {
   fn read_pipe_into_reply() {
     let _g = TestGuard::new();
     test_input("read < <(echo hello)").unwrap();
-    let val = Shed::vars(|v| v.get_var("REPLY"));
+    let val = var!("REPLY");
     assert_eq!(val, "hello");
   }
 
@@ -281,7 +282,7 @@ mod tests {
   fn read_pipe_into_named_var() {
     let _g = TestGuard::new();
     test_input("read myvar < <(echo world)").unwrap();
-    let val = Shed::vars(|v| v.get_var("myvar"));
+    let val = var!("myvar");
     assert_eq!(val, "world");
   }
 
@@ -291,26 +292,26 @@ mod tests {
   fn read_two_vars() {
     let _g = TestGuard::new();
     test_input("read a b < <(echo 'hello world')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "hello");
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "world");
+    assert_eq!(var!("a"), "hello");
+    assert_eq!(var!("b"), "world");
   }
 
   #[test]
   fn read_last_var_gets_remainder() {
     let _g = TestGuard::new();
     test_input("read a b < <(echo 'one two three four')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "one");
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "two three four");
+    assert_eq!(var!("a"), "one");
+    assert_eq!(var!("b"), "two three four");
   }
 
   #[test]
   fn read_more_vars_than_fields() {
     let _g = TestGuard::new();
     test_input("read a b c < <(echo 'only')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "only");
+    assert_eq!(var!("a"), "only");
     // b and c get empty strings since there are no more fields
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "");
-    assert_eq!(Shed::vars(|v| v.get_var("c")), "");
+    assert_eq!(var!("b"), "");
+    assert_eq!(var!("c"), "");
   }
 
   // ===================== Custom IFS =====================
@@ -321,9 +322,9 @@ mod tests {
     Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     test_input("read x y z < <(echo 'a:b:c')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("x")), "a");
-    assert_eq!(Shed::vars(|v| v.get_var("y")), "b");
-    assert_eq!(Shed::vars(|v| v.get_var("z")), "c");
+    assert_eq!(var!("x"), "a");
+    assert_eq!(var!("y"), "b");
+    assert_eq!(var!("z"), "c");
   }
 
   #[test]
@@ -332,8 +333,8 @@ mod tests {
     Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(":".into()), VarFlags::empty())).unwrap();
 
     test_input("read x y < <(echo 'a:b:c:d')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("x")), "a");
-    assert_eq!(Shed::vars(|v| v.get_var("y")), "b:c:d");
+    assert_eq!(var!("x"), "a");
+    assert_eq!(var!("y"), "b:c:d");
   }
 
   // ===================== Custom delimiter =====================
@@ -343,7 +344,7 @@ mod tests {
     let _g = TestGuard::new();
     // -d sets the delimiter; printf sends "hello,world" - read stops at ','
     test_input("read -d , myvar < <(echo -n 'hello,world')").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(var!("myvar"), "hello");
   }
 
   // ===================== Status =====================

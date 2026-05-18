@@ -4,11 +4,11 @@ use std::{
 };
 
 use super::{
-  ShResult, Shed,
+  ShResult,
   getopt::{Opt, OptSpec},
   outln, sherr,
   state::util,
-  with_status,
+  try_var, var, with_status,
 };
 
 pub(super) struct Cd;
@@ -85,7 +85,7 @@ impl super::Builtin for Cd {
 }
 
 fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
-  let path = Shed::vars(|v| v.get_var("CDPATH"));
+  let path = var!("CDPATH");
   let mut paths = path
     .split(':')
     .filter(|p| !p.trim().is_empty())
@@ -95,7 +95,7 @@ fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
 }
 
 fn get_old_pwd() -> PathBuf {
-  Shed::vars(|v| v.try_get_var("OLDPWD"))
+  try_var!("OLDPWD")
     .or_else(|| util::get_home_str().or_else(|| Some(String::from("/"))))
     .map(PathBuf::from)
     .unwrap()
@@ -108,6 +108,7 @@ pub mod tests {
 
   use tempfile::TempDir;
 
+  use crate::var;
   use crate::{
     state::{
       self, Shed,
@@ -277,7 +278,7 @@ pub mod tests {
     test_input(format!("cd {}", dir_a.path().display())).unwrap();
     test_input(format!("cd {}", dir_b.path().display())).unwrap();
 
-    let oldpwd = Shed::vars(|v| v.get_var("OLDPWD"));
+    let oldpwd = var!("OLDPWD");
     assert_eq!(oldpwd, dir_a.path().display().to_string());
   }
 
@@ -288,7 +289,7 @@ pub mod tests {
 
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
-    let pwd = Shed::vars(|v| v.get_var("PWD"));
+    let pwd = var!("PWD");
     assert_eq!(pwd, env::current_dir().unwrap().display().to_string());
   }
 

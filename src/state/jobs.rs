@@ -18,15 +18,14 @@ use super::{
   Shed,
   logic::AutoCmdKind,
   meta::CmdTimer,
-  util::{get_time_fmt, with_vars},
-  vars::ShellParam,
-};
-use crate::{
   procio::{stderr_fileno, stdout_fileno},
   sherr,
   signal::{disable_reaping, enable_reaping},
-  util::ShResult,
+  system_msg,
+  util::{get_time_fmt, with_vars},
+  vars::ShellParam,
 };
+use crate::util::ShResult;
 
 pub const SIG_EXIT_OFFSET: i32 = 128;
 
@@ -670,7 +669,7 @@ impl JobTab {
     self.order.push(tab_pos);
     if !silent {
       let msg = job.display(&self.order, JobCmdFlags::INIT);
-      Shed::meta_mut(|m| m.post_system_message(msg));
+      system_msg!("{msg}")
     }
     if tab_pos == self.jobs.len() {
       self.jobs.push(Some(job))

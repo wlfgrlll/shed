@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use super::{Lines, Pos, Shed};
+use super::{Lines, Pos, shopt};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Hint {
@@ -158,7 +158,7 @@ impl super::LineBuf {
       return;
     }
 
-    if !Shed::shopts(|o| o.line.auto_suggest) {
+    if !shopt!(line.auto_suggest) {
       self.hint = None;
       return;
     }

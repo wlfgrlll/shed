@@ -10,12 +10,11 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use super::{
-  Shed,
   complete::{Candidate, FuzzySelector},
   editcmd::Direction,
   linebuf::{Hint, LineBuf, Lines},
   procio::{MIN_INTERNAL_FD, do_something_that_opens_fds_that_we_cant_access_hack},
-  sherr, state,
+  sherr, shopt, state,
   util::ShResult,
 };
 
@@ -135,7 +134,7 @@ pub struct History {
 impl History {
   const USER_VERSION: i32 = 2;
   pub fn new(conn: Arc<Connection>, table: &str) -> ShResult<Self> {
-    let max_hist = Shed::shopts(|o| o.core.max_hist);
+    let max_hist = shopt!(core.max_hist);
 
     Self::init_db(&conn, table)?;
 
@@ -306,7 +305,7 @@ impl History {
     if command.is_empty() {
       return Ok(None);
     }
-    if Shed::shopts(|o| o.core.hist_ignore_dupes) {
+    if shopt!(core.hist_ignore_dupes) {
       let last: Option<String> = self
         .conn
         .query_row(
@@ -632,7 +631,7 @@ impl History {
     if command.is_empty() {
       return Ok(());
     }
-    if Shed::shopts(|o| o.core.hist_ignore_dupes) {
+    if shopt!(core.hist_ignore_dupes) {
       let last: Option<String> = self
         .conn
         .query_row(

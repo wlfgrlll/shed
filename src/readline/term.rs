@@ -2,7 +2,7 @@ use std::{env, fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{Shed, linebuf::Pos, state::terminal::width, util::ShResult, write_term};
+use super::{Shed, linebuf::Pos, shopt, state::terminal::width, util::ShResult, write_term};
 
 pub fn enumerate_lines(
   s: &str,
@@ -136,7 +136,7 @@ impl Layout {
     left_margin: usize,
     raw_calc: bool,
   ) -> Pos {
-    let tab_stop = Shed::shopts(|o| o.line.tab_width);
+    let tab_stop = shopt!(line.tab_width);
     let mut pos = orig;
     let mut esc_seq = 0;
     for c in s.graphemes(true) {
@@ -196,12 +196,12 @@ pub fn redraw(
 
   let t_cols = Shed::term(|t| t.t_cols());
 
-  let tab_width = Shed::shopts(|o| o.line.tab_width);
+  let tab_width = shopt!(line.tab_width);
   let prompt_end = Layout::calc_pos(t_cols, prompt, Pos { col: 0, row: 0 }, 0, false);
   let expanded = expand_tabs(line, prompt_end.col, tab_width);
   let multiline = expanded.contains('\n') || prompt_end.col == 0;
   if multiline {
-    let show_numbers = Shed::shopts(|o| o.line.line_numbers);
+    let show_numbers = shopt!(line.line_numbers);
     let display_line = enumerate_lines(
       &expanded,
       prompt_end.col,

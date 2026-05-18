@@ -14,9 +14,10 @@ use super::{
   },
   motion, ordered,
   procio::{RedirSet, RedirSpec, capture_command},
+  shopt,
   stash::{Stash, StashedCmd},
   state::{Shed, vars::VarFlags, vars::VarKind},
-  status_msg, system_msg,
+  status_msg, system_msg, try_var,
 };
 use crate::util::{format_size, var_ctx_guard};
 use crate::verb;
@@ -302,7 +303,7 @@ impl super::LineBuf {
         };
         self.cursor.pos = self.cursor.pos + cursor_offset;
         self.fix_cursor();
-        if Shed::shopts(|o| o.line.auto_indent) {
+        if shopt!(line.auto_indent) {
           self.equalize_rows(line_range.collect());
         }
       }
@@ -450,7 +451,7 @@ impl super::LineBuf {
   }
 
   fn ex_edit(&mut self, paths: &[PathBuf]) -> ShResult<()> {
-    if Shed::vars(|v| v.try_get_var("EDITOR")).is_none() {
+    if try_var!("EDITOR").is_none() {
       system_msg!("$EDITOR is unset. Aborting edit.");
       Ok(())
     } else {

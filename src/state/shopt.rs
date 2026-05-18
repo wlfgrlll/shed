@@ -6,14 +6,14 @@ use crate::{
   eval::lex::Span,
   expand::expand_keymap,
   procio::stderr_fileno,
-  sherr, two_way_display,
+  sherr, shopt, two_way_display,
   util::{ShResult, ansi_from_description},
 };
 
 use super::Shed;
 
 pub(crate) fn xtrace_print(argv: &[(String, Span)]) {
-  if Shed::shopts(|o| o.set.xtrace) {
+  if shopt!(set.xtrace) {
     let words = argv
       .iter()
       .map(|(s, _)| s.to_string())

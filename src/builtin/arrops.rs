@@ -244,6 +244,7 @@ mod tests {
       vars::{VarFlags, VarKind},
     },
     tests::testutil::{TestGuard, test_input},
+    var,
   };
   use std::collections::VecDeque;
 
@@ -350,7 +351,7 @@ mod tests {
     set_arr("arr", &["x", "y", "z"]);
 
     test_input("pop -v result arr").unwrap();
-    let val = Shed::vars(|v| v.get_var("result"));
+    let val = var!("result");
     assert_eq!(val, "z");
     assert_eq!(get_arr("arr"), vec!["x", "y"]);
   }
@@ -402,7 +403,7 @@ mod tests {
     set_arr("arr", &["first", "second"]);
 
     test_input("fpop -v result arr").unwrap();
-    let val = Shed::vars(|v| v.get_var("result"));
+    let val = var!("result");
     assert_eq!(val, "first");
     assert_eq!(get_arr("arr"), vec!["second"]);
   }

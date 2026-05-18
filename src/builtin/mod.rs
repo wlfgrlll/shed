@@ -10,10 +10,11 @@ use super::{
   },
   expand, keys, match_loop, out, outln, procio,
   procio::RedirSet,
-  readline, sherr, signal, state,
+  readline, sherr, shopt, signal, state,
   state::{Shed, jobs::ChildProc, shopt as shopt_internal},
-  status_msg, system_msg,
+  status_msg, system_msg, try_var,
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
+  var,
 };
 
 mod alias;

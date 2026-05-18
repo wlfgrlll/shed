@@ -23,14 +23,16 @@ use crate::{
     editmode::{EditMode, ViInsert},
     linebuf::LineBuf,
   },
+  shopt,
   state::{
     self, Shed,
     meta::Utility,
-    terminal::{Cols, Rows, TermGuard, calc_str_width},
+    terminal::{ColorMode, Cols, Rows, TermGuard, calc_str_width},
     vars::{VarFlags, VarKind},
   },
+  try_var,
   util::{self, ShResult, ends_with_unescaped, rfind_unescaped, var_ctx_guard},
-  write_term,
+  var, write_term,
 };
 
 bitflags! {
@@ -451,7 +453,7 @@ impl std::ops::Deref for Candidate {
 
 impl Candidate {
   pub fn is_match(&self, other: &str) -> bool {
-    let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
+    let ignore_case = shopt!(prompt.completion_ignore_case);
     if ignore_case {
       let other_lower = other.to_lowercase();
       let self_lower = self.content.to_lowercase();
@@ -493,7 +495,7 @@ impl Candidate {
   }
 
   pub fn strip_prefix(&self, prefix: &str) -> Option<String> {
-    let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
+    let ignore_case = shopt!(prompt.completion_ignore_case);
     if ignore_case {
       let old_len = self.content.len();
       let prefix_lower = prefix.to_lowercase();
@@ -579,7 +581,7 @@ pub(crate) fn complete_users(start: &str) -> Vec<Candidate> {
 }
 
 pub(crate) fn complete_vars(start: &str) -> Vec<Candidate> {
-  if !Shed::vars(|v| v.get_var(start)).is_empty() {
+  if !var!(start).is_empty() {
     return vec![];
   }
   // if we are here, we have a variable substitution that isn't complete
@@ -588,7 +590,7 @@ pub(crate) fn complete_vars(start: &str) -> Vec<Candidate> {
     v.flatten_vars()
       .keys()
       .map(|s| {
-        if let Some(val) = Shed::vars(|v| v.try_get_var(s)) {
+        if let Some(val) = try_var!(s) {
           Candidate::from(s).with_desc(val)
         } else {
           Candidate::from(s)
@@ -600,7 +602,7 @@ pub(crate) fn complete_vars(start: &str) -> Vec<Candidate> {
 }
 
 pub(crate) fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
-  if !Shed::vars(|v| v.get_var(raw)).is_empty() {
+  if !var!(raw).is_empty() {
     return vec![];
   }
   // if we are here, we have a variable substitution that isn't complete
@@ -609,7 +611,7 @@ pub(crate) fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
     v.flatten_vars()
       .keys()
       .map(|k| {
-        if let Some(val) = Shed::vars(|v| v.try_get_var(k)) {
+        if let Some(val) = try_var!(k) {
           Candidate::from(k.to_string()).with_desc(val)
         } else {
           Candidate::from(k.to_string())
@@ -652,7 +654,7 @@ fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
 
   log::debug!("After utilities, candidates are: {:?}", candidates);
 
-  if Shed::shopts(|o| o.core.autocd) {
+  if shopt!(core.autocd) {
     let dirs = complete_dirs(start, cursor_pos);
     candidates.extend(dirs);
   }
@@ -694,7 +696,7 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
   let escaped_pre = escape_glob(&unescaped_pre, false);
   let escaped_post = escape_glob(&unescaped_post, false);
 
-  let ignore_case = Shed::shopts(|o| o.prompt.completion_ignore_case);
+  let ignore_case = shopt!(prompt.completion_ignore_case);
   let pat = format!("{escaped_pre}*{escaped_post}");
   let match_opts = glob::MatchOptions {
     case_sensitive: !ignore_case,
@@ -712,6 +714,9 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
       let raw = c.content.clone();
 
       let mut new_content = if let Some(after_prefix) = raw.strip_prefix(&unescaped_pre) {
+        // strip the start and end, escape it for completion.
+        // We do this so that something like "$SOME_PATH/foo"
+        // is not replaced by "/some/path/foo" (preserves variable names and other stuff)
         let middle = after_prefix
           .strip_suffix(&unescaped_post)
           .unwrap_or(after_prefix);
@@ -1364,8 +1369,6 @@ pub(crate) struct FuzzyCompleter {
 
 impl FuzzySelector {
   const SELECTOR_GRAY: &str = "\x1b[90m▌\x1b[0m";
-  const SELECTOR_HL: &str = "\x1b[38;2;200;0;120m▌\x1b[1;39;48;5;237m";
-  const SELECTOR_HOVER: &str = "\x1b[90m▌\x1b[1;39;48;5;237m";
   const PROMPT_ARROW: &str = "\x1b[1;36m>\x1b[0m";
 
   pub fn new(title: impl Into<String>) -> Self {
@@ -1392,6 +1395,25 @@ impl FuzzySelector {
       number_candidates: enable,
       ..self
     }
+  }
+  fn selector_hl() -> String {
+    match Shed::term(|t| t.color_mode()) {
+      Some(ColorMode::Truecolor) => "\x1b[38;2;200;0;120m▌\x1b[1;39;48;5;237m",
+      Some(ColorMode::Palette256) => "\x1b[38;5;162m▌\x1b[1;39;48;5;237m",
+      Some(ColorMode::Palette16) => "\x1b[35m▌\x1b[1;39;100m",
+      None => "▌\x1b[1m",
+    }
+    .to_string()
+  }
+
+  fn selector_hover_hl() -> String {
+    match Shed::term(|t| t.color_mode()) {
+      Some(ColorMode::Truecolor) => "\x1b[90m▌\x1b[1;39;48;5;237m",
+      Some(ColorMode::Palette256) => "\x1b[90m▌\x1b[1;39;48;5;237m",
+      Some(ColorMode::Palette16) => "\x1b[90m▌\x1b[1;39;100m",
+      None => "▌\x1b[1m",
+    }
+    .to_string()
   }
 
   /// Calculate how many rows we need in order to draw this thing
@@ -1685,9 +1707,9 @@ impl FuzzySelector {
       let selected = i + offset == cursor_pos;
       let hovered = hovered == Some(i + offset);
       let selector = if selected {
-        Self::SELECTOR_HL
+        &Self::selector_hl()
       } else if hovered {
-        Self::SELECTOR_HOVER
+        &Self::selector_hover_hl()
       } else {
         Self::SELECTOR_GRAY
       };
@@ -2837,11 +2859,7 @@ mod tests {
       as_var_val_display(pword),
     );
     test_input(input).unwrap();
-    (
-      Shed::vars(|v| v.get_var("CAP1")),
-      Shed::vars(|v| v.get_var("CAP2")),
-      Shed::vars(|v| v.get_var("CAP3")),
-    )
+    (var!("CAP1"), var!("CAP2"), var!("CAP3"))
   }
 
   #[test]

@@ -1,19 +1,23 @@
+use chrono::{DateTime, Local};
 use rusqlite::Connection;
 use std::{
   cell::RefCell,
   collections::VecDeque,
+  fmt::Display,
   os::fd::BorrowedFd,
   sync::{
     Arc, OnceLock,
     atomic::{AtomicI32, Ordering},
   },
+  time::SystemTime,
 };
 
 use super::{
-  WtStat, autocmd, builtin, errln, eval, expand, keys, match_loop, procio, readline, sherr, signal,
+  WtStat, autocmd, builtin, eval, expand, keys, match_loop, procio, readline, sherr, signal,
   state::vars::{VarFlags, VarKind},
+  system_msg, try_var,
   util::{Pos, ShErr, ShErrKind, ShResult},
-  writefd,
+  var, writefd,
 };
 
 pub mod jobs;
@@ -27,6 +31,34 @@ pub(super) mod vars;
 
 thread_local! {
   static SHED: Shed = Shed::new();
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Message {
+  when: SystemTime,
+  what: String,
+}
+
+impl Message {
+  pub fn new(what: String) -> Self {
+    Self {
+      when: SystemTime::now(),
+      what,
+    }
+  }
+  pub fn with_timestamp(&self) -> String {
+    let time: DateTime<Local> = (self.when).into();
+    let formatted = time.format("[%H:%M:%S]").to_string();
+    let msg = self.what.trim().replace('\n', "\n\t\t"); // aligns multiline messages
+
+    format!("{formatted}\t{msg}")
+  }
+}
+
+impl Display for Message {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", self.what)
+  }
 }
 
 /// The shell
@@ -45,6 +77,12 @@ pub(super) struct Shed {
   db_conn: OnceLock<Option<Arc<Connection>>>,
   status_code: AtomicI32,
 
+  status_msg_queue: RefCell<VecDeque<Message>>,
+  status_msg_hist: RefCell<VecDeque<Message>>,
+
+  system_msg_queue: RefCell<VecDeque<Message>>,
+  system_msg_hist: RefCell<VecDeque<Message>>,
+
   #[cfg(test)]
   saved: RefCell<Option<Box<Self>>>,
 }
@@ -60,6 +98,12 @@ impl Shed {
       shopts: RefCell::new(shopt::ShOpts::default()),
       db_conn: OnceLock::new(),
       status_code: AtomicI32::new(0),
+
+      status_msg_queue: RefCell::new(VecDeque::new()),
+      status_msg_hist: RefCell::new(VecDeque::new()),
+
+      system_msg_queue: RefCell::new(VecDeque::new()),
+      system_msg_hist: RefCell::new(VecDeque::new()),
 
       #[cfg(test)]
       saved: RefCell::new(None),
@@ -154,6 +198,68 @@ impl Shed {
     })
   }
 
+  pub fn system_msg_pending() -> bool {
+    SHED.with(|shed| !shed.system_msg_queue.borrow().is_empty())
+  }
+
+  pub fn post_status_msg(msg: String) {
+    SHED.with(|shed| {
+      let msg = Message::new(msg);
+      shed.status_msg_queue.borrow_mut().push_back(msg);
+    });
+  }
+  pub fn pop_status_msg() -> Option<String> {
+    SHED.with(|shed| {
+      let mut queue = shed.status_msg_queue.borrow_mut();
+      let mut hist = shed.status_msg_hist.borrow_mut();
+      Self::pop_msg(&mut queue, &mut hist)
+    })
+  }
+  pub fn post_system_msg(msg: String) {
+    SHED.with(|shed| {
+      let msg = Message::new(msg);
+      shed.system_msg_queue.borrow_mut().push_back(msg);
+    });
+  }
+  pub fn pop_system_msg() -> Option<String> {
+    SHED.with(|shed| {
+      let mut queue = shed.system_msg_queue.borrow_mut();
+      let mut hist = shed.system_msg_hist.borrow_mut();
+      Self::pop_msg(&mut queue, &mut hist)
+    })
+  }
+  fn pop_msg(queue: &mut VecDeque<Message>, hist: &mut VecDeque<Message>) -> Option<String> {
+    let msg = queue.pop_front()?;
+
+    hist.push_back(msg.clone());
+    if hist.len() > 1000 {
+      hist.pop_front();
+    }
+
+    Some(msg.to_string())
+  }
+
+  pub fn status_msg_hist() -> Vec<Message> {
+    SHED.with(|shed| {
+      shed
+        .status_msg_hist
+        .borrow()
+        .iter()
+        .cloned()
+        .collect::<Vec<Message>>()
+    })
+  }
+  pub fn system_msg_hist() -> Vec<Message> {
+    SHED.with(|shed| {
+      shed
+        .system_msg_hist
+        .borrow()
+        .iter()
+        .cloned()
+        .collect::<Vec<Message>>()
+    })
+  }
+
   pub fn get_status() -> i32 {
     SHED.with(|shed| shed.status_code.load(Ordering::Relaxed))
   }
@@ -212,6 +318,10 @@ impl Shed {
       shopts: RefCell::new(self.shopts.borrow().clone()),
       db_conn: self.clone_db_conn(),
       terminal: RefCell::new(self.terminal.borrow().clone()),
+      status_msg_queue: RefCell::new(self.status_msg_queue.borrow().clone()),
+      status_msg_hist: RefCell::new(self.status_msg_hist.borrow().clone()),
+      system_msg_queue: RefCell::new(self.system_msg_queue.borrow().clone()),
+      system_msg_hist: RefCell::new(self.system_msg_hist.borrow().clone()),
       saved: RefCell::new(None),
       status_code: AtomicI32::new(self.status_code.load(Ordering::Relaxed)),
     };

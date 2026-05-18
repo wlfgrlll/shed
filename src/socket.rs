@@ -13,6 +13,7 @@ use crate::{
   },
   status_msg, system_msg,
   util::Pos,
+  var,
 };
 
 pub(super) fn handle_socket_request(
@@ -131,7 +132,7 @@ pub(super) fn handle_socket_request(
         write(&conn, b"\n").ok();
       }
       QueryHeader::GetVar(var) => {
-        let var = Shed::vars(|v| v.get_var(&var));
+        let var = var!(&var);
         write(&conn, var.as_bytes()).ok();
         write(&conn, b"\n").ok();
       }

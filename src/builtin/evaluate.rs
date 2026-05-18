@@ -25,6 +25,7 @@ impl super::Builtin for Eval {
 mod tests {
   use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
+  use crate::var;
 
   // ===================== Basic =====================
 
@@ -84,7 +85,7 @@ mod tests {
   fn eval_sets_variable() {
     let _g = TestGuard::new();
     test_input("eval x=42").unwrap();
-    let val = Shed::vars(|v| v.get_var("x"));
+    let val = var!("x");
     assert_eq!(val, "42");
   }
 

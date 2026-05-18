@@ -19,13 +19,12 @@ use nix::{
 };
 
 use super::{
-  Shed,
   eval::{
     execute::exec_nonint,
     lex::{Span, Tk, TkFlags},
   },
   expand::Expander,
-  match_loop, sherr, state,
+  match_loop, sherr, shopt, state,
   util::{ShErr, ShErrKind, ShResult},
 };
 
@@ -190,7 +189,7 @@ impl RedirBldr {
       RedirTarget::HereDoc { body, flags } => {
         log::debug!("heredoc body: {:?}", body);
         // Strip leading tabs per line BEFORE expansion (POSIX order).
-        let mut buf = if flags.contains(TkFlags::TAB_HEREDOC) {
+        let buf = if flags.contains(TkFlags::TAB_HEREDOC) {
           if body.is_empty() {
             String::new()
           } else {
@@ -746,7 +745,7 @@ pub(super) fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShRes
   let result = match class {
     RedirType::Input => OpenOptions::new().read(true).open(Path::new(&path)),
     RedirType::Output => {
-      if Shed::shopts(|o| o.set.noclobber) && path.is_file() {
+      if shopt!(set.noclobber) && path.is_file() {
         return Err(sherr!(
           ExecFail,
           "shopt core.noclobber is set, refusing to overwrite existing file `{}`",

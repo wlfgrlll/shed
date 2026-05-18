@@ -35,14 +35,14 @@ use super::{
   expand::{self, expand_keymap, expand_prompt},
   flush_term, key,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
-  match_loop, motion, procio, sherr,
+  match_loop, motion, procio, sherr, shopt,
   state::{
     self, Shed,
-    terminal::{calc_str_width, truncate_with_ellipsis},
+    terminal::{SyncOutputGuard, calc_str_width, truncate_with_ellipsis},
     util::with_vars,
     vars::{Var, VarFlags, VarKind},
   },
-  status_msg, system_msg,
+  status_msg, system_msg, try_var,
   util::{self, ShResult},
   verb, write_term,
 };
@@ -405,7 +405,7 @@ impl ShedLine {
   }
 
   fn new_private(prompt: Prompt, with_hist: bool) -> ShResult<Self> {
-    let statline = Shed::shopts(|o| o.statline.enable).then(StatusLine::new);
+    let statline = shopt!(statline.enable).then(StatusLine::new);
 
     let history = if with_hist {
       if let Some(conn) = state::util::get_db_conn() {
@@ -421,7 +421,7 @@ impl ShedLine {
     } else {
       History::empty("ex_history")
     };
-    let mode = if Shed::shopts(|o| o.set.vi) {
+    let mode = if shopt!(set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
       Box::new(Emacs::new()) as Box<dyn EditMode>
@@ -521,7 +521,7 @@ impl ShedLine {
       line.refresh();
     }
     self.editor = Default::default();
-    let mut mode = if Shed::shopts(|o| o.set.vi) {
+    let mut mode = if shopt!(set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
       Box::new(Emacs::new()) as Box<dyn EditMode>
@@ -532,7 +532,7 @@ impl ShedLine {
       self.old_layout = None;
     }
     if self.statline.is_none() {
-      self.statline = Shed::shopts(|o| o.statline.enable).then(StatusLine::new);
+      self.statline = shopt!(statline.enable).then(StatusLine::new);
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
@@ -567,9 +567,9 @@ impl ShedLine {
 
   /// This method ensures that the editing mode (Vi or Emacs) matches the 'vi' option, and switches modes if necessary.
   pub fn fix_editing_mode(&mut self) {
-    if Shed::shopts(|o| o.set.vi) && self.mode.report_mode() == ModeReport::Emacs {
+    if shopt!(set.vi) && self.mode.report_mode() == ModeReport::Emacs {
       self.swap_mode(&mut (Box::new(ViInsert::new()) as Box<dyn EditMode>));
-    } else if !Shed::shopts(|o| o.set.vi) && self.mode.report_mode() != ModeReport::Emacs {
+    } else if !shopt!(set.vi) && self.mode.report_mode() != ModeReport::Emacs {
       self.swap_mode(&mut (Box::new(Emacs::new()) as Box<dyn EditMode>));
     }
   }
@@ -1038,7 +1038,7 @@ impl ShedLine {
     if let Some(layout) = &self.old_layout {
       move_cursor_to_end(layout)?;
     }
-    if Shed::shopts(|o| o.line.trim_on_submit) {
+    if shopt!(line.trim_on_submit) {
       self.editor.trim();
     }
     write_term!("\n").ok();
@@ -1088,7 +1088,7 @@ impl ShedLine {
     if self.should_grab_history(&cmd) {
       let offset = cmd.history_scroll_offset().unwrap();
 
-      if Shed::shopts(|o| o.prompt.hist_cat)
+      if shopt!(prompt.hist_cat)
         && cmd
           .flags
           .intersects(CmdFlags::HAS_SHIFT | CmdFlags::HAS_CTRL)
@@ -1145,6 +1145,7 @@ impl ShedLine {
     }
 
     if cmd.verb_is(Verb::RecordMacro) {
+      log::debug!("starting macro recording with cmd: {:?}", cmd);
       let Some(register) = cmd.register.name() else {
         return Ok(None);
       };
@@ -1322,7 +1323,7 @@ impl ShedLine {
           self.update_editor_hint();
 
           Ok(None)
-        } else if self.should_submit()? || !Shed::shopts(|o| o.line.linebreak_on_incomplete) {
+        } else if self.should_submit()? || !shopt!(line.linebreak_on_incomplete) {
           self.submit()
         } else {
           self.run_cmd(cmd)
@@ -1491,6 +1492,7 @@ impl ShedLine {
   }
 
   pub fn print_line(&mut self, final_draw: bool) -> ShResult<()> {
+    let _sync = SyncOutputGuard::begin();
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
@@ -1548,9 +1550,9 @@ impl ShedLine {
       .unwrap_or(u16::MAX);
 
     let mut system_msg = String::new();
-    if Shed::meta(|m| m.system_msg_pending()) {
+    if Shed::system_msg_pending() {
       use std::fmt::Write as FmtWrite;
-      while let Some(msg) = Shed::meta_mut(|m| m.pop_system_message()) {
+      while let Some(msg) = Shed::pop_system_msg() {
         writeln!(system_msg, "{msg}").ok();
       }
     }
@@ -1730,7 +1732,7 @@ impl ShedLine {
       write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
     }
 
-    while let Some(msg) = Shed::meta_mut(|m| m.pop_status_message()) {
+    while let Some(msg) = Shed::pop_status_msg() {
       let now = Instant::now();
       self.status_msgs.push_back((msg, now));
     }

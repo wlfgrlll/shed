@@ -33,6 +33,7 @@ pub mod tests {
 
   use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
+  use crate::var;
   use tempfile::{NamedTempFile, TempDir};
 
   #[test]
@@ -43,7 +44,7 @@ pub mod tests {
     file.write_all(b"some_var=some_val").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    let var = Shed::vars(|v| v.get_var("some_var"));
+    let var = var!("some_var");
     assert_eq!(var, "some_val".to_string());
   }
 
@@ -55,9 +56,9 @@ pub mod tests {
     file.write_all(b"x=1\ny=2\nz=3").unwrap();
 
     test_input(format!("source {path}")).unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("x")), "1");
-    assert_eq!(Shed::vars(|v| v.get_var("y")), "2");
-    assert_eq!(Shed::vars(|v| v.get_var("z")), "3");
+    assert_eq!(var!("x"), "1");
+    assert_eq!(var!("y"), "2");
+    assert_eq!(var!("z"), "3");
   }
 
   #[test]
@@ -107,8 +108,8 @@ pub mod tests {
     file2.write_all(b"b=from_file2").unwrap();
 
     test_input(format!("source {path1} {path2}")).unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "from_file1");
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "from_file2");
+    assert_eq!(var!("a"), "from_file1");
+    assert_eq!(var!("b"), "from_file2");
   }
 
   // ===================== Dot syntax =====================
@@ -121,7 +122,7 @@ pub mod tests {
     file.write_all(b"dot_var=dot_val").unwrap();
 
     test_input(format!(". {path}")).unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("dot_var")), "dot_val");
+    assert_eq!(var!("dot_var"), "dot_val");
   }
 
   // ===================== Error cases =====================

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::{ShResult, match_loop, state, state::Shed, status_msg, subshell::expand_cmd_sub};
+use super::{
+  ShResult, match_loop, shopt, state, state::Shed, status_msg, subshell::expand_cmd_sub, var,
+};
 use crate::util::ansi_from_description;
 
 use nix::sys::wait::WaitStatus as WtStat;
@@ -385,7 +387,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::Pwd => {
-      let mut pwd = Shed::vars(|v| v.get_var("PWD"));
+      let mut pwd = var!("PWD");
       let home = state::util::get_home_str().unwrap_or_default();
       if pwd.starts_with(&home) {
         pwd = pwd.replacen(&home, "~", 1);
@@ -393,7 +395,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       result.push_str(&pwd);
     }
     PromptTk::PwdShort => {
-      let mut pwd = Shed::vars(|v| v.get_var("PWD"));
+      let mut pwd = var!("PWD");
       let home = state::util::get_home_str().unwrap_or_default();
       if pwd.starts_with(&home) {
         pwd = pwd.replacen(&home, "~", 1);
@@ -401,7 +403,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       let pathbuf = PathBuf::from(&pwd);
       let mut segments = pathbuf.iter().count();
       let mut path_iter = pathbuf.iter();
-      let max_segments = Shed::shopts(|s| s.prompt.trunc_prompt_path);
+      let max_segments = shopt!(prompt.trunc_prompt_path);
       while segments > max_segments {
         path_iter.next();
         segments -= 1;

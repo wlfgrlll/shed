@@ -39,7 +39,6 @@ fn main() -> ExitCode {
   let Some(args) = lifecycle::setup() else {
     return ExitCode::SUCCESS;
   };
-  log::info!("starting shed");
 
   if let Err(e) = input::dispatch_input(args) {
     e.print_error();

@@ -77,6 +77,7 @@ impl super::Builtin for Seek {
 mod tests {
   use crate::state;
   use crate::tests::testutil::{TestGuard, test_input};
+  use crate::var;
   use pretty_assertions::assert_eq;
 
   #[test]
@@ -120,7 +121,7 @@ mod tests {
     g.read_output();
 
     test_input("read line <&9").unwrap();
-    let val = crate::state::Shed::vars(|v| v.get_var("line"));
+    let val = var!("line");
     assert_eq!(val, "world");
   }
 
@@ -199,7 +200,7 @@ mod tests {
     // Read again from beginning
     test_input("read line <&9").unwrap();
 
-    let val = crate::state::Shed::vars(|v| v.get_var("line"));
+    let val = var!("line");
     assert_eq!(val, "abc");
   }
 

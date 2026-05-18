@@ -1,10 +1,8 @@
-use super::*;
-
 use std::{
   collections::{HashMap, HashSet, VecDeque},
   fmt::Write,
   os::{
-    fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd},
+    fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
     unix::{
       fs::PermissionsExt,
       net::{UnixListener, UnixStream},
@@ -13,13 +11,13 @@ use std::{
   path::{Path, PathBuf},
   rc::Rc,
   str::FromStr,
-  time::{Duration, Instant, SystemTime},
+  sync::Arc,
+  time::{Duration, Instant},
 };
 
 use super::{
   ShErr, ShResult, Shed,
   builtin::BUILTIN_NAMES,
-  errln,
   expand::{expand_keymap, glob_to_regex},
   jobs::Job,
   keys::KeyEvent,
@@ -29,6 +27,7 @@ use super::{
   readline::{Candidate, CompSpec, LineData},
   sherr,
   util::query_db,
+  var,
   vars::{VarFlags, VarKind},
   writefd,
 };
@@ -340,7 +339,7 @@ impl ShedSocket {
     format!("{runtime_dir}/shed/{pid}.sock")
   }
   pub fn mode() -> Mode {
-    Shed::vars(|v| v.get_var("SHED_SOCK_MODE"))
+    var!("SHED_SOCK_MODE")
       .parse::<u32>()
       .ok()
       .and_then(Mode::from_bits)
@@ -821,16 +820,6 @@ pub(crate) struct MetaTab {
   subscribers: Vec<Arc<UnixStream>>,
   last_job: Option<Job>,
 
-  // pending system messages
-  // are drawn above the prompt and survive redraws
-  system_msg: VecDeque<(SystemTime, String)>,
-  system_msg_hist: VecDeque<(SystemTime, String)>,
-
-  // same as system messages,
-  // but they appear under the prompt and are erased on redraw
-  status_msg: VecDeque<(SystemTime, String)>,
-  status_msg_hist: VecDeque<(SystemTime, String)>,
-
   // pushd/popd stack
   dir_stack: VecDeque<PathBuf>,
   // getopts char offset for opts like -abc
@@ -875,10 +864,6 @@ impl Clone for MetaTab {
       socket: self.socket.clone(),
       subscribers: self.subscribers.clone(),
       last_job: self.last_job.clone(),
-      system_msg: self.system_msg.clone(),
-      system_msg_hist: self.system_msg_hist.clone(),
-      status_msg: self.status_msg.clone(),
-      status_msg_hist: self.status_msg_hist.clone(),
       dir_stack: self.dir_stack.clone(),
       getopts_offset: self.getopts_offset,
       old_path: self.old_path.clone(),
@@ -909,10 +894,6 @@ impl Default for MetaTab {
       socket: None,
       subscribers: vec![],
       last_job: None,
-      system_msg: VecDeque::new(),
-      system_msg_hist: VecDeque::new(),
-      status_msg: VecDeque::new(),
-      status_msg_hist: VecDeque::new(),
       dir_stack: VecDeque::new(),
       getopts_offset: 0,
       old_path: None,
@@ -1081,7 +1062,7 @@ impl MetaTab {
 
     // ╭─ shed v0.xx.x ───────────╮
     let title = format!(
-      "{}{} \x1b[1;35mshed\x1b[0m \x1b[90mv{}\x1b[0m ",
+      "{}{} \x1b[1;35mshed\x1b[0m v{} ",
       util::TOP_LEFT,
       util::HOR_LINE,
       version
@@ -1514,37 +1495,6 @@ impl MetaTab {
   }
   pub fn interactive_shell(&self) -> bool {
     self.interactive_shell
-  }
-  pub fn post_system_message(&mut self, message: String) {
-    let now = SystemTime::now();
-    if self.interactive_shell {
-      self.system_msg.push_back((now, message));
-    } else {
-      errln!("{message}");
-    }
-  }
-  pub fn pop_system_message(&mut self) -> Option<String> {
-    let (time, msg) = self.system_msg.pop_front()?;
-    self.system_msg_hist.push_back((time, msg.clone()));
-    Some(msg)
-  }
-  pub fn system_msg_pending(&self) -> bool {
-    !self.system_msg.is_empty()
-  }
-  pub fn post_status_message(&mut self, message: String) {
-    let now = SystemTime::now();
-    self.status_msg.push_back((now, message));
-  }
-  pub fn pop_status_message(&mut self) -> Option<String> {
-    let (time, msg) = self.status_msg.pop_front()?;
-    self.status_msg_hist.push_back((time, msg.clone()));
-    Some(msg)
-  }
-  pub fn status_msg_history(&self) -> &VecDeque<(SystemTime, String)> {
-    &self.status_msg_hist
-  }
-  pub fn system_msg_history(&self) -> &VecDeque<(SystemTime, String)> {
-    &self.system_msg_hist
   }
   pub fn push_dir(&mut self, path: PathBuf) {
     self.dir_stack.push_front(path);

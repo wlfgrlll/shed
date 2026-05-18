@@ -1,6 +1,8 @@
-use crate::state::terminal::calc_str_width;
-use crate::write_term;
-use crate::{match_loop, sherr, util::error::ShResult};
+use super::{
+  ShResult, Shed, match_loop, sherr,
+  state::terminal::{ColorMode, calc_str_width},
+  write_term,
+};
 use std::fmt::Write;
 use yansi::{Paint, Painted, Style};
 
@@ -12,6 +14,58 @@ pub const HOR_LINE: &str = "\x1b[90m─\x1b[0m";
 pub const VERT_LINE: &str = "\x1b[90m│\x1b[0m";
 pub const TREE_LEFT: &str = "\x1b[90m├\x1b[0m";
 pub const TREE_RIGHT: &str = "\x1b[90m┤\x1b[0m";
+
+fn rgb_to_xterm256(r: u8, g: u8, b: u8) -> u8 {
+  let r = (r as u16 * 5 / 255) as u8;
+  let g = (g as u16 * 5 / 255) as u8;
+  let b = (b as u16 * 5 / 255) as u8;
+
+  16 + r * 36 + g * 6 + b
+}
+
+fn rgb_to_xterm16(r: u8, g: u8, b: u8) -> u8 {
+  let r = if r > 128 { 1 } else { 0 };
+  let g = if g > 128 { 1 } else { 0 };
+  let b = if b > 128 { 1 } else { 0 };
+
+  (b << 2) | (g << 1) | r
+}
+
+fn apply_fg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
+  match Shed::term(|t| t.color_mode()) {
+    None => style,
+    Some(ColorMode::Truecolor) => style.rgb(r, g, b),
+    Some(ColorMode::Palette256) => style.fixed(rgb_to_xterm256(r, g, b)),
+    Some(ColorMode::Palette16) => style.fixed(rgb_to_xterm16(r, g, b)),
+  }
+}
+
+fn apply_fg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> {
+  match Shed::term(|t| t.color_mode()) {
+    None => style,
+    Some(ColorMode::Truecolor) => style.rgb(r, g, b),
+    Some(ColorMode::Palette256) => style.fixed(rgb_to_xterm256(r, g, b)),
+    Some(ColorMode::Palette16) => style.fixed(rgb_to_xterm16(r, g, b)),
+  }
+}
+
+fn apply_bg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
+  match Shed::term(|t| t.color_mode()) {
+    None => style,
+    Some(ColorMode::Truecolor) => style.on_rgb(r, g, b),
+    Some(ColorMode::Palette256) => style.on_fixed(rgb_to_xterm256(r, g, b)),
+    Some(ColorMode::Palette16) => style.on_fixed(rgb_to_xterm16(r, g, b)),
+  }
+}
+
+fn apply_bg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> {
+  match Shed::term(|t| t.color_mode()) {
+    None => style,
+    Some(ColorMode::Truecolor) => style.on_rgb(r, g, b),
+    Some(ColorMode::Palette256) => style.on_fixed(rgb_to_xterm256(r, g, b)),
+    Some(ColorMode::Palette16) => style.on_fixed(rgb_to_xterm16(r, g, b)),
+  }
+}
 
 /// A wrapper around yansi::Style. Defers application of text attributes like bold/italic.
 #[derive(Clone, Debug, Default, Copy)]
@@ -351,7 +405,7 @@ pub fn style_from_description(desc: &str) -> ShResult<PaletteEntry> {
         "black" => style = style.on_black(),
         hex if word.starts_with('#') => {
           let (r,g,b) = hex_to_rgb(hex)?;
-          style = style.on_rgb(r,g,b);
+          style = apply_bg_rgb(style, r, g, b);
         }
         _ => return Err(sherr!(ParseErr, "Unknown background color '{}' in color description", word)),
       }
@@ -359,7 +413,7 @@ pub fn style_from_description(desc: &str) -> ShResult<PaletteEntry> {
 
     hex if word.starts_with('#') => {
       let (r,g,b) = hex_to_rgb(hex)?;
-      style = style.rgb(r,g,b);
+      style = apply_fg_rgb(style, r, g, b);
     }
 
     _ => return Err(sherr!(ParseErr, "Unknown style '{}' in color description", word)),
@@ -418,7 +472,7 @@ pub fn ansi_from_description(desc: &str) -> ShResult<String> {
         "black" => style = style.on_black(),
         hex if word.starts_with('#') => {
           let (r,g,b) = hex_to_rgb(hex)?;
-          style = style.on_rgb(r,g,b);
+          style = apply_bg_rgb_raw(style, r, g, b);
         }
         _ => return Err(sherr!(ParseErr, "Unknown background color '{}' in color description", word)),
       }
@@ -426,7 +480,7 @@ pub fn ansi_from_description(desc: &str) -> ShResult<String> {
 
     hex if word.starts_with('#') => {
       let (r,g,b) = hex_to_rgb(hex)?;
-      style = style.rgb(r,g,b);
+      style = apply_fg_rgb_raw(style, r, g, b);
     }
 
     _ => return Err(sherr!(ParseErr, "Unknown style '{}' in color description", word)),

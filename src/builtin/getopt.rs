@@ -324,6 +324,7 @@ fn sort_tks_raw(
 #[cfg(test)]
 mod tests {
   use crate::eval::lex::{LexFlags, LexStream};
+  use crate::var;
 
   use super::*;
 
@@ -533,7 +534,7 @@ mod tests {
 
   // ===================== Variable expansion through opts (TestGuard) =====================
 
-  use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
+  use crate::state::{Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
   #[test]
@@ -564,7 +565,7 @@ mod tests {
     })
     .unwrap();
     test_input("read $READ_ARGS <<< hello").unwrap();
-    let line = state::Shed::vars(|v| v.get_var("line"));
+    let line = var!("line");
     assert_eq!(line, "hello");
     drop(g);
   }

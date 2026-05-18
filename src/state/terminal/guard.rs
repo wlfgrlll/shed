@@ -1,3 +1,5 @@
+use crate::write_term;
+
 use super::{CursorStyle, Shed};
 
 /*
@@ -12,7 +14,7 @@ use super::{CursorStyle, Shed};
 /// This is returned from any Terminal method that modifies the terminal state.
 /// This allows us to scope terminal state changes, and ensures that the terminal state is always restored even if the code panics or returns early.
 #[derive(Debug)]
-pub struct TermGuard {
+pub(crate) struct TermGuard {
   raw_mode: Option<bool>,
   bracketed_paste: Option<bool>,
   kitty_proto: Option<bool>,
@@ -185,5 +187,24 @@ impl Snapshot {
   /// Set the inner guard to active and return it. This should be the only way to ever get an active TermGuard
   pub(super) fn activate(self) -> TermGuard {
     self.0.activate()
+  }
+}
+
+pub(crate) struct SyncOutputGuard;
+
+impl SyncOutputGuard {
+  pub fn begin() -> Option<Self> {
+    let supported = Shed::term(|t| t.term_caps().contains(super::TermCap::SYNC_OUTPUT));
+
+    supported.then(|| {
+      let _ = write_term!("{}", super::Terminal::SYNC_START);
+      Self
+    })
+  }
+}
+
+impl Drop for SyncOutputGuard {
+  fn drop(&mut self) {
+    let _ = write_term!("{}", super::Terminal::SYNC_END);
   }
 }

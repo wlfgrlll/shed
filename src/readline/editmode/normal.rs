@@ -194,7 +194,7 @@ impl EditMode for ViNormal {
           flags: self.flags(),
         })
       }
-      key!(Esc) => {
+      E(K::Esc, _) => {
         self.pending_seq.clear();
         None
       }

@@ -4,7 +4,7 @@ use std::str::Chars;
 
 use crate::expand::markers;
 use crate::expand::util::is_var_name_ch;
-use crate::state::Shed;
+use crate::try_var;
 use crate::util::QuoteState;
 use crate::util::ShResult;
 use crate::{match_loop, sherr};
@@ -93,9 +93,8 @@ pub fn unescape_str(raw: &str) -> String {
   let mut chars = raw.chars().peekable();
   let mut result = String::new();
   let mut last_was_word_break = false;
-  let word_breaks =
-    Shed::vars(|v| v.try_get_var("COMP_WORDBREAKS")).unwrap_or("\"'><=;|&(: ".into());
-  let ifs = Shed::vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
+  let word_breaks = try_var!("COMP_WORDBREAKS").unwrap_or("\"'><=;|&(: ".into());
+  let ifs = try_var!("IFS").unwrap_or(" \t\n".into());
   let word_breaks = format!("{word_breaks}{ifs}");
   let mut first_char = true;
 

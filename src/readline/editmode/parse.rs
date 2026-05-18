@@ -85,7 +85,9 @@ impl ViParser {
       }
       C::Complete(res) => match res {
         P::Complete(mut cmd) => {
-          cmd.register = register;
+          if cmd.register.is_none() {
+            cmd.register = register;
+          }
           cmd.raw_seq = pending_seq.to_string();
           return P::Complete(cmd);
         }
@@ -389,6 +391,7 @@ impl ViParser {
         let Some(reg) = chars.next() else {
           return C::pending();
         };
+        log::debug!("record macro reg: {reg}");
         let register: RegisterName = reg.into();
         C::complete(EditCmd {
           register,

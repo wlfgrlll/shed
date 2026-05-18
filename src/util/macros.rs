@@ -1,8 +1,7 @@
 /// Write to the internal Terminal buffer
 ///
 /// The given input will be buffered, meaning it won't be sent to the terminal until Terminal::flush() is called
-/// Note that this calls Shed::term_mut() internally.
-/// DO NOT call this from within any of the state module accessors (e.g. read_logic, write_meta, etc) as that will cause a deadlock.
+/// Note that this calls Shed::term_mut() internally, so don't call this inside of that function or the program explodes.
 #[macro_export]
 macro_rules! write_term {
   ($($arg:tt)*) => {{
@@ -15,7 +14,6 @@ macro_rules! write_term {
 ///
 /// This sends the given format args directly to the terminal.
 /// Note that this calls Shed::term() internally.
-/// DO NOT call this from within any of the state module accessors (e.g. read_logic, write_meta, etc) as that will cause a deadlock.
 #[macro_export]
 macro_rules! flush_term {
   () => {
@@ -71,6 +69,8 @@ macro_rules! motion {
 /// A macro for creating KeyEvent instances from a syntax like `key!(Ctrl + Shift + Enter)` or `key!(Alt + 'f')` or just `key!(Enter)`.
 #[macro_export]
 macro_rules! key {
+  // if anyone has ideas for how to not write out each combination manually,
+  // I am all ears
   (Shift + Ctrl + Alt + $key:ident) => {
     key!(Ctrl + Shift + Alt + $key)
   };
@@ -242,7 +242,7 @@ macro_rules! key {
 ///  let mut chars = input.chars().peekable();
 ///
 ///	 // expression => pattern => binding
-///  match_loop!(chars.peek() => &ch => ch, {
+///  match_loop!(char_indices.peek() => (i,ch) => ch, {
 ///  	'b' | 'a' | 'r' => {
 ///  		// some logic
 ///  	}
@@ -271,8 +271,8 @@ macro_rules! match_loop {
 /// Providing a span will automatically make the printed error point at the offending text referred to by the span.
 /// Examples:
 /// ```
-/// sherr!(ParseErr, "Unexpected token: {}", token);
-/// sherr!(SyntaxErr @ span, "Expected ';' but found '{}'", found);
+/// sherr!(ParseErr, "Unexpected token: {token}");
+/// sherr!(SyntaxErr @ span, "Expected ';' but found '{found}'");
 /// ```
 #[macro_export]
 macro_rules! sherr {
@@ -399,7 +399,7 @@ macro_rules! writefd {
 #[macro_export]
 macro_rules! status_msg {
   ($($arg:tt)*) => {{
-    $crate::state::Shed::meta_mut(|m| m.post_status_message(format!($($arg)*)))
+    $crate::state::Shed::post_status_msg(format!($($arg)*))
   }};
 }
 
@@ -409,7 +409,7 @@ macro_rules! status_msg {
 #[macro_export]
 macro_rules! system_msg {
   ($($arg:tt)*) => {{
-    $crate::state::Shed::meta_mut(|m| m.post_system_message(format!($($arg)*)))
+    $crate::state::Shed::post_system_msg(format!($($arg)*))
   }};
 }
 
@@ -429,4 +429,38 @@ macro_rules! autocmd {
     }
     $crate::state::Shed::set_status(saved_status);
   }};
+}
+
+/// Get a shell variable from Shed::vars(). Returns an empty string if unset. Checks env vars too.
+#[macro_export]
+macro_rules! var {
+  ($name:expr) => {
+    $crate::state::Shed::vars(|v| v.get_var($name))
+  };
+}
+
+/// Try to get a shell variable from Shed::vars(). Returns None if unset. Checks env vars too.
+/// Useful if you need to match on whether a variable exists or not.
+#[macro_export]
+macro_rules! try_var {
+  ($name:expr) => {
+    $crate::state::Shed::vars(|v| v.try_get_var($name))
+  };
+}
+
+/// Get a shell option from Shed::shopts().
+#[macro_export]
+macro_rules! shopt {
+  ($($path:tt)*) => {
+    $crate::state::Shed::shopts(|o| o.$($path)*)
+  };
+}
+
+/// Get a mutable shell option from Shed::shopts_mut().
+/// You can use this to alter shopt values inline.
+#[macro_export]
+macro_rules! shopt_mut {
+  ($($path:tt)*) => {
+    $crate::state::Shed::shopts_mut(|o| o.$($path)*)
+  };
 }

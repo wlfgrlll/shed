@@ -3,7 +3,7 @@ use bitflags::bitflags;
 use super::{
   editmode::ExNode,
   linebuf::{Grapheme, Pos, SelectShape},
-  state::Shed,
+  try_var,
 };
 
 pub(crate) use super::util::Direction;
@@ -34,6 +34,9 @@ impl RegisterName {
   }
   pub fn name(&self) -> Option<char> {
     self.name
+  }
+  pub fn is_none(&self) -> bool {
+    self.name.is_none()
   }
   pub fn write_to_register(&self, buf: RegisterContent) {
     if self.append {
@@ -202,7 +205,7 @@ impl EditCmd {
   }
   pub fn is_separator_insert(&self) -> bool {
     self.verb.as_ref().is_some_and(|v| {
-      let mut ifs = Shed::vars(|v| v.try_get_var("IFS")).unwrap_or(" \t\n".into());
+      let mut ifs = try_var!("IFS").unwrap_or(" \t\n".into());
       ifs.push(';');
       match &v.1 {
         Verb::AcceptLineOrNewline => true,

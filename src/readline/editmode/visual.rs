@@ -388,7 +388,7 @@ impl EditMode for ViVisual {
           flags: CmdFlags::empty(),
         })
       }
-      key!(Esc) => Some(EditCmd {
+      E(K::Esc, _) => Some(EditCmd {
         register: Default::default(),
         verb: Some(verb!(Verb::NormalMode)),
         motion: Some(motion!(Motion::Null)),

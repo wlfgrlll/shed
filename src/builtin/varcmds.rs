@@ -9,6 +9,7 @@ use super::{
     Shed,
     vars::{VarFlags, VarKind, display_as_var, display_env_vars, display_local, display_readonly},
   },
+  try_var,
   util::{ShResult, ShResultExt, split_at_unescaped, with_status},
 };
 
@@ -169,7 +170,7 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
         outln!("{output}");
       } else {
         for (name, span) in argv {
-          let val = Shed::vars(|v| v.try_get_var(name));
+          let val = try_var!(name);
           match val {
             Some(v) => outln!("{}", display_as_var(name, v)),
             None => {
@@ -333,6 +334,7 @@ impl super::Builtin for Local {
 mod tests {
   use crate::state::{self, Shed, vars::VarFlags};
   use crate::tests::testutil::{TestGuard, test_input};
+  use crate::var;
 
   // ===================== readonly =====================
 
@@ -348,7 +350,7 @@ mod tests {
   fn readonly_with_value() {
     let _g = TestGuard::new();
     test_input("readonly myvar=hello").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(var!("myvar"), "hello");
     let flags = Shed::vars(|v| v.get_var_flags("myvar"));
     assert!(flags.unwrap().contains(VarFlags::READONLY));
   }
@@ -358,7 +360,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("readonly myvar=hello").unwrap();
     test_input("myvar=world").ok();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(var!("myvar"), "hello");
   }
 
   #[test]
@@ -374,8 +376,8 @@ mod tests {
   fn readonly_multiple() {
     let _g = TestGuard::new();
     test_input("readonly a=1 b=2").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "1");
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "2");
+    assert_eq!(var!("a"), "1");
+    assert_eq!(var!("b"), "2");
     assert!(
       Shed::vars(|v| v.get_var_flags("a"))
         .unwrap()
@@ -401,9 +403,9 @@ mod tests {
   fn unset_removes_variable() {
     let _g = TestGuard::new();
     test_input("myvar=hello").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "hello");
+    assert_eq!(var!("myvar"), "hello");
     test_input("unset myvar").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "");
+    assert_eq!(var!("myvar"), "");
   }
 
   #[test]
@@ -412,8 +414,8 @@ mod tests {
     test_input("a=1").unwrap();
     test_input("b=2").unwrap();
     test_input("unset a b").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("a")), "");
-    assert_eq!(Shed::vars(|v| v.get_var("b")), "");
+    assert_eq!(var!("a"), "");
+    assert_eq!(var!("b"), "");
   }
 
   #[test]
@@ -429,7 +431,7 @@ mod tests {
     test_input("readonly myvar=protected").unwrap();
     test_input("unset myvar").ok();
     assert_ne!(state::Shed::get_status(), 0);
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "protected");
+    assert_eq!(var!("myvar"), "protected");
   }
 
   #[test]
@@ -446,7 +448,7 @@ mod tests {
   fn export_with_value() {
     let _g = TestGuard::new();
     test_input("export SHED_TEST_VAR=hello_export").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("SHED_TEST_VAR")), "hello_export");
+    assert_eq!(var!("SHED_TEST_VAR"), "hello_export");
     assert_eq!(std::env::var("SHED_TEST_VAR").unwrap(), "hello_export");
     unsafe { std::env::remove_var("SHED_TEST_VAR") };
   }
@@ -501,7 +503,7 @@ mod tests {
   fn local_sets_variable() {
     let _g = TestGuard::new();
     test_input("local mylocal=hello").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("mylocal")), "hello");
+    assert_eq!(var!("mylocal"), "hello");
   }
 
   #[test]
@@ -516,7 +518,7 @@ mod tests {
   fn local_empty_value() {
     let _g = TestGuard::new();
     test_input("local mylocal").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("mylocal")), "");
+    assert_eq!(var!("mylocal"), "");
     assert!(
       Shed::vars(|v| v.get_var_flags("mylocal"))
         .unwrap()
@@ -537,8 +539,8 @@ mod tests {
   fn local_multiple() {
     let _g = TestGuard::new();
     test_input("local x=10 y=20").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("x")), "10");
-    assert_eq!(Shed::vars(|v| v.get_var("y")), "20");
+    assert_eq!(var!("x"), "10");
+    assert_eq!(var!("y"), "20");
   }
 
   #[test]
@@ -731,7 +733,7 @@ mod tests {
   fn declare_plain_assignment() {
     let _g = TestGuard::new();
     test_input("declare foo=hello").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("foo")), "hello");
+    assert_eq!(var!("foo"), "hello");
   }
 
   #[test]
@@ -739,14 +741,14 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare foo").unwrap();
     // Declared but empty.
-    assert_eq!(Shed::vars(|v| v.get_var("foo")), "");
+    assert_eq!(var!("foo"), "");
   }
 
   #[test]
   fn declare_r_sets_readonly_flag() {
     let _g = TestGuard::new();
     test_input("declare -r myvar=42").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("myvar")), "42");
+    assert_eq!(var!("myvar"), "42");
     let flags = Shed::vars(|v| v.get_var_flags("myvar"));
     assert!(flags.unwrap().contains(VarFlags::READONLY));
   }
@@ -772,14 +774,14 @@ mod tests {
   fn declare_i_evaluates_arithmetic() {
     let _g = TestGuard::new();
     test_input("declare -i n=5+3").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("n")), "8");
+    assert_eq!(var!("n"), "8");
   }
 
   #[test]
   fn declare_i_no_value_is_zero() {
     let _g = TestGuard::new();
     test_input("declare -i n").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("n")), "0");
+    assert_eq!(var!("n"), "0");
   }
 
   #[test]
@@ -816,7 +818,7 @@ mod tests {
     // declare -a with no `=...` produces an empty array.
     test_input("declare -a empty").unwrap();
     // A bare element access on an empty array should be empty.
-    assert_eq!(Shed::vars(|v| v.get_var("empty[0]")), "");
+    assert_eq!(var!("empty[0]"), "");
   }
 
   #[test]
@@ -873,7 +875,7 @@ mod tests {
   fn declare_assoc_empty() {
     let _g = TestGuard::new();
     test_input("declare -A mymap").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("mymap")), "");
+    assert_eq!(var!("mymap"), "");
   }
 
   #[test]
@@ -933,7 +935,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("declare -A aa=([a]=1 [b]=2 [c]=3)").unwrap();
     test_input("declare -i count=${#aa[@]}").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("count")), "3");
+    assert_eq!(var!("count"), "3");
   }
 
   #[test]
@@ -983,7 +985,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("foo() { local -A m=([k]=v); }").unwrap();
     test_input("foo").unwrap();
-    assert_eq!(Shed::vars(|v| v.get_var("m")), "");
+    assert_eq!(var!("m"), "");
   }
 
   #[test]
@@ -1091,6 +1093,6 @@ mod tests {
     test_input("foo() { local arr=(); for c in x; do arr+=(\"$c\"); done; }").unwrap();
     test_input("foo").unwrap();
     // arr was local to foo; should not exist at top level.
-    assert_eq!(Shed::vars(|v| v.get_var("arr")), "");
+    assert_eq!(var!("arr"), "");
   }
 }
