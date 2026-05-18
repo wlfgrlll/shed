@@ -4,7 +4,6 @@ use std::{
   cell::RefCell,
   collections::VecDeque,
   fmt::Display,
-  os::fd::BorrowedFd,
   sync::{
     Arc, OnceLock,
     atomic::{AtomicI32, Ordering},

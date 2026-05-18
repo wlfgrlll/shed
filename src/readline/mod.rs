@@ -345,27 +345,36 @@ impl LineCmd {
 enum MacroRecord {
   #[default]
   Idle,
-  Recording(char),
+  Recording(RegisterName, Vec<KeyEvent>),
 }
 
 impl MacroRecord {
   pub fn is_recording(&self) -> bool {
-    matches!(self, MacroRecord::Recording(_))
+    matches!(self, MacroRecord::Recording(_, _))
   }
-  pub fn register(&self) -> Option<char> {
-    match self {
-      MacroRecord::Recording(c) => Some(*c),
-      MacroRecord::Idle => None,
+  pub fn feed_key_event(&mut self, event: KeyEvent) {
+    if let MacroRecord::Recording(_, keys) = self {
+      keys.push(event)
     }
   }
-  pub fn feed_key_event(&self, event: KeyEvent) {
-    if let Some(reg) = self.register() {
-      append_register(Some(reg), register::RegisterContent::Macro(vec![event]));
+  pub fn commit_recording(&mut self) -> Option<RegisterName> {
+    if let MacroRecord::Recording(reg, keys) = std::mem::take(self) {
+      reg.write_to_register(register::RegisterContent::Macro(keys));
+
+      Some(reg)
+    } else {
+      None
     }
+  }
+  pub fn start_recording(&mut self, reg: RegisterName) {
+    *self = MacroRecord::Recording(reg, vec![])
   }
   pub fn status(&self) -> Option<String> {
     match self {
-      MacroRecord::Recording(c) => Some(format!("recording {c}")),
+      MacroRecord::Recording(reg, _) => {
+        let name = reg.display()?;
+        Some(format!("recording {name}"))
+      }
       MacroRecord::Idle => None,
     }
   }
@@ -381,7 +390,7 @@ pub(super) struct ShedLine {
   pending_keymap: Vec<KeyEvent>,
   repeat_action: Option<CmdReplay>,
   repeat_motion: Option<Cmd<Motion>>,
-  repeat_macro: Option<char>,
+  repeat_macro: Option<RegisterName>,
   editor: LineBuf,
   macro_record: MacroRecord,
 
@@ -774,8 +783,7 @@ impl ShedLine {
     for key in keys {
       if self.macro_record.is_recording() {
         if let KeyEvent(KeyCode::Char('q'), ModKeys::NONE) = key {
-          self.repeat_macro = self.macro_record.register();
-          self.macro_record = MacroRecord::Idle;
+          self.repeat_macro = self.macro_record.commit_recording();
           continue;
         }
         self.macro_record.feed_key_event(key.clone());
@@ -1147,19 +1155,25 @@ impl ShedLine {
 
     if cmd.verb_is(Verb::RecordMacro) {
       log::debug!("starting macro recording with cmd: {:?}", cmd);
-      let Some(register) = cmd.register.name() else {
+      if cmd.register.name().is_none() {
         return Ok(None);
-      };
-      write_register(Some(register), RegisterContent::Macro(vec![]));
-      self.macro_record = MacroRecord::Recording(register);
+      }
+      cmd.register.write_to_register(RegisterContent::Empty);
+
+      self.macro_record.start_recording(cmd.register);
       return Ok(None);
     }
 
     if cmd.verb_is(Verb::PlayMacro) {
-      let Some(register) = cmd.register.name().or(self.repeat_macro) else {
+      let target = if cmd.register.name().is_some() {
+        cmd.register
+      } else if let Some(reg) = self.repeat_macro {
+        reg
+      } else {
         return Ok(None);
       };
-      let events = match read_register(Some(register)) {
+
+      let events = match target.read_from_register() {
         None => return Ok(None),
         Some(content) => match content {
           RegisterContent::Empty => return Ok(None),
