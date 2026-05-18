@@ -206,3 +206,15 @@ impl Drop for SyncOutputGuard {
     let _ = write_term!("{}", super::Terminal::SYNC_END);
   }
 }
+
+/// A guard that flushes the terminal on drop.
+///
+/// Creating one of these will guarantee that the Terminal writes its buffered input
+/// when the scope ends. Used mainly in the interactive loop
+pub(crate) struct FlushGuard;
+impl Drop for FlushGuard {
+  fn drop(&mut self) {
+    use std::io::Write;
+    Shed::term_mut(|t| t.flush()).ok();
+  }
+}
