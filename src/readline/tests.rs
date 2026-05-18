@@ -7,22 +7,25 @@ use crate::tests::testutil::TestGuard;
 /// Tests for our vim logic emulation. Each test consists of an initial text, a sequence of keys to feed, and the expected final text and cursor position.
 macro_rules! vi_test {
   { $($name:ident: $input:expr => $op:expr => $expected_text:expr,$expected_cursor:expr);* $(;)? } => {
-    $(#[test]
-      fn $name() {
-        let (mut vi, _g) = test_vi($input);
-        Shed::term_mut(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
-        let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-        vi.process_input(keys).unwrap();
-
-        for byte in $op.as_bytes() {
-          Shed::term_mut(|t| t.feed_bytes(&[*byte]));
+    mod vi {
+      use super::*;
+      $(#[test]
+        fn $name() {
+          let (mut vi, _g) = test_vi($input);
+          Shed::term_mut(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
           let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
           vi.process_input(keys).unwrap();
+
+          for byte in $op.as_bytes() {
+            Shed::term_mut(|t| t.feed_bytes(&[*byte]));
+            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+            vi.process_input(keys).unwrap();
+          }
+          assert_eq!(vi.editor.joined(), $expected_text);
+          assert_eq!(vi.editor.cursor_to_flat(), $expected_cursor);
         }
-        assert_eq!(vi.editor.joined(), $expected_text);
-        assert_eq!(vi.editor.cursor_to_flat(), $expected_cursor);
-      }
-    )*
+      )*
+    }
   };
 }
 
@@ -247,7 +250,6 @@ vi_test! {
   vi_ex_delete_range       : "line1\nline2\nline3"          => ":1,2d\r"             => "line3", 0;
   vi_ex_global_delete      : "echo foo\nls\necho bar"       => ":g/echo/d\r"         => "ls", 0;
   vi_ex_global_sub         : "foo bar\nfoo baz\nkeep"       => ":g/foo/s/foo/X/\r"   => "X bar\nX baz\nkeep", 0;
-  vi_ex_nested_global      : "alpha bravo\nalpha charlie\ndelta bravo\ngamma" => ":g/alpha/g/bravo/normal!dw\r" => "bravo\nalpha charlie\ndelta bravo\ngamma", 0;
   vi_ex_normal_range       : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
   vi_ex_repeat_global      : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
   vi_visual_dot_repeat     : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
@@ -260,6 +262,14 @@ vi_test! {
   vi_count_search_bkwd     : "foo=(bar biz bam)"            => "3?b\rx"              => "foo=(ar biz bam)", 5;
   vi_count_n_fwd           : "foo=(bar biz bam)"            => "/b\r2nx"             => "foo=(bar biz am)", 13;
   vi_count_n_bkwd          : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
+  vi_macro_record          : "foo bar biz"                  => "qacwbam\x1bwqQQ"     => "bam bam bam", 10;
+  vi_macro_double          : "foo BAR biz BAM"              => "qag~wwqqbguwwq@a@b"  => "FOO bar BIZ bam", 14;
+
+  // ugly ones go down here
+  vi_ex_nested_global
+    :  "alpha bravo\nalpha charlie\ndelta bravo\ngamma"
+    => ":g/alpha/g/bravo/normal!dw\r"
+    => "bravo\nalpha charlie\ndelta bravo\ngamma", 0;
 }
 
 // ===================== Vi Tests =====================
@@ -331,6 +341,8 @@ fn vi_auto_indent_siblings() {
   );
 }
 
+// this one cant go up there because '\x1bO' looks like an OSC sequence to the vte parser.
+// So we have to explicitly split up the key events here into 'key!(Esc)' and 'key!('O')'.
 #[test]
 fn vi_auto_indent_funcdef() {
   let (mut vi, _g) = test_vi("");
@@ -369,166 +381,96 @@ fn case_stmt_is_finished() {
   assert_eq!(vi.editor.joined(), "");
 }
 
-fn hist_expansion_test(commands: &[&str], input: &str, expected: &str) {
-  let _g = TestGuard::new();
-  let prompt = Prompt::default();
-  let mut line = ShedLine::new_no_hist(prompt).unwrap();
-  for cmd in commands {
-    line.history.push(cmd.to_string()).unwrap();
-  }
-  line.history.refresh_hist_entries();
-  line.history.update_search_mask(None);
+macro_rules! hist_expansion_test {
+  ($($name:ident: $cmds:expr => $input:expr => $expected:literal);* $(;)?
+   ---
+   $($name2:ident: $cmds2:expr => $input2:literal);* $(;)?
+  ) => {
+    mod hist_expansion {
+      use super::*;
+      $(#[test]
+        fn $name() {
+          let _g = TestGuard::new();
+          let prompt = Prompt::default();
+          let mut line = ShedLine::new_no_hist(prompt).unwrap();
+          for cmd in $cmds {
+            line.history.push(cmd.to_string()).unwrap();
+          }
+          line.history.refresh_hist_entries();
+          line.history.update_search_mask(None);
 
-  assert_eq!(line.history.masked_entries().len(), commands.len());
+          assert_eq!(line.history.masked_entries().len(), $cmds.len());
 
-  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-  line.process_input(keys).unwrap();
+          Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
+          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          line.process_input(keys).unwrap();
 
-  // After process_input with \r, if expansion happened the buffer
-  // still holds the expanded text (submit was deferred). If no
-  // expansion happened, take_buf() already consumed it and returned
-  // ReadlineEvent::Line, so we can't read joined(). Use Tab instead
-  // of Enter for expansion-only tests.
-  let joined = line.editor.joined();
-  assert_eq!(joined, expected);
+          let joined = line.editor.joined();
+          assert_eq!(joined, $expected);
+        }
+      )*
+
+      $(#[test]
+        fn $name2() {
+          let _g = TestGuard::new();
+          let prompt = Prompt::default();
+          let mut line = ShedLine::new_no_hist(prompt).unwrap();
+          for cmd in $cmds2 {
+            line.history.push(cmd.to_string()).unwrap();
+          }
+          line.history.update_search_mask(None);
+
+          // Feed input without pressing Enter
+          Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
+          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          line.process_input(keys).unwrap();
+
+          let before = line.editor.joined();
+          // Manually call attempt_history_expansion - should return false
+          let expanded = line.editor.attempt_history_expansion(&line.history);
+          assert!(!expanded, "expected no expansion but expansion occurred");
+          assert_eq!(line.editor.joined(), before);
+        }
+      )*
+    }
+  };
 }
 
-/// Like hist_expansion_test but asserts that no expansion occurs.
-/// Feeds input without \r, triggers expansion via Tab, and checks
-/// the buffer is unchanged.
-fn hist_no_expansion_test(commands: &[&str], input: &str) {
-  let _g = TestGuard::new();
-  let prompt = Prompt::default();
-  let mut line = ShedLine::new_no_hist(prompt).unwrap();
-  for cmd in commands {
-    line.history.push(cmd.to_string()).unwrap();
-  }
-  line.history.update_search_mask(None);
+hist_expansion_test! {
+  breaks_on_metachars1   : &["cargo run"]                      => "if !car;\r"          => "if cargo run;";
+  breaks_on_metachars2   : &["cargo run"]                      => "!car && true\r"      => "cargo run && true";
+  breaks_on_metachars3   : &["cargo run"]                      => "!car | grep foo\r"   => "cargo run | grep foo";
+  ignores_closing_quote  : &["cargo run"]                      => "echo \"foo !car\"\r" => "echo \"foo cargo run\"";
+  works_in_double_quotes : &["foo"]                            => "\"!!\"\r"            => "\"foo\"";
+  no_match_is_passthrough: &["foo", "bar"]                     => "!z\r"                => "z";
+  multiple               : &["hello", "world"]                 => "echo !! !h\r"        => "echo world hello";
+  inline                 : &["world"]                          => "echo !!\r"           => "echo world";
+  positive_index         : &["alpha", "beta", "gamma"]         => "!1\r"                => "alpha";
+  negative_index         : &["alpha", "beta", "gamma"]         => "!-2\r"               => "beta";
+  bang_dollar_single_word: &["solo"]                           => "!$\r"                => "solo";
+  bang_dollar            : &["echo hello world"]               => "!$\r"                => "world";
+  bang_bang              : &["echo hello", "ls"]               => "!!\r"                => "ls";
+  prefix_latest_match    : &["foo first", "bar", "foo second"] => "!f\r"                => "foo second";
+  prefix                 : &["foo", "bar", "biz", "qux"]       => "!f\r"                => "foo";
 
-  // Feed input without pressing Enter
-  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-  line.process_input(keys).unwrap();
+  multiline
+    : &["echo foo","if true; then\necho foo\nfi", "echo bar"]
+    => "!2\r"
+    => "if true; then\n\techo foo\nfi";
 
-  let before = line.editor.joined();
-  // Manually call attempt_history_expansion - should return false
-  let expanded = line.editor.attempt_history_expansion(&line.history);
-  assert!(!expanded, "expected no expansion but expansion occurred");
-  assert_eq!(line.editor.joined(), before);
-}
+  parse_recurses
+    : &["cargo run"]
+    => "echo \"foo $(echo \"!car\") bar\"\r"
+    => "echo \"foo $(echo \"cargo run\") bar\"";
 
-#[test]
-fn history_expansion_prefix() {
-  hist_expansion_test(&["foo", "bar", "biz", "qux"], "!f\r", "foo");
-}
-
-#[test]
-fn history_expansion_prefix_latest_match() {
-  hist_expansion_test(&["foo first", "bar", "foo second"], "!f\r", "foo second");
-}
-
-#[test]
-fn history_expansion_bang_bang() {
-  hist_expansion_test(&["echo hello", "ls"], "!!\r", "ls");
-}
-
-#[test]
-fn history_expansion_bang_dollar() {
-  hist_expansion_test(&["echo hello world"], "!$\r", "world");
-}
-
-#[test]
-fn history_expansion_bang_dollar_single_word() {
-  hist_expansion_test(&["solo"], "!$\r", "solo");
-}
-
-#[test]
-fn history_expansion_negative_index() {
-  hist_expansion_test(&["alpha", "beta", "gamma"], "!-2\r", "beta");
-}
-
-#[test]
-fn history_expansion_positive_index() {
-  hist_expansion_test(&["alpha", "beta", "gamma"], "!1\r", "alpha");
-}
-
-#[test]
-fn history_expansion_inline() {
-  hist_expansion_test(&["world"], "echo !!\r", "echo world");
-}
-
-#[test]
-fn history_expansion_multiple() {
-  hist_expansion_test(&["hello", "world"], "echo !! !h\r", "echo world hello");
-}
-
-#[test]
-fn history_expansion_no_match_is_passthrough() {
-  // !z with no match resolves to the token itself (minus the !)
-  hist_expansion_test(&["foo", "bar"], "!z\r", "z");
-}
-
-#[test]
-fn history_expansion_skips_single_quotes() {
-  hist_no_expansion_test(&["foo"], "'!!'");
-}
-
-#[test]
-fn history_expansion_works_in_double_quotes() {
-  hist_expansion_test(&["foo"], "\"!!\"\r", "\"foo\"");
-}
-
-#[test]
-fn history_expansion_skips_dollar_bang() {
-  hist_no_expansion_test(&["foo"], "$!1");
-}
-
-#[test]
-fn history_expansion_multiline() {
-  hist_expansion_test(
-    &["echo foo", "if true; then\necho foo\nfi", "echo bar"],
-    "!2\r",
-    "if true; then\n\techo foo\nfi",
-  );
-}
-
-#[test]
-fn hist_expansion_parse_recurses() {
-  hist_no_expansion_test(&["cargo run"], "echo \"foo $(echo '!car') bar\"\r");
-}
-
-#[test]
-fn hist_expansion_does_not_recurse_in_single_quotes() {
-  hist_no_expansion_test(&["cargo run"], "echo 'foo $(echo \"!car\") bar'");
-}
-
-#[test]
-fn hist_expansion_ignores_closing_quote() {
-  hist_expansion_test(
-    &["cargo run"],
-    "echo \"foo !car\"\r",
-    "echo \"foo cargo run\"",
-  );
-}
-
-#[test]
-fn hist_expansion_breaks_on_metacharacters() {
-  // Shell metacharacters (;, &, |, etc.) should terminate the bang token
-  // so '!car;' expands the 'car' prefix and preserves the trailing ';'
-  hist_expansion_test(&["cargo run"], "if !car;\r", "if cargo run;");
-  hist_expansion_test(&["cargo run"], "!car && true\r", "cargo run && true");
-  hist_expansion_test(&["cargo run"], "!car | grep foo\r", "cargo run | grep foo");
-}
-
-#[test]
-fn hist_expansion_skips_param_indirection() {
-  // ${!var} is parameter indirection, not history expansion. The leading
-  // '!' inside the braces names the variable to dereference, and must not
-  // be consumed by the bang-history scanner.
-  hist_no_expansion_test(&["cargo run"], "echo ${!var}");
-  hist_no_expansion_test(&["cargo run"], "echo ${!car}");
-  hist_no_expansion_test(&["cargo run"], "echo \"${!var}\"");
+  --- // no-expansion tests
+  skips_param_indirection1    : &["cargo run"] => "echo ${!var}";
+  skips_param_indirection2    : &["cargo run"] => "echo ${!car}";
+  skips_param_indirection3    : &["cargo run"] => "echo \"${!var}\"";
+  no_recurse_in_single_quotes2: &["cargo run"] => "echo 'foo $(echo \"!car\") bar'";
+  no_recurse_in_single_quotes1: &["cargo run"] => "echo \"foo $(echo '!car') bar\"\r";
+  skips_dollar_bang           : &["foo"]       => "$!1";
+  skips_single_quotes         : &["foo"]       => "'!!'";
 }
 
 // ===================== History General Tests =====================
@@ -767,104 +709,90 @@ fn hist_restore_ids_are_contiguous() {
 
 // ===================== Alias Expansion Tests =====================
 
-fn setup_aliases(aliases: &[(&str, &str)]) {
-  let span = Span::default();
-  Shed::logic_mut(|l| {
-    for (name, body) in aliases {
-      l.insert_alias(name, body, span.clone());
-    }
-  });
+macro_rules! alias_expansion_test {
+  ($($name:ident: $aliases:expr => $input:literal => $result:literal);* $(;)?
+   ---
+   $($name2:ident: $aliases2:expr => $input2:literal);* $(;)?
+  ) => {
+    $(#[test]
+      fn $name() {
+        let _g = TestGuard::new();
+        Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
+        Shed::logic_mut(|l| {
+          for (name, body) in $aliases {
+            l.insert_alias(name, body, Span::default());
+          }
+        });
+
+        let prompt = Prompt::default();
+        let mut line = ShedLine::new_no_hist(prompt).unwrap();
+
+        Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
+        let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+        line.process_input(keys).unwrap();
+
+        let joined = line.editor.joined();
+        assert_eq!(joined, $result, "\nInput: {:?}", $input);
+      }
+    )*
+      $(#[test]
+        fn $name2() {
+          let _g = TestGuard::new();
+          Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
+          Shed::logic_mut(|l| {
+            for (name, body) in $aliases2 {
+              l.insert_alias(name, body, Span::default());
+            }
+          });
+
+          let prompt = Prompt::default();
+          let mut line = ShedLine::new_no_hist(prompt).unwrap();
+
+          Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
+          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          line.process_input(keys).unwrap();
+
+          let before = line.editor.joined();
+          let expanded = line.editor.attempt_alias_expansion();
+          assert!(
+            !expanded,
+            "expected no alias expansion but expansion occurred"
+          );
+          assert_eq!(line.editor.joined(), before);
+        }
+    )*
+  };
 }
 
-fn alias_expansion_test(aliases: &[(&str, &str)], input: &str, expected: &str) {
-  let _g = TestGuard::new();
-  Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
-  setup_aliases(aliases);
+alias_expansion_test! {
+  alias_single_char_body      : &[("a", "b")]            => "a "            => "b ";
+  alias_single_char_name      : &[("g", "git")]          => "g "            => "git ";
+  alias_expand_after_semicolon: &[("gc", "git commit")]  => "echo hi; gc "  => "echo hi; git commit ";
+  alias_expansion_with_args   : &[("gc", "git commit")]  => "gc -m 'hello'" => "git commit -m 'hello'";
+  alias_simple_expansion      : &[("ll", "ls -la")]      => "ll "           => "ls -la ";
 
-  let prompt = Prompt::default();
-  let mut line = ShedLine::new_no_hist(prompt).unwrap();
+  alias_recursion_terminates
+    : &[("diff", "diff --color=auto")]
+    => "diff "
+    => "diff --color=auto ";
 
-  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-  line.process_input(keys).unwrap();
+  alias_multiple_on_same_line
+    : &[("gc", "git commit"), ("gp", "git push")]
+    => "gc; gp "
+    => "git commit; git push ";
 
-  let joined = line.editor.joined();
-  assert_eq!(joined, expected, "\nInput: {input:?}");
-}
-
-fn alias_no_expansion_test(aliases: &[(&str, &str)], input: &str) {
-  let _g = TestGuard::new();
-  Shed::shopts_mut(|o| o.prompt.expand_aliases = true);
-  setup_aliases(aliases);
-
-  let prompt = Prompt::default();
-  let mut line = ShedLine::new_no_hist(prompt).unwrap();
-
-  Shed::term_mut(|t| t.feed_bytes(input.as_bytes()));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-  line.process_input(keys).unwrap();
-
-  let before = line.editor.joined();
-  let expanded = line.editor.attempt_alias_expansion();
-  assert!(
-    !expanded,
-    "expected no alias expansion but expansion occurred"
-  );
-  assert_eq!(line.editor.joined(), before);
-}
-
-#[test]
-fn alias_simple_expansion() {
-  alias_expansion_test(&[("ll", "ls -la")], "ll ", "ls -la ");
-}
-
-#[test]
-fn alias_expansion_with_args() {
-  alias_expansion_test(
-    &[("gc", "git commit")],
-    "gc -m 'hello'",
-    "git commit -m 'hello'",
-  );
-}
-
-#[test]
-fn alias_self_referencing_no_infinite_loop() {
-  alias_expansion_test(
-    &[("diff", "diff --color=auto")],
-    "diff ",
-    "diff --color=auto ",
-  );
-}
-
-#[test]
-fn alias_no_expand_in_arg_position() {
-  alias_no_expansion_test(&[("foo", "bar")], "echo foo ");
-}
-
-#[test]
-fn alias_expand_after_semicolon() {
-  alias_expansion_test(
-    &[("gc", "git commit")],
-    "echo hi; gc ",
-    "echo hi; git commit ",
-  );
-}
-
-#[test]
-fn alias_single_char_name() {
-  alias_expansion_test(&[("g", "git")], "g ", "git ");
-}
-
-#[test]
-fn alias_single_char_body() {
-  alias_expansion_test(&[("a", "b")], "a ", "b ");
+  ---
+  alias_no_expand_in_quotes: &[("gc", "git commit")] => "echo 'gc' ";
+  alias_no_expand_in_arg_position: &[("foo", "bar")] => "echo foo ";
 }
 
 #[test]
 fn alias_no_expand_when_disabled() {
   let _g = TestGuard::new();
   Shed::shopts_mut(|o| o.prompt.expand_aliases = false);
-  setup_aliases(&[("gc", "git commit")]);
+  Shed::logic_mut(|l| {
+    l.insert_alias("gc", "git commit", Span::default());
+  });
 
   let prompt = Prompt::default();
   let mut line = ShedLine::new_no_hist(prompt).unwrap();
@@ -875,18 +803,4 @@ fn alias_no_expand_when_disabled() {
 
   let joined = line.editor.joined();
   assert_ne!(joined, "git commit");
-}
-
-#[test]
-fn alias_no_expand_in_quotes() {
-  alias_no_expansion_test(&[("gc", "git commit")], "echo 'gc' ");
-}
-
-#[test]
-fn alias_multiple_on_same_line() {
-  alias_expansion_test(
-    &[("gc", "git commit"), ("gp", "git push")],
-    "gc; gp ",
-    "git commit; git push ",
-  );
 }
