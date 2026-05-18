@@ -239,7 +239,9 @@ impl HistQuery {
 
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut entries = if self.delete {
-      hist.delete(&query, &param_refs)?
+      let res = hist.delete(&query, &param_refs)?;
+      hist.refresh_hist_entries();
+      res
     } else {
       hist.query(&query, &param_refs)?
     };
