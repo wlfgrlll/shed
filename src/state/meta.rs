@@ -26,7 +26,7 @@ use super::{
   match_loop,
   procio::MIN_INTERNAL_FD,
   readline::{Candidate, CompSpec, LineData},
-  sherr,
+  sherr, try_var,
   util::query_db,
   var,
   vars::{VarFlags, VarKind},
@@ -331,8 +331,7 @@ pub(crate) struct ShedSocket {
 
 impl ShedSocket {
   pub fn dir() -> String {
-    std::env::var("XDG_RUNTIME_DIR")
-      .unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
+    try_var!("XDG_RUNTIME_DIR").unwrap_or_else(|| format!("/tmp/shed-{}", nix::unistd::getuid()))
   }
   pub fn path() -> String {
     let pid = Pid::this();
@@ -1171,7 +1170,7 @@ impl MetaTab {
     std::mem::take(&mut self.last_was_func_def)
   }
   pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
-    let path = std::env::var("PATH").unwrap_or_default();
+    let path = var!("PATH");
     let paths = path.split(":").map(PathBuf::from);
     let mut seen = HashSet::new();
     let mut cmds = vec![];
@@ -1209,7 +1208,7 @@ impl MetaTab {
     cmds
   }
   pub fn get_exec_files_in_cwd() -> Vec<Rc<Utility>> {
-    let cwd = std::env::var("PWD").unwrap_or_default();
+    let cwd = var!("PWD");
     let mut files = vec![];
     if let Ok(entries) = Path::new(&cwd).read_dir() {
       for entry in entries.flatten() {
@@ -1411,7 +1410,7 @@ impl MetaTab {
     self.util_cache.clear();
   }
   pub fn rehash_path(&mut self) {
-    let path = std::env::var("PATH").unwrap_or_default();
+    let path = var!("PATH");
     self.clear_cached_cmds();
     self.old_path = Some(path.clone());
     let cmds_in_path = Self::get_cmds_in_path();
@@ -1420,7 +1419,7 @@ impl MetaTab {
     }
   }
   pub fn rehash_cwd(&mut self) {
-    let cwd = std::env::var("PWD").unwrap_or_default();
+    let cwd = var!("PWD");
     self.clear_cached_files();
     self.old_pwd = Some(cwd.clone());
     let exec_files_in_cwd = Self::get_exec_files_in_cwd();
@@ -1460,8 +1459,8 @@ impl MetaTab {
     self.rehash_internals();
   }
   pub fn try_rehash_utils(&mut self) {
-    let path = std::env::var("PATH").unwrap_or_default();
-    let cwd = std::env::var("PWD").unwrap_or_default();
+    let path = var!("PATH");
+    let cwd = var!("PWD");
     if self.old_path.as_ref().is_none_or(|old| *old != path) {
       self.rehash_path();
     }

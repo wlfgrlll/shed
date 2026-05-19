@@ -30,7 +30,7 @@ pub fn expand_raw_inner(
 
       let (home, expanded) = if username.is_empty() {
         // standard '~' expansion
-        (std::env::var("HOME").unwrap_or_default(), true)
+        (var!("HOME"), true)
       } else if let Ok(result) = User::from_name(&username)
         && let Some(user) = result
       {
@@ -230,6 +230,7 @@ pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
 #[cfg(test)]
 mod tests {
   use super::super::escape_glob;
+  use super::var;
   use crate::expand::escape::unescape_str;
   use crate::expand::{expand_glob, expand_raw, markers};
   use crate::state::{Shed, vars::VarFlags, vars::VarKind};
@@ -283,7 +284,7 @@ mod tests {
   #[test]
   fn tilde_expansion_home() {
     let _guard = TestGuard::new();
-    let home = std::env::var("HOME").unwrap();
+    let home = var!("HOME");
 
     let raw = unescape_str("~/foo");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();
@@ -296,7 +297,7 @@ mod tests {
   #[test]
   fn tilde_expansion_bare() {
     let _guard = TestGuard::new();
-    let home = std::env::var("HOME").unwrap();
+    let home = var!("HOME");
 
     let raw = unescape_str("~");
     let result = expand_raw(&mut raw.chars().peekable()).unwrap();

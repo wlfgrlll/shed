@@ -769,6 +769,27 @@ impl Terminal {
     Ok(())
   }
 
+  /// Defensively re-apply raw mode to the tty.
+  ///
+  /// Some child programs (notably pagers like less invoked by bat) run their
+  /// own termios cleanup on exit. When they die after the shell has reaped
+  /// their parent, their cleanup races with our pop_termios and can leave
+  /// the tty in cooked mode. We follow zsh's mitigation here: just re-apply
+  /// raw mode at the start of every readline iteration. Cheap (one ioctl)
+  /// and resilient to any late tcsetattr from orphaned descendants.
+  pub fn enforce_raw_mode(&mut self) -> ShResult<()> {
+    let Some(tty) = self.tty_raw() else {
+      return Ok(());
+    };
+    let tty = unsafe { BorrowedFd::borrow_raw(tty) };
+    let mut t =
+      tcgetattr(tty).map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
+    enable_raw_mode(&mut t);
+    tcsetattr(tty, termios::SetArg::TCSANOW, &t)
+      .map_err(|e| sherr!(InternalErr, "Failed to set terminal attributes: {e}"))?;
+    Ok(())
+  }
+
   pub fn edit_termios<F: FnOnce(&mut Termios)>(&mut self, f: F) -> ShResult<()> {
     let Some(tty) = self.tty_raw() else {
       return Ok(());

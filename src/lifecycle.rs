@@ -15,7 +15,7 @@ use super::{
     logic::TrapTarget,
     util::{self, generate_default_rc, source_env},
   },
-  status_msg,
+  status_msg, try_var,
   util::flog,
 };
 
@@ -154,7 +154,7 @@ fn setup_panic_handler() {
 
     // log panic
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
-      let home = std::env::var("HOME").unwrap();
+      let home = try_var!("HOME").unwrap();
       PathBuf::from(format!("{home}/.local/share"))
     });
     let log_dir = data_dir.join("shed").join("log");
@@ -164,10 +164,11 @@ fn setup_panic_handler() {
 
     let panic_info_raw = info.to_string();
     log_file.write_all(panic_info_raw.as_bytes()).unwrap();
+    log_file.write_all(b"\n\n").unwrap();
 
     let backtrace = std::backtrace::Backtrace::force_capture();
     log_file
-      .write_all(format!("\nBacktrace:\n{:?}", backtrace).as_bytes())
+      .write_all(format!("\nBacktrace:\n{:#?}", backtrace).as_bytes())
       .unwrap();
 
     // call the default panic hook

@@ -5,6 +5,7 @@ use super::{
   getopt::{Opt, OptSpec},
   out, outln, sherr,
   state::util::change_dir,
+  try_var,
   util::ShResultExt,
   with_status,
 };
@@ -286,7 +287,7 @@ impl super::Builtin for Dirs {
 }
 
 pub fn truncate_home_path(path: String) -> String {
-  if let Ok(home) = env::var("HOME")
+  if let Some(home) = try_var!("HOME")
     && path.starts_with(&home)
   {
     let new = path.strip_prefix(&home).unwrap();

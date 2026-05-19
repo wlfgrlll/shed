@@ -2,6 +2,8 @@ target
 **/*.rs.bk
 flamegraph.svg
 perf*
+lcov.*
+crap.*
 .idea
 *.iml
 /result*

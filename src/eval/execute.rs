@@ -24,6 +24,7 @@ use super::{
     shopt::xtrace_print,
     vars::{ShellParam, Var, VarFlags, VarKind},
   },
+  try_var,
   util::{
     self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, split_case_pat,
     var_ctx_guard, with_status,
@@ -72,7 +73,7 @@ pub fn is_in_path(name: Tk) -> bool {
     }
     false
   } else {
-    let Ok(path) = std::env::var("PATH") else {
+    let Some(path) = try_var!("PATH") else {
       return false;
     };
     let paths = path.split(':');

@@ -1,5 +1,4 @@
 use std::{
-  env,
   fmt::Write,
   io::{Read, Seek, Write as IoWrite},
 };
@@ -18,6 +17,7 @@ use super::{
   sherr,
   shopt_internal::xtrace_print,
   state::{self},
+  try_var,
   util::{ShResult, ShResultExt, ordered},
 };
 
@@ -183,9 +183,9 @@ impl super::Builtin for FixCmd {
 fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   let editor = if let Some(editor) = opts.editor {
     editor
-  } else if let Ok(editor) = env::var("FCEDIT") {
+  } else if let Some(editor) = try_var!("FCEDIT") {
     editor
-  } else if let Ok(editor) = env::var("EDITOR") {
+  } else if let Some(editor) = try_var!("EDITOR") {
     editor
   } else {
     return Err(sherr!(ExecFail, "No editor specified for fc command"));

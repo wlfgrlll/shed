@@ -167,7 +167,7 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
 }
 
 pub fn get_comp_wordbreaks() -> String {
-  std::env::var("COMP_WORDBREAKS").unwrap_or_else(|_| String::from("\"'><;|=&(:"))
+  try_var!("COMP_WORDBREAKS").unwrap_or_else(|| String::from("\"'><;|=&(:"))
 }
 
 /// Get the first char of IFS
@@ -386,7 +386,7 @@ pub fn set_ver_info() -> ShResult<()> {
 pub fn set_sh_lvl() -> ShResult<()> {
   // Increment SHLVL, or set to 1 if not present or invalid.
   // This var represents how many nested shell instances we're in
-  if let Ok(var) = std::env::var("SHLVL")
+  if let Some(var) = try_var!("SHLVL")
     && let Ok(lvl) = var.parse::<u32>()
   {
     Shed::vars_mut(|v| {
@@ -427,10 +427,10 @@ pub fn init_db_conn() {
 }
 
 pub fn open_db_conn() -> ShResult<Connection> {
-  let db_path = if let Ok(var) = std::env::var("SHED_HISTDB") {
+  let db_path = if let Some(var) = try_var!("SHED_HISTDB") {
     var
   } else {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = try_var!("HOME").unwrap_or_else(|| ".".to_string());
     dirs::data_dir()
       .map(|p| p.to_string_lossy().to_string())
       .unwrap_or_else(|| format!("{home}/.local/share/shed/shed_hist.db"))

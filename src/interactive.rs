@@ -33,7 +33,7 @@ use super::{
     terminal::TermGuard,
     util::{rc_file_path, source_login, source_rc},
   },
-  util, write_term,
+  try_var, util, write_term,
 };
 
 fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
@@ -141,7 +141,7 @@ fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
   source_builtin_scripts();
   source_builtin_completions();
 
-  if let Ok(welcome) = std::env::var("SHELL_WELCOME") {
+  if let Some(welcome) = try_var!("SHELL_WELCOME") {
     // support for systemd's run0 message
     errln!("\n{welcome}\n\n");
   }
@@ -207,6 +207,18 @@ pub(super) fn shed_interactive(
 
   // Main poll loop
   loop {
+    // make absolutely sure we are in raw mode here.
+    // we did enable raw mode above, but there do exist extreme corner cases where
+    // raw mode can be disabled in such a way that it is still turned off once we get back here.
+    //
+    // one example:
+    // 1. fork child process
+    // 2. child process forks another child
+    // 3. we reap our child process, and the grandchild is orphaned
+    // 4. we get back to the loop here, grandchild alters termios
+    // 5. shell is softlocked
+    Shed::term_mut(|t| t.enforce_raw_mode())?;
+
     state::util::try_hash();
     util::flog::update_log_level();
     let _flush_guard = state::terminal::FlushGuard; // flushes terminal on drop

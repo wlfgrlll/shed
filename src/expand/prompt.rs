@@ -416,21 +416,21 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       result.push_str(&path_rebuilt);
     }
     PromptTk::Hostname => {
-      let hostname = std::env::var("HOST").unwrap();
+      let hostname = var!("HOST");
       result.push_str(&hostname);
     }
     PromptTk::ShellName => result.push_str("shed"),
     PromptTk::Username => {
-      let username = std::env::var("USER").unwrap();
+      let username = var!("USER");
       result.push_str(&username);
     }
     PromptTk::PromptSymbol => {
-      let uid = std::env::var("UID").unwrap();
+      let uid = var!("UID");
       let symbol = if &uid == "0" { '#' } else { '$' };
       result.push(symbol);
     }
     PromptTk::HostnameShort => {
-      let hostname = std::env::var("HOST").unwrap();
+      let hostname = var!("HOST");
       let mut segments = hostname.split('.');
       if let Some(first) = segments.next() {
         result.push_str(first);

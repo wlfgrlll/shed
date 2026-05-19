@@ -16,8 +16,9 @@ use super::{
   expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
   procio::stdin_fileno,
   readline::Candidate,
-  sherr,
+  sherr, try_var,
   util::get_separator,
+  var,
 };
 
 /// Display key/value pairs as '{key}={value}\n'
@@ -614,7 +615,7 @@ impl VarTab {
     // First, inherit any env vars from the parent process
     let term = {
       if isatty(stdin_fileno()).unwrap() {
-        if let Ok(term) = std::env::var("TERM") {
+        if let Some(term) = try_var!("TERM") {
           term
         } else {
           "linux".to_string()
@@ -743,7 +744,7 @@ impl VarTab {
     if let Some(var) = self.vars.get(var).map(|s| s.to_string()) {
       var
     } else {
-      std::env::var(var).unwrap_or_default()
+      var!(var)
     }
   }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {

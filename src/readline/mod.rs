@@ -254,7 +254,7 @@ impl Prompt {
   pub fn new() -> Self {
     autocmd!(PrePrompt);
 
-    let Ok(ps1_raw) = std::env::var("PS1") else {
+    let Some(ps1_raw) = try_var!("PS1") else {
       return Self::default();
     };
     // PS1 expansion may involve running commands (e.g., for \h or \W), which can modify shell state
@@ -263,7 +263,7 @@ impl Prompt {
     let Ok(ps1_expanded) = expand_prompt(&ps1_raw) else {
       return Self::default();
     };
-    let psr_raw = std::env::var("PSR").ok();
+    let psr_raw = try_var!("PSR");
     let psr_expanded = psr_raw
       .clone()
       .map(|r| expand_prompt(&r))

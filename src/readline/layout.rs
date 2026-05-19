@@ -2,7 +2,9 @@ use std::{env, fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{Shed, linebuf::Pos, shopt, state::terminal::width, util::ShResult, write_term};
+use super::{
+  Shed, linebuf::Pos, shopt, state::terminal::width, try_var, util::ShResult, write_term,
+};
 
 pub fn enumerate_lines(
   s: &str,
@@ -185,11 +187,11 @@ pub fn redraw(
   let cursor = new_layout.cursor;
 
   Shed::term_mut(|t| t.emit_osc_prompt_start()).ok();
-  if let Ok(prefix) = env::var("SHELL_PROMPT_PREFIX") {
+  if let Some(prefix) = try_var!("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
   write_term!("{prompt}").ok();
-  if let Ok(suffix) = env::var("SHELL_PROMPT_SUFFIX") {
+  if let Some(suffix) = try_var!("SHELL_PROMPT_SUFFIX") {
     write_term!("{suffix}").ok();
   }
   Shed::term_mut(|t| t.emit_osc_prompt_end()).ok();

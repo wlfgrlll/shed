@@ -449,7 +449,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("export SHED_TEST_VAR=hello_export").unwrap();
     assert_eq!(var!("SHED_TEST_VAR"), "hello_export");
-    assert_eq!(std::env::var("SHED_TEST_VAR").unwrap(), "hello_export");
+    assert_eq!(var!("SHED_TEST_VAR"), "hello_export");
     unsafe { std::env::remove_var("SHED_TEST_VAR") };
   }
 
@@ -458,7 +458,7 @@ mod tests {
     let _g = TestGuard::new();
     test_input("SHED_TEST_VAR2=existing").unwrap();
     test_input("export SHED_TEST_VAR2").unwrap();
-    assert_eq!(std::env::var("SHED_TEST_VAR2").unwrap(), "existing");
+    assert_eq!(var!("SHED_TEST_VAR2"), "existing");
     unsafe { std::env::remove_var("SHED_TEST_VAR2") };
   }
 
@@ -483,8 +483,8 @@ mod tests {
   fn export_multiple() {
     let _g = TestGuard::new();
     test_input("export SHED_A=1 SHED_B=2").unwrap();
-    assert_eq!(std::env::var("SHED_A").unwrap(), "1");
-    assert_eq!(std::env::var("SHED_B").unwrap(), "2");
+    assert_eq!(var!("SHED_A"), "1");
+    assert_eq!(var!("SHED_B"), "2");
     unsafe { std::env::remove_var("SHED_A") };
     unsafe { std::env::remove_var("SHED_B") };
   }
@@ -619,7 +619,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = var!("HOME");
     assert!(out.contains(&format!("x={home}")), "got {out:?}");
   }
 

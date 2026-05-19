@@ -5,7 +5,6 @@ use markup::StyledHelp;
 use pager::{HelpPager, PagerEvent};
 
 use std::{
-  env,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
 };
@@ -19,7 +18,7 @@ use super::{
   readline::{self, ScoredCandidate},
   sherr, state,
   util::{self, Direction, ShResult, with_status},
-  write_term,
+  var, write_term,
 };
 
 use markup::TAG_SEQ;
@@ -119,7 +118,7 @@ impl super::Builtin for Help {
 
 pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   let mut tags = vec![];
-  let hpath = env::var("SHED_HPATH").unwrap_or_default();
+  let hpath = var!("SHED_HPATH");
   for path in hpath.split(':') {
     let path = Path::new(path);
     if let Ok(entries) = path.read_dir() {
@@ -156,7 +155,7 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
     ));
   }
 
-  let hpath = env::var("SHED_HPATH").unwrap_or_default();
+  let hpath = var!("SHED_HPATH");
 
   // search for prefixes of help doc filenames
   for path in hpath.split(':') {
