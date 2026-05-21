@@ -1,8 +1,14 @@
-<h1 align="center">shed</h1>
+<h1 align="center">
+	shed
+</h1>
+<p align="center">
+	<img alt="Coveralls" src="https://img.shields.io/coverallsCoverage/github/km-clay/shed?color=%23178f2d">
+	<img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/km-clay/shed/ci.yml">
+	<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/km-clay/shed">
+</p>
 <h6 align="center">
   A modern POSIX shell focusing on smooth line editing and rich interactive features.
 </h6>
-
 <img width="1925" height="1026" alt="shed" src="https://github.com/user-attachments/assets/c7d7d410-6cf5-4a04-a2be-ef3b6146e155" />
 
 ## Why shed?
