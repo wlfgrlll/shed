@@ -15,6 +15,30 @@ I started working on `shed` because I have yet to find an unopinionated shell wi
 
 `shed` includes a built-in modal line editor, written from scratch. It supports both **vim** and **emacs** editing modes. `shed`'s line editor distinguishes itself by treating multi-line operations as first class. It's effectively a terminal-embedded text editor, rather than a traditional shell line editor.
 
+#### Emacs mode
+The default. Supports the usual readline-style bindings (`Ctrl+A`/`Ctrl+E`/`Ctrl+W`, transposition, kill ring, etc.), with multi-line awareness layered on top.
+
+`Alt+;` provides access to `ex mode`
+
+#### Vi mode
+Enable with `shopt set.vi=true` or `set -o vi`. Implements normal, insert, visual, and replace modes with wide coverage of the standard vi motions and operators, including several vim-specific extensions like `g?`, and also implements registers and macro recording.
+
+`:` from normal mode enters `ex mode`.
+
+#### Ex mode
+A secondary command prompt that has many tools for both controlling the line editor, and executing shell commands without losing the one you are currently working on.
+
+| Command               | Description                                                                                                       |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------|
+| `:!cmd`               | Executes `cmd` as though it had been submitted from the main prompt. Triggers pre-cmd and post-cmd autocmds.      |
+| `:h topic`            | Opens the help page relevant to the given topic, e.g. `:h variables`.                                             |
+| `:stash`              | Stores the main editor's buffer, then clears the main editor. `:stash pop` restores the buffer.                   |
+| `:normal <keys>`      | Runs a normal-mode key sequence. Useful for `keymaps`.                                                            |
+| `:w file` / `:w !cmd` | Write the current buffer to a file, or pipe to a shell command. e.g. `:w !wl-copy` to pipe it to your clipboard.  |
+| `:r file` / `:r !cmd` | Read a file into the buffer, or read shell output, e.g. `:r !wl-paste` to read clipboard contents into the buffer.|
+
+For a comprehensive list, as well as more in-depth stuff like line-addressing, check out the [ex mode docs](./doc/ex.txt)
+
 ---
 
 ### Interactive Documentation
@@ -120,7 +144,7 @@ Additionally, `shed` implements a unique feature for interacting with your histo
 
 ### Alias Expansion
 
-`shed` supports fish-style alias expansion on the prompt. When enabled (`shopt prompt.expand_aliases=true`, the default), aliases expand visually as you type. Press space or enter after an alias and the real command appears in the buffer before execution. This lets you see and edit the expanded form before running it.
+`shed` supports fish-style alias expansion on the prompt. When enabled (`shopt prompt.expand_aliases=true`, the default), aliases expand visually as you type. Press space or enter after an alias and the real command appears in the buffer before execution. This lets you see and edit the expanded form before running it. Useful for keeping your command history readable.
 
 Expansion only applies to words in command position (not arguments).
 
@@ -134,7 +158,7 @@ Expansion only applies to words in command position (not arguments).
 shopt highlight.valid_command="bold green"
 shopt highlight.string="yellow"
 shopt highlight.variable="#89b4fa"
-shopt highlight.comment="italic bright black"
+shopt highlight.comment="italic bright black on white"
 shopt highlight.operator="bold magenta"
 ```
 
