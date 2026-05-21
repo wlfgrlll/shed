@@ -61,8 +61,6 @@ fn move_high_no_cloexec(fd: OwnedFd) -> nix::Result<OwnedFd> {
   Ok(new_fd)
 }
 
-// LCOV_EXCL_START
-
 /// SQLite opens long-lived file descriptors on its own and we cant call move_high on them.
 ///
 /// These files usually end up polluting the user-space 3-10 range which we work so hard to keep clear
@@ -90,8 +88,6 @@ where
   // now if this opens fds, they will be at least the value of min_fd
   something()
 }
-
-// LCOV_EXCL_STOP
 
 /// Creates pipes outside of the userspace range of FDs
 pub fn pipes_high() -> nix::Result<(OwnedFd, OwnedFd)> {
@@ -460,6 +456,7 @@ impl RedirSpec {
         let path = path.into_iter().next().unwrap();
 
         let file: OwnedFd = get_redir_file(mode, path)?.into();
+        let file = move_high(file)?;
         Ok(Redir::new(fd, file))
       }
       RedirSpec::Dup { from, to, mode: _ } => {
@@ -467,6 +464,7 @@ impl RedirSpec {
         let owned = borrowed
           .try_clone_to_owned()
           .map_err(|e| sherr!(InternalErr, "Failed to duplicate fd {}: {}", from, e))?;
+        let owned = move_high(owned)?;
         Ok(Redir::new(to, owned))
       }
       RedirSpec::Close { fd } => Ok(Redir::close(fd)),
@@ -476,6 +474,7 @@ impl RedirSpec {
 
         let owned = memfd_create(c"shed_heredoc", MFdFlags::MFD_CLOEXEC)
           .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
+        let owned = move_high(owned)?;
 
         if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
           buf = Expander::from_raw(&buf, flags)?

@@ -882,18 +882,23 @@ impl ExParser {
   fn parse_command(&mut self) -> ExR<ExNdRule> {
     let Some(tk) = self
       .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Command(_)))
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Command(_) | ExTkRule::Bang))
     else {
       return ExR::NoMatch;
     };
+
+    // `!cmd` form: `!` itself is the command-starter; dispatch to
+    // parse_shell directly and skip the trailing-bang consumption.
+    if matches!(tk.class, ExTkRule::Bang) {
+      return self.parse_shell();
+    }
+
     let cmd = tk.class.unwrap_cmd();
 
-    if !matches!(tk.class, ExTkRule::Bang) {
-      self.bang = self
-        .tokens
-        .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
-        .is_some()
-    }
+    self.bang = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
+      .is_some();
 
     match cmd {
       ExCommand::Read | ExCommand::Write => self.parse_read_write(&tk.class),
@@ -1665,5 +1670,17 @@ mod parse_command_tests {
     // parse() emits "expected command".
     let msg = parse_err("5");
     assert!(msg.contains("expected command"), "got: {msg:?}");
+  }
+
+  #[test]
+  fn leading_bang_parses_as_shell_command() {
+    // `:!cmd` form — Bang as the command-starter routes to parse_shell.
+    // Regression guard: the ExTkRule refactor split Bang out of the
+    // is_command predicate and silently broke this path.
+    let node = parse_ok("!echo foo");
+    match node.kind {
+      ExNdRule::Shell(s) => assert!(s.contains("echo"), "got: {s:?}"),
+      other => panic!("expected Shell, got {other:?}"),
+    }
   }
 }
