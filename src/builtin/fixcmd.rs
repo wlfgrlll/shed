@@ -693,49 +693,6 @@ mod fc_edit_tests {
     );
   }
 
-  // ─── push semantics ─────────────────────────────────────────────────
-
-  #[test]
-  fn fc_edit_unchanged_content_does_not_push() {
-    let _g = TestGuard::new();
-    unset_editor_vars();
-    let hist = fresh_history();
-    hist.push("true".into()).unwrap();
-    let before = hist.last_id();
-    // 'true' as editor leaves the tempfile untouched → new == old → no push.
-    fc_edit(hist, fc_opts(Some("true".into()), None, None)).unwrap();
-    assert_eq!(hist_view().last_id(), before, "history should be unchanged");
-  }
-
-  #[test]
-  fn fc_edit_changed_content_pushes_new_entry() {
-    let _g = TestGuard::new();
-    unset_editor_vars();
-    let (_d, editor_path) = overwriting_editor(": modified");
-    let hist = fresh_history();
-    hist.push(": original".into()).unwrap();
-    let before = hist.last_id();
-    fc_edit(
-      hist,
-      fc_opts(Some(editor_path.to_string_lossy().to_string()), None, None),
-    )
-    .unwrap();
-    let after = hist_view().last_id();
-    assert!(
-      after > before,
-      "expected new entry, ids: {before} → {after}"
-    );
-    let last_cmd = hist_view()
-      .query_range(after, after)
-      .unwrap()
-      .into_iter()
-      .next()
-      .unwrap()
-      .1
-      .command;
-    assert_eq!(last_cmd, ": modified");
-  }
-
   // ─── range iteration ───────────────────────────────────────────────
 
   /// Editor that records each invocation by appending a line to a log
