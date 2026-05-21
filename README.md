@@ -1,10 +1,9 @@
-# shed
+<h1 align="center">shed</h1>
+<h6 align="center">
+  A modern POSIX shell focusing on smooth line editing and rich interactive features.
+</h6>
 
-A Linux shell written in Rust. The name is a nod to the original Unix utilities `sh` and `ed`. `shed` places heavy emphasis on smooth line editing and general interactive UX improvements over existing options.
-
-`shed` is generally POSIX compatible, so the only stuff to learn is the stuff that sets it apart.
-
-<img width="931" height="537" alt="file" src="https://github.com/user-attachments/assets/33c587f0-99b2-4c5d-a80d-b7b130a7b8b1" />
+<img width="1925" height="1026" alt="shed" src="https://github.com/user-attachments/assets/c7d7d410-6cf5-4a04-a2be-ef3b6146e155" />
 
 ## Why shed?
 
@@ -24,6 +23,8 @@ I started working on `shed` because I have yet to find an unopinionated shell wi
 
 The help topics are opened in a custom interactive pager that uses a basic hypertext markup language. The content contains links to other topics that can be clicked on, or navigated to by using Tab to show link hints.
 
+<img width="1925" height="1028" alt="shed_help" src="https://github.com/user-attachments/assets/a6cf2031-5f01-4260-9104-bcf488ef1778" />
+
 Examples:
 ```bash
 help params     # opens the params page
@@ -34,12 +35,13 @@ Additionally, the help pages can be reached using `ex mode` like `:h some-topic`
 
 ---
 
-
 ### Fuzzy Tab Completion/History Search
 
-`shed` comes with fuzzy completion and history searching out of the box. It has its own internal fuzzyfinder implementation, so `fzf` is not a dependency.
-
-<img width="931" height="537" alt="file" src="https://github.com/user-attachments/assets/f078857a-e781-46f1-8bf3-06317f1d6ccb" />
+`shed` comes with fuzzy completion and history searching out of the box.
+<p align="center">
+	<img width="49%" alt="shed_comp" src="https://github.com/user-attachments/assets/489786e3-c925-433a-b905-a7b7ef1f9368" />
+	<img width="49%" alt="shed_hist" src="https://github.com/user-attachments/assets/5f07bcc7-0e3d-41ab-baae-59702a278969" />
+</p>
 
 ---
 
@@ -142,7 +144,7 @@ Style descriptions support named colors, `bright` variants, modifiers (`bold`, `
 
 ### Status Line
 
-`shed` provides an api for implementing your own status line, using the `shopt statline.*`:
+`shed` provides an API for implementing your own status line, using the `shopt statline.*` options:
 
 ```sh
 shopt statline.enable=true # enables the status line, anchors the prompt to it
@@ -163,7 +165,7 @@ An example implementation of a `shed` status line can be found [here](./examples
 
 Among other things, it's possible to read from and write to the line editor directly via the socket. This enables total extensibility of the editor by anything that can interact with a Unix socket. The `remote` editing mode causes input keys to be broadcast over the socket, to be consumed by subscribers that can use those inputs to control the editor remotely.
 
-More info can be found in [./doc/socket.txt](./doc/socket.txt).
+More info can be found in [the socket help page](./doc/socket.txt).
 
 ---
 
@@ -311,4 +313,4 @@ Full disclosure can be found here: [AI_POLICY.md](./AI_POLICY.md).
 
 ## Notes
 
-`shed` is experimental software and is currently under active development. Using an experimental shell is inherently risky business, there is no guarantee that your computer will not explode when you run this. That being said, I've been daily driving it for 5 months at the time of writing and my computer has not exploded yet. Use it at your own risk, the software is provided as-is.
+`shed` is experimental software and is currently under active development. Using an experimental shell is inherently risky business, there is no guarantee that your computer will not explode when you run this. That being said, I've been daily driving it for 8 months at the time of writing and my computer has not exploded yet. Use it at your own risk, the software is provided as-is.
