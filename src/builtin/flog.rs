@@ -43,10 +43,8 @@ impl super::Builtin for Flog {
         Opt::ShortWithArg('p', arg) => {
           prefix_fmt = arg.to_string();
         }
-        Opt::LongWithArg(flag, arg) => {
-          if flag.as_str() == "prefix" {
-            prefix_fmt = arg.to_string();
-          }
+        Opt::LongWithArg(flag, arg) if flag.as_str() == "prefix" => {
+          prefix_fmt = arg.to_string();
         }
         _ => {}
       }
@@ -107,5 +105,110 @@ impl Flog {
   fn get_log_level() -> Option<log::Level> {
     let level = var!("FLOG_LEVEL").to_ascii_uppercase();
     level.parse::<log::Level>().ok()
+  }
+}
+
+#[cfg(test)]
+mod flog_execute_tests {
+  use crate::state;
+  use crate::state::Shed;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::{TestGuard, test_input};
+
+  /// Empty the system_msg queue so each test sees a clean slate.
+  fn drain_system_msgs() {
+    while state::Shed::pop_system_msg().is_some() {}
+  }
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  /// Pop and concatenate all pending system messages.
+  fn collect_system_msgs() -> String {
+    let mut out = String::new();
+    while let Some(m) = state::Shed::pop_system_msg() {
+      out.push_str(&m);
+      out.push('\n');
+    }
+    out
+  }
+
+  #[test]
+  fn flog_no_args_errors() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    test_input("flog").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn flog_invalid_level_errors() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    test_input("flog NOTALEVEL hello").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn flog_level_above_threshold_is_silent() {
+    // Default FLOG_LEVEL is unset → fallback Error. Info > Error, so
+    // an info message must be suppressed and produce no system msg.
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    // Make sure FLOG_LEVEL is not set to something that would let info through.
+    Shed::vars_mut(|v| v.unset_var("FLOG_LEVEL").ok());
+    test_input("flog INFO suppressed_message_xyz").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    let msgs = collect_system_msgs();
+    assert!(!msgs.contains("suppressed_message_xyz"), "got: {msgs:?}");
+  }
+
+  #[test]
+  fn flog_level_at_threshold_emits_message() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    set_var("FLOG_LEVEL", "DEBUG");
+    test_input("flog INFO visible_info_message").unwrap();
+    let msgs = collect_system_msgs();
+    assert!(msgs.contains("visible_info_message"), "got: {msgs:?}");
+  }
+
+  #[test]
+  fn flog_p_flag_overrides_default_prefix() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    set_var("FLOG_LEVEL", "DEBUG");
+    test_input("flog -p 'CUSTOM_TAG' INFO body_text").unwrap();
+    let msgs = collect_system_msgs();
+    assert!(msgs.contains("CUSTOM_TAG"), "got: {msgs:?}");
+    assert!(msgs.contains("body_text"), "got: {msgs:?}");
+  }
+
+  #[test]
+  fn flog_long_prefix_flag_overrides_default_prefix() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    set_var("FLOG_LEVEL", "DEBUG");
+    test_input("flog --prefix 'LONG_TAG' INFO body_text2").unwrap();
+    let msgs = collect_system_msgs();
+    assert!(msgs.contains("LONG_TAG"), "got: {msgs:?}");
+    assert!(msgs.contains("body_text2"), "got: {msgs:?}");
+  }
+
+  #[test]
+  fn flog_default_prefix_contains_level_token() {
+    let _g = TestGuard::new();
+    drain_system_msgs();
+    set_var("FLOG_LEVEL", "DEBUG");
+    Shed::vars_mut(|v| v.unset_var("FLOG_FMT").ok());
+    test_input("flog INFO check_default_prefix").unwrap();
+    let msgs = collect_system_msgs();
+    // Default fmt is "[{level}] …" — at minimum the level name appears.
+    assert!(msgs.contains("INFO"), "got: {msgs:?}");
+    assert!(msgs.contains("check_default_prefix"), "got: {msgs:?}");
   }
 }

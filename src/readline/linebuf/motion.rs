@@ -1177,3 +1177,391 @@ impl super::LineBuf {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use crate::readline::LineBuf;
+  use crate::readline::editcmd::LineAddr;
+  use crate::tests::testutil::TestGuard;
+
+  /// Build a multi-line LineBuf with the cursor placed on `cursor_row`.
+  fn buf_at(content: &str, cursor_row: usize) -> LineBuf {
+    let mut b = LineBuf::default();
+    b.set_buffer(content.into());
+    b.set_cursor(super::super::Pos {
+      row: cursor_row,
+      col: 0,
+    });
+    b
+  }
+
+  // ─── LineAddr::Number — 1-indexed, clamped to last line ─────────────
+
+  #[test]
+  fn resolve_number_within_range() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc\nd", 0);
+    assert_eq!(b.resolve_line_addr(&LineAddr::Number(2)).unwrap(), Some(1));
+  }
+
+  #[test]
+  fn resolve_number_clamps_past_end() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    // 99 → clamped to last line (index 2).
+    assert_eq!(b.resolve_line_addr(&LineAddr::Number(99)).unwrap(), Some(2));
+  }
+
+  #[test]
+  fn resolve_number_zero_saturates_to_first() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    // 0.saturating_sub(1) → 0, min last → 0.
+    assert_eq!(b.resolve_line_addr(&LineAddr::Number(0)).unwrap(), Some(0));
+  }
+
+  // ─── LineAddr::Current / Last ────────────────────────────────────────
+
+  #[test]
+  fn resolve_current_returns_cursor_row() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc\nd", 2);
+    assert_eq!(b.resolve_line_addr(&LineAddr::Current).unwrap(), Some(2));
+  }
+
+  #[test]
+  fn resolve_last_returns_last_row_index() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc\nd", 0);
+    assert_eq!(b.resolve_line_addr(&LineAddr::Last).unwrap(), Some(3));
+  }
+
+  // ─── LineAddr::Offset ────────────────────────────────────────────────
+
+  #[test]
+  fn resolve_offset_positive() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc\nd", 1);
+    assert_eq!(b.resolve_line_addr(&LineAddr::Offset(2)).unwrap(), Some(3));
+  }
+
+  #[test]
+  fn resolve_offset_negative() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc\nd", 3);
+    assert_eq!(b.resolve_line_addr(&LineAddr::Offset(-2)).unwrap(), Some(1));
+  }
+
+  #[test]
+  fn resolve_offset_negative_saturates_at_zero() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 1);
+    // 1 + (-99) saturates to 0, not underflow.
+    assert_eq!(
+      b.resolve_line_addr(&LineAddr::Offset(-99)).unwrap(),
+      Some(0)
+    );
+  }
+
+  // ─── LineAddr::Pattern (forward) ─────────────────────────────────────
+
+  #[test]
+  fn resolve_pattern_finds_next_forward_match() {
+    let _g = TestGuard::new();
+    let b = buf_at("foo\nbar\nbaz\nfoo again", 0);
+    let result = b
+      .resolve_line_addr(&LineAddr::Pattern("baz".into()))
+      .unwrap();
+    assert_eq!(result, Some(2));
+  }
+
+  #[test]
+  fn resolve_pattern_wraps_around() {
+    let _g = TestGuard::new();
+    // cursor on row 2, pattern matches row 0 → search wraps.
+    let b = buf_at("target\nb\nc", 2);
+    let result = b
+      .resolve_line_addr(&LineAddr::Pattern("target".into()))
+      .unwrap();
+    assert_eq!(result, Some(0));
+  }
+
+  #[test]
+  fn resolve_pattern_no_match_returns_none() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    let result = b
+      .resolve_line_addr(&LineAddr::Pattern("xyz_no_match".into()))
+      .unwrap();
+    assert_eq!(result, None);
+  }
+
+  #[test]
+  fn resolve_pattern_invalid_regex_returns_none() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    // Unclosed bracket — invalid regex. Function logs status_msg and returns Ok(None).
+    let result = b.resolve_line_addr(&LineAddr::Pattern("[".into())).unwrap();
+    assert_eq!(result, None);
+  }
+
+  // ─── LineAddr::PatternRev (backward) ─────────────────────────────────
+
+  #[test]
+  fn resolve_pattern_rev_finds_previous_match() {
+    let _g = TestGuard::new();
+    let b = buf_at("target\nb\nc\nd", 3);
+    let result = b
+      .resolve_line_addr(&LineAddr::PatternRev("target".into()))
+      .unwrap();
+    assert_eq!(result, Some(0));
+  }
+
+  #[test]
+  fn resolve_pattern_rev_wraps_around() {
+    let _g = TestGuard::new();
+    // cursor on row 0, pattern matches row 2 → backward search wraps to end.
+    let b = buf_at("a\nb\ntarget", 0);
+    let result = b
+      .resolve_line_addr(&LineAddr::PatternRev("target".into()))
+      .unwrap();
+    assert_eq!(result, Some(2));
+  }
+
+  // ─── LineAddr::Mark — anchors and unimplemented ──────────────────────
+
+  #[test]
+  fn resolve_mark_lt_without_selection_returns_none() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    let result = b.resolve_line_addr(&LineAddr::Mark('<')).unwrap();
+    assert_eq!(result, None);
+  }
+
+  #[test]
+  fn resolve_mark_gt_without_selection_returns_none() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    let result = b.resolve_line_addr(&LineAddr::Mark('>')).unwrap();
+    assert_eq!(result, None);
+  }
+
+  #[test]
+  fn resolve_mark_lt_with_char_selection_returns_anchor_row() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("aaa\nbbb\nccc\nddd", 1);
+    // Start char-select at current cursor (row 1), then move cursor to row 3.
+    b.start_char_select();
+    b.set_cursor(super::super::Pos { row: 3, col: 0 });
+    let lt = b.resolve_line_addr(&LineAddr::Mark('<')).unwrap();
+    let gt = b.resolve_line_addr(&LineAddr::Mark('>')).unwrap();
+    // The lower-row endpoint is `<`, the upper is `>` (or vice-versa
+    // depending on internal anchor/cursor ordering); just verify they
+    // bracket the selection.
+    let (a, c) = (lt.unwrap(), gt.unwrap());
+    let (lo, hi) = if a < c { (a, c) } else { (c, a) };
+    assert_eq!(lo, 1);
+    assert_eq!(hi, 3);
+  }
+
+  #[test]
+  fn resolve_mark_with_line_selection_returns_anchor_and_cursor_rows() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("aaa\nbbb\nccc\nddd", 0);
+    b.start_line_select();
+    b.set_cursor(super::super::Pos { row: 2, col: 0 });
+    let lt = b.resolve_line_addr(&LineAddr::Mark('<')).unwrap();
+    let gt = b.resolve_line_addr(&LineAddr::Mark('>')).unwrap();
+    let (a, c) = (lt.unwrap(), gt.unwrap());
+    let (lo, hi) = if a < c { (a, c) } else { (c, a) };
+    assert_eq!(lo, 0);
+    assert_eq!(hi, 2);
+  }
+
+  #[test]
+  fn resolve_mark_unimplemented_named_mark_returns_none() {
+    let _g = TestGuard::new();
+    let b = buf_at("a\nb\nc", 0);
+    // Named marks ('a'-'z') aren't implemented; return None.
+    let result = b.resolve_line_addr(&LineAddr::Mark('a')).unwrap();
+    assert_eq!(result, None);
+  }
+
+  // ===================== motion_mutation =====================
+
+  use super::super::types::Grapheme;
+  use super::MotionKind;
+  use super::Pos;
+
+  fn upper_grapheme(g: &Grapheme) -> Grapheme {
+    Grapheme::from(g.to_string().to_uppercase().as_str())
+  }
+
+  // ─── MotionKind::Char (single row) ──────────────────────────────
+
+  #[test]
+  fn motion_mutation_char_inclusive_single_row() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello", 0);
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 0 },
+        end: Pos { row: 0, col: 2 },
+        inclusive: true,
+      },
+      upper_grapheme,
+    );
+    assert_eq!(b.joined(), "HELlo");
+  }
+
+  #[test]
+  fn motion_mutation_char_exclusive_single_row() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello", 0);
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 0 },
+        end: Pos { row: 0, col: 2 },
+        inclusive: false,
+      },
+      upper_grapheme,
+    );
+    // Exclusive end: cols 0..2 → "HEllo".
+    assert_eq!(b.joined(), "HEllo");
+  }
+
+  #[test]
+  fn motion_mutation_char_range_past_eol_stops_at_line_end() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("abc", 0);
+    // Range 0..10 inclusive — line is only 3 chars; the loop breaks.
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 0 },
+        end: Pos { row: 0, col: 10 },
+        inclusive: true,
+      },
+      upper_grapheme,
+    );
+    assert_eq!(b.joined(), "ABC");
+  }
+
+  #[test]
+  fn motion_mutation_char_ordered_swap() {
+    // start > end gets ordered() to (end, start). Verify reverse range works.
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello", 0);
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 3 },
+        end: Pos { row: 0, col: 1 },
+        inclusive: true,
+      },
+      upper_grapheme,
+    );
+    // ordered → start=col 1, end=col 3 inclusive → cols 1..=3.
+    assert_eq!(b.joined(), "hELLo");
+  }
+
+  // ─── MotionKind::Char (multi-row) ───────────────────────────────
+
+  #[test]
+  fn motion_mutation_char_multi_row_inclusive() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello\nworld\nfoo", 0);
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 2 },
+        end: Pos { row: 2, col: 1 },
+        inclusive: true,
+      },
+      upper_grapheme,
+    );
+    // Row 0: from col 2 to end of line ("hello" → "heLLO")
+    // Row 1: entire line ("world" → "WORLD")
+    // Row 2: cols 0..=1 ("foo" → "FOo")
+    assert_eq!(b.joined(), "heLLO\nWORLD\nFOo");
+  }
+
+  #[test]
+  fn motion_mutation_char_multi_row_exclusive_last_row() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello\nworld", 0);
+    b.motion_mutation(
+      &MotionKind::Char {
+        start: Pos { row: 0, col: 2 },
+        end: Pos { row: 1, col: 2 },
+        inclusive: false,
+      },
+      upper_grapheme,
+    );
+    // Row 0: cols 2..end ("hello" → "heLLO")
+    // Row 1: cols 0..2 exclusive → cols 0..2 → "world" → "WOrld"
+    assert_eq!(b.joined(), "heLLO\nWOrld");
+  }
+
+  // ─── MotionKind::Line ──────────────────────────────────────────
+
+  #[test]
+  fn motion_mutation_line_inclusive() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("a\nb\nc\nd", 0);
+    b.motion_mutation(
+      &MotionKind::Line {
+        start: 1,
+        end: 2,
+        inclusive: true,
+      },
+      upper_grapheme,
+    );
+    assert_eq!(b.joined(), "a\nB\nC\nd");
+  }
+
+  #[test]
+  fn motion_mutation_line_exclusive() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("a\nb\nc\nd", 0);
+    // Exclusive end → end.saturating_sub(1) = 1. So row 1..=1 only.
+    b.motion_mutation(
+      &MotionKind::Line {
+        start: 1,
+        end: 2,
+        inclusive: false,
+      },
+      upper_grapheme,
+    );
+    assert_eq!(b.joined(), "a\nB\nc\nd");
+  }
+
+  #[test]
+  fn motion_mutation_line_zero_end_doesnt_underflow() {
+    // end=0, exclusive → end.saturating_sub(1) = 0; range 0..=0 still mutates row 0.
+    let _g = TestGuard::new();
+    let mut b = buf_at("abc\ndef", 0);
+    b.motion_mutation(
+      &MotionKind::Line {
+        start: 0,
+        end: 0,
+        inclusive: false,
+      },
+      upper_grapheme,
+    );
+    assert_eq!(b.joined(), "ABC\ndef");
+  }
+
+  // ─── MotionKind::Block — unimplemented panics ────────────────────
+
+  #[test]
+  #[should_panic]
+  fn motion_mutation_block_panics() {
+    let _g = TestGuard::new();
+    let mut b = buf_at("hello", 0);
+    b.motion_mutation(
+      &MotionKind::Block {
+        start: Pos { row: 0, col: 0 },
+        end: Pos { row: 0, col: 2 },
+      },
+      upper_grapheme,
+    );
+  }
+}

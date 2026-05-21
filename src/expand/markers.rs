@@ -15,12 +15,6 @@ pub(crate) const VAR_SUB: Marker = '\u{e10c}';
 pub(crate) const ESCAPE: Marker = '\u{e116}';
 
 // other
-pub(crate) const VISUAL_MODE_START: Marker = '\u{e118}';
-pub(crate) const VISUAL_MODE_END: Marker = '\u{e119}';
-
-pub(crate) const MATCH_START: Marker = '\u{e120}';
-pub(crate) const MATCH_END: Marker = '\u{e121}';
-
 pub(crate) const RESET: Marker = '\u{e11a}';
 
 /* Expansion Markers */

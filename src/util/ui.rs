@@ -519,3 +519,314 @@ pub(crate) fn stylize_loglevel(level: log::Level) -> String {
   };
   format!("{level}").paint(style.style()).to_string()
 }
+
+#[cfg(test)]
+mod stylize_loglevel_tests {
+  use super::*;
+
+  /// Every level should include the level name verbatim inside the
+  /// ANSI-wrapped string.
+  #[test]
+  fn output_contains_level_name() {
+    for level in [
+      log::Level::Error,
+      log::Level::Warn,
+      log::Level::Info,
+      log::Level::Debug,
+      log::Level::Trace,
+    ] {
+      let out = stylize_loglevel(level);
+      let name = format!("{level}");
+      assert!(out.contains(&name), "level {level}: {out:?}");
+    }
+  }
+
+  /// Output should be ANSI-styled, i.e. longer than the bare level name
+  /// and contain at least one ESC byte.
+  #[test]
+  fn output_is_ansi_styled() {
+    let out = stylize_loglevel(log::Level::Error);
+    assert!(out.contains('\x1b'));
+    assert!(out.len() > "ERROR".len());
+  }
+
+  /// Different levels should produce different ANSI sequences (different
+  /// foreground colors). We just sanity-check pairwise distinctness for
+  /// the five variants — any collision would mean the match arm is wrong.
+  #[test]
+  fn each_level_uses_distinct_styling() {
+    let levels = [
+      log::Level::Error,
+      log::Level::Warn,
+      log::Level::Info,
+      log::Level::Debug,
+      log::Level::Trace,
+    ];
+    let outputs: Vec<String> = levels.iter().copied().map(stylize_loglevel).collect();
+    for (i, a) in outputs.iter().enumerate() {
+      for (j, b) in outputs.iter().enumerate() {
+        if i != j {
+          assert_ne!(
+            a, b,
+            "levels {:?} and {:?} produced identical styling",
+            levels[i], levels[j]
+          );
+        }
+      }
+    }
+  }
+}
+
+#[cfg(test)]
+mod color_application_tests {
+  //! Tests for the apply_fg_rgb / apply_bg_rgb family + the
+  //! rgb_to_xterm{256,16} lookup tables they depend on.
+  //!
+  //! The functions branch on `Shed::term(|t| t.color_mode())`, which
+  //! consults env vars (NO_COLOR, SHED_COLOR_MODE, TERM, plus
+  //! terminfo). We drive the dispatch by setting SHED_COLOR_MODE in
+  //! the test vars.
+
+  use super::*;
+  use crate::state::Shed;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+  use yansi::Paint;
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn reset_color_env() {
+    Shed::vars_mut(|v| {
+      v.unset_var("NO_COLOR").ok();
+      v.unset_var("SHED_COLOR_MODE").ok();
+      v.unset_var("TERM").ok();
+    });
+  }
+
+  /// Render `style` over a single-character target and stringify it,
+  /// so we can assert against the resulting ANSI escape sequence.
+  fn render(style: Style) -> String {
+    format!("{}", "x".paint(style))
+  }
+
+  // ===================== rgb_to_xterm256 =====================
+
+  #[test]
+  fn xterm256_black_is_16() {
+    assert_eq!(rgb_to_xterm256(0, 0, 0), 16);
+  }
+
+  #[test]
+  fn xterm256_white_is_231() {
+    // 16 + 5*36 + 5*6 + 5 = 231
+    assert_eq!(rgb_to_xterm256(255, 255, 255), 231);
+  }
+
+  #[test]
+  fn xterm256_pure_red() {
+    // 16 + 5*36 = 196
+    assert_eq!(rgb_to_xterm256(255, 0, 0), 196);
+  }
+
+  #[test]
+  fn xterm256_pure_green() {
+    // 16 + 5*6 = 46
+    assert_eq!(rgb_to_xterm256(0, 255, 0), 46);
+  }
+
+  #[test]
+  fn xterm256_pure_blue() {
+    // 16 + 5 = 21
+    assert_eq!(rgb_to_xterm256(0, 0, 255), 21);
+  }
+
+  // ===================== rgb_to_xterm16 =====================
+
+  #[test]
+  fn xterm16_packs_bits_as_bgr() {
+    // Bits are (b<<2) | (g<<1) | r, with each component thresholded
+    // at >128.
+    assert_eq!(rgb_to_xterm16(0, 0, 0), 0);
+    assert_eq!(rgb_to_xterm16(255, 0, 0), 1); // r only
+    assert_eq!(rgb_to_xterm16(0, 255, 0), 2); // g only
+    assert_eq!(rgb_to_xterm16(0, 0, 255), 4); // b only
+    assert_eq!(rgb_to_xterm16(255, 255, 255), 7); // all
+    assert_eq!(rgb_to_xterm16(0, 255, 255), 6); // g+b → cyan
+  }
+
+  #[test]
+  fn xterm16_threshold_is_strictly_greater_than_128() {
+    // 128 → 0 (not >128), 129 → 1.
+    assert_eq!(rgb_to_xterm16(128, 0, 0), 0);
+    assert_eq!(rgb_to_xterm16(129, 0, 0), 1);
+  }
+
+  // ===================== apply_fg_rgb across color modes =====================
+
+  #[test]
+  fn fg_no_color_mode_returns_style_unchanged() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("NO_COLOR", "1");
+    let styled = apply_fg_rgb(Style::new(), 200, 50, 75);
+    let out = render(styled);
+    // No SGR escape sequence emitted at all.
+    assert!(!out.contains('\x1b'), "got: {out:?}");
+  }
+
+  #[test]
+  fn fg_truecolor_mode_emits_sgr_38_2_rgb() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let styled = apply_fg_rgb(Style::new(), 12, 34, 56);
+    let out = render(styled);
+    // CSI 38 ; 2 ; R ; G ; B  m  for 24-bit foreground.
+    assert!(out.contains("38;2;12;34;56"), "got: {out:?}");
+  }
+
+  #[test]
+  fn fg_palette256_mode_emits_sgr_38_5_n() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "256");
+    let styled = apply_fg_rgb(Style::new(), 255, 0, 0);
+    let out = render(styled);
+    // Pure red → xterm256 index 196.
+    assert!(out.contains("38;5;196"), "got: {out:?}");
+  }
+
+  #[test]
+  fn fg_palette16_mode_emits_low_index() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "16");
+    let styled = apply_fg_rgb(Style::new(), 0, 0, 255);
+    let out = render(styled);
+    // Pure blue → index 4 (b<<2).
+    assert!(out.contains("38;5;4"), "got: {out:?}");
+  }
+
+  // ===================== apply_bg_rgb across color modes =====================
+
+  #[test]
+  fn bg_no_color_mode_returns_style_unchanged() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("NO_COLOR", "1");
+    let styled = apply_bg_rgb(Style::new(), 10, 20, 30);
+    let out = render(styled);
+    assert!(!out.contains('\x1b'), "got: {out:?}");
+  }
+
+  #[test]
+  fn bg_truecolor_mode_emits_sgr_48_2_rgb() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let styled = apply_bg_rgb(Style::new(), 12, 34, 56);
+    let out = render(styled);
+    // CSI 48 ; 2 ; R ; G ; B m for 24-bit background.
+    assert!(out.contains("48;2;12;34;56"), "got: {out:?}");
+  }
+
+  #[test]
+  fn bg_palette256_mode_emits_sgr_48_5_n() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "256");
+    let styled = apply_bg_rgb(Style::new(), 0, 255, 0);
+    let out = render(styled);
+    // Pure green → xterm256 index 46.
+    assert!(out.contains("48;5;46"), "got: {out:?}");
+  }
+
+  #[test]
+  fn bg_palette16_mode_emits_low_index() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "16");
+    let styled = apply_bg_rgb(Style::new(), 255, 0, 0);
+    let out = render(styled);
+    // Pure red → index 1.
+    assert!(out.contains("48;5;1"), "got: {out:?}");
+  }
+
+  // ===================== apply_fg_rgb_raw =====================
+
+  /// Render a Painted<&str> directly; the _raw variants chain the
+  /// color onto an already-Painted value.
+  fn render_painted(p: Painted<&str>) -> String {
+    format!("{p}")
+  }
+
+  #[test]
+  fn fg_raw_truecolor_emits_sgr_38_2_rgb() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let painted = apply_fg_rgb_raw("x".paint(Style::new()), 7, 8, 9);
+    let out = render_painted(painted);
+    assert!(out.contains("38;2;7;8;9"), "got: {out:?}");
+  }
+
+  #[test]
+  fn fg_raw_no_color_emits_no_escape() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("NO_COLOR", "1");
+    let painted = apply_fg_rgb_raw("x".paint(Style::new()), 7, 8, 9);
+    let out = render_painted(painted);
+    assert!(!out.contains('\x1b'), "got: {out:?}");
+  }
+
+  // ===================== apply_bg_rgb_raw =====================
+
+  #[test]
+  fn bg_raw_truecolor_emits_sgr_48_2_rgb() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let painted = apply_bg_rgb_raw("x".paint(Style::new()), 7, 8, 9);
+    let out = render_painted(painted);
+    assert!(out.contains("48;2;7;8;9"), "got: {out:?}");
+  }
+
+  #[test]
+  fn bg_raw_palette256_emits_sgr_48_5_n() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "256");
+    let painted = apply_bg_rgb_raw("x".paint(Style::new()), 0, 0, 255);
+    let out = render_painted(painted);
+    // Pure blue → 21.
+    assert!(out.contains("48;5;21"), "got: {out:?}");
+  }
+
+  // ===================== fg vs bg never confused =====================
+
+  #[test]
+  fn fg_emits_38_not_48() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let out = render(apply_fg_rgb(Style::new(), 1, 2, 3));
+    assert!(out.contains("38;2;"), "got: {out:?}");
+    assert!(!out.contains("48;2;"), "got: {out:?}");
+  }
+
+  #[test]
+  fn bg_emits_48_not_38() {
+    let _g = TestGuard::new();
+    reset_color_env();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    let out = render(apply_bg_rgb(Style::new(), 1, 2, 3));
+    assert!(out.contains("48;2;"), "got: {out:?}");
+    assert!(!out.contains("38;2;"), "got: {out:?}");
+  }
+}

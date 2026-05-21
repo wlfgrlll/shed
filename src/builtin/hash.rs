@@ -62,3 +62,93 @@ impl super::Builtin for Hash {
     with_status(0)
   }
 }
+
+#[cfg(test)]
+mod hash_tests {
+  use crate::state::{self, Shed};
+  use crate::tests::testutil::{TestGuard, has_cmd, test_input};
+
+  /// Strip cached utilities so each test starts from a known state.
+  fn clear_cache() {
+    Shed::meta_mut(|m| m.clear_cache());
+  }
+
+  // ─── no args, no opts → list cached commands ────────────────────
+
+  #[test]
+  fn hash_with_no_args_lists_cached_commands() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let g = TestGuard::new();
+    clear_cache();
+    // Hash a known command first so there's something to list.
+    test_input("hash cat").unwrap();
+    g.read_output();
+    test_input("hash").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("cat="), "got: {out:?}");
+  }
+
+  // ─── hash <cmd> → caches command ────────────────────────────────
+
+  #[test]
+  fn hash_specific_command_succeeds() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    clear_cache();
+    test_input("hash cat").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ─── unknown command → NotFound ─────────────────────────────────
+
+  #[test]
+  fn hash_unknown_command_errors() {
+    let _g = TestGuard::new();
+    clear_cache();
+    test_input("hash definitely_not_a_real_cmd_xyzzy").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── -r clears cache ────────────────────────────────────────────
+
+  #[test]
+  fn hash_dash_r_clears_cache() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let g = TestGuard::new();
+    clear_cache();
+    test_input("hash cat").unwrap();
+    g.read_output();
+    test_input("hash -r").unwrap();
+    g.read_output();
+    // After clearing, `hash` should produce no output.
+    test_input("hash").unwrap();
+    let out = g.read_output();
+    assert!(!out.contains("cat="), "cache should be empty: {out:?}");
+  }
+
+  // ─── --refresh re-discovers PATH commands ───────────────────────
+
+  #[test]
+  fn hash_refresh_succeeds() {
+    let _g = TestGuard::new();
+    clear_cache();
+    test_input("hash --refresh").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ─── unknown opt → ParseErr ─────────────────────────────────────
+
+  #[test]
+  fn hash_unknown_opt_errors() {
+    let _g = TestGuard::new();
+    clear_cache();
+    test_input("hash --not-a-real-flag").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+}

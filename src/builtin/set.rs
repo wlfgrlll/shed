@@ -343,3 +343,369 @@ impl super::Builtin for Set {
     with_status(0)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_setflag_parse() {
+    assert_eq!(SetFlags::try_from('a').unwrap(), SetFlags::ALLEXPORT);
+    assert_eq!(SetFlags::try_from('b').unwrap(), SetFlags::NOTIFY);
+    assert_eq!(SetFlags::try_from('C').unwrap(), SetFlags::NO_CLOBBER);
+    assert_eq!(SetFlags::try_from('e').unwrap(), SetFlags::ERREXIT);
+    assert_eq!(SetFlags::try_from('f').unwrap(), SetFlags::NO_GLOB);
+    assert_eq!(SetFlags::try_from('h').unwrap(), SetFlags::HASHALL);
+    assert_eq!(SetFlags::try_from('m').unwrap(), SetFlags::MONITOR);
+    assert_eq!(SetFlags::try_from('n').unwrap(), SetFlags::NO_EXEC);
+    assert_eq!(SetFlags::try_from('u').unwrap(), SetFlags::NO_UNSET);
+    assert_eq!(SetFlags::try_from('v').unwrap(), SetFlags::VERBOSE);
+    assert_eq!(SetFlags::try_from('x').unwrap(), SetFlags::XTRACE);
+    assert!(SetFlags::try_from('z').is_err());
+
+    assert_eq!(
+      SetFlags::from_str("allexport").unwrap(),
+      SetFlags::ALLEXPORT
+    );
+    assert_eq!(SetFlags::from_str("notify").unwrap(), SetFlags::NOTIFY);
+    assert_eq!(
+      SetFlags::from_str("noclobber").unwrap(),
+      SetFlags::NO_CLOBBER
+    );
+    assert_eq!(SetFlags::from_str("errexit").unwrap(), SetFlags::ERREXIT);
+    assert_eq!(SetFlags::from_str("noglob").unwrap(), SetFlags::NO_GLOB);
+    assert_eq!(SetFlags::from_str("hashall").unwrap(), SetFlags::HASHALL);
+    assert_eq!(SetFlags::from_str("monitor").unwrap(), SetFlags::MONITOR);
+    assert_eq!(SetFlags::from_str("noexec").unwrap(), SetFlags::NO_EXEC);
+    assert_eq!(SetFlags::from_str("nounset").unwrap(), SetFlags::NO_UNSET);
+    assert_eq!(SetFlags::from_str("verbose").unwrap(), SetFlags::VERBOSE);
+    assert_eq!(SetFlags::from_str("xtrace").unwrap(), SetFlags::XTRACE);
+    assert_eq!(SetFlags::from_str("vi").unwrap(), SetFlags::VI_MODE);
+    assert_eq!(SetFlags::from_str("emacs").unwrap(), SetFlags::EMACS_MODE);
+    assert!(SetFlags::from_str("invalid").is_err());
+  }
+
+  // ─── as_char: single-bit → short flag char ────────────────────────
+
+  #[test]
+  fn as_char_single_bits_round_trip_via_try_from() {
+    // Every single-bit flag that has a short-form char should map both
+    // ways consistently.
+    let pairs: &[(SetFlags, char)] = &[
+      (SetFlags::ALLEXPORT, 'a'),
+      (SetFlags::NOTIFY, 'b'),
+      (SetFlags::NO_CLOBBER, 'C'),
+      (SetFlags::ERREXIT, 'e'),
+      (SetFlags::NO_GLOB, 'f'),
+      (SetFlags::HASHALL, 'h'),
+      (SetFlags::MONITOR, 'm'),
+      (SetFlags::NO_EXEC, 'n'),
+      (SetFlags::NO_UNSET, 'u'),
+      (SetFlags::VERBOSE, 'v'),
+      (SetFlags::XTRACE, 'x'),
+    ];
+    for (flag, ch) in pairs {
+      assert_eq!(flag.as_char(), Some(*ch), "as_char for {flag:?}");
+      assert_eq!(
+        SetFlags::try_from(*ch).unwrap(),
+        *flag,
+        "try_from('{ch}') round-trip"
+      );
+    }
+  }
+
+  // ─── as_char: long-only flags have no short form → None ──────────
+
+  #[test]
+  fn as_char_long_only_flags_return_none() {
+    // These flags are settable only via `set -o NAME`, never as `-X`.
+    assert_eq!(SetFlags::IGNORE_EOF.as_char(), None);
+    assert_eq!(SetFlags::VI_MODE.as_char(), None);
+    assert_eq!(SetFlags::EMACS_MODE.as_char(), None);
+    assert_eq!(SetFlags::NO_LOG.as_char(), None);
+  }
+
+  // ─── as_char: composite/empty inputs → None ───────────────────────
+
+  #[test]
+  fn as_char_empty_flagset_returns_none() {
+    assert_eq!(SetFlags::empty().as_char(), None);
+  }
+
+  #[test]
+  fn as_char_multi_bit_combination_returns_none() {
+    // The function uses `*self == Self::ONE_FLAG` for matching, which
+    // requires exact equality. A combined set never matches any single
+    // bit — pinning this strictness.
+    let combo = SetFlags::ERREXIT | SetFlags::VERBOSE;
+    assert_eq!(combo.as_char(), None);
+  }
+
+  // ===================== Set::execute =====================
+
+  mod execute {
+    use crate::state::{self, Shed};
+    use crate::tests::testutil::{TestGuard, test_input};
+
+    // ─── single short-flag toggles ─────────────────────────────────
+
+    #[test]
+    fn dash_e_enables_errexit() {
+      let _g = TestGuard::new();
+      assert!(!Shed::shopts(|o| o.set.errexit));
+      test_input("set -e").unwrap();
+      assert!(Shed::shopts(|o| o.set.errexit));
+    }
+
+    #[test]
+    fn plus_e_disables_errexit() {
+      let _g = TestGuard::new();
+      test_input("set -e").unwrap();
+      assert!(Shed::shopts(|o| o.set.errexit));
+      test_input("set +e").unwrap();
+      assert!(!Shed::shopts(|o| o.set.errexit));
+    }
+
+    #[test]
+    fn dash_a_enables_allexport() {
+      let _g = TestGuard::new();
+      test_input("set -a").unwrap();
+      assert!(Shed::shopts(|o| o.set.allexport));
+    }
+
+    #[test]
+    fn dash_u_enables_nounset() {
+      let _g = TestGuard::new();
+      test_input("set -u").unwrap();
+      assert!(Shed::shopts(|o| o.set.nounset));
+    }
+
+    // ─── packed short flags ────────────────────────────────────────
+
+    #[test]
+    fn dash_ae_enables_both_allexport_and_errexit() {
+      let _g = TestGuard::new();
+      test_input("set -ae").unwrap();
+      assert!(Shed::shopts(|o| o.set.allexport));
+      assert!(Shed::shopts(|o| o.set.errexit));
+    }
+
+    // ─── long opts via -o NAME ─────────────────────────────────────
+
+    #[test]
+    fn dash_o_vi_enables_vi_mode() {
+      let _g = TestGuard::new();
+      test_input("set -o vi").unwrap();
+      assert!(Shed::shopts(|o| o.set.vi));
+    }
+
+    #[test]
+    fn plus_o_vi_disables_vi_mode() {
+      let _g = TestGuard::new();
+      test_input("set -o vi").unwrap();
+      assert!(Shed::shopts(|o| o.set.vi));
+      test_input("set +o vi").unwrap();
+      assert!(!Shed::shopts(|o| o.set.vi));
+    }
+
+    #[test]
+    fn dash_o_emacs_disables_vi_mode() {
+      // EMACS_MODE has a special case: it inverts vi instead of having
+      // its own field.
+      let _g = TestGuard::new();
+      test_input("set -o vi").unwrap();
+      test_input("set -o emacs").unwrap();
+      assert!(!Shed::shopts(|o| o.set.vi));
+    }
+
+    #[test]
+    fn dash_o_unknown_name_errors() {
+      let _g = TestGuard::new();
+      test_input("set -o not_a_real_opt").ok();
+      assert_ne!(state::Shed::get_status(), 0);
+    }
+
+    // ─── unknown short flag errors ─────────────────────────────────
+
+    #[test]
+    fn dash_z_unknown_flag_errors() {
+      let _g = TestGuard::new();
+      test_input("set -z").ok();
+      assert_ne!(state::Shed::get_status(), 0);
+    }
+
+    // ─── -o with no following name prints current settings ────────
+
+    #[test]
+    fn dash_o_alone_prints_current_settings() {
+      let g = TestGuard::new();
+      test_input("set -e").unwrap();
+      g.read_output(); // drain anything set printed
+      test_input("set -o").unwrap();
+      let out = g.read_output();
+      // The exact format is "set -<chars>" or "set -o name"; either way
+      // 'e' (or 'errexit') should be mentioned somewhere.
+      assert!(out.contains('e') || out.contains("errexit"), "got: {out:?}");
+    }
+
+    // ─── positional args ───────────────────────────────────────────
+
+    #[test]
+    fn positional_args_replace_argv() {
+      let _g = TestGuard::new();
+      test_input("set -- one two three").unwrap();
+      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      assert_eq!(args, vec!["one", "two", "three"]);
+    }
+
+    #[test]
+    fn bare_positional_args_replace_argv() {
+      // Without `--`, positional non-polarity args still get pushed.
+      let _g = TestGuard::new();
+      test_input("set foo bar").unwrap();
+      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      assert_eq!(args, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn double_dash_alone_clears_argv() {
+      let _g = TestGuard::new();
+      test_input("set -- a b c").unwrap();
+      test_input("set --").unwrap();
+      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      assert_eq!(args, Vec::<String>::new());
+    }
+
+    #[test]
+    fn dash_double_dash_carries_remaining_as_positional() {
+      // `set -e -- foo bar` enables errexit AND sets foo bar.
+      let _g = TestGuard::new();
+      test_input("set -e -- foo bar").unwrap();
+      assert!(Shed::shopts(|o| o.set.errexit));
+      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      assert_eq!(args, vec!["foo", "bar"]);
+    }
+
+    // ─── bare `-` resets shopts.set ────────────────────────────────
+
+    #[test]
+    fn bare_dash_resets_shopts_to_defaults() {
+      let _g = TestGuard::new();
+      test_input("set -e -a -u").unwrap();
+      assert!(Shed::shopts(|o| o.set.errexit));
+      assert!(Shed::shopts(|o| o.set.allexport));
+      test_input("set -").unwrap();
+      assert!(!Shed::shopts(|o| o.set.errexit));
+      assert!(!Shed::shopts(|o| o.set.allexport));
+      assert!(!Shed::shopts(|o| o.set.nounset));
+    }
+
+    // ─── no args → print all vars ─────────────────────────────────
+
+    #[test]
+    fn no_args_prints_variables() {
+      let g = TestGuard::new();
+      test_input("UNIQUE_SET_TEST_VAR=hello_marker").unwrap();
+      g.read_output();
+      test_input("set").unwrap();
+      let out = g.read_output();
+      assert!(out.contains("UNIQUE_SET_TEST_VAR"), "got: {out:?}");
+      assert!(out.contains("hello_marker"), "got: {out:?}");
+    }
+  }
+
+  // ===================== build_set_call =====================
+
+  mod build_set_call_tests {
+    use super::super::build_set_call;
+    use crate::tests::testutil::{TestGuard, test_input};
+
+    /// readable=true returns a multi-line aligned listing of every
+    /// flag with on/off status.
+    #[test]
+    fn readable_lists_one_flag_per_line() {
+      let _g = TestGuard::new();
+      // Force at least one known flag on so the output is non-trivial.
+      test_input("set -e").unwrap();
+      let out = build_set_call(true);
+      assert!(out.contains("errexit"), "got: {out:?}");
+      assert!(out.contains("on") || out.contains("off"), "got: {out:?}");
+      // Multi-line listing.
+      assert!(out.contains('\n'), "got: {out:?}");
+    }
+
+    /// readable=true aligns flag names — every line up to the gap has
+    /// the same width when measured by display columns.
+    #[test]
+    fn readable_aligns_flag_names() {
+      let _g = TestGuard::new();
+      let out = build_set_call(true);
+      let lines: Vec<&str> = out.lines().collect();
+      // Find the first column index of "on" or "off" on each line.
+      let positions: Vec<usize> = lines
+        .iter()
+        .filter_map(|l| l.find(" on").or_else(|| l.find(" off")))
+        .collect();
+      assert!(positions.len() > 1, "needed >1 lines, got: {out:?}");
+      let first = positions[0];
+      for p in &positions {
+        assert_eq!(*p, first, "alignment mismatch in: {out:?}");
+      }
+    }
+
+    /// readable=false returns a `set ...` invocation that round-trips
+    /// the currently enabled short flags.
+    #[test]
+    fn non_readable_emits_set_invocation_with_on_chars() {
+      let _g = TestGuard::new();
+      test_input("set -ex").unwrap();
+      let call = build_set_call(false);
+      assert!(call.starts_with("set "), "got: {call:?}");
+      // Should mention both e and x in the on-chars cluster.
+      // (Order within the cluster isn't fixed, so check membership.)
+      let on_part = call
+        .split_whitespace()
+        .find(|w| w.starts_with('-'))
+        .unwrap_or("");
+      assert!(on_part.contains('e'), "got: {call:?}");
+      assert!(on_part.contains('x'), "got: {call:?}");
+    }
+
+    /// Off-flags get a `+` cluster.
+    #[test]
+    fn non_readable_emits_plus_cluster_for_off_flags() {
+      let _g = TestGuard::new();
+      test_input("set -e").unwrap();
+      test_input("set +e").unwrap();
+      let call = build_set_call(false);
+      // After +e, errexit is off. There must be a `+` cluster
+      // containing 'e' somewhere in the output.
+      let plus_part = call.split_whitespace().find(|w| w.starts_with('+'));
+      assert!(
+        plus_part.is_some(),
+        "expected '+...' cluster, got: {call:?}"
+      );
+      assert!(plus_part.unwrap().contains('e'), "got: {call:?}");
+    }
+
+    /// Positional args are appended after `--`.
+    #[test]
+    fn non_readable_appends_positional_args_after_dash_dash() {
+      let _g = TestGuard::new();
+      test_input("set -- alpha beta gamma").unwrap();
+      let call = build_set_call(false);
+      assert!(call.contains("--"), "got: {call:?}");
+      assert!(call.contains("alpha"), "got: {call:?}");
+      assert!(call.contains("beta"), "got: {call:?}");
+      assert!(call.contains("gamma"), "got: {call:?}");
+    }
+
+    /// Result has no trailing whitespace.
+    #[test]
+    fn non_readable_trims_trailing_whitespace() {
+      let _g = TestGuard::new();
+      let call = build_set_call(false);
+      assert!(!call.ends_with(' '), "got: {call:?}");
+    }
+  }
+}

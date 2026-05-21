@@ -594,3 +594,354 @@ impl ScopeStack {
     }
   }
 }
+
+#[cfg(test)]
+mod index_var_sliced_tests {
+  use super::*;
+  use crate::state::Shed;
+  use crate::state::vars::{ArrIndex, VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+  use std::collections::VecDeque;
+
+  fn set_arr(name: &str, items: &[&str]) {
+    let vec: VecDeque<String> = items.iter().map(|s| s.to_string()).collect();
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn set_assoc(name: &str, pairs: &[(&str, &str)]) {
+    let vec: Vec<(String, String)> = pairs
+      .iter()
+      .map(|(k, v)| (k.to_string(), v.to_string()))
+      .collect();
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::AssocArr(vec), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn set_str(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn index(
+    name: &str,
+    idx: ArrIndex,
+    slice_start: Option<usize>,
+    slice_len: Option<usize>,
+  ) -> ShResult<String> {
+    Shed::vars(|v| v.index_var_sliced(name, idx, slice_start, slice_len))
+  }
+
+  // ─── Arr: positional index ────────────────────────────────────────
+
+  #[test]
+  fn arr_literal_index() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c"]);
+    assert_eq!(index("arr", ArrIndex::Literal(1), None, None).unwrap(), "b");
+  }
+
+  #[test]
+  fn arr_literal_out_of_bounds_errors() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b"]);
+    assert!(index("arr", ArrIndex::Literal(99), None, None).is_err());
+  }
+
+  #[test]
+  fn arr_from_back_index() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c", "d"]);
+    // FromBack(1) → items.len() - 1 = 3 → last element "d"
+    assert_eq!(
+      index("arr", ArrIndex::FromBack(1), None, None).unwrap(),
+      "d"
+    );
+  }
+
+  #[test]
+  fn arr_from_back_overflows_errors() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b"]);
+    // FromBack(99) — items.len() (2) < 99 → ExecFail.
+    assert!(index("arr", ArrIndex::FromBack(99), None, None).is_err());
+  }
+
+  // ─── Arr: ArgCount ────────────────────────────────────────────────
+
+  #[test]
+  fn arr_arg_count_returns_length() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["x", "y", "z", "w"]);
+    assert_eq!(index("arr", ArrIndex::ArgCount, None, None).unwrap(), "4");
+  }
+
+  #[test]
+  fn arr_arg_count_on_empty_array() {
+    let _g = TestGuard::new();
+    set_arr("arr", &[]);
+    assert_eq!(index("arr", ArrIndex::ArgCount, None, None).unwrap(), "0");
+  }
+
+  // ─── Arr: AllSplit / AllJoined ────────────────────────────────────
+
+  #[test]
+  fn arr_all_split_joins_with_arg_sep() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c"]);
+    // ARG_SEP is the marker char that splits later. We just check that
+    // all values appear.
+    let result = index("arr", ArrIndex::AllSplit, None, None).unwrap();
+    assert!(result.contains('a'));
+    assert!(result.contains('b'));
+    assert!(result.contains('c'));
+  }
+
+  #[test]
+  fn arr_all_joined_uses_first_char_of_ifs() {
+    let _g = TestGuard::new();
+    set_str("IFS", ",xy");
+    set_arr("arr", &["a", "b", "c"]);
+    // First char of IFS is ',', so values join with ','.
+    assert_eq!(
+      index("arr", ArrIndex::AllJoined, None, None).unwrap(),
+      "a,b,c"
+    );
+  }
+
+  #[test]
+  fn arr_all_joined_defaults_to_space_when_ifs_empty() {
+    let _g = TestGuard::new();
+    set_str("IFS", "");
+    set_arr("arr", &["a", "b", "c"]);
+    // Empty IFS → first-char is '\0'?  Actually IFS=""  → next().unwrap_or(' ').
+    // Looking at code: `.chars().next().unwrap_or(' ')`. An empty string
+    // yields None from next() so we get ' '.
+    assert_eq!(
+      index("arr", ArrIndex::AllJoined, None, None).unwrap(),
+      "a b c"
+    );
+  }
+
+  // ─── Arr: slicing ────────────────────────────────────────────────
+
+  #[test]
+  fn arr_all_split_with_slice_skips_and_takes() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c", "d", "e"]);
+    // start=1, len=2 → ["b","c"]
+    let result = index("arr", ArrIndex::AllSplit, Some(1), Some(2)).unwrap();
+    assert!(result.contains('b'));
+    assert!(result.contains('c'));
+    assert!(!result.contains('a'));
+    assert!(!result.contains('d'));
+  }
+
+  #[test]
+  fn arr_all_joined_with_slice() {
+    let _g = TestGuard::new();
+    set_str("IFS", "-");
+    set_arr("arr", &["a", "b", "c", "d", "e"]);
+    assert_eq!(
+      index("arr", ArrIndex::AllJoined, Some(2), Some(2)).unwrap(),
+      "c-d"
+    );
+  }
+
+  #[test]
+  fn arr_all_joined_with_slice_start_only() {
+    let _g = TestGuard::new();
+    set_str("IFS", "-");
+    set_arr("arr", &["a", "b", "c", "d"]);
+    // start=1, no len → take rest
+    assert_eq!(
+      index("arr", ArrIndex::AllJoined, Some(1), None).unwrap(),
+      "b-c-d"
+    );
+  }
+
+  // ─── AssocArr ────────────────────────────────────────────────────
+
+  #[test]
+  fn assoc_arr_key_lookup() {
+    let _g = TestGuard::new();
+    set_assoc("amap", &[("apple", "red"), ("banana", "yellow")]);
+    assert_eq!(
+      index("amap", ArrIndex::Key("apple".into()), None, None).unwrap(),
+      "red"
+    );
+  }
+
+  #[test]
+  fn assoc_arr_missing_key_returns_empty_string() {
+    let _g = TestGuard::new();
+    set_assoc("amap", &[("a", "1")]);
+    assert_eq!(
+      index("amap", ArrIndex::Key("missing".into()), None, None).unwrap(),
+      ""
+    );
+  }
+
+  #[test]
+  fn assoc_arr_arg_count() {
+    let _g = TestGuard::new();
+    set_assoc("amap", &[("a", "1"), ("b", "2"), ("c", "3")]);
+    assert_eq!(index("amap", ArrIndex::ArgCount, None, None).unwrap(), "3");
+  }
+
+  #[test]
+  fn assoc_arr_all_joined_with_ifs() {
+    let _g = TestGuard::new();
+    set_str("IFS", "+");
+    set_assoc("amap", &[("a", "1"), ("b", "2")]);
+    let result = index("amap", ArrIndex::AllJoined, None, None).unwrap();
+    // Iteration order is preserved, values joined by '+'.
+    assert_eq!(result, "1+2");
+  }
+
+  #[test]
+  fn assoc_arr_all_split() {
+    let _g = TestGuard::new();
+    set_assoc("amap", &[("a", "1"), ("b", "2")]);
+    let result = index("amap", ArrIndex::AllSplit, None, None).unwrap();
+    assert!(result.contains('1'));
+    assert!(result.contains('2'));
+  }
+
+  // ─── Scalar var errors ───────────────────────────────────────────
+
+  #[test]
+  fn scalar_var_is_not_indexable_errors() {
+    let _g = TestGuard::new();
+    set_str("scalar", "hello");
+    assert!(index("scalar", ArrIndex::Literal(0), None, None).is_err());
+  }
+
+  // ─── Missing var returns empty string ────────────────────────────
+
+  #[test]
+  fn missing_var_returns_empty_string() {
+    let _g = TestGuard::new();
+    assert_eq!(
+      index("no_such_var_xyz_qqq", ArrIndex::Literal(0), None, None).unwrap(),
+      ""
+    );
+  }
+}
+
+#[cfg(test)]
+mod get_array_keys_tests {
+  use super::*;
+  use crate::state::Shed;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+  use std::collections::VecDeque;
+
+  fn set_arr(name: &str, items: &[&str]) {
+    let vec: VecDeque<String> = items.iter().map(|s| s.to_string()).collect();
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn set_assoc(name: &str, pairs: &[(&str, &str)]) {
+    let vec: Vec<(String, String)> = pairs
+      .iter()
+      .map(|(k, v)| (k.to_string(), v.to_string()))
+      .collect();
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::AssocArr(vec), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn set_str(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn get_keys(name: &str, joined: bool) -> ShResult<String> {
+    Shed::vars(|v| v.get_array_keys(name, joined))
+  }
+
+  #[test]
+  fn arr_keys_are_sequential_indices() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c", "d"]);
+    // joined=true → first char of IFS (default ' ').
+    let out = get_keys("arr", true).unwrap();
+    assert_eq!(out, "0 1 2 3");
+  }
+
+  #[test]
+  fn empty_arr_returns_empty_string() {
+    let _g = TestGuard::new();
+    set_arr("arr_empty", &[]);
+    assert_eq!(get_keys("arr_empty", true).unwrap(), "");
+  }
+
+  #[test]
+  fn arr_joined_false_uses_arg_sep_marker() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["x", "y"]);
+    let out = get_keys("arr", false).unwrap();
+    // Separator is the ARG_SEP marker char between the two indices.
+    let sep = crate::expand::markers::ARG_SEP.to_string();
+    assert_eq!(out, format!("0{sep}1"));
+  }
+
+  #[test]
+  fn assoc_keys_returned_in_insertion_order() {
+    let _g = TestGuard::new();
+    set_assoc("h", &[("foo", "1"), ("bar", "2"), ("baz", "3")]);
+    let out = get_keys("h", true).unwrap();
+    // Joined with space (default IFS first char).
+    assert_eq!(out, "foo bar baz");
+  }
+
+  #[test]
+  fn assoc_joined_false_uses_arg_sep_marker() {
+    let _g = TestGuard::new();
+    set_assoc("h", &[("k1", "a"), ("k2", "b")]);
+    let out = get_keys("h", false).unwrap();
+    let sep = crate::expand::markers::ARG_SEP.to_string();
+    assert_eq!(out, format!("k1{sep}k2"));
+  }
+
+  #[test]
+  fn scalar_var_errors() {
+    let _g = TestGuard::new();
+    set_str("scalar", "value");
+    assert!(get_keys("scalar", true).is_err());
+  }
+
+  #[test]
+  fn missing_var_returns_empty_string() {
+    let _g = TestGuard::new();
+    assert_eq!(
+      get_keys("no_such_var_for_get_array_keys", true).unwrap(),
+      ""
+    );
+  }
+
+  #[test]
+  fn custom_ifs_first_char_is_used_when_joined() {
+    let _g = TestGuard::new();
+    set_arr("arr", &["a", "b", "c"]);
+    Shed::vars_mut(|v| {
+      v.set_var("IFS", VarKind::Str(":/".into()), VarFlags::empty())
+        .unwrap();
+    });
+    // First char of IFS is ':'.
+    assert_eq!(get_keys("arr", true).unwrap(), "0:1:2");
+  }
+}

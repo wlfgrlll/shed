@@ -133,9 +133,6 @@ impl Line {
       self.0.push(Grapheme::from(g));
     }
   }
-  pub fn push_char(&mut self, c: char) {
-    self.0.push(Grapheme::from(c));
-  }
   pub fn split_off(&mut self, at: usize) -> Line {
     if at > self.0.len() {
       return Line::default();
@@ -146,15 +143,14 @@ impl Line {
     self.0.append(&mut other.0);
   }
   pub fn insert_str(&mut self, at: usize, other: &str) {
-    let mut at = at.min(self.0.len());
     if other.contains('\n') {
       log::warn!(
         "Inserting string with newlines into a single line. Newlines will be treated as literal characters."
       );
     }
-    for g in other.graphemes(true) {
+    let start = at.min(self.0.len());
+    for (at, g) in (start..).zip(other.graphemes(true)) {
       self.0.insert(at, Grapheme::from(g));
-      at += 1;
     }
   }
   pub fn insert_char(&mut self, at: usize, c: char) {

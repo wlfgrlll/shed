@@ -61,6 +61,8 @@ fn move_high_no_cloexec(fd: OwnedFd) -> nix::Result<OwnedFd> {
   Ok(new_fd)
 }
 
+// LCOV_EXCL_START
+
 /// SQLite opens long-lived file descriptors on its own and we cant call move_high on them.
 ///
 /// These files usually end up polluting the user-space 3-10 range which we work so hard to keep clear
@@ -88,6 +90,8 @@ where
   // now if this opens fds, they will be at least the value of min_fd
   something()
 }
+
+// LCOV_EXCL_STOP
 
 /// Creates pipes outside of the userspace range of FDs
 pub fn pipes_high() -> nix::Result<(OwnedFd, OwnedFd)> {
@@ -938,4 +942,95 @@ pub mod tests {
     assert!(contents.contains("out"));
     assert!(contents.contains("err"));
   }
+
+  // ===================== capture_command =====================
+
+  use super::capture_command;
+  use crate::state;
+
+  #[test]
+  fn capture_simple_echo() {
+    let _g = TestGuard::new();
+    let out = capture_command("echo hello", None).unwrap();
+    assert_eq!(out, "hello");
+  }
+
+  #[test]
+  fn capture_strips_trailing_newlines() {
+    let _g = TestGuard::new();
+    // The function does trim_end on the captured output.
+    let out = capture_command("printf 'foo\\n\\n\\n'", None).unwrap();
+    assert_eq!(out, "foo");
+  }
+
+  #[test]
+  fn capture_preserves_internal_newlines() {
+    let _g = TestGuard::new();
+    let out = capture_command("printf 'one\\ntwo\\nthree'", None).unwrap();
+    assert_eq!(out, "one\ntwo\nthree");
+  }
+
+  #[test]
+  fn capture_empty_output() {
+    let _g = TestGuard::new();
+    let out = capture_command("true", None).unwrap();
+    assert_eq!(out, "");
+  }
+
+  #[test]
+  fn capture_command_sets_exit_status() {
+    let _g = TestGuard::new();
+    // `false` exits 1; capture_command should propagate that into
+    // Shed::get_status while still returning captured output (empty).
+    let out = capture_command("false", None).unwrap();
+    assert_eq!(out, "");
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn capture_nonzero_status_still_captures_output() {
+    let _g = TestGuard::new();
+    // Multi-statement: prints output then fails.
+    let out = capture_command("echo before-fail; false", None).unwrap();
+    assert_eq!(out, "before-fail");
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── With stdin piped to child ──────────────────────────────────────
+
+  #[test]
+  fn capture_feeds_stdin_to_command() {
+    let _g = TestGuard::new();
+    if !has_cmd("cat") {
+      return;
+    }
+    let out = capture_command("cat", Some("piped input")).unwrap();
+    assert_eq!(out, "piped input");
+  }
+
+  #[test]
+  fn capture_stdin_with_multiline_input() {
+    let _g = TestGuard::new();
+    if !has_cmd("cat") {
+      return;
+    }
+    let out = capture_command("cat", Some("line1\nline2\nline3\n")).unwrap();
+    assert_eq!(out, "line1\nline2\nline3");
+  }
+
+  #[test]
+  fn capture_stdin_seen_by_read_builtin() {
+    let _g = TestGuard::new();
+    // The child's `read` builtin should successfully consume the
+    // stdin we feed.
+    let out = capture_command("read x; echo \"got=$x\"", Some("hello world\n")).unwrap();
+    assert_eq!(out, "got=hello world");
+  }
+
+  // Note: there's no `no-stdin → child sees EOF` test because TestGuard
+  // keeps its stdin write-end open for the lifetime of the test. A child
+  // reading from the inherited stdin pipe would block forever waiting on
+  // data nobody is closing. The `Option<&str>` stdin parameter handles
+  // the genuinely-disconnected case in production via the
+  // `stdin_pipes.is_some()` check at the top of capture_command.
 }

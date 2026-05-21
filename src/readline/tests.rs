@@ -135,6 +135,35 @@ vi_test! {
   diW_big_inner            : "one-two three"                => "diW"                 => " three", 0;
   daW_big_around           : "one two-three end"            => "wdaW"                => "one end", 4;
   ciW_big                  : "one-two three"                => "ciWx\x1b"            => "x three", 0;
+
+  // ─── text_obj_word: cursor-on-whitespace branch ──────────────────
+  // diw/daw etc. when the cursor starts ON a whitespace char operate
+  // on the contiguous whitespace span (and, for `aw`, also consume the
+  // following word).
+  diw_on_single_space      : "foo bar"                      => "f diw"               => "foobar", 3;
+  diw_on_multi_space_run   : "a   b"                        => "f diw"               => "ab", 1;
+  diW_on_whitespace        : "foo bar"                      => "f diW"               => "foobar", 3;
+  daw_on_whitespace_takes_following_word
+                           : "foo bar"                      => "f daw"               => "foo", 2;
+  daW_on_whitespace_takes_following_big_word
+                           : "a b-c d"                      => "f daW"               => "a d", 1;
+
+  // ─── text_obj_word: word-start branch, extra cases ───────────────
+  // Cursor in middle of word (not first char) — bkwd-extension path.
+  diw_from_middle_of_word  : "one two three"                => "wldiw"               => "one  three", 4;
+  // Cursor at last char of word — fwd-extension reaches EOL.
+  diw_at_last_char_of_word : "foo"                          => "$diw"                => "", 0;
+  // aw at end-of-buffer: no trailing ws to consume, so we leave the
+  // leading space behind (this pins shed's current behavior; vim itself
+  // would also eat the leading space here).
+  daw_at_buffer_end_keeps_leading_space
+                           : "foo bar"                      => "$daw"                => "foo ", 3;
+  // Big-word ignores punctuation: "one-two" as a unit.
+  diW_from_middle_punct    : "one-two three"                => "lldiW"               => " three", 0;
+  // Around-word at start of buffer: no leading ws; trailing ws eaten.
+  daw_at_buffer_start      : "foo bar baz"                  => "daw"                 => "bar baz", 0;
+  // Normal word splits on punctuation; iw on the '-' selects only it.
+  diw_on_punctuation_char  : "one-two"                      => "llldiw"              => "onetwo", 3;
   di_dquote                : "one \"two\" three"            => "f\"di\""             => "one \"\" three", 5;
   da_dquote                : "one \"two\" three"            => "f\"da\""             => "one three", 4;
   ci_dquote                : "one \"two\" three"            => "f\"ci\"x\x1b"        => "one \"x\" three", 5;
@@ -253,6 +282,8 @@ vi_test! {
   ex_delete_range          : "line1\nline2\nline3"          => ":1,2d\r"             => "line3", 0;
   ex_global_delete         : "echo foo\nls\necho bar"       => ":g/echo/d\r"         => "ls", 0;
   ex_global_sub            : "foo bar\nfoo baz\nkeep"       => ":g/foo/s/foo/X/\r"   => "X bar\nX baz\nkeep", 0;
+  ex_global_negated_delete : "echo foo\nls\necho bar\nkeep" => ":g!/echo/d\r"        => "echo foo\necho bar", 9;
+  ex_global_negated_sub    : "foo bar\nkeep\nfoo biz"       => ":g!/keep/s/foo/X/\r" => "X bar\nkeep\nX biz", 0;
   ex_normal_range          : "hello world\nfoo bar\nbiz"    => ":1,2normal!dw\r"     => "world\nbar\nbiz", 6;
   ex_repeat_global         : "echo foo\nls\necho bar\nls2"  => ":g/echo/d\r   :g\r"  => "ls\nls2", 0;
   visual_dot_repeat        : "hello\nworld\nfoo\nbar\nbiz"  => "jVjdu2k."            => "foo\nbar\nbiz", 0;
@@ -267,6 +298,23 @@ vi_test! {
   count_n_bkwd             : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
   macro_record             : "foo bar biz"                  => "qacwbam\x1bwqQQ"     => "bam bam bam", 10;
   macro_double             : "foo BAR biz BAM"              => "qag~wwqqbguwwq@a@b"  => "FOO bar BIZ bam", 14;
+
+  // ─── ViNormal::handle_key — less-tested branches ────────────────
+  // V enters visual-line mode; following 'd' deletes the whole line.
+  normal_V_line_visual_d   : "abc\ndef\nghi"                => "jVd"                 => "abc\nghi", 4;
+  // Ctrl+A (\x01) increments the number on the current line.
+  normal_ctrl_a_increments : "42"                           => "\x01"                => "43", 1;
+  // Ctrl+X (\x18) decrements.
+  normal_ctrl_x_decrements : "42"                           => "\x18"                => "41", 1;
+  // Ctrl+G (\x07) prints position; no buffer change.
+  normal_ctrl_g_no_change  : "hello"                        => "\x07"                => "hello", 0;
+
+  // ─── ViReplace::handle_key (R from normal) ───────────────────────
+  replace_one_char         : "hello"                        => "Rx\x1b"               => "xello", 0;
+  replace_multiple_chars   : "hello"                        => "Rxy\x1b"              => "xyllo", 1;
+  replace_then_backspace   : "hello"                        => "Rxy\x08\x1b"          => "xyllo", 0;
+  replace_then_esc_to_normal: "hello"                       => "Rx\x1b"               => "xello", 0;
+  replace_tab_completes    : "hello"                        => "Rx\x09\x1b"           => "xello", 1;
 
   // ugly ones go down here
   ex_nested_global
@@ -903,15 +951,6 @@ hint_test! {
     => "echo \x0fj" // ctrl+o, j
     => "echo foo\necho ", "echo foo\necho bar\necho biz", 14;
 
-  hint_constrained
-    : &[
-      "echo foobar",
-      "echo foo",
-      "echo foooooo"
-    ]
-    => "echo foob\x1be"
-    => "echo foobar", "", 10;
-
   most_recent_wins
     : &[
       "echo apple",
@@ -928,13 +967,6 @@ hint_test! {
     ]
     => "echo a"
     => "echo a", "echo apple", 6;
-
-  divergence_clears_hint
-    : &[
-      "echo foo bar",
-    ]
-    => "echo z"
-    => "echo z", "", 6;
 
   exact_buffer_no_hint
     : &[
@@ -957,4 +989,675 @@ hint_test! {
     ]
     => "echo z\x7f"
     => "echo ", "echo foobar", 5;
+
+  hint_constrained
+    : &[
+      "echo foobar",
+      "echo foo",
+      "echo foooooo"
+    ]
+    => "echo foob\x1be"
+    => "echo foobar", "", 10;
+
+  divergence_clears_hint
+    : &[
+      "echo foo bar",
+    ]
+    => "echo z"
+    => "echo z", "", 6;
+}
+
+// ===================== Emacs Tests =====================
+//
+// Unlike `vi_test!`, which feeds raw bytes through the parser, emacs
+// bindings rely heavily on Ctrl/Alt modifiers that are awkward to spell
+// in byte literals. We use `expand_keymap` to parse vim-keymap syntax
+// (`<C-a>`, `<A-f>`, `<BS>`, etc.) into `KeyEvent`s, then feed them
+// directly to `process_input`.
+
+fn test_emacs(initial: &str) -> (ShedLine, TestGuard) {
+  Shed::shopts_mut(|o| o.set.vi = false);
+  let g = TestGuard::new();
+  let prompt = Prompt::default();
+  let mut em = ShedLine::new_no_hist(prompt).unwrap().with_initial(initial);
+  // Place cursor at end-of-buffer — matches what a real interactive
+  // emacs session looks like just after the user has finished typing.
+  let end = em.editor.joined().chars().count();
+  em.editor.edit(|e| e.set_cursor_from_flat(end));
+  (em, g)
+}
+
+macro_rules! emacs_test {
+  { $($name:ident: $input:expr => $op:expr => $expected_text:expr,$expected_cursor:expr);* $(;)? } => {
+    mod emacs {
+      use super::*;
+      use crate::expand::expand_keymap;
+      $(#[test]
+        fn $name() {
+          let (mut em, _g) = test_emacs($input);
+          let keys = expand_keymap($op);
+          em.process_input(keys).unwrap();
+          assert_eq!(em.editor.joined(), $expected_text,
+            "buffer mismatch for {}", stringify!($name));
+          assert_eq!(em.editor.cursor_to_flat(), $expected_cursor,
+            "cursor mismatch for {}", stringify!($name));
+        }
+      )*
+    }
+  };
+}
+
+emacs_test! {
+  // ─── Plain typing ─────────────────────────────────────────────────
+  insert_chars             : ""                  => "hello"           => "hello", 5;
+  insert_then_more         : "abc"               => "def"             => "abcdef", 6;
+
+  // ─── Backspace ────────────────────────────────────────────────────
+  backspace_one            : "hello"             => "<BS>"            => "hell", 4;
+  backspace_many           : "hello"             => "<BS><BS><BS>"    => "he", 2;
+
+  // ─── Ctrl+a / Ctrl+e: line motions ────────────────────────────────
+  ctrl_a_to_start          : "hello"             => "<C-a>"           => "hello", 0;
+  ctrl_e_to_end            : "hello"             => "<C-a><C-e>"      => "hello", 5;
+
+  // ─── Ctrl+f / Ctrl+b: char motions ────────────────────────────────
+  ctrl_f_forward_char      : "hello"             => "<C-a><C-f>"      => "hello", 1;
+  ctrl_b_backward_char     : "hello"             => "<C-b>"           => "hello", 4;
+
+  // ─── Alt+f / Alt+b: word motions ──────────────────────────────────
+  // Shed's Alt+f maps to `Motion::WordMotion(To::End, ...)`, so the cursor
+  // lands on the LAST char of the target word, not past it.
+  alt_f_word_forward       : "one two three"     => "<C-a><A-f>"      => "one two three", 2;
+  alt_b_word_backward      : "one two three"     => "<A-b>"           => "one two three", 8;
+
+  // ─── Ctrl+d: delete forward (non-empty buffer) ────────────────────
+  ctrl_d_deletes_under_cursor : "hello"          => "<C-a><C-d>"      => "ello", 0;
+
+  // ─── Ctrl+k: kill to end of line ──────────────────────────────────
+  ctrl_k_kills_to_eol      : "hello world"       => "<C-a><C-f><C-f><C-f><C-f><C-f><C-k>"
+                                                                     => "hello", 5;
+
+  // ─── Ctrl+u: kill to start of line ────────────────────────────────
+  ctrl_u_kills_to_sol      : "hello world"       => "<C-u>"           => "", 0;
+
+  // ─── Ctrl+w / Alt+Backspace: kill word backward ───────────────────
+  ctrl_w_kills_word_back   : "one two three"     => "<C-w>"           => "one two ", 8;
+  alt_bs_kills_word_back   : "one two three"     => "<A-BS>"          => "one two ", 8;
+
+  // ─── Alt+d: kill word forward ─────────────────────────────────────
+  alt_d_kills_word_forward : "one two three"     => "<C-a><A-d>"      => " two three", 0;
+
+  // ─── Ctrl+y: yank back what Ctrl+w just killed ────────────────────
+  yank_after_kill_word     : "one two"           => "<C-w><C-y>"      => "one two", 7;
+
+  // ─── Ctrl+t: transpose chars (swap char-before-cursor with char-at-cursor) ─
+  ctrl_t_transpose         : "abc"               => "<C-a><C-f><C-t>" => "bac", 2;
+
+  // ─── Alt+t: transpose words ───────────────────────────────────────
+  // First word with no prior word: no-op (bail when prev_word_span fails).
+  alt_t_first_word_noop    : "foo bar"           => "<C-a><A-t>"            => "foo bar", 0;
+  // Cursor on second word triggers transpose. test_emacs starts the
+  // cursor PAST the end; back up one with <C-b> to land on 'r'.
+  alt_t_inside_second_word : "foo bar"           => "<C-b><A-t>"            => "bar foo", 7;
+
+  // ─── Alt+u / Alt+l / Alt+c: case changes on next word ─────────────
+  // Verb+Motion ops don't reposition the cursor — it stays at the
+  // operation's anchor. (Real Emacs moves point past the word; shed's
+  // impl currently doesn't. If that gets fixed, update the expected
+  // cursor here to match.)
+  alt_u_uppercases_word    : "hello world"       => "<C-a><A-u>"      => "HELLO world", 0;
+  alt_l_lowercases_word    : "HELLO WORLD"       => "<C-a><A-l>"      => "hello WORLD", 0;
+  alt_c_capitalizes_word   : "hello world"       => "<C-a><A-c>"      => "Hello world", 5;
+
+  // ─── Ctrl+/ and Alt+/ — undo / redo ───────────────────────────────
+  ctrl_slash_undoes        : "hello"             => "x<C-/>"          => "hello", 5;
+}
+
+// ===================== handle_completion_key =====================
+//
+// Drive the completion overlay's key dispatch directly. We can't use the
+// public `process_input` path because that would also fire other state
+// like keymaps and edit modes; we want isolation on the
+// `handle_completion_key` arms specifically.
+
+mod handle_completion_key {
+  use super::*;
+  use crate::keys::{KeyCode, KeyEvent, ModKeys};
+  use crate::readline::complete::{Candidate, FuzzyCompleter};
+
+  fn fresh_line(initial: &str) -> (ShedLine, TestGuard) {
+    let g = TestGuard::new();
+    let prompt = Prompt::default();
+    let line = ShedLine::new_no_hist(prompt).unwrap().with_initial(initial);
+    (line, g)
+  }
+
+  fn install_completer(line: &mut ShedLine, items: &[&str]) {
+    let mut comp = FuzzyCompleter::default();
+    let cands: Vec<Candidate> = items
+      .iter()
+      .map(|s| Candidate::from(s.to_string()))
+      .collect();
+    comp.selector.activate(cands);
+    line.completer = Some(comp);
+  }
+
+  // ─── Enter → Accept ────────────────────────────────────────────────
+
+  #[test]
+  fn enter_accepts_selected_candidate_and_clears_completer() {
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["hello"]);
+    // selected_candidate is filtered[cursor=0]; with a single candidate
+    // that's "hello".
+    let ret = line.handle_completion_key(&key!(Enter)).unwrap();
+    assert!(ret, "handle_completion_key should return true on Accept");
+    assert!(line.completer.is_none(), "completer should be cleared");
+    // The Accept path replaces the buffer with the completed line. With
+    // FuzzyCompleter::default() the token_span is (0, 0) and
+    // original_input is empty, so the completed line is just the
+    // candidate.
+    assert_eq!(line.editor.joined(), "hello");
+    assert_eq!(line.editor.cursor_to_flat(), "hello".len());
+  }
+
+  #[test]
+  fn enter_with_multiple_candidates_accepts_cursor_position() {
+    // activate([a, b, c]) reverses → filtered=[c, b, a]; cursor=0 → "c".
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["alpha", "beta", "gamma"]);
+    line.handle_completion_key(&key!(Enter)).unwrap();
+    assert_eq!(line.editor.joined(), "gamma");
+    assert!(line.completer.is_none());
+  }
+
+  // ─── Esc / Ctrl+D → Dismiss ───────────────────────────────────────
+
+  #[test]
+  fn esc_dismisses_and_clears_completer() {
+    let (mut line, _g) = fresh_line("partial");
+    install_completer(&mut line, &["one", "two"]);
+    let ret = line.handle_completion_key(&key!(Esc)).unwrap();
+    assert!(ret);
+    assert!(line.completer.is_none());
+    // The editor buffer should NOT be modified on dismiss.
+    assert_eq!(line.editor.joined(), "partial");
+  }
+
+  #[test]
+  fn ctrl_d_dismisses_and_clears_completer() {
+    let (mut line, _g) = fresh_line("partial");
+    install_completer(&mut line, &["one", "two"]);
+    let ret = line.handle_completion_key(&key!(Ctrl + 'd')).unwrap();
+    assert!(ret);
+    assert!(line.completer.is_none());
+    assert_eq!(line.editor.joined(), "partial");
+  }
+
+  // ─── Tab/Down/Up → Consumed ───────────────────────────────────────
+
+  #[test]
+  fn tab_consumed_keeps_completer_and_marks_redraw() {
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["a", "b", "c"]);
+    line.needs_redraw = false;
+    let ret = line.handle_completion_key(&key!(Tab)).unwrap();
+    assert!(ret);
+    assert!(line.completer.is_some(), "completer should remain active");
+    assert!(line.needs_redraw, "Consumed should request redraw");
+  }
+
+  #[test]
+  fn down_consumed_keeps_completer() {
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["a", "b"]);
+    line.handle_completion_key(&key!(Down)).unwrap();
+    assert!(line.completer.is_some());
+  }
+
+  #[test]
+  fn up_consumed_keeps_completer() {
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["a", "b"]);
+    line.handle_completion_key(&key!(Up)).unwrap();
+    assert!(line.completer.is_some());
+  }
+
+  // ─── Tab navigation then Enter accepts the new selection ──────────
+
+  #[test]
+  fn tab_then_enter_accepts_advanced_candidate() {
+    // filtered = [c, b, a] (reverse-of-insertion); cursor=0 = c. After
+    // one Tab, cursor moves to 1 = b. Enter accepts "b".
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["alpha", "beta", "gamma"]);
+    line.handle_completion_key(&key!(Tab)).unwrap();
+    line.handle_completion_key(&key!(Enter)).unwrap();
+    assert_eq!(line.editor.joined(), "beta");
+  }
+
+  // ─── typing a char → Consumed (query filters) ─────────────────────
+
+  #[test]
+  fn typing_filters_candidates_and_keeps_completer() {
+    let (mut line, _g) = fresh_line("");
+    install_completer(&mut line, &["alpha", "beta", "gamma"]);
+    // 'g' fuzzy-matches only "gamma".
+    let key = KeyEvent(KeyCode::Char('g'), ModKeys::NONE);
+    line.handle_completion_key(&key).unwrap();
+    assert!(line.completer.is_some());
+    let comp = line.completer.as_ref().unwrap();
+    let names: Vec<&str> = comp
+      .selector
+      .filtered()
+      .iter()
+      .map(|c| c.candidate.content())
+      .collect();
+    assert_eq!(names, vec!["gamma"]);
+  }
+
+  // ─── Enter on empty filtered → Dismiss path ───────────────────────
+
+  #[test]
+  fn enter_on_empty_filtered_dismisses() {
+    // Activate with zero candidates → filtered is empty → selector
+    // returns Dismiss when Enter is pressed → handle_completion_key
+    // clears completer.
+    let (mut line, _g) = fresh_line("");
+    let comp = FuzzyCompleter::default(); // no candidates activated
+    line.completer = Some(comp);
+    let ret = line.handle_completion_key(&key!(Enter)).unwrap();
+    assert!(ret);
+    assert!(line.completer.is_none());
+  }
+}
+
+// ===================== ViVisual::handle_key =====================
+//
+// `visual_test!` mirrors `vi_test!` but uses `expand_keymap` so we can
+// write Ctrl/Alt sequences naturally (`<C-a>`, `<Esc>`, etc.) instead of
+// embedding raw escape bytes. Each test starts in normal mode (we feed
+// `<Esc>` first); the user op is expected to enter visual mode itself
+// (typically `v` / `V` / `<C-v>`).
+
+macro_rules! visual_test {
+  { $($name:ident: $input:expr => $op:expr => $expected_text:expr, $expected_cursor:expr);* $(;)? } => {
+    mod visual {
+      use super::*;
+      use crate::expand::expand_keymap;
+      $(#[test]
+        fn $name() {
+          let (mut vi, _g) = test_vi($input);
+          // Force a known starting state: normal mode.
+          let prelude = expand_keymap("<Esc>");
+          vi.process_input(prelude).unwrap();
+          let keys = expand_keymap($op);
+          vi.process_input(keys).unwrap();
+          assert_eq!(vi.editor.joined(), $expected_text,
+            "buffer mismatch for {}", stringify!($name));
+          assert_eq!(vi.editor.cursor_to_flat(), $expected_cursor,
+            "cursor mismatch for {}", stringify!($name));
+        }
+      )*
+    }
+  };
+}
+
+visual_test! {
+  // ─── Esc → NormalMode (no buffer change) ──────────────────────────
+  esc_in_visual_returns_to_normal      : "hello"       => "v<Esc>"            => "hello", 0;
+
+  // ─── Char-driven verbs: delete / yank / change ────────────────────
+  v_l_l_d_deletes_three                : "hello"       => "vlld"              => "lo", 0;
+  v_w_d_deletes_through_word_boundary  : "hello world" => "vwd"               => "orld", 0;
+  v_l_l_c_changes_three                : "hello"       => "vllcX<Esc>"        => "Xlo", 0;
+
+  // ─── Backspace inside visual moves cursor back ────────────────────
+  v_l_l_bs_d_deletes_two               : "hello"       => "vll<BS>d"          => "llo", 0;
+
+  // ─── Counted motion in visual ─────────────────────────────────────
+  v_count_l_d_deletes_n_plus_one       : "abcdef"      => "v3ld"              => "ef", 0;
+
+  // ─── Ctrl+a / Ctrl+x — increment / decrement number in visual ────
+  // <C-a>/<C-x> operate on whatever number is in the visual selection.
+  ctrl_a_increments_visual_number      : "5"           => "v<C-a>"            => "6", 0;
+  ctrl_x_decrements_visual_number      : "5"           => "v<C-x>"            => "4", 0;
+  ctrl_a_on_full_multi_digit           : "10"          => "vl<C-a>"           => "11", 1;
+
+  // ─── Ctrl+r — redo from visual ────────────────────────────────────
+  // Delete in visual → undo restores → redo via visual+Ctrl+r reapplies.
+  visual_ctrl_r_redoes_last_change     : "hello"       => "vllduv<C-r>"      => "lo", 0;
+
+  // ─── Arrow keys via common_cmds fallthrough ──────────────────────
+  v_right_right_d_deletes_via_arrows   : "abcdef"      => "v<Right><Right>d"  => "def", 0;
+
+  // ─── Invalid pending seq is cleared, next valid char works ──────
+  v_invalid_then_d_still_deletes       : "hello"       => "vzd"               => "ello", 0;
+
+  // ─── Ctrl+g — PrintPosition (no buffer effect) ───────────────────
+  ctrl_g_in_visual_doesnt_modify_buffer: "hello"       => "v<C-g><Esc>"       => "hello", 0;
+
+  // ─── Ctrl+d / Ctrl+u — HalfScreen motions; on a single-line buffer
+  // the motion has nowhere meaningful to go and lands cursor at 0, but
+  // the dispatcher still fires (which is what we're covering here) ──
+  ctrl_d_in_visual_single_line_noop    : "hello"       => "v<C-d><Esc>"       => "hello", 0;
+  ctrl_u_in_visual_single_line_noop    : "hello"       => "v<C-u><Esc>"       => "hello", 0;
+
+  // ═══════════════ parse_verb dispatch arms ═══════════════════════════
+  // Each entry exercises one char-keyed arm in ViVisual::parse_verb.
+
+  // ─── y / d / c — basic operators ─────────────────────────────────
+  parse_verb_y_yanks_and_p_pastes      : "hello"       => "vlly$p"            => "hellohel", 7;
+  parse_verb_d_deletes_selection       : "hello"       => "vlld"              => "lo", 0;
+  parse_verb_c_changes_selection       : "hello"       => "vllcX<Esc>"        => "Xlo", 0;
+
+  // ─── x / s / S — delete / substitute / change-selection ──────────
+  parse_verb_x_deletes_selection       : "hello"       => "vllx"              => "lo", 0;
+  // `s` in shed's visual maps to Delete (not Substitute-with-insert).
+  // The trailing `X<Esc>` runs in normal mode; X at cursor=0 is a no-op.
+  parse_verb_s_deletes_like_d          : "hello"       => "vllsX<Esc>"        => "lo", 0;
+  parse_verb_S_changes_selection       : "hello"       => "vllSX<Esc>"        => "Xlo", 0;
+
+  // ─── ~ / u / U — case toggle / lower / upper ──────────────────────
+  parse_verb_tilde_toggles_case        : "Hello"       => "vll~"              => "hELlo", 0;
+  parse_verb_u_lowers_selection        : "HELLO"       => "vllu"              => "helLO", 0;
+  parse_verb_U_uppers_selection        : "hello"       => "vllU"              => "HELlo", 0;
+
+  // ─── r <ch> — replace each char in selection ─────────────────────
+  parse_verb_r_replaces_each_char      : "hello"       => "vllrX"             => "XXXlo", 0;
+
+  // ─── X / Y / D / R / C — visual-with-whole-line operators ────────
+  // In visual mode, the attached WholeLine motion is overridden by the
+  // selection, so these end up operating on the visual range only. We
+  // pin shed's current behavior — vim's classic semantics differ.
+  parse_verb_capital_X_deletes_selection_only
+                                       : "foo\nbar"    => "vX"                => "oo\nbar", 0;
+  parse_verb_capital_Y_yanks_selection_only
+                                       : "foo\nbar"    => "vYjP"              => "foo\nfbar", 4;
+  parse_verb_capital_D_deletes_selection_only
+                                       : "foo\nbar"    => "vD"                => "oo\nbar", 0;
+  parse_verb_capital_R_changes_selection_only
+                                       : "foo\nbar"    => "vRX<Esc>"          => "Xoo\nbar", 0;
+  parse_verb_capital_C_changes_selection_only
+                                       : "foo\nbar"    => "vCX<Esc>"          => "Xoo\nbar", 0;
+
+  // ─── > / < — indent / dedent ─────────────────────────────────────
+  parse_verb_gt_indents_line           : "foo\nbar"    => "v>"                => "\tfoo\nbar", 1;
+  // Dedent on a tab-indented first line with cursor at 0 currently does
+  // nothing — pinning shed's behavior.
+  parse_verb_lt_dedent_at_indent_noop  : "\tfoo\nbar"  => "v<"                => "\tfoo\nbar", 0;
+
+  // ─── p / P — put (paste) replacing selection ─────────────────────
+  // `yl` yanks one char; the trailing `l`s are separate cursor moves.
+  // So `yll` from cursor=0 of "hello world": yank "h", cursor moves to
+  // 1, then `vll` selects [1..3]="ell", `p` replaces with "h" → "hho world".
+  parse_verb_p_pastes_over_selection
+    : "hello world"                                    => "yllvllp"           => "hho world", 1;
+
+  // ─── A / I — append / insert from visual ─────────────────────────
+  parse_verb_capital_A_appends_at_selection_end
+    : "hello"                                          => "vllAX<Esc>"        => "heXllo", 2;
+  parse_verb_capital_I_inserts_at_selection_start
+    : "hello"                                          => "$vlIX<Esc>"        => "hellXo", 4;
+
+  // ─── o / O — swap visual anchor; no buffer change ────────────────
+  parse_verb_o_swaps_anchor            : "hello"       => "vllo<Esc>"         => "hello", 2;
+  parse_verb_capital_O_swaps_anchor    : "hello"       => "vllO<Esc>"         => "hello", 2;
+
+  // ─── J — join lines (visual) ─────────────────────────────────────
+  parse_verb_J_joins_selected_lines    : "foo\nbar"    => "vjJ"               => "foo bar", 3;
+
+  // ─── g + v — re-select last visual (current cursor only) ─────────
+  // Pin behavior: `gv` after Esc re-enters visual but only at the
+  // cursor's final position, so the subsequent `d` deletes just one
+  // char rather than the full original range.
+  parse_verb_gv_reselects_last_position: "hello"       => "vll<Esc>gvd"       => "helo", 2;
+
+  // ─── g + ? — rot13 ───────────────────────────────────────────────
+  parse_verb_g_question_rot13          : "hello"       => "vllg?"             => "urylo", 0;
+
+  // ─── . — repeat last change ──────────────────────────────────────
+  // Pin shed's current dot-repeat semantics in visual.
+  parse_verb_dot_repeats_last_change   : "abcdefghij"  => "vllduvll."         => "abcdhij", 4;
+
+  // ─── = — equalize (no-op on a buffer with no structure) ─────────
+  parse_verb_eq_equalize_noop          : "foo"         => "v="                => "foo", 0;
+
+  // ─── invalid sequence — pending seq cleared, next op runs ───────
+  parse_verb_invalid_then_d            : "hello"       => "vgX d"             => "ello", 0;
+}
+
+// ===================== handle_hist_search_key =====================
+//
+// Drive the history-fuzzy-finder's key dispatch directly. Same pattern
+// as `handle_completion_key` tests above: bypass `process_input` to
+// isolate the Accept / Dismiss / Consumed arms.
+
+mod handle_hist_search_key {
+  use super::*;
+  use crate::keys::{KeyCode, KeyEvent, ModKeys};
+  use crate::readline::complete::{Candidate, FuzzySelector};
+
+  fn fresh_line() -> (ShedLine, TestGuard) {
+    let g = TestGuard::new();
+    let prompt = Prompt::default();
+    let line = ShedLine::new_no_hist(prompt).unwrap();
+    (line, g)
+  }
+
+  /// Build a FuzzySelector with candidates carrying ids, install it as
+  /// the history's fuzzy_finder. Candidate ids must be present because
+  /// the Accept arm does `cmd.id().unwrap()`.
+  fn install_hist_finder(line: &mut ShedLine, items: &[(usize, &str)]) {
+    let mut sel = FuzzySelector::new("History");
+    let cands: Vec<Candidate> = items
+      .iter()
+      .map(|(id, s)| Candidate::from((*id, s.to_string())))
+      .collect();
+    sel.activate(cands);
+    line.history.fuzzy_finder = Some(sel);
+  }
+
+  // ─── Enter → Accept ────────────────────────────────────────────────
+
+  #[test]
+  fn enter_accepts_and_clears_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "ls -la")]);
+    line.handle_hist_search_key(key!(Enter)).unwrap();
+    // Accept calls stop_search → fuzzy_finder becomes None.
+    assert!(line.history.fuzzy_finder.is_none());
+    assert!(line.needs_redraw);
+  }
+
+  #[test]
+  fn enter_accept_with_multiple_candidates_clears_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "alpha"), (1, "beta"), (2, "gamma")]);
+    line.handle_hist_search_key(key!(Enter)).unwrap();
+    assert!(line.history.fuzzy_finder.is_none());
+  }
+
+  // ─── Esc → Dismiss ────────────────────────────────────────────────
+
+  #[test]
+  fn esc_dismisses_and_clears_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "some cmd")]);
+    line.handle_hist_search_key(key!(Esc)).unwrap();
+    assert!(line.history.fuzzy_finder.is_none());
+    assert!(line.needs_redraw);
+  }
+
+  #[test]
+  fn ctrl_d_dismisses_and_clears_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "x")]);
+    line.handle_hist_search_key(key!(Ctrl + 'd')).unwrap();
+    assert!(line.history.fuzzy_finder.is_none());
+  }
+
+  // ─── Tab/Down/Up → Consumed ───────────────────────────────────────
+
+  #[test]
+  fn tab_consumed_keeps_finder_and_marks_redraw() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "a"), (1, "b"), (2, "c")]);
+    line.needs_redraw = false;
+    line.handle_hist_search_key(key!(Tab)).unwrap();
+    assert!(line.history.fuzzy_finder.is_some());
+    assert!(line.needs_redraw);
+  }
+
+  #[test]
+  fn down_consumed_keeps_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "a"), (1, "b")]);
+    line.handle_hist_search_key(key!(Down)).unwrap();
+    assert!(line.history.fuzzy_finder.is_some());
+  }
+
+  #[test]
+  fn up_consumed_keeps_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "a"), (1, "b")]);
+    line.handle_hist_search_key(key!(Up)).unwrap();
+    assert!(line.history.fuzzy_finder.is_some());
+  }
+
+  // ─── typing a char → Consumed (query filter) ─────────────────────
+
+  #[test]
+  fn typing_filters_candidates_and_keeps_finder() {
+    let (mut line, _g) = fresh_line();
+    install_hist_finder(&mut line, &[(0, "alpha"), (1, "beta"), (2, "gamma")]);
+    let key = KeyEvent(KeyCode::Char('g'), ModKeys::NONE);
+    line.handle_hist_search_key(key).unwrap();
+    assert!(line.history.fuzzy_finder.is_some());
+    let names: Vec<&str> = line
+      .history
+      .fuzzy_finder
+      .as_ref()
+      .unwrap()
+      .filtered()
+      .iter()
+      .map(|c| c.candidate.content())
+      .collect();
+    assert_eq!(names, vec!["gamma"]);
+  }
+}
+
+// ===================== ShedLine::handle_key =====================
+//
+// Direct tests for the top-level key dispatcher. Existing vi_test! and
+// emacs_test! exercise this transitively via `process_input`, but those
+// flows also fire keymap matching, edit-mode resolution, etc. These
+// tests target the LineCmd branches in handle_key/resolve_cmd directly.
+
+mod handle_key_dispatch {
+  use super::*;
+  use crate::keys::{KeyCode, KeyEvent, ModKeys};
+  use crate::readline::ReadlineEvent;
+
+  fn fresh_emacs(initial: &str) -> (ShedLine, TestGuard) {
+    Shed::shopts_mut(|o| o.set.vi = false);
+    let g = TestGuard::new();
+    let prompt = Prompt::default();
+    let mut line = ShedLine::new_no_hist(prompt).unwrap().with_initial(initial);
+    let end = line.editor.joined().chars().count();
+    line.editor.edit(|e| e.set_cursor_from_flat(end));
+    (line, g)
+  }
+
+  // ─── EndOfFile branch ─────────────────────────────────────────────
+
+  #[test]
+  fn ctrl_d_on_empty_buffer_returns_eof() {
+    let (mut line, _g) = fresh_emacs("");
+    let res = line.handle_key(key!(Ctrl + 'd')).unwrap();
+    assert!(matches!(res, Some(ReadlineEvent::Eof)));
+  }
+
+  #[test]
+  fn ctrl_d_on_non_empty_buffer_deletes_char_returns_none() {
+    let (mut line, _g) = fresh_emacs("hello");
+    line.editor.edit(|e| e.set_cursor_from_flat(0));
+    let res = line.handle_key(key!(Ctrl + 'd')).unwrap();
+    assert!(res.is_none(), "expected None, got {res:?}");
+    // The Ctrl+D-as-Delete should remove the char under the cursor.
+    assert_eq!(line.editor.joined(), "ello");
+  }
+
+  // ─── ClearScreen ──────────────────────────────────────────────────
+
+  #[test]
+  fn ctrl_l_marks_redraw_returns_none() {
+    let (mut line, _g) = fresh_emacs("anything");
+    line.needs_redraw = false;
+    let res = line.handle_key(key!(Ctrl + 'l')).unwrap();
+    assert!(res.is_none());
+    assert!(line.needs_redraw);
+  }
+
+  // ─── TriggerHistSearch ──────────────────────────────────────────
+
+  #[test]
+  fn ctrl_r_in_insert_mode_starts_history_search() {
+    let (mut line, _g) = fresh_emacs("");
+    // History search needs the search-entries cache to have something.
+    // Push an entry so start_search has data to work with.
+    line.history.push("prev_cmd".into()).unwrap();
+    let _ = line.handle_key(key!(Ctrl + 'r')).unwrap();
+    // start_hist_search sets up the finder when there are >=2 entries
+    // OR adopts the single match. Either way, the call should return
+    // without error and not throw an EOF.
+  }
+
+  // ─── SubmitLine on empty editor still routes through SubmitLine ─
+
+  #[test]
+  fn enter_on_empty_buffer_returns_line() {
+    // submit() should return ReadlineEvent::Line("") for an empty
+    // buffer (the loop layer handles the empty case).
+    let (mut line, _g) = fresh_emacs("");
+    let res = line.handle_key(key!(Enter)).unwrap();
+    match res {
+      Some(ReadlineEvent::Line(s)) => assert_eq!(s, ""),
+      other => panic!("expected Line(\"\"), got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn enter_on_simple_command_submits_line() {
+    let (mut line, _g) = fresh_emacs("echo hi");
+    let res = line.handle_key(key!(Enter)).unwrap();
+    match res {
+      Some(ReadlineEvent::Line(s)) => assert_eq!(s, "echo hi"),
+      other => panic!("expected Line(\"echo hi\"), got {other:?}"),
+    }
+  }
+
+  // ─── Plain printable char is routed through Execute → buffer grows
+
+  #[test]
+  fn typing_a_char_grows_buffer_returns_none() {
+    let (mut line, _g) = fresh_emacs("");
+    let key = KeyEvent(KeyCode::Char('x'), ModKeys::NONE);
+    let res = line.handle_key(key).unwrap();
+    assert!(res.is_none());
+    assert_eq!(line.editor.joined(), "x");
+  }
+
+  // ─── Unbound key returns None (no LineCmd) ─────────────────────
+
+  #[test]
+  fn key_with_no_command_returns_none() {
+    // F12 isn't bound in default emacs/vi mode. resolve_key returns
+    // None → handle_key returns Ok(None).
+    let (mut line, _g) = fresh_emacs("");
+    let res = line
+      .handle_key(KeyEvent(KeyCode::F(12), ModKeys::NONE))
+      .unwrap();
+    assert!(res.is_none());
+  }
 }

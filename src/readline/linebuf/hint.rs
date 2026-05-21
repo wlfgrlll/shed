@@ -143,7 +143,12 @@ impl super::LineBuf {
   }
 
   pub fn set_hint(&mut self, hint: Option<Hint>) {
-    if self.is_empty() {
+    let is_override = matches!(&hint, Some(Hint::Override(_)));
+
+    // Override hints are explicit (typically socket-driven), so they
+    // bypass the empty-buffer and auto_suggest gates that normally
+    // suppress hints. Other hints are heuristic and respect both.
+    if !is_override && self.is_empty() {
       self.hint = None;
       return;
     }
@@ -163,7 +168,7 @@ impl super::LineBuf {
       return;
     }
 
-    if !shopt!(line.auto_suggest) {
+    if !is_override && !shopt!(line.auto_suggest) {
       self.hint = None;
       return;
     }

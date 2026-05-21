@@ -363,4 +363,154 @@ mod tests {
     test_input("read < <(echo -n '')").unwrap();
     assert_eq!(state::Shed::get_status(), 1);
   }
+
+  // ===================== readkey =====================
+
+  /// Set the tty to raw mode at test start so subsequently `feed_tty`'d
+  /// bytes pass through without the kernel buffering them until newline
+  /// or interpreting special chars (Ctrl+D as VEOF, etc.).
+  fn arm_raw_tty() {
+    Shed::term_mut(|t| t.enforce_raw_mode()).unwrap();
+  }
+
+  #[test]
+  fn readkey_stores_into_named_var() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"a");
+    test_input("readkey -v key").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(var!("key"), "a");
+  }
+
+  #[test]
+  fn readkey_with_no_var_writes_to_stdout() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"a");
+    test_input("readkey").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    // The vim-seq for plain 'a' (no mods) is just "a".
+    assert!(
+      g.read_output().contains('a'),
+      "expected 'a' in output, got: {:?}",
+      g.read_output()
+    );
+  }
+
+  #[test]
+  fn readkey_whitelist_accepts_listed_char() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"y");
+    test_input("readkey -v ans -w yn").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(var!("ans"), "y");
+  }
+
+  #[test]
+  fn readkey_whitelist_rejects_unlisted_char() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"x");
+    test_input("readkey -v ans -w yn").unwrap();
+    assert_eq!(state::Shed::get_status(), 1);
+    // var should not be set when whitelist rejects.
+    assert_eq!(var!("ans"), "");
+  }
+
+  #[test]
+  fn readkey_blacklist_rejects_listed_char() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"q");
+    test_input("readkey -v ans -b q").unwrap();
+    assert_eq!(state::Shed::get_status(), 1);
+    assert_eq!(var!("ans"), "");
+  }
+
+  #[test]
+  fn readkey_blacklist_accepts_unlisted_char() {
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"a");
+    test_input("readkey -v ans -b q").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(var!("ans"), "a");
+  }
+
+  #[test]
+  fn readkey_renders_special_key_as_vim_seq() {
+    // Carriage return (Enter) — feeds \r, which the parser maps to
+    // KeyCode::Enter, rendered as <Enter>.
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"\r");
+    test_input("readkey -v k").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(var!("k"), "<Enter>");
+  }
+
+  #[test]
+  fn readkey_renders_ctrl_char_as_vim_seq() {
+    // Ctrl+A is \x01, parsed as KeyCode::Char('a') with CTRL → "<C-a>".
+    let g = TestGuard::new();
+    arm_raw_tty();
+    g.feed_tty(b"\x01");
+    test_input("readkey -v k").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(var!("k"), "<C-a>");
+  }
+
+  // ===================== Read::execute remaining flags =====================
+
+  #[test]
+  fn read_r_flag_disables_escape_processing() {
+    let _g = TestGuard::new();
+    // Without -r the backslash would be consumed as an escape. With -r
+    // it is preserved verbatim.
+    test_input("read -r line < <(printf 'a\\\\b\\n')").unwrap();
+    assert_eq!(var!("line"), "a\\b");
+  }
+
+  #[test]
+  fn read_n_flag_limits_byte_count() {
+    let _g = TestGuard::new();
+    test_input("read -n 3 short < <(echo -n 'helloworld')").unwrap();
+    assert_eq!(var!("short"), "hel");
+  }
+
+  #[test]
+  fn read_n_flag_invalid_count_errors() {
+    let _g = TestGuard::new();
+    test_input("read -n notanumber line < <(echo hi)").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn read_t_flag_invalid_value_errors() {
+    let _g = TestGuard::new();
+    test_input("read -t abc line < <(echo hi)").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn read_a_flag_populates_array() {
+    let _g = TestGuard::new();
+    test_input("read -a arr < <(echo 'one two three')").unwrap();
+    // Index into the array; an unspecified element returns empty.
+    test_input("echo $arr[0]:$arr[1]:$arr[2]").unwrap();
+    // Just verify that the array element accesses succeed and the
+    // status is 0.
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn read_p_flag_emits_prompt() {
+    let g = TestGuard::new();
+    test_input("read -p 'enter> ' line < <(echo hi)").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("enter> "), "got: {out:?}");
+    assert_eq!(var!("line"), "hi");
+  }
 }

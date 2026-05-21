@@ -1671,4 +1671,88 @@ mod tests {
       "'!$' should NOT produce a Bang; got {classes:?}"
     );
   }
+
+  // ===================== case_pat_lookahead =====================
+
+  fn lookahead(s: &str) -> Option<usize> {
+    case_pat_lookahead(s.chars().peekable())
+  }
+
+  #[test]
+  fn finds_simple_close_paren() {
+    // pos counts bytes consumed including the ')'.
+    assert_eq!(lookahead("abc)"), Some(4));
+  }
+
+  #[test]
+  fn returns_none_on_hard_sep_outside_quotes() {
+    assert_eq!(lookahead("abc def"), None);
+    assert_eq!(lookahead("abc;def"), None);
+    assert_eq!(lookahead("abc\ndef"), None);
+  }
+
+  #[test]
+  fn returns_none_on_open_paren_outside_quotes() {
+    // Unbalanced `(` aborts the lookahead.
+    assert_eq!(lookahead("abc(def"), None);
+  }
+
+  #[test]
+  fn returns_none_at_eof_with_no_close_paren() {
+    assert_eq!(lookahead("just_text"), None);
+    assert_eq!(lookahead(""), None);
+  }
+
+  #[test]
+  fn escape_consumes_following_char() {
+    // `\)` is escaped, doesn't terminate. Then we hit real `)`.
+    assert_eq!(lookahead("ab\\)cd)"), Some(7));
+  }
+
+  #[test]
+  fn escape_of_space_doesnt_trip_hard_sep() {
+    // `\ ` (escaped space) is consumed, doesn't terminate.
+    assert_eq!(lookahead("ab\\ cd)"), Some(7));
+  }
+
+  #[test]
+  fn single_quotes_hide_special_chars() {
+    // Inside single quotes, `;` `)` `(` are all literal.
+    assert_eq!(lookahead("'foo;bar')"), Some(10));
+  }
+
+  #[test]
+  fn double_quotes_hide_special_chars() {
+    assert_eq!(lookahead("\"foo bar\")"), Some(10));
+  }
+
+  #[test]
+  fn ansi_c_quoting_dollar_squote_skipped() {
+    // $'...' should be skipped through; the `)` inside doesn't count.
+    assert_eq!(lookahead("$')(')"), Some(6));
+  }
+
+  #[test]
+  fn cmd_sub_dollar_paren_is_balanced() {
+    // $(...) — internal `)` matches its `(`. Outer `)` is what we find.
+    assert_eq!(lookahead("$(echo;hi))"), Some(11));
+  }
+
+  #[test]
+  fn nested_cmd_subs_balanced() {
+    // $(echo;$(true)) is two levels deep; balanced.
+    assert_eq!(lookahead("$(echo;$(true)))"), Some(16));
+  }
+
+  #[test]
+  fn escape_of_newline_with_followup_whitespace() {
+    // `\<newline>` + spaces → all consumed as line-continuation.
+    assert_eq!(lookahead("a\\\n   b)"), Some(8));
+  }
+
+  #[test]
+  fn close_paren_inside_quotes_doesnt_terminate() {
+    // The `)` between quotes is literal; outer `)` is the real close.
+    assert_eq!(lookahead("\"a)b\")"), Some(6));
+  }
 }

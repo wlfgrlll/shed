@@ -16,9 +16,8 @@ use super::{
   expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
   procio::stdin_fileno,
   readline::Candidate,
-  sherr, try_var,
+  sherr,
   util::get_separator,
-  var,
 };
 
 /// Display key/value pairs as '{key}={value}\n'
@@ -615,7 +614,7 @@ impl VarTab {
     // First, inherit any env vars from the parent process
     let term = {
       if isatty(stdin_fileno()).unwrap() {
-        if let Some(term) = try_var!("TERM") {
+        if let Ok(term) = std::env::var("TERM") {
           term
         } else {
           "linux".to_string()
@@ -744,7 +743,7 @@ impl VarTab {
     if let Some(var) = self.vars.get(var).map(|s| s.to_string()) {
       var
     } else {
-      var!(var)
+      std::env::var(var).unwrap_or_default()
     }
   }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {
@@ -889,5 +888,316 @@ impl VarTab {
         .map(|s| s.to_string())
         .unwrap_or_default(),
     }
+  }
+}
+
+#[cfg(test)]
+mod top_level_colon_tests {
+  use super::top_level_colon;
+
+  #[test]
+  fn simple_colon_at_position() {
+    assert_eq!(top_level_colon("foo:bar"), Some(3));
+  }
+
+  #[test]
+  fn no_colon_returns_none() {
+    assert_eq!(top_level_colon("foobar"), None);
+    assert_eq!(top_level_colon(""), None);
+  }
+
+  #[test]
+  fn colon_at_start() {
+    assert_eq!(top_level_colon(":foo"), Some(0));
+  }
+
+  #[test]
+  fn colon_at_end() {
+    assert_eq!(top_level_colon("foo:"), Some(3));
+  }
+
+  #[test]
+  fn colon_inside_braces_skipped() {
+    // `${foo:bar}` — the `:` is nested inside braces.
+    assert_eq!(top_level_colon("${foo:bar}"), None);
+  }
+
+  #[test]
+  fn colon_inside_parens_skipped() {
+    // `$(cmd:arg)` — the `:` is nested inside parens.
+    assert_eq!(top_level_colon("$(cmd:arg)"), None);
+  }
+
+  #[test]
+  fn outer_colon_found_when_inner_nested() {
+    // Outer colon at index 1, inner colon nested inside `${}`.
+    assert_eq!(top_level_colon("x:${foo:bar}"), Some(1));
+  }
+
+  #[test]
+  fn first_colon_wins_when_multiple_top_level() {
+    assert_eq!(top_level_colon("a:b:c"), Some(1));
+  }
+
+  #[test]
+  fn nested_braces_keep_inner_colon_hidden() {
+    assert_eq!(top_level_colon("{{a:b}c}"), None);
+  }
+
+  #[test]
+  fn colon_after_closing_brace() {
+    // `${x}:y` — after `}` we're back to depth 0, the `:` is top-level.
+    assert_eq!(top_level_colon("${x}:y"), Some(4));
+  }
+
+  #[test]
+  fn outer_then_inner_colons() {
+    // First colon at index 1 (top-level), second at 7 (inside parens).
+    assert_eq!(top_level_colon("a:$(cmd:arg):b"), Some(1));
+  }
+}
+
+#[cfg(test)]
+mod shell_param_fmt_tests {
+  use super::*;
+
+  #[test]
+  fn status_formats_as_question_mark() {
+    assert_eq!(ShellParam::Status.to_string(), "?");
+  }
+
+  #[test]
+  fn shpid_formats_as_dollar() {
+    assert_eq!(ShellParam::ShPid.to_string(), "$");
+  }
+
+  #[test]
+  fn last_job_formats_as_bang() {
+    assert_eq!(ShellParam::LastJob.to_string(), "!");
+  }
+
+  #[test]
+  fn shell_name_formats_as_zero() {
+    assert_eq!(ShellParam::ShellName.to_string(), "0");
+  }
+
+  #[test]
+  fn pos_formats_as_number() {
+    assert_eq!(ShellParam::Pos(1).to_string(), "1");
+    assert_eq!(ShellParam::Pos(99).to_string(), "99");
+  }
+
+  #[test]
+  fn all_args_formats_as_at() {
+    assert_eq!(ShellParam::AllArgs.to_string(), "@");
+  }
+
+  #[test]
+  fn all_args_str_formats_as_star() {
+    assert_eq!(ShellParam::AllArgsStr.to_string(), "*");
+  }
+
+  #[test]
+  fn arg_count_formats_as_hash() {
+    assert_eq!(ShellParam::ArgCount.to_string(), "#");
+  }
+
+  // ─── round-trip via FromStr ───────────────────────────────────────
+
+  #[test]
+  fn every_variant_round_trips_through_from_str() {
+    use std::str::FromStr;
+    let cases = [
+      ShellParam::Status,
+      ShellParam::ShPid,
+      ShellParam::LastJob,
+      ShellParam::ShellName,
+      ShellParam::Pos(7),
+      ShellParam::AllArgs,
+      ShellParam::AllArgsStr,
+      ShellParam::ArgCount,
+    ];
+    for v in cases {
+      let s = v.to_string();
+      let parsed = ShellParam::from_str(&s).unwrap();
+      assert_eq!(parsed, v, "round-trip mismatch for {v:?} via {s:?}");
+    }
+  }
+}
+
+#[cfg(test)]
+mod set_index_tests {
+  use super::*;
+  use crate::tests::testutil::TestGuard;
+
+  fn make_tab_with_arr(name: &str, items: Vec<&str>) -> VarTab {
+    let mut tab = VarTab::new();
+    tab
+      .set_var(
+        name,
+        VarKind::Arr(items.into_iter().map(String::from).collect()),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    tab
+  }
+
+  fn arr_items(tab: &VarTab, name: &str) -> Vec<String> {
+    match tab.vars.get(name).map(|v| v.kind()) {
+      Some(VarKind::Arr(items)) => items.iter().cloned().collect(),
+      other => panic!("expected Arr for {name}, got {other:?}"),
+    }
+  }
+
+  fn assoc_items(tab: &VarTab, name: &str) -> Vec<(String, String)> {
+    match tab.vars.get(name).map(|v| v.kind()) {
+      Some(VarKind::AssocArr(items)) => items.clone(),
+      other => panic!("expected AssocArr for {name}, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn literal_index_replaces_existing_slot() {
+    let _g = TestGuard::new();
+    let mut tab = make_tab_with_arr("arr", vec!["a", "b", "c"]);
+    tab
+      .set_index("arr", ArrIndex::Literal(1), "B!".into())
+      .unwrap();
+    assert_eq!(arr_items(&tab, "arr"), vec!["a", "B!", "c"]);
+  }
+
+  #[test]
+  fn literal_index_past_end_resizes_with_empty_strings() {
+    let _g = TestGuard::new();
+    let mut tab = make_tab_with_arr("arr", vec!["a"]);
+    tab
+      .set_index("arr", ArrIndex::Literal(3), "z".into())
+      .unwrap();
+    assert_eq!(arr_items(&tab, "arr"), vec!["a", "", "", "z"]);
+  }
+
+  #[test]
+  fn from_back_index_targets_correct_slot() {
+    let _g = TestGuard::new();
+    let mut tab = make_tab_with_arr("arr", vec!["a", "b", "c"]);
+    // FromBack(1) → items.len() - 1 = index 2.
+    tab
+      .set_index("arr", ArrIndex::FromBack(1), "C!".into())
+      .unwrap();
+    assert_eq!(arr_items(&tab, "arr"), vec!["a", "b", "C!"]);
+  }
+
+  #[test]
+  fn from_back_index_out_of_bounds_errors() {
+    let _g = TestGuard::new();
+    let mut tab = make_tab_with_arr("arr", vec!["a", "b"]);
+    let res = tab.set_index("arr", ArrIndex::FromBack(5), "x".into());
+    assert!(res.is_err());
+  }
+
+  #[test]
+  fn assoc_array_new_key_appended() {
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_var("h", VarKind::AssocArr(vec![]), VarFlags::empty())
+      .unwrap();
+    tab
+      .set_index("h", ArrIndex::Key("k".into()), "v".into())
+      .unwrap();
+    assert_eq!(
+      assoc_items(&tab, "h"),
+      vec![("k".to_string(), "v".to_string())]
+    );
+  }
+
+  #[test]
+  fn assoc_array_existing_key_overwritten_in_place() {
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_var(
+        "h",
+        VarKind::AssocArr(vec![("k1".into(), "old".into()), ("k2".into(), "y".into())]),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    tab
+      .set_index("h", ArrIndex::Key("k1".into()), "new".into())
+      .unwrap();
+    assert_eq!(
+      assoc_items(&tab, "h"),
+      vec![
+        ("k1".to_string(), "new".to_string()),
+        ("k2".to_string(), "y".to_string())
+      ]
+    );
+  }
+
+  #[test]
+  fn set_index_on_scalar_errors() {
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_var("scalar", VarKind::Str("plain".into()), VarFlags::empty())
+      .unwrap();
+    // After resolve_for on a Str, the literal index applies but the
+    // catchall arm returns "Variable '...' is not an array".
+    let res = tab.set_index("scalar", ArrIndex::Literal(0), "x".into());
+    assert!(res.is_err());
+  }
+
+  #[test]
+  fn missing_var_is_silent_ok() {
+    // var_exists guard at the top is false → function returns Ok
+    // without creating anything.
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_index("never_existed", ArrIndex::Literal(0), "x".into())
+      .unwrap();
+    assert!(tab.vars.get("never_existed").is_none());
+  }
+
+  #[test]
+  fn wildcard_index_into_indexed_array_errors() {
+    let _g = TestGuard::new();
+    let mut tab = make_tab_with_arr("arr", vec!["a", "b"]);
+    let res = tab.set_index("arr", ArrIndex::AllSplit, "x".into());
+    assert!(res.is_err());
+  }
+
+  #[test]
+  fn wildcard_index_into_assoc_array_errors() {
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_var(
+        "h",
+        VarKind::AssocArr(vec![("k".into(), "v".into())]),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    // Wildcard (AllSplit / AllJoined) on assoc array → inner not-a-Key arm errors.
+    let res = tab.set_index("h", ArrIndex::AllSplit, "x".into());
+    assert!(res.is_err());
+  }
+
+  #[test]
+  fn literal_index_on_assoc_array_becomes_string_key() {
+    // resolve_for converts Literal(n) → Key(n.to_string()) for assoc
+    // arrays. Pin this stringification behavior.
+    let _g = TestGuard::new();
+    let mut tab = VarTab::new();
+    tab
+      .set_var("h", VarKind::AssocArr(vec![]), VarFlags::empty())
+      .unwrap();
+    tab
+      .set_index("h", ArrIndex::Literal(7), "v".into())
+      .unwrap();
+    assert_eq!(
+      assoc_items(&tab, "h"),
+      vec![("7".to_string(), "v".to_string())]
+    );
   }
 }

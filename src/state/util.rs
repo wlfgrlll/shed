@@ -408,6 +408,19 @@ pub fn get_db_conn() -> Option<Arc<Connection>> {
   SHED.with(|shed| shed.db_conn.get().cloned().flatten())
 }
 
+/// Initialize the shared database connection with an in-memory sqlite
+/// database. Used by TestGuard. Safe to call multiple times — the OnceLock
+/// only takes effect on the first call, so all tests in a thread share the
+/// same in-memory db (per-test cleanup is handled separately by TestGuard).
+#[cfg(test)]
+pub fn init_test_db_conn() {
+  SHED.with(|shed| {
+    let _ = shed
+      .db_conn
+      .set(Connection::open_in_memory().ok().map(std::sync::Arc::new));
+  });
+}
+
 /// Initialize the shared database connection on the `Shed` struct.
 pub fn init_db_conn() {
   SHED.with(|shed| match open_db_conn().ok() {
@@ -496,4 +509,330 @@ pub fn get_exec_wrappers() -> Vec<String> {
   wrappers.extend(user_wrappers);
 
   wrappers
+}
+
+#[cfg(test)]
+mod generate_default_rc_tests {
+  use super::*;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+
+  fn set_rc_path(p: &std::path::Path) {
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_RC",
+        VarKind::Str(p.to_string_lossy().to_string()),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    });
+  }
+
+  // ─── creates file when missing ──────────────────────────────────
+
+  #[test]
+  fn creates_file_when_not_present() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let rc = dir.path().join("test.shedrc");
+    set_rc_path(&rc);
+    assert!(!rc.exists());
+    let result = generate_default_rc().unwrap();
+    assert_eq!(result, Some(rc.clone()));
+    assert!(rc.exists());
+  }
+
+  // ─── doesn't overwrite an existing file ─────────────────────────
+
+  #[test]
+  fn does_not_overwrite_existing_file() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let rc = dir.path().join("existing.shedrc");
+    std::fs::write(&rc, "USER_CONTENT_MARKER").unwrap();
+    set_rc_path(&rc);
+    let result = generate_default_rc().unwrap();
+    assert_eq!(result, None);
+    // File still has user content.
+    let content = std::fs::read_to_string(&rc).unwrap();
+    assert_eq!(content, "USER_CONTENT_MARKER");
+  }
+
+  // ─── file content contains expected sections ────────────────────
+
+  #[test]
+  fn generated_file_contains_default_shopt_lines() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let rc = dir.path().join("rc_with_shopts.shedrc");
+    set_rc_path(&rc);
+    generate_default_rc().unwrap();
+    let content = std::fs::read_to_string(&rc).unwrap();
+    // Header marker.
+    assert!(
+      content.contains("Shed Runtime Commands"),
+      "got: {content:?}"
+    );
+    // ShOpts::generate_default_rc should produce `shopt set ...` lines
+    // for known group names. We check a few representative ones.
+    assert!(content.contains("core."), "missing core shopt lines");
+    assert!(content.contains("prompt."), "missing prompt shopt lines");
+    assert!(content.contains("line."), "missing line shopt lines");
+  }
+
+  #[test]
+  fn generated_file_contains_static_helper_section() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let rc = dir.path().join("rc_with_static.shedrc");
+    set_rc_path(&rc);
+    generate_default_rc().unwrap();
+    let content = std::fs::read_to_string(&rc).unwrap();
+    assert!(content.contains("complete -d cd"), "got: {content:?}");
+    assert!(content.contains("autocmd"), "got: {content:?}");
+    assert!(content.contains("keymap"), "got: {content:?}");
+  }
+
+  // The "no rc path resolvable" error path is essentially unreachable
+  // in practice: `get_home` falls back to passwd-uid lookup, so even
+  // with HOME unset rc_file_path returns Some. Not tested here.
+}
+
+#[cfg(test)]
+mod source_runtime_file_tests {
+  use super::*;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+  use crate::var;
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  #[test]
+  fn env_var_pointed_file_gets_sourced() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("source.sh");
+    std::fs::write(&path, "MARKER_VAR=set_by_source\n").unwrap();
+    set_var("TEST_RC_VAR", &path.to_string_lossy());
+    source_runtime_file("testrc", Some("TEST_RC_VAR")).unwrap();
+    assert_eq!(var!("MARKER_VAR"), "set_by_source");
+  }
+
+  #[test]
+  fn missing_target_file_is_no_op() {
+    let _g = TestGuard::new();
+    set_var("TEST_RC_NONEXISTENT", "/path/that/should/never/exist/zzz");
+    let res = source_runtime_file("nonexistent", Some("TEST_RC_NONEXISTENT"));
+    assert!(res.is_ok());
+  }
+
+  #[test]
+  fn env_var_unset_and_no_home_file_no_op() {
+    let _g = TestGuard::new();
+    // Point HOME to a tempdir with no matching file.
+    let dir = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &dir.path().to_string_lossy());
+    Shed::vars_mut(|v| v.unset_var("TEST_NOTHING").ok());
+    let res = source_runtime_file("nothing", Some("TEST_NOTHING"));
+    assert!(res.is_ok());
+  }
+
+  #[test]
+  fn falls_back_to_home_dot_file_when_env_unset() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let dotfile = dir.path().join(".my_test_rc");
+    std::fs::write(&dotfile, "HOME_FALLBACK_MARKER=via_home\n").unwrap();
+    set_var("HOME", &dir.path().to_string_lossy());
+    Shed::vars_mut(|v| v.unset_var("ENV_NAME_NOT_SET").ok());
+    source_runtime_file("my_test_rc", Some("ENV_NAME_NOT_SET")).unwrap();
+    assert_eq!(var!("HOME_FALLBACK_MARKER"), "via_home");
+  }
+}
+
+#[cfg(test)]
+mod source_wrapper_tests {
+  //! Thin one-liner wrappers that delegate to `source_runtime_file`
+  //! with hardcoded (name, env_var) pairs. The tests verify that each
+  //! wrapper uses the right env-var name — if any pair gets swapped,
+  //! the assertion fails.
+
+  use super::*;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+  use crate::var;
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  #[test]
+  fn source_rc_uses_shed_rc_env_var() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("rc.sh");
+    std::fs::write(&path, "SOURCE_RC_MARKER=fired\n").unwrap();
+    set_var("SHED_RC", &path.to_string_lossy());
+    source_rc().unwrap();
+    assert_eq!(var!("SOURCE_RC_MARKER"), "fired");
+  }
+
+  #[test]
+  fn source_login_uses_shed_profile_env_var() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("profile.sh");
+    std::fs::write(&path, "SOURCE_LOGIN_MARKER=fired\n").unwrap();
+    set_var("SHED_PROFILE", &path.to_string_lossy());
+    source_login().unwrap();
+    assert_eq!(var!("SOURCE_LOGIN_MARKER"), "fired");
+  }
+
+  #[test]
+  fn source_env_uses_shed_env_env_var() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("env.sh");
+    std::fs::write(&path, "SOURCE_ENV_MARKER=fired\n").unwrap();
+    set_var("SHED_ENV", &path.to_string_lossy());
+    source_env().unwrap();
+    assert_eq!(var!("SOURCE_ENV_MARKER"), "fired");
+  }
+}
+
+#[cfg(test)]
+mod lookup_cmd_tests {
+  use super::*;
+  use crate::tests::testutil::{TestGuard, has_cmd};
+
+  #[test]
+  fn lookup_returns_path_for_known_binary_with_hashall() {
+    if !has_cmd("ls") {
+      return;
+    }
+    let _g = TestGuard::new();
+    crate::shopt_mut!(set.hashall = true);
+    crate::state::util::try_hash();
+    let path = lookup_cmd("ls");
+    assert!(path.is_some(), "expected Some(path) for 'ls'");
+    // Whatever the path is, it should end with "ls".
+    let path = path.unwrap();
+    assert_eq!(path.file_name().unwrap().to_string_lossy(), "ls");
+  }
+
+  #[test]
+  fn lookup_returns_path_for_known_binary_without_hashall() {
+    if !has_cmd("ls") {
+      return;
+    }
+    let _g = TestGuard::new();
+    crate::shopt_mut!(set.hashall = false);
+    let path = lookup_cmd("ls");
+    assert!(path.is_some(), "expected Some(path) for 'ls'");
+  }
+
+  #[test]
+  fn lookup_returns_none_for_unknown_command() {
+    let _g = TestGuard::new();
+    assert!(lookup_cmd("definitely_not_a_real_binary_zzzqqq").is_none());
+  }
+
+  #[test]
+  fn lookup_returns_none_for_builtin_name() {
+    // `cd` resolves via which_util as UtilKind::Builtin, which the
+    // filter in lookup_cmd rejects (only Command|File pass through).
+    let _g = TestGuard::new();
+    crate::shopt_mut!(set.hashall = true);
+    crate::state::util::try_hash();
+    assert!(lookup_cmd("cd").is_none());
+  }
+}
+
+#[cfg(test)]
+mod set_ver_info_tests {
+  //! `set_ver_info` populates two shell vars from compile-time
+  //! constants: `SHED_VERSION` (the Cargo.toml version string) and
+  //! `SHED_VER_INFO` (an AssocArr with major/minor/patch/arch/os keys).
+  //! The tests pin the structure rather than specific values, so they
+  //! don't churn each version bump.
+
+  use super::*;
+  use crate::tests::testutil::TestGuard;
+  use crate::var;
+
+  #[test]
+  fn sets_shed_version_to_cargo_pkg_version() {
+    let _g = TestGuard::new();
+    set_ver_info().unwrap();
+    assert_eq!(var!("SHED_VERSION"), env!("CARGO_PKG_VERSION"));
+  }
+
+  #[test]
+  fn ver_info_is_assoc_array_with_five_keys() {
+    let _g = TestGuard::new();
+    set_ver_info().unwrap();
+    let kind = Shed::vars(|v| v.try_get_var_kind("SHED_VER_INFO"));
+    match kind {
+      Some(VarKind::AssocArr(items)) => {
+        let keys: std::collections::HashSet<String> =
+          items.iter().map(|(k, _)| k.clone()).collect();
+        assert_eq!(keys.len(), 5, "got: {keys:?}");
+        for expected in ["major", "minor", "patch", "arch", "os"] {
+          assert!(
+            keys.contains(expected),
+            "missing key {expected}, got: {keys:?}"
+          );
+        }
+      }
+      other => panic!("expected AssocArr, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn ver_info_arch_and_os_match_compile_time_consts() {
+    let _g = TestGuard::new();
+    set_ver_info().unwrap();
+    let items = match Shed::vars(|v| v.try_get_var_kind("SHED_VER_INFO")) {
+      Some(VarKind::AssocArr(items)) => items,
+      other => panic!("expected AssocArr, got {other:?}"),
+    };
+    let get = |k: &str| {
+      items
+        .iter()
+        .find(|(key, _)| key == k)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+    };
+    assert_eq!(get("arch"), std::env::consts::ARCH);
+    assert_eq!(get("os"), std::env::consts::OS);
+  }
+
+  #[test]
+  fn ver_info_semver_components_match_cargo_pkg_version() {
+    let _g = TestGuard::new();
+    set_ver_info().unwrap();
+    let items = match Shed::vars(|v| v.try_get_var_kind("SHED_VER_INFO")) {
+      Some(VarKind::AssocArr(items)) => items,
+      other => panic!("expected AssocArr, got {other:?}"),
+    };
+    let get = |k: &str| {
+      items
+        .iter()
+        .find(|(key, _)| key == k)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+    };
+    let expected: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').collect();
+    assert_eq!(get("major"), expected[0]);
+    assert_eq!(get("minor"), expected[1]);
+    assert_eq!(get("patch"), expected[2]);
+  }
 }

@@ -191,24 +191,55 @@ bitflags! {
   }
 }
 
-const COMMANDS: &[(&str, ExTkRule)] = &[
-  ("substitute", ExTkRule::Substitute),
-  ("global", ExTkRule::Global),
-  ("normal", ExTkRule::Normal),
-  ("delete", ExTkRule::Delete),
-  ("yank", ExTkRule::Yank),
-  ("put", ExTkRule::Put),
-  ("edit", ExTkRule::Edit),
-  ("read", ExTkRule::Read),
-  ("write", ExTkRule::Write),
-  ("stash", ExTkRule::Stash),
-  ("quit", ExTkRule::Quit),
-  ("help", ExTkRule::Help),
+const COMMANDS: &[(&str, ExCommand)] = &[
+  ("substitute", ExCommand::Substitute),
+  ("global", ExCommand::Global),
+  ("normal", ExCommand::Normal),
+  ("delete", ExCommand::Delete),
+  ("yank", ExCommand::Yank),
+  ("expand", ExCommand::Expand),
+  ("put", ExCommand::Put),
+  ("edit", ExCommand::Edit),
+  ("read", ExCommand::Read),
+  ("write", ExCommand::Write),
+  ("stash", ExCommand::Stash),
+  ("quit", ExCommand::Quit),
+  ("help", ExCommand::Help),
 ];
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ExTkRule {
+  Bang,
+  Append,
+  NormalSeq,
+  Argument,
+
+  Address(ExLineAddr),
+  Command(ExCommand),
+
+  ShellTk(Tk), // delegate to LexStream after '!' appears
+}
+
+impl ExTkRule {
+  pub fn unwrap_cmd(&self) -> ExCommand {
+    if let ExTkRule::Command(cmd) = self {
+      *cmd
+    } else {
+      panic!("called unwrap_cmd on non-command token")
+    }
+  }
+  pub fn unwrap_addr(&self) -> ExLineAddr {
+    if let ExTkRule::Address(addr) = self {
+      *addr
+    } else {
+      panic!("called unwrap_addr on non-address token")
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExLineAddr {
   Number,
   Dot,
   Dollar,
@@ -216,13 +247,13 @@ pub enum ExTkRule {
   Comma,
   Offset,
   Mark,
-  Bang,
-  Append,
-  NormalSeq,
   Pattern,
   PatternRev,
-  Argument,
+}
 
+#[derive(Debug, Clone, Copy)]
+pub enum ExCommand {
+  Expand,
   Substitute,
   Global,
   Normal,
@@ -235,44 +266,9 @@ pub enum ExTkRule {
   Stash,
   Quit,
   Help,
-  Command,
+  Shell,
 
-  ShellTk(Tk), // delegate to LexStream after '!' appears
-}
-
-impl ExTkRule {
-  pub fn is_addr(&self) -> bool {
-    matches!(
-      self,
-      ExTkRule::Number
-        | ExTkRule::Dot
-        | ExTkRule::Dollar
-        | ExTkRule::Percent
-        | ExTkRule::Comma
-        | ExTkRule::Offset
-        | ExTkRule::Mark
-        | ExTkRule::Pattern
-    )
-  }
-  pub fn is_command(&self) -> bool {
-    matches!(
-      self,
-      ExTkRule::Substitute
-        | ExTkRule::Global
-        | ExTkRule::Normal
-        | ExTkRule::Delete
-        | ExTkRule::Yank
-        | ExTkRule::Put
-        | ExTkRule::Edit
-        | ExTkRule::Read
-        | ExTkRule::Write
-        | ExTkRule::Stash
-        | ExTkRule::Quit
-        | ExTkRule::Help
-        | ExTkRule::Bang
-        | ExTkRule::Command
-    )
-  }
+  Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -388,7 +384,7 @@ impl<'a> ExLexer<'a> {
     // strip delimiter chars
     let span = self.get_span(range.start + 1..range.end.saturating_sub(1))?;
     Some(ExTk {
-      class: ExTkRule::Pattern,
+      class: ExTkRule::Address(ExLineAddr::Pattern),
       span,
     })
   }
@@ -411,18 +407,22 @@ impl<'a> ExLexer<'a> {
     // and funcs is not empty as per the assertion above
     res.unwrap()
   }
-  fn command(&self) -> Option<&ExTk> {
+  fn command(&self) -> Option<ExCommand> {
+    // two passes: first, ignore bang and look for a command name
+    // if not found, accept bang since ':!echo foo' is valid
     self
       .tokens
       .iter()
       .rev()
-      .find(|tk| tk.class.is_command() && !matches!(tk.class, ExTkRule::Bang))
+      .find(|tk| matches!(tk.class, ExTkRule::Command(_)))
+      .map(|tk| tk.class.unwrap_cmd())
       .or_else(|| {
         self
           .tokens
           .iter()
           .rev()
           .find(|tk| matches!(tk.class, ExTkRule::Bang))
+          .map(|_| ExCommand::Shell)
       })
   }
   fn parse_substitute_arg(&mut self) {
@@ -492,18 +492,18 @@ impl<'a> ExLexer<'a> {
   fn parse_args(&mut self) {
     let Some(cmd) = self.command() else { return };
 
-    match cmd.class.clone() {
-      ExTkRule::Substitute => self.parse_substitute_arg(),
-      ExTkRule::Global => self.parse_global_arg(),
-      ExTkRule::Normal => self.parse_normal_seq(),
-      ExTkRule::Bang => self.parse_shell_cmd(),
-      rule => {
+    match cmd {
+      ExCommand::Substitute => self.parse_substitute_arg(),
+      ExCommand::Global => self.parse_global_arg(),
+      ExCommand::Normal => self.parse_normal_seq(),
+      ExCommand::Shell => self.parse_shell_cmd(),
+      cmd => {
         // Some command like 'edit' or 'write' or something that just expects words
         // These are subject to shell expansion, so we use LexStream for these
         let Some(start_pos) = self.peek_pos() else {
           return;
         };
-        let is_write = matches!(rule, ExTkRule::Write);
+        let is_write = matches!(cmd, ExCommand::Write);
         let rest = self.chars.by_ref().map(|(_, ch)| ch).collect::<String>();
         let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
           .filter_map(Result::ok)
@@ -526,16 +526,16 @@ impl<'a> ExLexer<'a> {
       }
     }
   }
-  fn classify_cmd(name: &str) -> ExTkRule {
+  fn classify_cmd(name: &str) -> Option<ExCommand> {
     if name.is_empty() {
-      return ExTkRule::Command;
+      return None;
     }
     for (full, rule) in COMMANDS {
       if full.starts_with(name) {
-        return (*rule).clone();
+        return Some(*rule);
       }
     }
-    ExTkRule::Command
+    None
   }
   fn parse_cmd_name(&mut self) {
     let Some(&(start, first)) = self.chars.peek() else {
@@ -549,10 +549,15 @@ impl<'a> ExLexer<'a> {
     match_loop!(self.chars.peek() => &(i,ch) => ch, {
       '!' => {
         let cmd_name = &self.input[start..i];
-        let cmd_rule = Self::classify_cmd(cmd_name);
+        let Some(cmd_rule) = Self::classify_cmd(cmd_name) else {
+          let Some(tk) = self.get_token(i..i+1, ExTkRule::Bang) else { return };
+          self.tokens.push(tk);
+          self.chars.next();
+          return;
+        };
 
         if end > start {
-          let Some(tk) = self.get_token(start..end, cmd_rule) else { return };
+          let Some(tk) = self.get_token(start..end, ExTkRule::Command(cmd_rule)) else { return };
           self.tokens.push(tk);
         }
 
@@ -570,9 +575,9 @@ impl<'a> ExLexer<'a> {
     });
 
     let cmd_name = &self.input[start..end];
-    let cmd_rule = Self::classify_cmd(cmd_name);
+    let cmd_rule = Self::classify_cmd(cmd_name).unwrap_or(ExCommand::Unknown);
 
-    let Some(tk) = self.get_token(start..end, cmd_rule) else {
+    let Some(tk) = self.get_token(start..end, ExTkRule::Command(cmd_rule)) else {
       return;
     };
     self.tokens.push(tk);
@@ -604,7 +609,7 @@ impl<'a> ExLexer<'a> {
   }
   fn parse_address(&mut self) {
     if let Some((i, _)) = self.chars.peeking_next(|&(_, ch)| ch == '%')
-      && let Some(tk) = self.get_token(i..i + 1, ExTkRule::Percent)
+      && let Some(tk) = self.get_token(i..i + 1, ExTkRule::Address(ExLineAddr::Percent))
     {
       self.tokens.push(tk);
       return;
@@ -617,7 +622,7 @@ impl<'a> ExLexer<'a> {
       let Some((i, _)) = this.peeking_next(|c| *c == ',') else {
         return;
       };
-      let Some(tk) = this.get_token(i..i + 1, ExTkRule::Comma) else {
+      let Some(tk) = this.get_token(i..i + 1, ExTkRule::Address(ExLineAddr::Comma)) else {
         return;
       };
       this.tokens.push(tk);
@@ -631,27 +636,27 @@ impl<'a> ExLexer<'a> {
     };
 
     let (end, rule) = match first {
-      '.' => (start + 1, ExTkRule::Dot),
-      '$' => (start + 1, ExTkRule::Dollar),
+      '.' => (start + 1, ExTkRule::Address(ExLineAddr::Dot)),
+      '$' => (start + 1, ExTkRule::Address(ExLineAddr::Dollar)),
       '0'..='9' => {
         let end = self.consume_digits(start + 1);
-        (end, ExTkRule::Number)
+        (end, ExTkRule::Address(ExLineAddr::Number))
       }
       '+' | '-' => {
         let end = self.consume_digits(start + 1);
-        (end, ExTkRule::Offset)
+        (end, ExTkRule::Address(ExLineAddr::Offset))
       }
       '\'' => {
         let Some((i, c)) = self.chars.next() else {
           self.flags |= ExLexFlags::LEX_UNFINISHED;
           return false;
         };
-        (i + c.len_utf8(), ExTkRule::Mark)
+        (i + c.len_utf8(), ExTkRule::Address(ExLineAddr::Mark))
       }
       ch @ ('/' | '?') => {
         let rule = match ch {
-          '?' => ExTkRule::PatternRev,
-          _ => ExTkRule::Pattern,
+          '?' => ExTkRule::Address(ExLineAddr::PatternRev),
+          _ => ExTkRule::Address(ExLineAddr::Pattern),
         };
         let end = self.consume_pattern(start + 1, first);
         (end, rule)
@@ -659,7 +664,7 @@ impl<'a> ExLexer<'a> {
       _ => return false, // unreachable probably
     };
 
-    if matches!(rule, ExTkRule::Pattern) {
+    if matches!(rule, ExTkRule::Address(ExLineAddr::Pattern)) {
       if let Some(tk) = self.get_pattern_token(start..end) {
         self.tokens.push(tk);
         true
@@ -694,7 +699,6 @@ pub enum ExNdRule {
     flags: SubFlags,
   },
   Global {
-    negated: bool,
     pat: String,
     nested: Box<ExNode>,
   },
@@ -736,6 +740,7 @@ impl Default for AddressRange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExNode {
   pub address: Option<AddressRange>,
+  pub bang: bool,
   pub kind: ExNdRule,
 }
 
@@ -769,12 +774,16 @@ use ExInnerPartialParseResult as ExPR;
 #[derive(Debug, Clone)]
 pub struct ExParser {
   tokens: Peekable<IntoIter<ExTk>>,
+  bang: bool,
 }
 
 impl ExParser {
   pub fn new(tokens: Vec<ExTk>) -> Self {
     let tokens = tokens.into_iter().peekable();
-    Self { tokens }
+    Self {
+      tokens,
+      bang: false,
+    }
   }
   pub fn parse(mut self) -> ExP<ExNode> {
     let address = match self.parse_address() {
@@ -789,11 +798,20 @@ impl ExParser {
       ExR::NoMatch => return ExP::Error("expected command".into()),
     };
 
-    ExP::Success(ExNode { address, kind })
+    let bang = self.bang;
+
+    ExP::Success(ExNode {
+      address,
+      bang,
+      kind,
+    })
   }
 
   fn parse_address(&mut self) -> ExR<AddressRange> {
-    let Some(tk) = self.tokens.peeking_next(|tk| tk.class.is_addr()) else {
+    let Some(tk) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(_)))
+    else {
       return ExR::NoMatch;
     };
 
@@ -804,13 +822,16 @@ impl ExParser {
 
     if self
       .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Comma))
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(ExLineAddr::Comma)))
       .is_none()
     {
       return ExR::success(AddressRange::Single(resolved));
     };
 
-    let Some(end_tk) = self.tokens.peeking_next(|tk| tk.class.is_addr()) else {
+    let Some(end_tk) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(_)))
+    else {
       return ExR::error("expected second address after ','".into());
     };
 
@@ -822,15 +843,17 @@ impl ExParser {
     ExR::success(AddressRange::Range(resolved, resolved_end))
   }
   fn parse_one_address(tk: &ExTk) -> ExPR<AddressRange, LineAddr> {
-    match tk.class {
-      ExTkRule::Number => {
+    let addr = tk.class.unwrap_addr();
+
+    match addr {
+      ExLineAddr::Number => {
         let addr = tk.span.as_str().parse::<usize>().unwrap_or(1);
         ExPR::Partial(LineAddr::Number(addr))
       }
-      ExTkRule::Dot => ExPR::Partial(LineAddr::Current),
-      ExTkRule::Dollar => ExPR::Partial(LineAddr::Last),
-      ExTkRule::Percent => ExPR::Full(AddressRange::all_lines()),
-      ExTkRule::Offset => {
+      ExLineAddr::Dot => ExPR::Partial(LineAddr::Current),
+      ExLineAddr::Dollar => ExPR::Partial(LineAddr::Last),
+      ExLineAddr::Percent => ExPR::Full(AddressRange::all_lines()),
+      ExLineAddr::Offset => {
         let s = tk
           .span
           .as_str()
@@ -840,16 +863,16 @@ impl ExParser {
         let offset = s.parse::<isize>().unwrap_or(1);
         ExPR::Partial(LineAddr::Offset(offset))
       }
-      ExTkRule::Mark => {
+      ExLineAddr::Mark => {
         let mark_name = tk.span.as_str().chars().nth(1).unwrap();
 
         ExPR::Partial(LineAddr::Mark(mark_name))
       }
-      ExTkRule::Pattern => {
+      ExLineAddr::Pattern => {
         let pat = tk.span.as_str().to_string();
         ExPR::Partial(LineAddr::Pattern(pat))
       }
-      ExTkRule::PatternRev => {
+      ExLineAddr::PatternRev => {
         let pat = tk.span.as_str().to_string();
         ExPR::Partial(LineAddr::PatternRev(pat))
       }
@@ -857,24 +880,35 @@ impl ExParser {
     }
   }
   fn parse_command(&mut self) -> ExR<ExNdRule> {
-    let Some(tk) = self.tokens.peeking_next(|tk| tk.class.is_command()) else {
+    let Some(tk) = self
+      .tokens
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Command(_)))
+    else {
       return ExR::NoMatch;
     };
+    let cmd = tk.class.unwrap_cmd();
 
-    match &tk.class {
-      ExTkRule::Read | ExTkRule::Write => self.parse_read_write(&tk.class),
-      ExTkRule::Substitute => self.parse_substitute(),
-      ExTkRule::Global => self.parse_global(),
-      ExTkRule::Normal => self.parse_normal(),
-      ExTkRule::Edit => self.parse_edit(),
-      ExTkRule::Stash => self.parse_stash(),
-      ExTkRule::Help => self.parse_help(),
-      ExTkRule::Bang => self.parse_shell(),
-      ExTkRule::Delete => ExR::success(ExNdRule::Delete),
-      ExTkRule::Yank => ExR::success(ExNdRule::Yank),
-      ExTkRule::Put => ExR::success(ExNdRule::Put(Anchor::After)),
-      ExTkRule::Quit => ExR::success(ExNdRule::Quit),
-      ExTkRule::Command => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
+    if !matches!(tk.class, ExTkRule::Bang) {
+      self.bang = self
+        .tokens
+        .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
+        .is_some()
+    }
+
+    match cmd {
+      ExCommand::Read | ExCommand::Write => self.parse_read_write(&tk.class),
+      ExCommand::Substitute => self.parse_substitute(),
+      ExCommand::Global => self.parse_global(),
+      ExCommand::Normal => self.parse_normal(),
+      ExCommand::Edit => self.parse_edit(),
+      ExCommand::Stash => self.parse_stash(),
+      ExCommand::Help => self.parse_help(),
+      ExCommand::Shell => self.parse_shell(),
+      ExCommand::Delete => ExR::success(ExNdRule::Delete),
+      ExCommand::Yank => ExR::success(ExNdRule::Yank),
+      ExCommand::Put => ExR::success(ExNdRule::Put(Anchor::After)),
+      ExCommand::Quit => ExR::success(ExNdRule::Quit),
+      ExCommand::Unknown => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
       _ => unreachable!(),
     }
   }
@@ -909,10 +943,6 @@ impl ExParser {
     ExR::success(ExNdRule::Shell(cmd))
   }
   fn parse_normal(&mut self) -> ExR<ExNdRule> {
-    self
-      .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang));
-
     let Some(tk) = self
       .tokens
       .peeking_next(|tk| matches!(tk.class, ExTkRule::NormalSeq))
@@ -937,13 +967,17 @@ impl ExParser {
 
     let name = self.tokens.next().map(|tk| tk.span.as_str().to_string());
     let arg = arg.unwrap();
+    // Inner matches use the same prefix direction as the outer gate:
+    // `<name>.starts_with(arg)` — so abbreviations like `:stash p` or
+    // `:stash ap` resolve to `pop` / `apply` etc. The subcommand names
+    // have no shared prefixes, so this is unambiguous.
     match arg.as_str() {
-      _ if arg.starts_with("pop") => ExR::success(ExNdRule::Stash(StashArgs::Pop(name))),
-      _ if arg.starts_with("drop") => ExR::success(ExNdRule::Stash(StashArgs::Drop(name))),
-      _ if arg.starts_with("apply") => ExR::success(ExNdRule::Stash(StashArgs::Apply(name))),
-      _ if arg.starts_with("insert") => ExR::success(ExNdRule::Stash(StashArgs::Insert(name))),
-      _ if arg.starts_with("swap") => ExR::success(ExNdRule::Stash(StashArgs::Swap(name))),
-      _ if arg.starts_with("list") => {
+      _ if "pop".starts_with(&arg) => ExR::success(ExNdRule::Stash(StashArgs::Pop(name))),
+      _ if "drop".starts_with(&arg) => ExR::success(ExNdRule::Stash(StashArgs::Drop(name))),
+      _ if "apply".starts_with(&arg) => ExR::success(ExNdRule::Stash(StashArgs::Apply(name))),
+      _ if "insert".starts_with(&arg) => ExR::success(ExNdRule::Stash(StashArgs::Insert(name))),
+      _ if "swap".starts_with(&arg) => ExR::success(ExNdRule::Stash(StashArgs::Swap(name))),
+      _ if "list".starts_with(&arg) => {
         let target = name
           .map(|n| match n.as_str() {
             _ if "stack".starts_with(n.trim()) => Ok(Some(StashListArg::Stack)),
@@ -964,14 +998,14 @@ impl ExParser {
   fn parse_substitute(&mut self) -> ExR<ExNdRule> {
     let Some(pat) = self
       .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(ExLineAddr::Pattern)))
     else {
       // Bare `:s` with no arguments — repeat the last substitute
       return ExR::success(ExNdRule::RepeatSubstitute);
     };
     let Some(repl) = self
       .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(ExLineAddr::Pattern)))
     else {
       return ExR::error("expected replacement argument for substitute command".into());
     };
@@ -1002,13 +1036,9 @@ impl ExParser {
     ExR::success(ExNdRule::Substitute { pat, repl, flags })
   }
   fn parse_global(&mut self) -> ExR<ExNdRule> {
-    let negated = self
-      .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
-      .is_some();
     let Some(pat) = self
       .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Pattern))
+      .peeking_next(|tk| matches!(tk.class, ExTkRule::Address(ExLineAddr::Pattern)))
     else {
       // Bare `:g` with no arguments — repeat the last global
       return ExR::success(ExNdRule::RepeatGlobal);
@@ -1027,7 +1057,6 @@ impl ExParser {
     };
 
     ExR::success(ExNdRule::Global {
-      negated,
       pat: pat.span.as_str().to_string(),
       nested: Box::new(sub_node),
     })
@@ -1043,11 +1072,8 @@ impl ExParser {
     ExR::success(ExNdRule::Edit(args))
   }
   fn parse_read_write(&mut self, rule: &ExTkRule) -> ExR<ExNdRule> {
-    let is_read = matches!(rule, ExTkRule::Read);
-    let is_shell_arg = self
-      .tokens
-      .peeking_next(|tk| matches!(tk.class, ExTkRule::Bang))
-      .is_some();
+    let is_read = matches!(rule, ExTkRule::Command(ExCommand::Read));
+    let is_shell_arg = self.bang;
 
     if is_shell_arg {
       let mut args = vec![];
@@ -1085,5 +1111,559 @@ impl ExParser {
         ExR::success(ExNdRule::Write(WriteDest::File(PathBuf::from(arg))))
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod parse_stash_tests {
+  use super::*;
+
+  /// Parse a stash command and return the resulting StashArgs, or panic
+  /// if it didn't parse as a stash.
+  fn parse_stash(input: &str) -> StashArgs {
+    let node = match parse_ex_input(input) {
+      ExP::Success(node) => node,
+      ExP::Error(msg) => panic!("parse error for {input:?}: {msg}"),
+    };
+    match node.kind {
+      ExNdRule::Stash(args) => args,
+      other => panic!("expected Stash for {input:?}, got {other:?}"),
+    }
+  }
+
+  fn parse_stash_err(input: &str) -> String {
+    match parse_ex_input(input) {
+      ExP::Success(node) => panic!("expected error for {input:?}, got success: {node:?}"),
+      ExP::Error(msg) => msg,
+    }
+  }
+
+  // ─── push variants ────────────────────────────────────────────────
+
+  #[test]
+  fn bare_stash_is_push_none() {
+    assert_eq!(parse_stash("stash"), StashArgs::Push(None));
+  }
+
+  #[test]
+  fn stash_with_non_subcmd_arg_is_push_some() {
+    // Arg that isn't a prefix of any known subcommand name → treated
+    // as a stash message.
+    assert_eq!(
+      parse_stash("stash hello_message"),
+      StashArgs::Push(Some("hello_message".into()))
+    );
+  }
+
+  // ─── subcommands (full name) ─────────────────────────────────────
+
+  #[test]
+  fn stash_pop_with_no_name() {
+    assert_eq!(parse_stash("stash pop"), StashArgs::Pop(None));
+  }
+
+  #[test]
+  fn stash_pop_with_name() {
+    assert_eq!(
+      parse_stash("stash pop wip"),
+      StashArgs::Pop(Some("wip".into()))
+    );
+  }
+
+  #[test]
+  fn stash_drop_with_name() {
+    assert_eq!(
+      parse_stash("stash drop wip"),
+      StashArgs::Drop(Some("wip".into()))
+    );
+  }
+
+  #[test]
+  fn stash_apply_with_name() {
+    assert_eq!(
+      parse_stash("stash apply wip"),
+      StashArgs::Apply(Some("wip".into()))
+    );
+  }
+
+  #[test]
+  fn stash_insert_with_name() {
+    assert_eq!(
+      parse_stash("stash insert wip"),
+      StashArgs::Insert(Some("wip".into()))
+    );
+  }
+
+  #[test]
+  fn stash_swap_with_name() {
+    assert_eq!(
+      parse_stash("stash swap wip"),
+      StashArgs::Swap(Some("wip".into()))
+    );
+  }
+
+  // ─── list ────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_list_no_target_is_none() {
+    assert_eq!(parse_stash("stash list"), StashArgs::List(None));
+  }
+
+  #[test]
+  fn stash_list_stack_target() {
+    assert_eq!(
+      parse_stash("stash list stack"),
+      StashArgs::List(Some(StashListArg::Stack))
+    );
+  }
+
+  #[test]
+  fn stash_list_named_target() {
+    assert_eq!(
+      parse_stash("stash list named"),
+      StashArgs::List(Some(StashListArg::Named))
+    );
+  }
+
+  #[test]
+  fn stash_list_invalid_target_errors() {
+    let msg = parse_stash_err("stash list bogus");
+    assert!(msg.contains("invalid stash list argument"), "got: {msg:?}");
+  }
+
+  // ─── abbreviation handling ──────────────────────────────────────
+  // Each subcommand name has no shared prefixes with any other, so
+  // each starting char (and any prefix shorter than the full name)
+  // unambiguously identifies one subcommand.
+
+  #[test]
+  fn stash_p_abbrev_is_pop() {
+    assert_eq!(parse_stash("stash p"), StashArgs::Pop(None));
+    assert_eq!(parse_stash("stash po"), StashArgs::Pop(None));
+  }
+
+  #[test]
+  fn stash_d_abbrev_is_drop() {
+    assert_eq!(parse_stash("stash d"), StashArgs::Drop(None));
+    assert_eq!(parse_stash("stash dr"), StashArgs::Drop(None));
+  }
+
+  #[test]
+  fn stash_a_abbrev_is_apply() {
+    assert_eq!(parse_stash("stash a"), StashArgs::Apply(None));
+    assert_eq!(parse_stash("stash ap"), StashArgs::Apply(None));
+  }
+
+  #[test]
+  fn stash_i_abbrev_is_insert() {
+    assert_eq!(parse_stash("stash i"), StashArgs::Insert(None));
+    assert_eq!(parse_stash("stash in"), StashArgs::Insert(None));
+  }
+
+  #[test]
+  fn stash_s_abbrev_is_swap() {
+    assert_eq!(parse_stash("stash s"), StashArgs::Swap(None));
+    assert_eq!(parse_stash("stash sw"), StashArgs::Swap(None));
+  }
+
+  #[test]
+  fn stash_l_abbrev_is_list() {
+    assert_eq!(parse_stash("stash l"), StashArgs::List(None));
+    assert_eq!(parse_stash("stash li"), StashArgs::List(None));
+  }
+
+  #[test]
+  fn stash_abbrev_with_name_arg() {
+    // The name arg is still picked up correctly when using an abbrev.
+    assert_eq!(
+      parse_stash("stash p wip"),
+      StashArgs::Pop(Some("wip".into()))
+    );
+  }
+
+  #[test]
+  fn stash_arg_longer_than_subcmd_name_treated_as_push() {
+    // "pops" isn't a prefix of any subcommand name (the outer check
+    // also tests in the prefix-of-name direction), so it falls through
+    // to Push.
+    assert_eq!(
+      parse_stash("stash pops"),
+      StashArgs::Push(Some("pops".into()))
+    );
+  }
+}
+
+#[cfg(test)]
+mod parse_read_write_tests {
+  use super::*;
+  use std::path::PathBuf;
+
+  fn parse_ok(input: &str) -> ExNdRule {
+    match parse_ex_input(input) {
+      ExP::Success(node) => node.kind,
+      ExP::Error(msg) => panic!("parse error for {input:?}: {msg}"),
+    }
+  }
+
+  fn parse_err(input: &str) -> String {
+    match parse_ex_input(input) {
+      ExP::Success(_) => panic!("expected error for {input:?}"),
+      ExP::Error(msg) => msg,
+    }
+  }
+
+  // ─── :read with file arg ─────────────────────────────────────────
+
+  #[test]
+  fn read_with_file_arg() {
+    let kind = parse_ok("read foo.txt");
+    assert_eq!(
+      kind,
+      ExNdRule::Read(ReadSrc::File(PathBuf::from("foo.txt")))
+    );
+  }
+
+  #[test]
+  fn read_no_args_errors() {
+    let msg = parse_err("read");
+    assert!(msg.contains("expected"), "got: {msg:?}");
+  }
+
+  // ─── :read! <cmd> shell source ──────────────────────────────────
+
+  #[test]
+  fn read_bang_treats_arg_as_shell_command() {
+    let kind = parse_ok("read! ls -la");
+    match kind {
+      ExNdRule::Read(ReadSrc::Cmd(s)) => {
+        // Whatever the lexer gives us, the raw span should contain
+        // 'ls' and '-la' joined as one string.
+        assert!(s.contains("ls"), "got: {s:?}");
+      }
+      other => panic!("expected Read(Cmd), got {other:?}"),
+    }
+  }
+
+  // ─── :write with file arg ───────────────────────────────────────
+
+  #[test]
+  fn write_with_file_arg() {
+    let kind = parse_ok("write out.txt");
+    assert_eq!(
+      kind,
+      ExNdRule::Write(WriteDest::File(PathBuf::from("out.txt")))
+    );
+  }
+
+  #[test]
+  fn write_with_append_redirect() {
+    // `:w >> file` → FileAppend
+    let kind = parse_ok("write >> out.txt");
+    assert_eq!(
+      kind,
+      ExNdRule::Write(WriteDest::FileAppend(PathBuf::from("out.txt")))
+    );
+  }
+
+  #[test]
+  fn write_no_args_errors() {
+    let msg = parse_err("write");
+    assert!(msg.contains("expected"), "got: {msg:?}");
+  }
+
+  // ─── :write! <cmd> shell dest ───────────────────────────────────
+
+  #[test]
+  fn write_bang_treats_arg_as_shell_command() {
+    let kind = parse_ok("write! cat");
+    match kind {
+      ExNdRule::Write(WriteDest::Cmd(s)) => assert!(s.contains("cat"), "got: {s:?}"),
+      other => panic!("expected Write(Cmd), got {other:?}"),
+    }
+  }
+}
+
+#[cfg(test)]
+mod parse_one_addr_tests {
+  use super::*;
+
+  /// Run only the lexer over `input` and return the resulting tokens.
+  fn lex(input: &str) -> Vec<ExTk> {
+    ExLexer::new(input).lex()
+  }
+
+  /// Extract the (single) address token and return its rule and lexeme.
+  /// Panics if no address token was produced. Useful for verifying that
+  /// parse_one_addr classified the opening character correctly.
+  fn first_token(input: &str) -> (ExTkRule, String) {
+    let tokens = lex(input);
+    let tk = tokens
+      .into_iter()
+      .next()
+      .unwrap_or_else(|| panic!("no tokens produced for {input:?}"));
+    let text = tk.span.as_str().to_string();
+    (tk.class, text)
+  }
+
+  #[test]
+  fn dot_is_dot_token() {
+    let (rule, text) = first_token(".");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Dot)));
+    assert_eq!(text, ".");
+  }
+
+  #[test]
+  fn dollar_is_dollar_token() {
+    let (rule, text) = first_token("$");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Dollar)));
+    assert_eq!(text, "$");
+  }
+
+  #[test]
+  fn single_digit_is_number_token() {
+    let (rule, text) = first_token("5");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Number)));
+    assert_eq!(text, "5");
+  }
+
+  #[test]
+  fn multi_digit_is_number_token() {
+    let (rule, text) = first_token("123");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Number)));
+    assert_eq!(text, "123");
+  }
+
+  #[test]
+  fn plus_offset() {
+    let (rule, text) = first_token("+3");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Offset)));
+    assert_eq!(text, "+3");
+  }
+
+  #[test]
+  fn minus_offset() {
+    let (rule, text) = first_token("-7");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Offset)));
+    assert_eq!(text, "-7");
+  }
+
+  #[test]
+  fn bare_plus_is_offset_with_no_digits() {
+    let (rule, _) = first_token("+");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Offset)));
+  }
+
+  #[test]
+  fn mark_consumes_following_char() {
+    let (rule, text) = first_token("'a");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Mark)));
+    assert_eq!(text, "'a");
+  }
+
+  #[test]
+  fn unterminated_mark_produces_no_token() {
+    // A lone quote → next() consumes None, lexer flagged unfinished,
+    // parse_one_addr returns false → no token recorded.
+    let tokens = lex("'");
+    assert!(tokens.is_empty(), "got: {tokens:?}");
+  }
+
+  #[test]
+  fn forward_pattern_strips_delimiters() {
+    let (rule, text) = first_token("/foo/");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::Pattern)));
+    // get_pattern_token strips the surrounding delimiter chars.
+    assert_eq!(text, "foo");
+  }
+
+  #[test]
+  fn reverse_pattern_keeps_delimiters() {
+    // The Pattern arm uses get_pattern_token (strips delims), but
+    // PatternRev uses get_token (no stripping). Pin that distinction.
+    let (rule, text) = first_token("?bar?");
+    assert!(matches!(rule, ExTkRule::Address(ExLineAddr::PatternRev)));
+    assert_eq!(text, "?bar?");
+  }
+}
+
+#[cfg(test)]
+mod parse_one_address_tests {
+  //! ExParser::parse_one_address is static + private, but it's invoked
+  //! by parse_address whenever the lexer hands the parser an address
+  //! token. We can verify each branch by feeding `<addr>d` and asserting
+  //! on the resulting ExNode.address.
+
+  use super::*;
+  use crate::readline::editcmd::LineAddr;
+
+  fn parse_addr(input: &str) -> AddressRange {
+    let node = match parse_ex_input(input) {
+      ExP::Success(node) => node,
+      ExP::Error(msg) => panic!("parse error for {input:?}: {msg}"),
+    };
+    node
+      .address
+      .unwrap_or_else(|| panic!("no address parsed for {input:?}"))
+  }
+
+  fn single(addr: AddressRange) -> LineAddr {
+    match addr {
+      AddressRange::Single(a) => a,
+      AddressRange::Range(_, _) => {
+        panic!("expected Single, got Range: {addr:?}")
+      }
+    }
+  }
+
+  #[test]
+  fn number_becomes_line_number() {
+    assert_eq!(single(parse_addr("5d")), LineAddr::Number(5));
+  }
+
+  #[test]
+  fn dot_becomes_current() {
+    assert_eq!(single(parse_addr(".d")), LineAddr::Current);
+  }
+
+  #[test]
+  fn dollar_becomes_last() {
+    assert_eq!(single(parse_addr("$d")), LineAddr::Last);
+  }
+
+  #[test]
+  fn percent_becomes_full_range_all_lines() {
+    // Percent is the only "Full" variant — it short-circuits to the
+    // canonical 1..$ range.
+    assert_eq!(parse_addr("%d"), AddressRange::all_lines());
+  }
+
+  #[test]
+  fn plus_offset_strips_plus_prefix() {
+    assert_eq!(single(parse_addr("+3d")), LineAddr::Offset(3));
+  }
+
+  #[test]
+  fn minus_offset_keeps_sign() {
+    assert_eq!(single(parse_addr("-2d")), LineAddr::Offset(-2));
+  }
+
+  #[test]
+  fn mark_addr_uses_char_after_quote() {
+    assert_eq!(single(parse_addr("'ad")), LineAddr::Mark('a'));
+  }
+
+  #[test]
+  fn forward_pattern_becomes_pattern_addr() {
+    // Pattern stores the delimiter-stripped text from the lexer.
+    assert_eq!(
+      single(parse_addr("/foo/d")),
+      LineAddr::Pattern("foo".into())
+    );
+  }
+
+  #[test]
+  fn range_parses_both_endpoints() {
+    let addr = parse_addr("1,5d");
+    match addr {
+      AddressRange::Range(s, e) => {
+        assert_eq!(s, LineAddr::Number(1));
+        assert_eq!(e, LineAddr::Number(5));
+      }
+      other => panic!("expected Range, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn reverse_pattern_becomes_pattern_rev_addr() {
+    // PatternRev arm uses get_token (no delimiter stripping), so the
+    // stored string includes the surrounding '?' delimiters.
+    assert_eq!(
+      single(parse_addr("?bar?d")),
+      LineAddr::PatternRev("?bar?".into())
+    );
+  }
+}
+
+#[cfg(test)]
+mod parse_command_tests {
+  //! `parse_command` dispatches each ExCommand variant to a sub-parser.
+  //! We verify the simple ones (Delete, Yank, Put, Quit), the Unknown
+  //! arm, the bang side-effect, and the NoMatch path.
+
+  use super::*;
+  use crate::readline::editcmd::Anchor;
+
+  fn parse_ok(input: &str) -> ExNode {
+    match parse_ex_input(input) {
+      ExP::Success(node) => node,
+      ExP::Error(msg) => panic!("parse error for {input:?}: {msg}"),
+    }
+  }
+
+  fn parse_err(input: &str) -> String {
+    match parse_ex_input(input) {
+      ExP::Success(node) => panic!("expected error for {input:?}, got {node:?}"),
+      ExP::Error(msg) => msg,
+    }
+  }
+
+  #[test]
+  fn bare_delete_produces_delete_node() {
+    let node = parse_ok("delete");
+    assert_eq!(node.kind, ExNdRule::Delete);
+    assert!(!node.bang);
+    assert!(node.address.is_none());
+  }
+
+  #[test]
+  fn bare_yank_produces_yank_node() {
+    let node = parse_ok("yank");
+    assert_eq!(node.kind, ExNdRule::Yank);
+  }
+
+  #[test]
+  fn bare_put_produces_put_after_node() {
+    let node = parse_ok("put");
+    assert_eq!(node.kind, ExNdRule::Put(Anchor::After));
+  }
+
+  #[test]
+  fn bare_quit_produces_quit_node() {
+    let node = parse_ok("quit");
+    assert_eq!(node.kind, ExNdRule::Quit);
+  }
+
+  #[test]
+  fn prefix_match_picks_first_matching_command() {
+    // classify_cmd uses prefix matching against the COMMANDS table.
+    // "d" → Delete (first entry whose name starts with "d").
+    let node = parse_ok("d");
+    assert_eq!(node.kind, ExNdRule::Delete);
+  }
+
+  #[test]
+  fn unknown_command_name_errors() {
+    // "zzz" is not a prefix of any command → classify_cmd returns
+    // Unknown → parse_command emits "not an editor command".
+    let msg = parse_err("zzz");
+    assert!(
+      msg.contains("not an editor command") || msg.contains("zzz"),
+      "got: {msg:?}"
+    );
+  }
+
+  #[test]
+  fn bang_after_command_sets_bang_flag() {
+    let node = parse_ok("quit!");
+    assert_eq!(node.kind, ExNdRule::Quit);
+    assert!(node.bang, "expected bang=true, got: {node:?}");
+  }
+
+  #[test]
+  fn no_command_at_all_errors_expected_command() {
+    // An address with no command → parse_command returns NoMatch →
+    // parse() emits "expected command".
+    let msg = parse_err("5");
+    assert!(msg.contains("expected command"), "got: {msg:?}");
   }
 }

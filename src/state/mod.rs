@@ -13,7 +13,7 @@ use std::{
 
 use super::{
   WtStat, autocmd, builtin, eval, expand, keys, match_loop, procio, readline, sherr,
-  shopt as shopt_macro, signal,
+  shopt as shopt_macro, signal, socket,
   state::vars::{VarFlags, VarKind},
   system_msg, try_var, two_way_display, util as crate_util,
   util::{Pos, ShErr, ShErrKind, ShResult},

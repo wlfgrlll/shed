@@ -104,7 +104,7 @@ pub(crate) struct TestGuard {
   old_cwd: PathBuf,
   saved_env: HashMap<String, String>,
 
-  _pty_master: OwnedFd,
+  _pty_master: Option<OwnedFd>,
   pty_slave: OwnedFd,
   stdin_write_pipe: Option<OwnedFd>,
   output: Arc<(Mutex<Vec<u8>>, Condvar)>,
@@ -169,11 +169,19 @@ impl TestGuard {
     state::Shed::save_state();
     state::util::try_hash();
     save_registers();
+    // Set up an in-memory sqlite db (once per test thread; OnceLock means
+    // subsequent TestGuards no-op here). Then wipe the stash table so each
+    // test starts with a clean slate.
+    state::util::init_test_db_conn();
+    if let Some(conn) = state::util::get_db_conn() {
+      // The table won't exist on first run; ignore that error.
+      let _ = conn.execute_batch("DROP TABLE IF EXISTS stash");
+    }
     Self {
       _redir_guard,
       old_cwd,
       saved_env,
-      _pty_master: pty_master,
+      _pty_master: Some(pty_master),
       pty_slave,
       stdin_write_pipe: Some(stdin_write),
 
@@ -213,6 +221,22 @@ impl TestGuard {
       nix::unistd::write(borrowed, data).unwrap();
       // drops, closes
     }
+  }
+
+  /// Write bytes to the pty master, which will appear as readable input on
+  /// the pty slave that Shed's Terminal reads from. Use this to drive
+  /// poll/read paths in tests.
+  pub fn feed_tty(&self, data: &[u8]) {
+    if let Some(master) = self._pty_master.as_ref() {
+      nix::unistd::write(master.as_fd(), data).unwrap();
+    }
+  }
+
+  /// Close the pty master fd. The slave (shed's tty) will then see POLLHUP
+  /// on the next poll, exercising the disconnect-cleanup branch in
+  /// `shed_loop_iter`.
+  pub fn close_tty_master(&mut self) {
+    self._pty_master.take(); // drops, closes
   }
 
   pub fn read_output(&self) -> String {

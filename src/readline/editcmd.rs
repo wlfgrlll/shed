@@ -186,6 +186,7 @@ impl EditCmd {
         _,
         Verb::ExCmd(ExNode {
           address: _,
+          bang: _,
           kind: ExNdRule::Quit
         })
       ))
@@ -198,6 +199,7 @@ impl EditCmd {
         _,
         Verb::ExCmd(ExNode {
           address: _,
+          bang: _,
           kind: ExNdRule::Shell(_)
         })
       ))
@@ -564,4 +566,101 @@ pub enum WriteDest {
   File(std::path::PathBuf),
   FileAppend(std::path::PathBuf),
   Cmd(String),
+}
+
+#[cfg(test)]
+mod history_scroll_offset_tests {
+  use super::*;
+
+  fn cmd_with_verb(verb: Verb, count: usize) -> EditCmd {
+    let mut c = EditCmd::new();
+    c.set_verb(Cmd(count, verb));
+    c
+  }
+
+  fn cmd_with_motion(motion: Motion, count: usize) -> EditCmd {
+    let mut c = EditCmd::new();
+    c.set_motion(Cmd(count, motion));
+    c
+  }
+
+  // ─── Verb path ────────────────────────────────────────────────────
+
+  #[test]
+  fn history_up_returns_negative_count() {
+    assert_eq!(
+      cmd_with_verb(Verb::HistoryUp, 1).history_scroll_offset(),
+      Some(-1)
+    );
+  }
+
+  #[test]
+  fn history_down_returns_positive_count() {
+    assert_eq!(
+      cmd_with_verb(Verb::HistoryDown, 1).history_scroll_offset(),
+      Some(1)
+    );
+  }
+
+  #[test]
+  fn history_up_with_count_n() {
+    assert_eq!(
+      cmd_with_verb(Verb::HistoryUp, 5).history_scroll_offset(),
+      Some(-5)
+    );
+  }
+
+  #[test]
+  fn history_down_with_count_n() {
+    assert_eq!(
+      cmd_with_verb(Verb::HistoryDown, 5).history_scroll_offset(),
+      Some(5)
+    );
+  }
+
+  // ─── Motion path (LineUp / LineDown) ─────────────────────────────
+
+  #[test]
+  fn line_up_motion_returns_negative_count() {
+    assert_eq!(
+      cmd_with_motion(Motion::LineUp, 1).history_scroll_offset(),
+      Some(-1)
+    );
+  }
+
+  #[test]
+  fn line_down_motion_returns_positive_count() {
+    assert_eq!(
+      cmd_with_motion(Motion::LineDown, 1).history_scroll_offset(),
+      Some(1)
+    );
+  }
+
+  #[test]
+  fn line_up_motion_with_count_n() {
+    assert_eq!(
+      cmd_with_motion(Motion::LineUp, 3).history_scroll_offset(),
+      Some(-3)
+    );
+  }
+
+  // ─── No matching verb/motion → None ──────────────────────────────
+
+  #[test]
+  fn unrelated_verb_returns_none() {
+    assert_eq!(cmd_with_verb(Verb::Delete, 1).history_scroll_offset(), None);
+  }
+
+  #[test]
+  fn unrelated_motion_returns_none() {
+    assert_eq!(
+      cmd_with_motion(Motion::ForwardChar, 1).history_scroll_offset(),
+      None
+    );
+  }
+
+  #[test]
+  fn empty_cmd_returns_none() {
+    assert_eq!(EditCmd::new().history_scroll_offset(), None);
+  }
 }

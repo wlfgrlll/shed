@@ -1,8 +1,13 @@
 use std::path::PathBuf;
 
 use super::{
-  ShResult, crate_util::ansi_from_description, match_loop, shopt, state, state::Shed, status_msg,
-  subshell::expand_cmd_sub, var,
+  ShResult,
+  crate_util::{ansi_from_description, format_time},
+  match_loop, shopt, state,
+  state::Shed,
+  status_msg,
+  subshell::expand_cmd_sub,
+  var,
 };
 
 use nix::sys::wait::WaitStatus as WtStat;
@@ -24,183 +29,6 @@ pub enum PromptTk {
   Username,
   PromptSymbol,
   JobCount,
-}
-
-fn format_cmd_runtime(dur: std::time::Duration) -> String {
-  const ETERNITY: u128 = f32::INFINITY as u128;
-  let mut micros = dur.as_micros();
-  let mut millis = 0;
-  let mut seconds = 0;
-  let mut minutes = 0;
-  let mut hours = 0;
-  let mut days = 0;
-  let mut weeks = 0;
-  let mut months = 0;
-  let mut years = 0;
-  let mut decades = 0;
-  let mut centuries = 0;
-  let mut millennia = 0;
-  let mut epochs = 0;
-  let mut aeons = 0;
-  let mut eternities = 0;
-
-  if micros >= 1000 {
-    millis = micros / 1000;
-    micros %= 1000;
-  }
-  if millis >= 1000 {
-    seconds = millis / 1000;
-    millis %= 1000;
-  }
-  if seconds >= 60 {
-    minutes = seconds / 60;
-    seconds %= 60;
-  }
-  if minutes >= 60 {
-    hours = minutes / 60;
-    minutes %= 60;
-  }
-  if hours >= 24 {
-    days = hours / 24;
-    hours %= 24;
-  }
-  if days >= 7 {
-    weeks = days / 7;
-    days %= 7;
-  }
-  if weeks >= 4 {
-    months = weeks / 4;
-    weeks %= 4;
-  }
-  if months >= 12 {
-    years = months / 12;
-    weeks %= 12;
-  }
-  if years >= 10 {
-    decades = years / 10;
-    years %= 10;
-  }
-  if decades >= 10 {
-    centuries = decades / 10;
-    decades %= 10;
-  }
-  if centuries >= 10 {
-    millennia = centuries / 10;
-    centuries %= 10;
-  }
-  if millennia >= 1000 {
-    epochs = millennia / 1000;
-    millennia %= 1000;
-  }
-  if epochs >= 1000 {
-    aeons = epochs / 1000;
-    epochs %= aeons;
-  }
-  if aeons == ETERNITY {
-    eternities = aeons / ETERNITY;
-    aeons %= ETERNITY;
-  }
-
-  // Format the result
-  let mut result = Vec::new();
-  if eternities > 0 {
-    let mut string = format!("{} eternit", eternities);
-    if eternities > 1 {
-      string.push_str("ies");
-    } else {
-      string.push('y');
-    }
-    result.push(string)
-  }
-  if aeons > 0 {
-    let mut string = format!("{} aeon", aeons);
-    if aeons > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if epochs > 0 {
-    let mut string = format!("{} epoch", epochs);
-    if epochs > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if millennia > 0 {
-    let mut string = format!("{} millenni", millennia);
-    if millennia > 1 {
-      string.push_str("um")
-    } else {
-      string.push('a')
-    }
-    result.push(string)
-  }
-  if centuries > 0 {
-    let mut string = format!("{} centur", centuries);
-    if centuries > 1 {
-      string.push_str("ies")
-    } else {
-      string.push('y')
-    }
-    result.push(string)
-  }
-  if decades > 0 {
-    let mut string = format!("{} decade", decades);
-    if decades > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if years > 0 {
-    let mut string = format!("{} year", years);
-    if years > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if months > 0 {
-    let mut string = format!("{} month", months);
-    if months > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if weeks > 0 {
-    let mut string = format!("{} week", weeks);
-    if weeks > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if days > 0 {
-    let mut string = format!("{} day", days);
-    if days > 1 {
-      string.push('s')
-    }
-    result.push(string)
-  }
-  if hours > 0 {
-    let string = format!("{}h", hours);
-    result.push(string);
-  }
-  if minutes > 0 {
-    let string = format!("{}m", minutes);
-    result.push(string);
-  }
-  if seconds > 0 {
-    let string = format!("{}s", seconds);
-    result.push(string);
-  }
-  if result.is_empty() && millis > 0 {
-    let string = format!("{}ms", millis);
-    result.push(string);
-  }
-  if result.is_empty() && micros > 0 {
-    let string = format!("{}µs", micros);
-    result.push(string);
-  }
-
-  result.join(" ")
 }
 
 fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
@@ -382,7 +210,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
     }
     PromptTk::RuntimeFormatted => {
       if let Some(runtime) = Shed::meta_mut(|m| m.get_time()) {
-        let runtime_fmt = format_cmd_runtime(runtime);
+        let runtime_fmt = format_time(runtime);
         result.push_str(&runtime_fmt);
       }
     }
@@ -563,30 +391,30 @@ mod tests {
   #[test]
   fn runtime_millis() {
     let dur = Duration::from_millis(500);
-    assert_eq!(format_cmd_runtime(dur), "500ms");
+    assert_eq!(format_time(dur), "500ms");
   }
 
   #[test]
   fn runtime_seconds() {
     let dur = Duration::from_secs(5);
-    assert_eq!(format_cmd_runtime(dur), "5s");
+    assert_eq!(format_time(dur), "5s");
   }
 
   #[test]
   fn runtime_minutes_and_seconds() {
     let dur = Duration::from_secs(125);
-    assert_eq!(format_cmd_runtime(dur), "2m 5s");
+    assert_eq!(format_time(dur), "2m 5s");
   }
 
   #[test]
   fn runtime_hours() {
     let dur = Duration::from_secs(3661);
-    assert_eq!(format_cmd_runtime(dur), "1h 1m 1s");
+    assert_eq!(format_time(dur), "1h 1m 1s");
   }
 
   #[test]
   fn runtime_micros() {
     let dur = Duration::from_micros(500);
-    assert_eq!(format_cmd_runtime(dur), "500µs");
+    assert_eq!(format_time(dur), "500µs");
   }
 }

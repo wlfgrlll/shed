@@ -300,6 +300,36 @@ mod shell_intro_2_1 {
     input::run_script(file.path(), vec!["a".into(), "b".into(), "c".into()]).unwrap();
     assert_output!(g, "b 2\n");
   }
+
+  // ─── exec_dash_c: parse / structure edge paths ────────────────
+
+  #[test]
+  fn dash_c_parse_error_returns_ok() {
+    // Unbalanced quote → ParsedSrc::parse_src returns Err; exec_dash_c
+    // prints the errors but returns Ok(()) regardless.
+    let _g = TestGuard::new();
+    let res = exec_dash_c("echo 'unterminated".into(), vec!["s".into()]);
+    assert!(res.is_ok());
+  }
+
+  #[test]
+  fn dash_c_multi_statement_input_runs_each() {
+    let g = TestGuard::new();
+    // Multiple statements: the single-cmd NO_FORK optimization should
+    // be skipped (nodes.len() != 1 path), and both echos still run.
+    exec_dash_c(
+      "echo first; echo second; echo third".into(),
+      vec!["s".into()],
+    )
+    .unwrap();
+    assert_output!(g, "first\nsecond\nthird\n");
+  }
+
+  #[test]
+  fn dash_c_empty_input_is_ok() {
+    let _g = TestGuard::new();
+    exec_dash_c("".into(), vec!["s".into()]).unwrap();
+  }
 }
 
 mod quoting_2_2 {
@@ -767,10 +797,19 @@ mod word_expansions_2_6 {
      * In assignment context, tilde expansion is also performed after the '='
      * and after each unquoted ':' within the assigned value.
      */
-    use std::env;
+    use crate::{
+      Shed,
+      state::vars::{VarFlags, VarKind},
+    };
 
     test_input! {
-      setup: { unsafe { env::set_var("HOME", "/home/test"); }; },
+      setup: {
+        Shed::vars_mut(|v| v.set_var(
+          "HOME",
+          VarKind::Str("/home/test".to_string()),
+          VarFlags::EXPORT,
+        )).unwrap();
+      },
       tilde_bare           : "echo ~"         => "/home/test\n";
       tilde_slash_path     : "echo ~/foo/bar" => "/home/test/foo/bar\n";
       tilde_slash_only     : "echo ~/"        => "/home/test/\n";
@@ -785,13 +824,25 @@ mod word_expansions_2_6 {
     }
 
     test_input! {
-      setup: { unsafe { env::set_var("HOME", "/home with spaces"); }; },
+      setup: {
+        Shed::vars_mut(|v| v.set_var(
+          "HOME",
+          VarKind::Str("/home with spaces".to_string()),
+          VarFlags::EXPORT,
+        )).unwrap();
+      },
       tilde_single_word    : r#"for x in ~; do echo "[$x]"; done"#     => "[/home with spaces]\n";
       tilde_path_single    : r#"for x in ~/sub; do echo "[$x]"; done"# => "[/home with spaces/sub]\n";
     }
 
     test_input! {
-      setup: { unsafe { env::set_var("HOME", "/home/test"); }; },
+      setup: {
+        Shed::vars_mut(|v| v.set_var(
+          "HOME",
+          VarKind::Str("/home/test".to_string()),
+          VarFlags::EXPORT,
+        )).unwrap();
+      },
       tilde_in_assignment    : r#"x=~; echo "$x""#       => "/home/test\n";
       tilde_in_assign_path   : r#"x=~/foo; echo "$x""#   => "/home/test/foo\n";
       tilde_in_assign_colon  : r#"x=a:~/b:c; echo "$x""# => "a:/home/test/b:c\n";

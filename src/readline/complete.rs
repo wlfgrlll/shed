@@ -1805,11 +1805,7 @@ impl FuzzySelector {
         layout.rows
       };
       let cursor_offset = layout.cols + layout.cursor_col;
-      let cursor_phys_row = if new_cols > 0 {
-        cursor_offset / new_cols
-      } else {
-        1
-      };
+      let cursor_phys_row = cursor_offset.checked_div(new_cols).unwrap_or(1);
       let lines_below = physical_rows.saturating_sub(cursor_phys_row + 1);
 
       let gap_extra = if new_cols > 0 && layout.preceding_line_width > new_cols {
@@ -2382,6 +2378,195 @@ mod tests {
     );
   }
 
+  // ===================== get_candidates: CompStrat dispatch =====================
+  // The COMP_WORDBREAKS tests above exercise token_span calculation.
+  // These tests exercise the strategy-routing match arms — Command,
+  // Var, Tilde, Argument, Files (via redirect), Null, and the
+  // empty-line fast path.
+
+  /// Strip just the content list out of a CompResult for assertion.
+  fn contents(result: &CompResult) -> Vec<&str> {
+    match result {
+      CompResult::NoMatch => vec![],
+      CompResult::Single { result } => vec![result.content()],
+      CompResult::Many { candidates } => candidates.iter().map(|c| c.content()).collect(),
+    }
+  }
+
+  #[test]
+  fn get_candidates_empty_line_routes_to_command_strategy() {
+    // Empty line / cursor at 0 falls through to the
+    // `Self::Command { prefix: "" }` default in CompStrat::resolve.
+    let _g = TestGuard::new();
+    let mut comp = SimpleCompleter::default();
+    let result = comp.get_candidates("".into(), 0).unwrap();
+    // Almost certainly Many — even a minimal PATH has > 1 binary. But
+    // accept Single too in case some sandboxed env has exactly one.
+    match result {
+      CompResult::Many { .. } | CompResult::Single { .. } => {}
+      CompResult::NoMatch => panic!("expected command candidates, got NoMatch"),
+    }
+  }
+
+  #[test]
+  fn get_candidates_var_prefix_completes_with_shell_var() {
+    let _g = TestGuard::new();
+    // Use a name unlikely to be defined by the environment.
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "UNIQUE_COMP_TEST_VAR_XYZZY",
+        VarKind::Str("hello".into()),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    });
+    let mut comp = SimpleCompleter::default();
+    let line = "echo $UNIQUE_COMP_TEST".to_string();
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    let cs = contents(&result);
+    assert!(
+      cs.iter().any(|c| *c == "UNIQUE_COMP_TEST_VAR_XYZZY"),
+      "expected UNIQUE_COMP_TEST_VAR_XYZZY in candidates, got: {cs:?}"
+    );
+  }
+
+  #[test]
+  fn get_candidates_var_prefix_with_no_matches_returns_nomatch() {
+    let _g = TestGuard::new();
+    let mut comp = SimpleCompleter::default();
+    // A prefix that absolutely won't match any shell or env var.
+    let line = "echo $ZZZZZZZ_NOT_A_REAL_VAR_PREFIX_QQQ".to_string();
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    assert!(matches!(result, CompResult::NoMatch));
+  }
+
+  #[test]
+  fn get_candidates_path_arg_lists_directory_entries() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("apple.txt"), "").unwrap();
+    std::fs::write(dir.path().join("banana.txt"), "").unwrap();
+    std::fs::write(dir.path().join("cherry.txt"), "").unwrap();
+
+    let mut comp = SimpleCompleter::default();
+    let line = format!("ls {}/", dir.path().display());
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    let cs = contents(&result);
+    assert!(cs.iter().any(|c| c.contains("apple.txt")), "got: {cs:?}");
+    assert!(cs.iter().any(|c| c.contains("banana.txt")), "got: {cs:?}");
+    assert!(cs.iter().any(|c| c.contains("cherry.txt")), "got: {cs:?}");
+  }
+
+  #[test]
+  fn get_candidates_path_arg_with_prefix_filters() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("apple.txt"), "").unwrap();
+    std::fs::write(dir.path().join("apricot.txt"), "").unwrap();
+    std::fs::write(dir.path().join("banana.txt"), "").unwrap();
+
+    let mut comp = SimpleCompleter::default();
+    // Prefix "ap" should match apple + apricot but not banana.
+    let line = format!("ls {}/ap", dir.path().display());
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    let cs = contents(&result);
+    assert!(cs.iter().any(|c| c.contains("apple")), "got: {cs:?}");
+    assert!(cs.iter().any(|c| c.contains("apricot")), "got: {cs:?}");
+    assert!(!cs.iter().any(|c| c.contains("banana")), "got: {cs:?}");
+  }
+
+  #[test]
+  fn get_candidates_redirect_uses_files_strategy() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("output.log"), "").unwrap();
+
+    let mut comp = SimpleCompleter::default();
+    let line = format!("echo hi > {}/", dir.path().display());
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    let cs = contents(&result);
+    assert!(cs.iter().any(|c| c.contains("output.log")), "got: {cs:?}");
+  }
+
+  #[test]
+  fn get_candidates_dirs_only_does_not_filter_argument_path() {
+    // dirs_only is consulted only in the Files (redirect) strategy and
+    // the Argument-NoSpec-NoMatch tail — NOT the default Argument path
+    // that calls `complete_path`. This test pins that: even with
+    // dirs_only=true, files surface through plain argument completion.
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("file.txt"), "").unwrap();
+    std::fs::create_dir(dir.path().join("subdir")).unwrap();
+
+    let mut comp = SimpleCompleter::default();
+    comp.dirs_only = true;
+    let line = format!("ls {}/", dir.path().display());
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    let cs = contents(&result);
+    assert!(cs.iter().any(|c| c.contains("file.txt")), "got: {cs:?}");
+    assert!(cs.iter().any(|c| c.contains("subdir")), "got: {cs:?}");
+  }
+
+  #[test]
+  fn get_candidates_token_span_set_for_var_prefix() {
+    // get_candidates assigns token_span based on where the leaf starts.
+    // Verify it lands on the $ position (well, just after) for a var.
+    let _g = TestGuard::new();
+    let mut comp = SimpleCompleter::default();
+    let line = "echo $PA".to_string();
+    let dollar_idx = line.find('$').unwrap();
+    let _ = comp.get_candidates(line.clone(), line.len()).unwrap();
+    // The span should cover the $ token; start should be at or just
+    // after the $ depending on whether the leaf starts at $ or 'P'.
+    assert!(
+      comp.token_span.0 >= dollar_idx && comp.token_span.0 <= dollar_idx + 1,
+      "expected token_span near $, got {:?}",
+      comp.token_span
+    );
+  }
+
+  #[test]
+  fn get_candidates_dedups_and_sorts_many_results() {
+    // The post-processing step sorts by length-then-alpha and dedups.
+    // Easiest path: create files in a tempdir with predictable sort
+    // order.
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "").unwrap();
+    std::fs::write(dir.path().join("bbb.txt"), "").unwrap();
+    std::fs::write(dir.path().join("c.txt"), "").unwrap();
+
+    let mut comp = SimpleCompleter::default();
+    let line = format!("ls {}/", dir.path().display());
+    let cursor = line.len();
+    let result = comp.get_candidates(line, cursor).unwrap();
+    if let CompResult::Many { candidates } = result {
+      // Sort key is (len, content), so the two shorter names come
+      // before the longer one regardless of alphabetical order.
+      let a_idx = candidates
+        .iter()
+        .position(|c| c.content().contains("a.txt"));
+      let bbb_idx = candidates
+        .iter()
+        .position(|c| c.content().contains("bbb.txt"));
+      if let (Some(a), Some(bbb)) = (a_idx, bbb_idx) {
+        assert!(
+          a < bbb,
+          "shorter candidate should sort first; got order a@{a}, bbb@{bbb}"
+        );
+      }
+    } else {
+      panic!("expected Many with 3 files");
+    }
+  }
+
   // ===================== SimpleCompleter cycling =====================
 
   #[test]
@@ -2899,5 +3084,534 @@ mod tests {
     let _g = TestGuard::new();
     let (a, _b, _c) = run_comp_func_with_args("it's", "", "");
     assert_eq!(a, "it's");
+  }
+
+  // ===================== FuzzySelector::handle_key =====================
+
+  mod fuzzy_selector_handle_key {
+    use super::*;
+    use crate::keys::ModKeys as M;
+
+    fn sel_with(items: &[&str]) -> FuzzySelector {
+      let mut sel = FuzzySelector::new("test");
+      let cands: Vec<Candidate> = items
+        .iter()
+        .map(|s| Candidate::from(s.to_string()))
+        .collect();
+      sel.activate(cands);
+      sel
+    }
+
+    // ─── Enter ────────────────────────────────────────────────────────
+
+    #[test]
+    fn enter_with_empty_filtered_dismisses() {
+      let _g = TestGuard::new();
+      let mut sel = FuzzySelector::new("test");
+      let resp = sel.handle_key(key!(Enter)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Dismiss));
+    }
+
+    #[test]
+    fn enter_accepts_candidate_at_cursor_zero() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta", "gamma"]);
+      let expected = sel.filtered()[0].candidate.clone();
+      let resp = sel.handle_key(key!(Enter)).unwrap();
+      match resp {
+        SelectorResponse::Accept(c) => assert_eq!(c, expected),
+        _ => panic!("expected Accept"),
+      }
+    }
+
+    #[test]
+    fn enter_after_navigation_accepts_correct_candidate() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta", "gamma"]);
+      sel.handle_key(key!(Down)).unwrap();
+      sel.handle_key(key!(Down)).unwrap();
+      let expected = sel.filtered()[2].candidate.clone();
+      let resp = sel.handle_key(key!(Enter)).unwrap();
+      match resp {
+        SelectorResponse::Accept(c) => assert_eq!(c, expected),
+        _ => panic!("expected Accept"),
+      }
+    }
+
+    // ─── Dismiss keys ─────────────────────────────────────────────────
+
+    #[test]
+    fn esc_dismisses_and_clears_filtered() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      assert_eq!(sel.filtered().len(), 3);
+      let resp = sel.handle_key(key!(Esc)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Dismiss));
+      assert!(sel.filtered().is_empty());
+    }
+
+    #[test]
+    fn ctrl_d_dismisses_and_clears_filtered() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let resp = sel.handle_key(key!(Ctrl + 'd')).unwrap();
+      assert!(matches!(resp, SelectorResponse::Dismiss));
+      assert!(sel.filtered().is_empty());
+    }
+
+    // ─── Cursor movement: forward ─────────────────────────────────────
+
+    #[test]
+    fn tab_advances_cursor() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let target = sel.filtered()[1].candidate.clone();
+      sel.handle_key(key!(Tab)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), target);
+    }
+
+    #[test]
+    fn down_advances_cursor() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let target = sel.filtered()[1].candidate.clone();
+      sel.handle_key(key!(Down)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), target);
+    }
+
+    #[test]
+    fn tab_wraps_at_end() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let first = sel.filtered()[0].candidate.clone();
+      for _ in 0..3 {
+        sel.handle_key(key!(Tab)).unwrap();
+      }
+      assert_eq!(sel.selected_candidate().unwrap(), first);
+    }
+
+    #[test]
+    fn down_wraps_at_end() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b"]);
+      let first = sel.filtered()[0].candidate.clone();
+      sel.handle_key(key!(Down)).unwrap();
+      sel.handle_key(key!(Down)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), first);
+    }
+
+    #[test]
+    fn scroll_down_does_not_wrap() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b"]);
+      let last = sel.filtered()[1].candidate.clone();
+      // ScrollDown 3x: 0→1→1→1 (saturates at max-1).
+      sel.handle_key(K(C::ScrollDown, M::NONE)).unwrap();
+      sel.handle_key(K(C::ScrollDown, M::NONE)).unwrap();
+      sel.handle_key(K(C::ScrollDown, M::NONE)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), last);
+    }
+
+    // ─── Cursor movement: backward ────────────────────────────────────
+
+    #[test]
+    fn shift_tab_retreats_cursor() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let first = sel.filtered()[0].candidate.clone();
+      sel.handle_key(key!(Down)).unwrap();
+      sel.handle_key(key!(Shift + Tab)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), first);
+    }
+
+    #[test]
+    fn shift_tab_wraps_at_top() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let last = sel.filtered()[2].candidate.clone();
+      sel.handle_key(key!(Shift + Tab)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), last);
+    }
+
+    #[test]
+    fn up_wraps_at_top() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b"]);
+      let last = sel.filtered()[1].candidate.clone();
+      sel.handle_key(key!(Up)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), last);
+    }
+
+    #[test]
+    fn scroll_up_does_not_wrap() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b"]);
+      let first = sel.filtered()[0].candidate.clone();
+      // ScrollUp at cursor=0 should stay at 0 (saturating).
+      sel.handle_key(K(C::ScrollUp, M::NONE)).unwrap();
+      sel.handle_key(K(C::ScrollUp, M::NONE)).unwrap();
+      assert_eq!(sel.selected_candidate().unwrap(), first);
+    }
+
+    // ─── Response types ───────────────────────────────────────────────
+
+    #[test]
+    fn all_movement_keys_return_consumed() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      for key in [
+        key!(Down),
+        key!(Up),
+        key!(Tab),
+        key!(Shift + Tab),
+        K(C::ScrollDown, M::NONE),
+        K(C::ScrollUp, M::NONE),
+      ] {
+        let resp = sel.handle_key(key).unwrap();
+        assert!(matches!(resp, SelectorResponse::Consumed));
+      }
+    }
+
+    // ─── Query editing ────────────────────────────────────────────────
+
+    #[test]
+    fn typing_char_filters_candidates() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta", "gamma"]);
+      assert_eq!(sel.filtered().len(), 3);
+      let resp = sel.handle_key(K(C::Char('g'), M::NONE)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Consumed));
+      // 'g' only fuzzy-matches "gamma".
+      assert_eq!(sel.filtered().len(), 1);
+      assert_eq!(sel.filtered()[0].candidate.content(), "gamma");
+    }
+
+    #[test]
+    fn typing_no_match_empties_filtered() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta"]);
+      sel.handle_key(K(C::Char('z'), M::NONE)).unwrap();
+      assert!(sel.filtered().is_empty());
+    }
+
+    #[test]
+    fn typing_then_enter_accepts_filtered_match() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta", "gamma"]);
+      sel.handle_key(K(C::Char('g'), M::NONE)).unwrap();
+      let resp = sel.handle_key(key!(Enter)).unwrap();
+      match resp {
+        SelectorResponse::Accept(c) => assert_eq!(c.content(), "gamma"),
+        _ => panic!("expected Accept"),
+      }
+    }
+
+    #[test]
+    fn typing_then_no_match_then_enter_dismisses() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta"]);
+      sel.handle_key(K(C::Char('z'), M::NONE)).unwrap();
+      let resp = sel.handle_key(key!(Enter)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Dismiss));
+    }
+
+    #[test]
+    fn ctrl_c_clears_query_restores_full_list() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["alpha", "beta", "gamma"]);
+      sel.handle_key(K(C::Char('g'), M::NONE)).unwrap();
+      assert_eq!(sel.filtered().len(), 1);
+      let resp = sel.handle_key(key!(Ctrl + 'c')).unwrap();
+      assert!(matches!(resp, SelectorResponse::Consumed));
+      assert_eq!(sel.filtered().len(), 3);
+    }
+
+    // ─── Empty filtered: movement is a no-op ─────────────────────────
+
+    #[test]
+    fn navigation_on_empty_selector_does_not_panic() {
+      let _g = TestGuard::new();
+      let mut sel = FuzzySelector::new("test");
+      for key in [
+        key!(Down),
+        key!(Up),
+        key!(Tab),
+        key!(Shift + Tab),
+        K(C::ScrollDown, M::NONE),
+        K(C::ScrollUp, M::NONE),
+      ] {
+        let resp = sel.handle_key(key).unwrap();
+        assert!(matches!(resp, SelectorResponse::Consumed));
+      }
+      assert!(sel.selected_candidate().is_none());
+    }
+
+    // ─── Mouse handling ──────────────────────────────────────────────
+
+    #[test]
+    fn mouse_pos_returns_consumed() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let resp = sel.handle_key(K(C::MousePos(0, 0), M::NONE)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Consumed));
+    }
+
+    #[test]
+    fn left_click_out_of_range_returns_consumed_no_change() {
+      let _g = TestGuard::new();
+      let mut sel = sel_with(&["a", "b", "c"]);
+      let before = sel.selected_candidate().unwrap();
+      // row_map is empty without draw(); click row is out-of-range → no-op.
+      let resp = sel.handle_key(K(C::LeftClick(99, 0), M::NONE)).unwrap();
+      assert!(matches!(resp, SelectorResponse::Consumed));
+      assert_eq!(sel.selected_candidate().unwrap(), before);
+    }
+  }
+
+  // ===================== complete_jobs =====================
+
+  mod complete_jobs_tests {
+    use super::*;
+    use crate::state::jobs::{ChildProc, JobBldr, JobID};
+    use nix::sys::wait::WaitStatus;
+    use nix::unistd::Pid;
+
+    fn drain_jobs() {
+      Shed::jobs_mut(|j| {
+        let ids: Vec<JobID> = j
+          .jobs()
+          .iter()
+          .flatten()
+          .filter_map(|job| job.tabid().map(JobID::TableID))
+          .collect();
+        for id in ids {
+          j.remove_job(id);
+        }
+      });
+    }
+
+    fn insert_named_job(pid: i32, cmd: &str) {
+      let pid = Pid::from_raw(pid);
+      let mut child = ChildProc::new(pid, Some(cmd), Some(pid), false).unwrap();
+      child.set_stat(WaitStatus::StillAlive);
+      let mut bldr = JobBldr::new();
+      bldr.push_child(child);
+      bldr.set_pgid(pid);
+      let job = bldr.build();
+      Shed::jobs_mut(|j| j.insert_job(job, true)).unwrap();
+    }
+
+    #[test]
+    fn complete_jobs_empty_table_returns_empty() {
+      let _g = TestGuard::new();
+      drain_jobs();
+      assert!(complete_jobs("").is_empty());
+      assert!(complete_jobs("%").is_empty());
+    }
+
+    #[test]
+    fn complete_jobs_no_percent_returns_pgid_candidates() {
+      let _g = TestGuard::new();
+      drain_jobs();
+      insert_named_job(70001, "uniq_test_cmd_a");
+      let out = complete_jobs("");
+      assert!(!out.is_empty(), "got: {out:?}");
+      // Bare-form candidates are pgid strings; "70001" should appear.
+      assert!(out.iter().any(|c| c.content() == "70001"), "got: {out:?}");
+    }
+
+    #[test]
+    fn complete_jobs_with_percent_prefix_returns_named_candidates() {
+      let _g = TestGuard::new();
+      drain_jobs();
+      insert_named_job(70002, "uniq_named_job_xyz");
+      let out = complete_jobs("%");
+      // %-prefix means we want jobs *by name*. The candidate's
+      // content should be prefixed with `%`.
+      assert!(
+        out.iter().any(|c| c.content().starts_with('%')),
+        "got: {out:?}"
+      );
+    }
+  }
+
+  // ===================== complete_users =====================
+
+  mod complete_users_tests {
+    use super::*;
+
+    #[test]
+    fn complete_users_finds_root_on_unix() {
+      // /etc/passwd reliably contains `root` on any Linux/CI machine.
+      // If /etc/passwd is missing entirely, the function returns
+      // empty — skip the assertion in that case.
+      let _g = TestGuard::new();
+      if !std::path::Path::new("/etc/passwd").exists() {
+        return;
+      }
+      let out = complete_users("ro");
+      assert!(
+        out.iter().any(|c| c.content() == "root"),
+        "expected 'root' in candidates, got: {out:?}"
+      );
+    }
+
+    #[test]
+    fn complete_users_filters_by_prefix() {
+      let _g = TestGuard::new();
+      if !std::path::Path::new("/etc/passwd").exists() {
+        return;
+      }
+      // A nonsense prefix should match nobody.
+      let out = complete_users("zzz_no_such_user_prefix_qqq");
+      assert!(out.is_empty(), "got: {out:?}");
+    }
+  }
+
+  // ===================== complete_builtins =====================
+
+  mod complete_builtins_tests {
+    use super::*;
+
+    #[test]
+    fn complete_builtins_known_prefix_matches() {
+      let _g = TestGuard::new();
+      let out = complete_builtins("ec"); // echo
+      assert!(
+        out.iter().any(|c| c.content() == "echo"),
+        "expected 'echo' in candidates, got: {out:?}"
+      );
+    }
+
+    #[test]
+    fn complete_builtins_empty_prefix_returns_all() {
+      let _g = TestGuard::new();
+      let all = complete_builtins("");
+      assert_eq!(all.len(), BUILTIN_NAMES.len());
+    }
+
+    #[test]
+    fn complete_builtins_unknown_prefix_returns_empty() {
+      let _g = TestGuard::new();
+      assert!(complete_builtins("zzz_no_such_builtin_qqq").is_empty());
+    }
+  }
+
+  // ===================== complete_commands './' prefix =====================
+
+  mod complete_commands_dotslash_tests {
+    use super::*;
+
+    #[test]
+    fn dotslash_prefix_routes_through_file_branch() {
+      // The `./` prefix takes a separate branch in complete_commands
+      // that filters cached_utils to UtilKind::File and re-prepends
+      // "./" to the resulting candidates. We can't deterministically
+      // populate the file cache from a unit test, so we just verify
+      // the function returns successfully on a `./` prefix and that
+      // any results that come back start with `./`.
+      let _g = TestGuard::new();
+      let out = complete_commands("./", 2);
+      for c in &out {
+        assert!(c.content.starts_with("./"), "got: {c:?}");
+      }
+    }
+  }
+
+  // ===================== complete_path ignore_case branch =====================
+
+  mod complete_path_ignore_case_tests {
+    use super::*;
+
+    #[test]
+    fn ignore_case_flag_makes_match_case_insensitive() {
+      // Build a tempdir with a Mixed-Case filename, then complete with
+      // a lowercase prefix. Without ignore_case → no match; with it →
+      // match. We just toggle the flag and confirm the on-case path
+      // actually returns something.
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let file_path = dir.path().join("MixedCaseFile.txt");
+      std::fs::write(&file_path, "x").unwrap();
+
+      let prev_cwd = std::env::current_dir().unwrap();
+      std::env::set_current_dir(dir.path()).unwrap();
+
+      // Off: case-sensitive — "mixed" shouldn't match "MixedCaseFile".
+      crate::shopt_mut!(prompt.completion_ignore_case = false);
+      let strict = complete_path("mixed", 5);
+
+      // On: case-insensitive — "mixed" should match "MixedCaseFile".
+      crate::shopt_mut!(prompt.completion_ignore_case = true);
+      let relaxed = complete_path("mixed", 5);
+
+      std::env::set_current_dir(prev_cwd).unwrap();
+      crate::shopt_mut!(prompt.completion_ignore_case = false);
+
+      assert!(
+        strict
+          .iter()
+          .all(|c| !c.content.ends_with("MixedCaseFile.txt")),
+        "case-sensitive shouldn't match, got: {strict:?}"
+      );
+      assert!(
+        relaxed
+          .iter()
+          .any(|c| c.content.ends_with("MixedCaseFile.txt")),
+        "ignore-case should match, got: {relaxed:?}"
+      );
+    }
+  }
+
+  // ===================== BashCompSpec builders =====================
+
+  mod bash_comp_spec_tests {
+    use super::*;
+
+    #[test]
+    fn every_builder_method_sets_its_field() {
+      // Cover all the with_*/enable-style methods on BashCompSpec in
+      // one shot. The methods are pure setters, so we just confirm
+      // each one flips the corresponding field.
+      let spec = BashCompSpec::new()
+        .with_func("complete_foo".into())
+        .with_wordlist(vec!["a".into(), "b".into()])
+        .with_source("complete -F complete_foo cmd".into())
+        .files(true)
+        .dirs(true)
+        .commands(true)
+        .builtins(true)
+        .users(true)
+        .vars(true)
+        .signals(true)
+        .jobs(true)
+        .aliases(true);
+
+      assert_eq!(spec.function, Some("complete_foo".to_string()));
+      assert_eq!(spec.wordlist, Some(vec!["a".into(), "b".into()]));
+      assert_eq!(spec.source, "complete -F complete_foo cmd");
+      assert!(spec.files);
+      assert!(spec.dirs);
+      assert!(spec.commands);
+      assert!(spec.builtins);
+      assert!(spec.users);
+      assert!(spec.vars);
+      assert!(spec.signals);
+      assert!(spec.jobs);
+      assert!(spec.aliases);
+    }
+
+    #[test]
+    fn builder_methods_can_disable_via_false() {
+      // The enable parameter on each setter is a real boolean, not a
+      // marker — passing false should leave (or clear) the field.
+      let spec = BashCompSpec::new()
+        .files(true)
+        .files(false)
+        .dirs(true)
+        .dirs(false);
+      assert!(!spec.files);
+      assert!(!spec.dirs);
+    }
   }
 }

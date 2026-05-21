@@ -484,6 +484,7 @@ impl super::Builtin for Hist {
 
     for (arg, span) in args.argv {
       let Ok(id) = arg.parse::<i64>() else {
+        Shed::set_status(2);
         return Err(sherr!(ParseErr, "Invalid command ID: {arg}").promote(span));
       };
       query.specific_ids.push(id);
@@ -538,5 +539,865 @@ impl super::Builtin for Hist {
     }
 
     with_status(0)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::tests::testutil::TestGuard;
+
+  fn parse(opts: &[Opt]) -> HistQuery {
+    HistQuery::from_opts(opts).expect("from_opts should succeed")
+  }
+
+  // ─── LongWithArg → field assignments ─────────────────────────────────
+
+  #[test]
+  fn opts_after() {
+    let q = parse(&[Opt::LongWithArg("after".into(), "yesterday".into())]);
+    assert_eq!(q.after, (Some("yesterday".into()), false));
+  }
+
+  #[test]
+  fn opts_before() {
+    let q = parse(&[Opt::LongWithArg("before".into(), "tomorrow".into())]);
+    assert_eq!(q.before, (Some("tomorrow".into()), false));
+  }
+
+  #[test]
+  fn opts_contains() {
+    let q = parse(&[Opt::LongWithArg("contains".into(), "grep".into())]);
+    assert_eq!(q.contains, (Some("grep".into()), false));
+  }
+
+  #[test]
+  fn opts_starts_with() {
+    let q = parse(&[Opt::LongWithArg("starts-with".into(), "git".into())]);
+    assert_eq!(q.starts_with, (Some("git".into()), false));
+  }
+
+  #[test]
+  fn opts_ends_with() {
+    let q = parse(&[Opt::LongWithArg("ends-with".into(), ".log".into())]);
+    assert_eq!(q.ends_with, (Some(".log".into()), false));
+  }
+
+  #[test]
+  fn opts_matches_regex() {
+    let q = parse(&[Opt::LongWithArg("matches".into(), "^cargo".into())]);
+    assert_eq!(q.matches, (Some("^cargo".into()), false));
+  }
+
+  #[test]
+  fn opts_duration_gt_lt() {
+    let q = parse(&[
+      Opt::LongWithArg("duration-gt".into(), "1s".into()),
+      Opt::LongWithArg("duration-lt".into(), "1h".into()),
+    ]);
+    assert_eq!(q.duration_gt, (Some("1s".into()), false));
+    assert_eq!(q.duration_lt, (Some("1h".into()), false));
+  }
+
+  #[test]
+  fn opts_with_token() {
+    let q = parse(&[Opt::LongWithArg("with-token".into(), "abcd-1234".into())]);
+    assert_eq!(q.with_token, (Some("abcd-1234".into()), false));
+  }
+
+  #[test]
+  fn opts_with_status_parses_integer() {
+    let q = parse(&[Opt::LongWithArg("with-status".into(), "127".into())]);
+    assert_eq!(q.with_status, (Some(127), false));
+  }
+
+  #[test]
+  fn opts_with_status_invalid_errors() {
+    let result =
+      HistQuery::from_opts(&[Opt::LongWithArg("with-status".into(), "notanumber".into())]);
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn opts_lines_gt_lt() {
+    let q = parse(&[
+      Opt::LongWithArg("lines-gt".into(), "5".into()),
+      Opt::LongWithArg("lines-lt".into(), "20".into()),
+    ]);
+    assert_eq!(q.lines_gt, (Some(5), false));
+    assert_eq!(q.lines_lt, (Some(20), false));
+  }
+
+  #[test]
+  fn opts_lines_gt_invalid_errors() {
+    let result = HistQuery::from_opts(&[Opt::LongWithArg("lines-gt".into(), "abc".into())]);
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn opts_limit() {
+    let q = parse(&[Opt::LongWithArg("limit".into(), "50".into())]);
+    assert_eq!(q.limit, Some(50));
+  }
+
+  #[test]
+  fn opts_limit_invalid_falls_back_to_max() {
+    // The code uses unwrap_or(usize::MAX) for limit specifically.
+    let q = parse(&[Opt::LongWithArg("limit".into(), "abc".into())]);
+    assert_eq!(q.limit, Some(usize::MAX));
+  }
+
+  #[test]
+  fn opts_in_dir_uses_arg_when_not_canonicalizable() {
+    let _g = TestGuard::new();
+    // A clearly non-existent path falls back to the literal arg.
+    let q = parse(&[Opt::LongWithArg(
+      "in-dir".into(),
+      "/definitely/not/a/real/dir/xyz123".into(),
+    )]);
+    assert_eq!(
+      q.in_dir,
+      (Some("/definitely/not/a/real/dir/xyz123".into()), false)
+    );
+  }
+
+  // ─── Long (no arg) → bool flags ──────────────────────────────────────
+
+  #[test]
+  fn opts_ex_hist_flag() {
+    let q = parse(&[Opt::Long("ex".into())]);
+    assert!(q.ex_hist);
+  }
+
+  #[test]
+  fn opts_count_flag() {
+    let q = parse(&[Opt::Long("count".into())]);
+    assert!(q.count);
+  }
+
+  #[test]
+  fn opts_delete_flag() {
+    let q = parse(&[Opt::Long("delete".into())]);
+    assert!(q.delete);
+  }
+
+  #[test]
+  fn opts_restore_flag() {
+    let q = parse(&[Opt::Long("restore".into())]);
+    assert!(q.restore);
+  }
+
+  #[test]
+  fn opts_json_flag() {
+    let q = parse(&[Opt::Long("json".into())]);
+    assert!(q.json);
+  }
+
+  #[test]
+  fn opts_pull_flag() {
+    let q = parse(&[Opt::Long("pull".into())]);
+    assert!(q.pull);
+  }
+
+  // ─── Short flags ─────────────────────────────────────────────────────
+
+  #[test]
+  fn opts_short_n_disables_numbers() {
+    let q = parse(&[Opt::Short('n')]);
+    assert!(q.no_numbers);
+  }
+
+  #[test]
+  fn opts_short_r_reverses() {
+    let q = parse(&[Opt::Short('r')]);
+    assert!(q.reverse);
+  }
+
+  // ─── --not polarity ──────────────────────────────────────────────────
+
+  #[test]
+  fn opts_not_flips_polarity_for_next_arg() {
+    let q = parse(&[
+      Opt::Long("not".into()),
+      Opt::LongWithArg("contains".into(), "rm -rf".into()),
+    ]);
+    assert_eq!(q.contains, (Some("rm -rf".into()), true));
+  }
+
+  #[test]
+  fn opts_not_only_applies_to_next_arg_then_resets() {
+    let q = parse(&[
+      Opt::Long("not".into()),
+      Opt::LongWithArg("contains".into(), "danger".into()),
+      Opt::LongWithArg("after".into(), "yesterday".into()),
+    ]);
+    assert_eq!(q.contains, (Some("danger".into()), true));
+    // 'after' should NOT be negated — polarity reset after 'contains'.
+    assert_eq!(q.after, (Some("yesterday".into()), false));
+  }
+
+  #[test]
+  fn opts_double_not_cancels_polarity() {
+    let q = parse(&[
+      Opt::Long("not".into()),
+      Opt::Long("not".into()),
+      Opt::LongWithArg("contains".into(), "x".into()),
+    ]);
+    assert_eq!(q.contains, (Some("x".into()), false));
+  }
+
+  // ─── --import path resolution ────────────────────────────────────────
+
+  fn set_shed_home(path: &str) {
+    use crate::state::vars::{VarFlags, VarKind};
+    Shed::vars_mut(|v| v.set_var("HOME", VarKind::Str(path.into()), VarFlags::EXPORT)).unwrap();
+  }
+
+  #[test]
+  fn opts_import_bash_resolves_to_home_bash_history() {
+    let _g = TestGuard::new();
+    set_shed_home("/tmp/some_home");
+    let q = parse(&[Opt::LongWithArg("import".into(), "bash".into())]);
+    assert_eq!(q.import.as_deref(), Some("/tmp/some_home/.bash_history"));
+  }
+
+  #[test]
+  fn opts_import_zsh_resolves_to_home_zsh_history() {
+    let _g = TestGuard::new();
+    set_shed_home("/tmp/some_home");
+    let q = parse(&[Opt::LongWithArg("import".into(), "zsh".into())]);
+    assert_eq!(q.import.as_deref(), Some("/tmp/some_home/.zsh_history"));
+  }
+
+  #[test]
+  fn opts_import_arbitrary_path_passed_through() {
+    let _g = TestGuard::new();
+    let q = parse(&[Opt::LongWithArg(
+      "import".into(),
+      "/etc/some.history".into(),
+    )]);
+    assert_eq!(q.import.as_deref(), Some("/etc/some.history"));
+  }
+
+  // ─── Unknown / error handling ────────────────────────────────────────
+
+  #[test]
+  fn opts_unknown_long_silently_ignored() {
+    // Unknown long opts fall through `_ => {}` — they don't error.
+    let q = parse(&[Opt::LongWithArg("totally-made-up".into(), "x".into())]);
+    // No fields should have been set by this unknown opt.
+    assert_eq!(q.after, (None, false));
+    assert_eq!(q.before, (None, false));
+  }
+
+  #[test]
+  fn opts_unknown_short_errors() {
+    // The catch-all arm at the bottom of the match returns an error for
+    // anything that doesn't fit the recognized Opt shapes.
+    let result = HistQuery::from_opts(&[Opt::ShortWithArg('x', "val".into())]);
+    assert!(result.is_err());
+  }
+
+  // ─── Combined / multi-opt sanity check ───────────────────────────────
+
+  #[test]
+  fn opts_multiple_fields_compose() {
+    let q = parse(&[
+      Opt::Short('r'),
+      Opt::Long("json".into()),
+      Opt::LongWithArg("contains".into(), "cargo".into()),
+      Opt::LongWithArg("limit".into(), "10".into()),
+      Opt::Long("not".into()),
+      Opt::LongWithArg("in-dir".into(), "/nonexistent/zzz".into()),
+    ]);
+    assert!(q.reverse);
+    assert!(q.json);
+    assert_eq!(q.contains, (Some("cargo".into()), false));
+    assert_eq!(q.limit, Some(10));
+    assert_eq!(q.in_dir, (Some("/nonexistent/zzz".into()), true));
+  }
+
+  // ─── HistQuery::execute ──────────────────────────────────────────────
+  //
+  // Each test builds a fresh in-memory History, seeds it with known
+  // entries, then runs a HistQuery and checks the result. The test
+  // table name varies per test so the LazyLock cache in history.rs
+  // doesn't bleed entries across cases.
+
+  use crate::readline::HistEntry;
+  use std::time::{Duration as StdDuration, UNIX_EPOCH};
+  use uuid::Uuid;
+
+  /// Build a HistEntry with the given command and the rest filled in
+  /// from defaults. Timestamp is fixed (NOT now()) so cross-runs are
+  /// deterministic where they need to be.
+  fn entry(cmd: &str) -> HistEntry {
+    HistEntry {
+      runtime: StdDuration::from_micros(0),
+      timestamp: UNIX_EPOCH + StdDuration::from_secs(1_700_000_000),
+      command: cmd.into(),
+      cwd: "/tmp".into(),
+      status: 0,
+      token: Uuid::new_v4(),
+    }
+  }
+
+  fn entry_full(
+    cmd: &str,
+    cwd: &str,
+    status: i32,
+    runtime_micros: u64,
+    secs_since_epoch: u64,
+  ) -> HistEntry {
+    HistEntry {
+      runtime: StdDuration::from_micros(runtime_micros),
+      timestamp: UNIX_EPOCH + StdDuration::from_secs(secs_since_epoch),
+      command: cmd.into(),
+      cwd: cwd.into(),
+      status,
+      token: Uuid::new_v4(),
+    }
+  }
+
+  /// Create a History with a unique per-test table name and seed it with
+  /// the given entries (oldest first).
+  fn hist_with(name: &str, entries: Vec<HistEntry>) -> crate::readline::History {
+    let h = crate::readline::History::empty(name);
+    for e in entries {
+      h.push_entry(e).unwrap();
+    }
+    h
+  }
+
+  // ─── No filters ─────────────────────────────────────────────────────
+
+  #[test]
+  fn execute_no_conditions_returns_all_entries() {
+    let _g = TestGuard::new();
+    let h = hist_with("exec_all", vec![entry("a"), entry("b"), entry("c")]);
+    let q = HistQuery::new();
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 3);
+  }
+
+  // ─── Substring / prefix / suffix filters ────────────────────────────
+
+  #[test]
+  fn execute_contains_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_contains",
+      vec![entry("ls -la"), entry("echo hello"), entry("cat foo")],
+    );
+    let mut q = HistQuery::new();
+    q.contains = (Some("echo".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "echo hello");
+  }
+
+  #[test]
+  fn execute_starts_with_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_starts",
+      vec![entry("git status"), entry("git log"), entry("ls")],
+    );
+    let mut q = HistQuery::new();
+    q.starts_with = (Some("git".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  #[test]
+  fn execute_ends_with_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_ends",
+      vec![entry("touch a.log"), entry("rm b.log"), entry("vi c.txt")],
+    );
+    let mut q = HistQuery::new();
+    q.ends_with = (Some(".log".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  // ─── Status / token / dir filters ───────────────────────────────────
+
+  #[test]
+  fn execute_with_status_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_status",
+      vec![
+        entry_full("ok", "/tmp", 0, 0, 100),
+        entry_full("fail", "/tmp", 1, 0, 200),
+        entry_full("notfound", "/tmp", 127, 0, 300),
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.with_status = (Some(127), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "notfound");
+  }
+
+  #[test]
+  fn execute_in_dir_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_dir",
+      vec![
+        entry_full("a", "/home/u", 0, 0, 100),
+        entry_full("b", "/tmp", 0, 0, 200),
+        entry_full("c", "/home/u", 0, 0, 300),
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.in_dir = (Some("/home/u".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  // ─── Line count filters ─────────────────────────────────────────────
+
+  #[test]
+  fn execute_lines_gt_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_lines_gt",
+      vec![
+        entry("one"),
+        entry("one\ntwo\nthree"),       // 3 lines
+        entry("one\ntwo\nthree\nfour"), // 4 lines
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.lines_gt = (Some(2), false); // strictly greater than 2
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  #[test]
+  fn execute_lines_lt_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_lines_lt",
+      vec![entry("one"), entry("one\ntwo"), entry("a\nb\nc\nd")],
+    );
+    let mut q = HistQuery::new();
+    q.lines_lt = (Some(3), false); // strictly less than 3
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  // ─── Duration filters ───────────────────────────────────────────────
+
+  #[test]
+  fn execute_duration_gt_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_dur_gt",
+      vec![
+        entry_full("fast", "/", 0, 1, 100),           // 1us
+        entry_full("medium", "/", 0, 1_000_000, 200), // 1s
+        entry_full("slow", "/", 0, 10_000_000, 300),  // 10s
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.duration_gt = (Some("5s".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "slow");
+  }
+
+  #[test]
+  fn execute_duration_lt_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_dur_lt",
+      vec![
+        entry_full("fast", "/", 0, 1, 100),
+        entry_full("slow", "/", 0, 10_000_000, 200),
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.duration_lt = (Some("1s".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "fast");
+  }
+
+  #[test]
+  fn execute_duration_invalid_errors() {
+    let _g = TestGuard::new();
+    let h = hist_with("exec_dur_bad", vec![entry("x")]);
+    let mut q = HistQuery::new();
+    q.duration_gt = (Some("not-a-duration".into()), false);
+    let result = q.execute(&h);
+    assert!(result.is_err());
+  }
+
+  // ─── Limit / specific IDs ───────────────────────────────────────────
+
+  #[test]
+  fn execute_limit_caps_result_count() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_limit",
+      vec![entry("a"), entry("b"), entry("c"), entry("d")],
+    );
+    let mut q = HistQuery::new();
+    q.limit = Some(2);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  #[test]
+  fn execute_specific_id_positive() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_id",
+      vec![entry("first"), entry("second"), entry("third")],
+    );
+    let mut q = HistQuery::new();
+    q.specific_ids = vec![2]; // literal id=2 (second entry, since ids start at 1)
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "second");
+  }
+
+  #[test]
+  fn execute_specific_id_negative_is_relative_to_end() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_id_neg",
+      vec![entry("first"), entry("second"), entry("third")],
+    );
+    let mut q = HistQuery::new();
+    q.specific_ids = vec![-1]; // -1 → second-newest entry
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "second");
+  }
+
+  // ─── --not negation ─────────────────────────────────────────────────
+
+  #[test]
+  fn execute_negated_contains_excludes_matches() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_not",
+      vec![
+        entry("danger_rm_command"),
+        entry("safe_ls"),
+        entry("also_safe"),
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.contains = (Some("danger".into()), true); // NOT contains
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+    for r in &results {
+      assert!(!r.1.command.contains("danger"));
+    }
+  }
+
+  // ─── matches (regex, applied post-query) ────────────────────────────
+
+  #[test]
+  fn execute_matches_regex_post_filter() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_regex",
+      vec![entry("cargo build"), entry("cargo test"), entry("git log")],
+    );
+    let mut q = HistQuery::new();
+    q.matches = (Some("^cargo".into()), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 2);
+  }
+
+  #[test]
+  fn execute_matches_regex_negated() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_regex_neg",
+      vec![entry("cargo build"), entry("cargo test"), entry("git log")],
+    );
+    let mut q = HistQuery::new();
+    q.matches = (Some("^cargo".into()), true);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "git log");
+  }
+
+  // ─── Ordering ───────────────────────────────────────────────────────
+
+  #[test]
+  fn execute_default_returns_oldest_first_after_reverse_default() {
+    // execute() pulls DESC from sqlite, then reverses (since
+    // self.reverse defaults to false). End result: oldest at index 0,
+    // newest at the end.
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_order",
+      vec![entry("one"), entry("two"), entry("three")],
+    );
+    let q = HistQuery::new();
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results[0].1.command, "one");
+    assert_eq!(results[2].1.command, "three");
+  }
+
+  #[test]
+  fn execute_reverse_keeps_desc_order() {
+    let _g = TestGuard::new();
+    let h = hist_with("exec_rev", vec![entry("one"), entry("two"), entry("three")]);
+    let mut q = HistQuery::new();
+    q.reverse = true;
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results[0].1.command, "three");
+    assert_eq!(results[2].1.command, "one");
+  }
+
+  // ─── Combined filters ──────────────────────────────────────────────
+
+  #[test]
+  fn execute_combined_status_and_starts_with() {
+    let _g = TestGuard::new();
+    let h = hist_with(
+      "exec_combo",
+      vec![
+        entry_full("git push", "/", 0, 0, 100),
+        entry_full("git push --force", "/", 128, 0, 200),
+        entry_full("ls -la", "/", 0, 0, 300),
+      ],
+    );
+    let mut q = HistQuery::new();
+    q.starts_with = (Some("git".into()), false);
+    q.with_status = (Some(0), false);
+    let results = q.execute(&h).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1.command, "git push");
+  }
+
+  // ─── Bad date input ─────────────────────────────────────────────────
+
+  #[test]
+  fn execute_invalid_after_date_errors() {
+    let _g = TestGuard::new();
+    let h = hist_with("exec_bad_date", vec![entry("x")]);
+    let mut q = HistQuery::new();
+    q.after = (Some("not-a-real-date-zzz".into()), false);
+    let result = q.execute(&h);
+    assert!(result.is_err());
+  }
+}
+
+#[cfg(test)]
+mod hist_builtin_execute_tests {
+  //! Tests for the `Hist` builtin's `execute()` itself — covering the
+  //! `hist` command end-to-end via `test_input`. The mod above (`tests`)
+  //! exercises `HistQuery` directly; this one exercises argument
+  //! dispatch, table selection, output formatting, and the restore/pull/
+  //! import branches.
+
+  use crate::readline::History;
+  use crate::state::{self, Shed};
+  use crate::tests::testutil::{TestGuard, test_input};
+
+  /// Drop and re-init the named table on the shared in-memory conn so
+  /// each test starts with a clean slate. Returns a History handle for
+  /// seeding entries.
+  fn fresh_history(table: &str) -> History {
+    let conn = state::util::get_db_conn().expect("test db conn");
+    let _ = conn.execute_batch(&format!("DROP TABLE IF EXISTS {table}"));
+    let _ = conn.execute_batch(&format!("DROP TABLE IF EXISTS {table}_backup"));
+    let _ = conn.execute_batch("PRAGMA user_version = 0");
+    History::new(conn, table).expect("history init")
+  }
+
+  // ─── default listing / filtering ───────────────────────────────────
+
+  #[test]
+  fn hist_lists_pushed_entries() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": alpha".into()).unwrap();
+    h.push(": beta".into()).unwrap();
+    test_input("hist").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": alpha"), "got: {out:?}");
+    assert!(out.contains(": beta"), "got: {out:?}");
+    assert_eq!(Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn hist_n_flag_omits_ids() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": only-entry".into()).unwrap();
+    // With -n, lines should NOT start with the id\t prefix.
+    test_input("hist -n").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": only-entry"));
+    // The id form would be "1\t: only-entry". With -n we just have the cmd.
+    assert!(!out.contains("1\t"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_count_outputs_entry_count() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": a".into()).unwrap();
+    h.push(": b".into()).unwrap();
+    h.push(": c".into()).unwrap();
+    test_input("hist --count").unwrap();
+    let out = g.read_output();
+    assert!(out.trim_end().ends_with("3"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_json_outputs_json_object() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": json-entry".into()).unwrap();
+    test_input("hist --json").unwrap();
+    let out = g.read_output();
+    // serde_json::to_string_pretty produces newlines and a {…} wrapper.
+    assert!(out.contains("\"command\""), "got: {out:?}");
+    assert!(out.contains(": json-entry"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_contains_filter_narrows_results() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": git push".into()).unwrap();
+    h.push(": ls -la".into()).unwrap();
+    h.push(": git log".into()).unwrap();
+    test_input("hist --contains git").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": git push"), "got: {out:?}");
+    assert!(out.contains(": git log"), "got: {out:?}");
+    assert!(!out.contains(": ls -la"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_specific_id_arg_filters_to_that_entry() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": one".into()).unwrap();
+    h.push(": two".into()).unwrap();
+    h.push(": three".into()).unwrap();
+    test_input("hist 2").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": two"), "got: {out:?}");
+    assert!(!out.contains(": one"), "got: {out:?}");
+    assert!(!out.contains(": three"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_invalid_id_arg_errors() {
+    let _g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": entry".into()).unwrap();
+    // The dispatcher turns the ShErr into a non-zero status.
+    test_input("hist not_a_number").ok();
+    assert_ne!(Shed::get_status(), 0, "expected non-zero status");
+  }
+
+  // ─── --ex selects ex_history table ─────────────────────────────────
+
+  #[test]
+  fn hist_ex_uses_ex_history_table() {
+    let g = TestGuard::new();
+    let normal = fresh_history("shed_history");
+    let ex = fresh_history("ex_history");
+    normal.push(": normal-entry".into()).unwrap();
+    ex.push(": ex-entry".into()).unwrap();
+    test_input("hist --ex").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": ex-entry"), "got: {out:?}");
+    assert!(!out.contains(": normal-entry"), "got: {out:?}");
+  }
+
+  // ─── --delete and --restore ────────────────────────────────────────
+
+  #[test]
+  fn hist_delete_by_id_removes_entry() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": kept".into()).unwrap();
+    h.push(": doomed".into()).unwrap();
+    // Delete the second entry by id.
+    test_input("hist --delete 2").unwrap();
+    g.read_output(); // drain --delete output
+    // Now re-list; the doomed entry should be gone.
+    test_input("hist").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": kept"), "got: {out:?}");
+    assert!(!out.contains(": doomed"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_restore_brings_back_deleted_entries() {
+    let g = TestGuard::new();
+    let h = fresh_history("shed_history");
+    h.push(": one".into()).unwrap();
+    h.push(": two".into()).unwrap();
+    // Delete both — creates the backup table.
+    test_input("hist --delete --contains :").unwrap();
+    g.read_output();
+    // Now restore.
+    test_input("hist --restore").unwrap();
+    g.read_output();
+    // Re-list: both entries should reappear.
+    test_input("hist").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": one"), "got: {out:?}");
+    assert!(out.contains(": two"), "got: {out:?}");
+  }
+
+  #[test]
+  fn hist_restore_with_no_backup_errors() {
+    let _g = TestGuard::new();
+    let _h = fresh_history("shed_history");
+    // No prior --delete → no backup table → restore fails.
+    test_input("hist --restore").ok();
+    assert_ne!(Shed::get_status(), 0);
+  }
+
+  // ─── --pull just refreshes caches ──────────────────────────────────
+
+  #[test]
+  fn hist_pull_returns_ok() {
+    let _g = TestGuard::new();
+    let _h = fresh_history("shed_history");
+    test_input("hist --pull").unwrap();
+    assert_eq!(Shed::get_status(), 0);
+  }
+
+  // ─── --import reads a file and pushes entries ──────────────────────
+
+  #[test]
+  fn hist_import_adds_entries_from_bash_format_file() {
+    let g = TestGuard::new();
+    let _h = fresh_history("shed_history");
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join(".bash_history");
+    std::fs::write(
+      &path,
+      "#1700000000\n: imported-one\n#1700000001\n: imported-two\n",
+    )
+    .unwrap();
+    test_input(format!("hist --import {}", path.display())).unwrap();
+    g.read_output(); // drain "imported N" + entries dump
+    // Verify the entries are queryable via a follow-up list.
+    test_input("hist").unwrap();
+    let out = g.read_output();
+    assert!(out.contains(": imported-one"), "got: {out:?}");
+    assert!(out.contains(": imported-two"), "got: {out:?}");
   }
 }

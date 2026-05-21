@@ -161,12 +161,13 @@ pub fn double_bracket_test(node: Node) -> ShResult<bool> {
             }
           }
           UnaryOp::Symlink => {
-            let path = PathBuf::from(operand.as_str());
-            if path.exists() {
-              path.metadata().unwrap().file_type().is_symlink()
-            } else {
-              false
-            }
+            // symlink_metadata = lstat: returns the symlink's own metadata
+            // rather than following to the target. `metadata()` here would
+            // always report the *target's* file type and never see the
+            // symlink itself.
+            std::fs::symlink_metadata(operand.as_str())
+              .map(|m| m.file_type().is_symlink())
+              .unwrap_or(false)
           }
           UnaryOp::Readable => nix::unistd::access(operand.as_str(), AccessFlags::R_OK).is_ok(),
           UnaryOp::Writable => nix::unistd::access(operand.as_str(), AccessFlags::W_OK).is_ok(),
@@ -641,5 +642,262 @@ mod tests {
     use super::TestOp;
     use std::str::FromStr;
     assert!(TestOp::from_str("~=").is_err());
+  }
+
+  // ─── Symlink (-h / -L) ──────────────────────────────────────────────
+
+  #[test]
+  fn test_symlink_true() {
+    let _g = TestGuard::new();
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target");
+    fs::write(&target, b"hi").unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    test_input(format!("[[ -h {} ]]", link.display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_symlink_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -h {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_symlink_capital_l_alias() {
+    let _g = TestGuard::new();
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target");
+    fs::write(&target, b"hi").unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    test_input(format!("[[ -L {} ]]", link.display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Executable (-x) ────────────────────────────────────────────────
+
+  #[test]
+  fn test_executable_true() {
+    use std::os::unix::fs::PermissionsExt;
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    let mut perms = fs::metadata(file.path()).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(file.path(), perms).unwrap();
+    test_input(format!("[[ -x {} ]]", file.path().display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_executable_false() {
+    use std::os::unix::fs::PermissionsExt;
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    let mut perms = fs::metadata(file.path()).unwrap().permissions();
+    perms.set_mode(0o644);
+    fs::set_permissions(file.path(), perms).unwrap();
+    test_input(format!("[[ -x {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── NamedPipe (-p) ─────────────────────────────────────────────────
+
+  #[test]
+  fn test_named_pipe_true() {
+    let _g = TestGuard::new();
+    let dir = TempDir::new().unwrap();
+    let fifo = dir.path().join("myfifo");
+    nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    test_input(format!("[[ -p {} ]]", fifo.display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_named_pipe_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -p {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Socket (-S) ────────────────────────────────────────────────────
+
+  #[test]
+  fn test_socket_true() {
+    let _g = TestGuard::new();
+    let dir = TempDir::new().unwrap();
+    let sock_path = dir.path().join("test.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&sock_path).unwrap();
+    test_input(format!("[[ -S {} ]]", sock_path.display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_socket_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -S {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── BlockSpecial (-b) / CharSpecial (-c) ───────────────────────────
+
+  #[test]
+  fn test_block_special_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -b {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_char_special_true_dev_null() {
+    let _g = TestGuard::new();
+    // /dev/null is a character special device on every reasonable unix.
+    test_input("[[ -c /dev/null ]]").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_char_special_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -c {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Sticky (-k) ────────────────────────────────────────────────────
+
+  #[test]
+  fn test_sticky_true_tmpdir() {
+    let _g = TestGuard::new();
+    // /tmp has the sticky bit set on every standard Linux setup.
+    test_input("[[ -k /tmp ]]").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_sticky_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -k {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── UIDOwner (-O) / GIDOwner (-G) ──────────────────────────────────
+
+  #[test]
+  fn test_uid_owner_true_on_self_created_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -O {} ]]", file.path().display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_gid_owner_true_on_self_created_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -G {} ]]", file.path().display())).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_uid_owner_false_on_nonexistent_path() {
+    let _g = TestGuard::new();
+    test_input("[[ -O /__nope_xyz_123 ]]").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── SetUID (-u) / SetGID (-g) ──────────────────────────────────────
+
+  #[test]
+  fn test_setuid_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -u {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_setgid_false_on_regular_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    test_input(format!("[[ -g {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── ModifiedSinceStatusChange (-N) ─────────────────────────────────
+
+  #[test]
+  fn test_modified_since_ctime_false_on_fresh_file() {
+    let _g = TestGuard::new();
+    let file = NamedTempFile::new().unwrap();
+    // A brand-new file has mtime == ctime, so mtime > ctime is false.
+    test_input(format!("[[ -N {} ]]", file.path().display())).unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Terminal (-t) ──────────────────────────────────────────────────
+
+  #[test]
+  fn test_terminal_false_on_pipe_stdin() {
+    let _g = TestGuard::new();
+    // TestGuard redirects stdin to a pipe, not a tty.
+    test_input("[[ -t 0 ]]").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_terminal_true_on_pty_stdout() {
+    let _g = TestGuard::new();
+    // TestGuard redirects stdout to the pty slave, which is a real tty.
+    test_input("[[ -t 1 ]]").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_terminal_non_numeric_operand_is_false() {
+    let _g = TestGuard::new();
+    test_input("[[ -t notanumber ]]").unwrap();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Conjunction short-circuit ──────────────────────────────────────
+
+  #[test]
+  fn test_and_short_circuits_on_first_false() {
+    // The second operand here would error if evaluated (bad integer),
+    // but `&&` short-circuits.
+    let _g = TestGuard::new();
+    test_input("[[ -z nonempty && abc -eq 5 ]]").unwrap();
+    // First clause is false (nonempty isn't empty), and short-circuit
+    // means the bad-int clause is never reached → no error, status nonzero.
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn test_or_short_circuits_on_first_true() {
+    let _g = TestGuard::new();
+    test_input("[[ -n nonempty || abc -eq 5 ]]").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ─── Misc errors ────────────────────────────────────────────────────
+
+  #[test]
+  fn test_regex_invalid_pattern_errors() {
+    let _g = TestGuard::new();
+    // Unclosed character class — invalid regex. The handler returns
+    // Err(SyntaxErr) which test_input surfaces as an Err.
+    let result = test_input(r#"[[ abc =~ "[" ]]"#);
+    assert!(
+      result.is_err(),
+      "invalid regex pattern should propagate an error"
+    );
   }
 }

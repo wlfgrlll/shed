@@ -42,11 +42,9 @@ fn has_braces(s: &str) -> bool {
     ',' if qt_state.outside() && depth == 1 => {
       has_comma = true;
     }
-    '.' if qt_state.outside() && depth == 1 => {
-      if chars.peek() == Some(&'.') {
-        chars.next();
-        has_range = true;
-      }
+    '.' if qt_state.outside() && depth == 1 && chars.peek() == Some(&'.') => {
+      chars.next();
+      has_range = true;
     }
     _ => {}
   });

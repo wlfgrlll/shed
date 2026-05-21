@@ -1322,4 +1322,302 @@ mod tests {
     let _g = TestGuard::new();
     assert_eq!(arith("(undef_var + 1)"), 1.0);
   }
+
+  // ===================== Comparison: Gt / Ge =====================
+
+  #[test]
+  fn arith_gt_true() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(5 > 3)"), 1.0);
+  }
+
+  #[test]
+  fn arith_gt_false() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(3 > 5)"), 0.0);
+  }
+
+  #[test]
+  fn arith_ge_equal() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(5 >= 5)"), 1.0);
+  }
+
+  #[test]
+  fn arith_ge_false() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(3 >= 5)"), 0.0);
+  }
+
+  // ===================== Bitwise =====================
+
+  #[test]
+  fn arith_bit_and() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(12 & 10)"), 8.0); // 1100 & 1010 = 1000
+  }
+
+  #[test]
+  fn arith_bit_or() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(12 | 10)"), 14.0); // 1100 | 1010 = 1110
+  }
+
+  #[test]
+  fn arith_bit_xor() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(12 ^ 10)"), 6.0); // 1100 ^ 1010 = 0110
+  }
+
+  #[test]
+  fn arith_bit_not() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(~0)"), -1.0);
+    assert_eq!(arith("(~5)"), -6.0);
+  }
+
+  #[test]
+  fn arith_shift_left() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(1 << 4)"), 16.0);
+  }
+
+  #[test]
+  fn arith_shift_right() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(64 >> 2)"), 16.0);
+  }
+
+  // ===================== Unary plus =====================
+
+  #[test]
+  fn arith_unary_plus() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(+5)"), 5.0);
+    assert_eq!(arith("(3 + +2)"), 5.0);
+  }
+
+  // ===================== Compound assignment ops =====================
+
+  #[test]
+  fn arith_minus_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("10".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x -= 3)"), 7.0);
+    assert_eq!(try_var!("x").unwrap(), "7");
+  }
+
+  #[test]
+  fn arith_mul_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("6".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x *= 7)"), 42.0);
+    assert_eq!(try_var!("x").unwrap(), "42");
+  }
+
+  #[test]
+  fn arith_div_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("20".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x /= 4)"), 5.0);
+    assert_eq!(try_var!("x").unwrap(), "5");
+  }
+
+  #[test]
+  fn arith_mod_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("17".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x %= 5)"), 2.0);
+    assert_eq!(try_var!("x").unwrap(), "2");
+  }
+
+  #[test]
+  fn arith_bit_and_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("12".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x &= 10)"), 8.0);
+  }
+
+  #[test]
+  fn arith_bit_or_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("12".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x |= 3)"), 15.0);
+  }
+
+  #[test]
+  fn arith_bit_xor_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("12".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x ^= 10)"), 6.0);
+  }
+
+  #[test]
+  fn arith_shift_l_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("1".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x <<= 3)"), 8.0);
+  }
+
+  #[test]
+  fn arith_shift_r_assign() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("32".into()), VarFlags::empty())).unwrap();
+    assert_eq!(arith("(x >>= 2)"), 8.0);
+  }
+
+  // ===================== Postfix/Prefix decrement =====================
+
+  #[test]
+  fn arith_postfix_dec() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
+    // post-dec yields the pre-decrement value
+    assert_eq!(arith("(x--)"), 5.0);
+    assert_eq!(try_var!("x").unwrap(), "4");
+  }
+
+  #[test]
+  fn arith_prefix_dec() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
+    // pre-dec yields the new value
+    assert_eq!(arith("(--x)"), 4.0);
+    assert_eq!(try_var!("x").unwrap(), "4");
+  }
+
+  // ===================== Ternary =====================
+
+  #[test]
+  fn arith_ternary_true_branch() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(1 ? 42 : 99)"), 42.0);
+  }
+
+  #[test]
+  fn arith_ternary_false_branch() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(0 ? 42 : 99)"), 99.0);
+  }
+
+  #[test]
+  fn arith_ternary_short_circuits_unevaluated_side() {
+    // x in the true branch should NOT be evaluated when the condition
+    // is false. If it were, an undefined var would still resolve to 0,
+    // so this is more about exercising the Jump opcode than detecting
+    // side effects, but it confirms the control-flow path.
+    let _g = TestGuard::new();
+    assert_eq!(arith("(0 ? 1/0 : 7)"), 7.0); // 1/0 would error if evaluated
+  }
+
+  // ===================== Logical && / || short-circuit =====================
+
+  #[test]
+  fn arith_and_short_circuits_on_zero() {
+    let _g = TestGuard::new();
+    // 0 && (1/0) — should not evaluate the RHS, so no div-by-zero.
+    assert_eq!(arith("(0 && 1/0)"), 0.0);
+  }
+
+  #[test]
+  fn arith_or_short_circuits_on_nonzero() {
+    let _g = TestGuard::new();
+    assert_eq!(arith("(1 || 1/0)"), 1.0);
+  }
+
+  // ===================== Error paths =====================
+
+  #[test]
+  fn arith_division_by_zero_errors() {
+    let _g = TestGuard::new();
+    assert!(expand_arithmetic("(5 / 0)").is_err());
+  }
+
+  #[test]
+  fn arith_modulo_by_zero_errors() {
+    let _g = TestGuard::new();
+    assert!(expand_arithmetic("(5 % 0)").is_err());
+  }
+
+  #[test]
+  fn arith_div_assign_by_zero_errors() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
+    assert!(expand_arithmetic("(x /= 0)").is_err());
+  }
+
+  #[test]
+  fn arith_mod_assign_by_zero_errors() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("x", VarKind::Str("5".into()), VarFlags::empty())).unwrap();
+    assert!(expand_arithmetic("(x %= 0)").is_err());
+  }
+
+  // ===================== ArithOp::from_str =====================
+  //
+  // One test per operator string, plus the error path. Uses `matches!` to
+  // avoid requiring a PartialEq impl on ArithOp (the enum is module-private
+  // and doesn't have one).
+
+  macro_rules! parse_op {
+    ($name:ident, $input:expr, $variant:pat) => {
+      #[test]
+      fn $name() {
+        let parsed = $input.parse::<ArithOp>().expect("should parse");
+        assert!(
+          matches!(parsed, $variant),
+          "got {parsed:?}, expected to match {}",
+          stringify!($variant)
+        );
+      }
+    };
+  }
+
+  // Math
+  parse_op!(arithop_add, "+", ArithOp::Add);
+  parse_op!(arithop_sub, "-", ArithOp::Sub);
+  parse_op!(arithop_mul, "*", ArithOp::Mul);
+  parse_op!(arithop_div, "/", ArithOp::Div);
+  parse_op!(arithop_mod, "%", ArithOp::Mod);
+
+  // Comparison
+  parse_op!(arithop_lt, "<", ArithOp::Lt);
+  parse_op!(arithop_gt, ">", ArithOp::Gt);
+  parse_op!(arithop_le, "<=", ArithOp::Le);
+  parse_op!(arithop_ge, ">=", ArithOp::Ge);
+  parse_op!(arithop_eq, "==", ArithOp::Eq);
+  parse_op!(arithop_ne, "!=", ArithOp::Ne);
+
+  // Logical
+  parse_op!(arithop_and, "&&", ArithOp::And);
+  parse_op!(arithop_or, "||", ArithOp::Or);
+
+  // Bitwise
+  parse_op!(arithop_bit_and, "&", ArithOp::BitAnd);
+  parse_op!(arithop_bit_or, "|", ArithOp::BitOr);
+  parse_op!(arithop_bit_xor, "^", ArithOp::BitXor);
+  parse_op!(arithop_shift_l, "<<", ArithOp::ShiftL);
+  parse_op!(arithop_shift_r, ">>", ArithOp::ShiftR);
+
+  // Assignment
+  parse_op!(arithop_assign, "=", ArithOp::Assign);
+  parse_op!(arithop_plus_assign, "+=", ArithOp::PlusAssign);
+  parse_op!(arithop_minus_assign, "-=", ArithOp::MinusAssign);
+  parse_op!(arithop_mul_assign, "*=", ArithOp::MulAssign);
+  parse_op!(arithop_div_assign, "/=", ArithOp::DivAssign);
+  parse_op!(arithop_mod_assign, "%=", ArithOp::ModAssign);
+  parse_op!(arithop_bit_and_assign, "&=", ArithOp::BitAndAssign);
+  parse_op!(arithop_bit_or_assign, "|=", ArithOp::BitOrAssign);
+  parse_op!(arithop_bit_xor_assign, "^=", ArithOp::BitXorAssign);
+  parse_op!(arithop_shift_l_assign, "<<=", ArithOp::ShiftLAssign);
+  parse_op!(arithop_shift_r_assign, ">>=", ArithOp::ShiftRAssign);
+
+  // Error path
+  #[test]
+  fn arithop_unknown_string_errors() {
+    assert!("@@".parse::<ArithOp>().is_err());
+    assert!("===".parse::<ArithOp>().is_err());
+    assert!("".parse::<ArithOp>().is_err());
+    assert!("foo".parse::<ArithOp>().is_err());
+  }
 }

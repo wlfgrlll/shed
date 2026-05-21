@@ -4,6 +4,7 @@ flamegraph.svg
 perf*
 lcov.*
 crap.*
+coverage
 .idea
 *.iml
 /result*

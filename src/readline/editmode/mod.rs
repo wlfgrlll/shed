@@ -197,3 +197,235 @@ pub fn common_cmds(key: E) -> Option<EditCmd> {
   }
   Some(pending_cmd)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn key(code: K, mods: M) -> E {
+    E(code, mods)
+  }
+
+  // ─── Motion-only mappings ────────────────────────────────────────────
+
+  #[test]
+  fn common_home_maps_to_start_of_line() {
+    let cmd = common_cmds(key(K::Home, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::StartOfLine));
+    assert!(cmd.verb().is_none());
+  }
+
+  #[test]
+  fn common_end_maps_to_end_of_line() {
+    let cmd = common_cmds(key(K::End, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::EndOfLine));
+  }
+
+  #[test]
+  fn common_left_maps_to_backward_char() {
+    let cmd = common_cmds(key(K::Left, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::BackwardChar));
+  }
+
+  #[test]
+  fn common_right_maps_to_forward_char() {
+    let cmd = common_cmds(key(K::Right, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::ForwardChar));
+  }
+
+  #[test]
+  fn common_ctrl_left_word_backward() {
+    let cmd = common_cmds(key(K::Left, M::CTRL)).unwrap();
+    assert!(cmd.motion_is(Motion::WordMotion(
+      To::Start,
+      Word::Normal,
+      Direction::Backward,
+    )));
+  }
+
+  #[test]
+  fn common_ctrl_right_word_forward() {
+    let cmd = common_cmds(key(K::Right, M::CTRL)).unwrap();
+    assert!(cmd.motion_is(Motion::WordMotion(
+      To::Start,
+      Word::Normal,
+      Direction::Forward,
+    )));
+  }
+
+  // ─── Verb-only mappings ──────────────────────────────────────────────
+
+  #[test]
+  fn common_tab_inserts_tab_char() {
+    let cmd = common_cmds(key(K::Tab, M::NONE)).unwrap();
+    assert!(cmd.verb_is(Verb::InsertChar('\t')));
+  }
+
+  #[test]
+  fn common_enter_accepts_line() {
+    let cmd = common_cmds(key(K::Enter, M::NONE)).unwrap();
+    assert!(cmd.verb_is(Verb::AcceptLineOrNewline));
+  }
+
+  #[test]
+  fn common_shift_enter_inserts_newline() {
+    let cmd = common_cmds(key(K::Enter, M::SHIFT)).unwrap();
+    assert!(cmd.verb_is(Verb::InsertChar('\n')));
+  }
+
+  #[test]
+  fn common_ctrl_d_end_of_file() {
+    let cmd = common_cmds(key(K::Char('d'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::EndOfFile));
+  }
+
+  #[test]
+  fn common_ctrl_c_interrupt() {
+    let cmd = common_cmds(key(K::Char('c'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::Interrupt));
+  }
+
+  #[test]
+  fn common_ctrl_p_history_up() {
+    let cmd = common_cmds(key(K::Char('p'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::HistoryUp));
+  }
+
+  #[test]
+  fn common_ctrl_n_history_down() {
+    let cmd = common_cmds(key(K::Char('n'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::HistoryDown));
+  }
+
+  #[test]
+  fn common_ctrl_l_clear_screen() {
+    let cmd = common_cmds(key(K::Char('l'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::ClearScreen));
+  }
+
+  #[test]
+  fn common_ctrl_s_accept_hint() {
+    let cmd = common_cmds(key(K::Char('s'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::AcceptHint));
+  }
+
+  // ─── Verb + Motion combos ────────────────────────────────────────────
+
+  #[test]
+  fn common_delete_deletes_forward_char() {
+    let cmd = common_cmds(key(K::Delete, M::NONE)).unwrap();
+    assert!(cmd.verb_is(Verb::Delete));
+    assert!(cmd.motion_is(Motion::ForwardCharForced));
+  }
+
+  #[test]
+  fn common_backspace_deletes_backward_char() {
+    let cmd = common_cmds(key(K::Backspace, M::NONE)).unwrap();
+    assert!(cmd.verb_is(Verb::Delete));
+    assert!(cmd.motion_is(Motion::BackwardCharForced));
+  }
+
+  #[test]
+  fn common_ctrl_h_is_backspace_alias() {
+    let cmd = common_cmds(key(K::Char('h'), M::CTRL)).unwrap();
+    assert!(cmd.verb_is(Verb::Delete));
+    assert!(cmd.motion_is(Motion::BackwardCharForced));
+  }
+
+  // ─── Up/Down with modifier flags ─────────────────────────────────────
+
+  #[test]
+  fn common_up_plain() {
+    let cmd = common_cmds(key(K::Up, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::LineUp));
+    assert!(!cmd.flags.contains(CmdFlags::HAS_SHIFT));
+    assert!(!cmd.flags.contains(CmdFlags::HAS_CTRL));
+  }
+
+  #[test]
+  fn common_shift_up_sets_has_shift_flag() {
+    let cmd = common_cmds(key(K::Up, M::SHIFT)).unwrap();
+    assert!(cmd.motion_is(Motion::LineUp));
+    assert!(cmd.flags.contains(CmdFlags::HAS_SHIFT));
+  }
+
+  #[test]
+  fn common_ctrl_up_sets_has_ctrl_flag() {
+    let cmd = common_cmds(key(K::Up, M::CTRL)).unwrap();
+    assert!(cmd.motion_is(Motion::LineUp));
+    assert!(cmd.flags.contains(CmdFlags::HAS_CTRL));
+  }
+
+  #[test]
+  fn common_down_plain() {
+    let cmd = common_cmds(key(K::Down, M::NONE)).unwrap();
+    assert!(cmd.motion_is(Motion::LineDown));
+    assert!(!cmd.flags.contains(CmdFlags::HAS_SHIFT));
+    assert!(!cmd.flags.contains(CmdFlags::HAS_CTRL));
+  }
+
+  #[test]
+  fn common_shift_down_sets_has_shift_flag() {
+    let cmd = common_cmds(key(K::Down, M::SHIFT)).unwrap();
+    assert!(cmd.motion_is(Motion::LineDown));
+    assert!(cmd.flags.contains(CmdFlags::HAS_SHIFT));
+  }
+
+  #[test]
+  fn common_ctrl_down_sets_has_ctrl_flag() {
+    let cmd = common_cmds(key(K::Down, M::CTRL)).unwrap();
+    assert!(cmd.motion_is(Motion::LineDown));
+    assert!(cmd.flags.contains(CmdFlags::HAS_CTRL));
+  }
+
+  #[test]
+  fn common_up_shift_takes_precedence_over_ctrl() {
+    // The code is `if SHIFT { ... } else if CTRL { ... }` — so when
+    // both are set, SHIFT wins and HAS_CTRL stays unset.
+    let cmd = common_cmds(key(K::Up, M::SHIFT | M::CTRL)).unwrap();
+    assert!(cmd.flags.contains(CmdFlags::HAS_SHIFT));
+    assert!(!cmd.flags.contains(CmdFlags::HAS_CTRL));
+  }
+
+  // ─── Unmapped keys → None ────────────────────────────────────────────
+
+  #[test]
+  fn common_unmapped_key_returns_none() {
+    // A plain letter with no modifiers isn't in the common table.
+    assert!(common_cmds(key(K::Char('a'), M::NONE)).is_none());
+    // Random control key not in the list.
+    assert!(common_cmds(key(K::Char('q'), M::CTRL)).is_none());
+    // Function key — not handled here.
+    assert!(common_cmds(key(K::F(5), M::NONE)).is_none());
+  }
+
+  // ─── ModeReport::as_edit_mode round-trip ────────────────────────
+
+  #[test]
+  fn as_edit_mode_round_trips_through_report_mode() {
+    // Each variant should construct an EditMode whose `report_mode()`
+    // returns the original variant. Acts as a sanity check that the
+    // 1:1 mapping isn't drifted (e.g., Insert → ViNormal by accident).
+    let cases = [
+      ModeReport::Insert,
+      ModeReport::Normal,
+      ModeReport::Ex,
+      ModeReport::Visual,
+      ModeReport::Replace,
+      ModeReport::Verbatim,
+      ModeReport::Emacs,
+      ModeReport::Remote,
+      ModeReport::Search,
+      ModeReport::RevSearch,
+    ];
+    for variant in cases {
+      let mode = variant.as_edit_mode();
+      assert_eq!(
+        mode.report_mode(),
+        variant,
+        "{variant:?} round-tripped to {:?}",
+        mode.report_mode()
+      );
+    }
+  }
+}

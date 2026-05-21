@@ -1144,4 +1144,243 @@ mod tests {
     let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(lines, vec!["foo/bar", "foo"]);
   }
+
+  // ===================== Case conversion =====================
+
+  fn set(name: &str, val: &str) {
+    Shed::vars_mut(|v| v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())).unwrap();
+  }
+
+  #[test]
+  fn param_to_upper_all() {
+    let _g = TestGuard::new();
+    set("x", "hello world");
+    assert_eq!(test_param_expansion("x^^").unwrap(), "HELLO WORLD");
+  }
+
+  #[test]
+  fn param_to_upper_first() {
+    let _g = TestGuard::new();
+    set("x", "hello world");
+    assert_eq!(test_param_expansion("x^").unwrap(), "Hello world");
+  }
+
+  #[test]
+  fn param_to_upper_first_on_empty() {
+    let _g = TestGuard::new();
+    set("x", "");
+    assert_eq!(test_param_expansion("x^").unwrap(), "");
+  }
+
+  #[test]
+  fn param_to_lower_all() {
+    let _g = TestGuard::new();
+    set("x", "HELLO WORLD");
+    assert_eq!(test_param_expansion("x,,").unwrap(), "hello world");
+  }
+
+  #[test]
+  fn param_to_lower_first() {
+    let _g = TestGuard::new();
+    set("x", "HELLO WORLD");
+    assert_eq!(test_param_expansion("x,").unwrap(), "hELLO WORLD");
+  }
+
+  // ===================== SetDefault (with colon) =====================
+
+  #[test]
+  fn param_set_default_unset_or_null_when_unset() {
+    let _g = TestGuard::new();
+    let result = test_param_expansion("NEWVAR:=defaultval").unwrap();
+    assert_eq!(result, "defaultval");
+    // Side effect: variable should now be set.
+    assert_eq!(var!("NEWVAR"), "defaultval");
+  }
+
+  #[test]
+  fn param_set_default_unset_or_null_when_null() {
+    let _g = TestGuard::new();
+    set("EMPTY", "");
+    let result = test_param_expansion("EMPTY:=fallback").unwrap();
+    assert_eq!(result, "fallback");
+    assert_eq!(var!("EMPTY"), "fallback");
+  }
+
+  #[test]
+  fn param_set_default_unset_or_null_when_set_no_op() {
+    let _g = TestGuard::new();
+    set("x", "original");
+    let result = test_param_expansion("x:=replacement").unwrap();
+    assert_eq!(result, "original");
+    assert_eq!(var!("x"), "original");
+  }
+
+  // ===================== AltSetNotNull edge: var unset returns empty =====================
+
+  #[test]
+  fn param_alt_set_not_null_unset_returns_empty() {
+    let _g = TestGuard::new();
+    let result = test_param_expansion("UNSET:+alt").unwrap();
+    assert_eq!(result, "");
+  }
+
+  #[test]
+  fn param_alt_set_not_null_null_returns_empty() {
+    let _g = TestGuard::new();
+    set("EMPTY", "");
+    let result = test_param_expansion("EMPTY:+alt").unwrap();
+    assert_eq!(result, "");
+  }
+
+  // ===================== ErrUnsetOrNull =====================
+
+  #[test]
+  fn param_err_unset_or_null_when_unset() {
+    let _g = TestGuard::new();
+    let result = test_param_expansion("UNSET:?missing!");
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn param_err_unset_or_null_when_null() {
+    let _g = TestGuard::new();
+    set("EMPTY", "");
+    let result = test_param_expansion("EMPTY:?cannot be empty");
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn param_err_unset_or_null_when_set_passes_through() {
+    let _g = TestGuard::new();
+    set("x", "value");
+    let result = test_param_expansion("x:?should not fire").unwrap();
+    assert_eq!(result, "value");
+  }
+
+  #[test]
+  fn param_err_unset_when_unset() {
+    let _g = TestGuard::new();
+    let result = test_param_expansion("UNSET?missing");
+    assert!(result.is_err());
+  }
+
+  // ===================== Slice out-of-bounds =====================
+
+  #[test]
+  fn param_substr_offset_beyond_length() {
+    let _g = TestGuard::new();
+    set("x", "hi");
+    let result = test_param_expansion("x:99").unwrap();
+    // The fallback path returns the original value untouched.
+    assert_eq!(result, "hi");
+  }
+
+  #[test]
+  fn param_substr_len_beyond_end() {
+    let _g = TestGuard::new();
+    set("x", "ab");
+    // start=0, end=0+99=99 — out of bounds → fallback returns full value.
+    let result = test_param_expansion("x:0:99").unwrap();
+    assert_eq!(result, "ab");
+  }
+
+  // ===================== ReplacePrefix / ReplaceSuffix (execution) =====================
+
+  #[test]
+  fn param_replace_prefix_matches() {
+    let _g = TestGuard::new();
+    set("x", "hello world");
+    let result = test_param_expansion("x/#hello/HI").unwrap();
+    assert_eq!(result, "HI world");
+  }
+
+  #[test]
+  fn param_replace_prefix_no_match() {
+    let _g = TestGuard::new();
+    set("x", "world hello");
+    let result = test_param_expansion("x/#hello/HI").unwrap();
+    assert_eq!(result, "world hello");
+  }
+
+  #[test]
+  fn param_replace_suffix_matches() {
+    let _g = TestGuard::new();
+    set("x", "hello world");
+    let result = test_param_expansion("x/%world/EARTH").unwrap();
+    assert_eq!(result, "hello EARTH");
+  }
+
+  #[test]
+  fn param_replace_suffix_no_match() {
+    let _g = TestGuard::new();
+    set("x", "world hello");
+    let result = test_param_expansion("x/%world/EARTH").unwrap();
+    assert_eq!(result, "world hello");
+  }
+
+  // ===================== VarNamesWithPrefix =====================
+
+  #[test]
+  fn param_var_names_with_prefix_returns_empty_for_glob_form() {
+    // Pinning current behavior: the parser keeps the trailing `*` as
+    // part of the prefix string, so `starts_with("PREFIX_*")` only
+    // matches names that literally contain `*` (i.e., nothing real).
+    // If/when the glob-prefix logic is fixed to strip the `*`, this
+    // test should switch to checking that PREFIX_one and PREFIX_two
+    // are returned.
+    let _g = TestGuard::new();
+    set("PREFIX_one", "1");
+    set("PREFIX_two", "2");
+    let result = test_param_expansion("!PREFIX_*").unwrap();
+    assert_eq!(result, "");
+  }
+
+  // ===================== nounset error path =====================
+
+  #[test]
+  fn param_nounset_unset_var_errors() {
+    let _g = TestGuard::new();
+    Shed::shopts_mut(|o| o.set.nounset = true);
+    // Bare expansion of an unset var with `set -u` should error.
+    let result = test_param_expansion("DEFINITELY_NOT_SET_zzz");
+    assert!(result.is_err());
+  }
+
+  // ===================== Length with array index branches =====================
+
+  #[test]
+  fn param_length_of_array_size_via_at() {
+    let _g = TestGuard::new();
+    test_input("arr=(a b c d)").unwrap();
+    // `${#arr[@]}` returns the element count.
+    let result = test_param_expansion("#arr[@]").unwrap();
+    assert_eq!(result, "4");
+  }
+
+  #[test]
+  fn param_length_of_array_element() {
+    let _g = TestGuard::new();
+    test_input("arr=(hello world!)").unwrap();
+    // `${#arr[0]}` returns the length of the first element.
+    let result = test_param_expansion("#arr[0]").unwrap();
+    assert_eq!(result, "5");
+  }
+
+  // ===================== Status side effects from compare() =====================
+
+  #[test]
+  fn param_uppercase_sets_status_zero_on_change() {
+    let _g = TestGuard::new();
+    set("x", "hello");
+    test_param_expansion("x^^").unwrap();
+    assert_eq!(Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn param_uppercase_sets_status_one_when_unchanged() {
+    let _g = TestGuard::new();
+    set("x", "ALREADY_UPPER");
+    test_param_expansion("x^^").unwrap();
+    assert_eq!(Shed::get_status(), 1);
+  }
 }

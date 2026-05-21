@@ -445,21 +445,6 @@ impl super::LineBuf {
     }
   }
 
-  pub fn enumerate_graphemes(lines: &Lines) -> Vec<(Pos, Grapheme)> {
-    lines
-      .iter()
-      .enumerate()
-      .flat_map(|(row, line)| {
-        line
-          .graphemes()
-          .iter()
-          .cloned()
-          .enumerate()
-          .map(move |(col, g)| (Pos { row, col }, g))
-      })
-      .collect()
-  }
-
   pub fn with_initial(mut self, s: &str, cursor_pos: usize) -> Self {
     self.set_buffer(s.to_string());
     // In the flat model, cursor_pos was a flat offset. Map to col on row .

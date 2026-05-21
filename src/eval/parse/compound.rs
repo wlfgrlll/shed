@@ -408,16 +408,7 @@ impl ParseStream {
     if !self.check_keyword("function") || !self.next_tk_is_some() {
       return Ok(None);
     }
-
-    let Some(func_def) = self.parse_func_def()? else {
-      bail!(
-        self,
-        vec![],
-        "Malformed function definition after 'function' keyword"
-      );
-    };
-
-    Ok(Some(func_def))
+    self.parse_func_def()
   }
   pub(super) fn parse_arith(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks: Vec<Tk> = vec![];
@@ -750,5 +741,265 @@ impl ParseStream {
       },
       redirs
     )))
+  }
+}
+
+#[cfg(test)]
+mod parse_for_arith_tests {
+  //! End-to-end tests for C-style arithmetic `for` loops, which take
+  //! the parse_for_arith branch of compound parsing.
+
+  use crate::state;
+  use crate::tests::testutil::{TestGuard, test_input};
+
+  #[test]
+  fn basic_arith_for_loop_runs_n_iterations() {
+    let g = TestGuard::new();
+    test_input("for (( i=0; i<3; i=i+1 )); do echo $i; done").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "0\n1\n2\n", "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn arith_for_loop_with_empty_body_runs() {
+    let _g = TestGuard::new();
+    test_input("for (( i=0; i<3; i=i+1 )); do :; done").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn arith_for_loop_with_falsy_initial_cond_skips_body() {
+    let g = TestGuard::new();
+    test_input("for (( i=5; i<5; i=i+1 )); do echo hit; done").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "");
+  }
+
+  // Note: missing `do` / `done` cause parse errors that print but
+  // don't propagate to `$?` (exec_input's parser branch prints errors
+  // then returns Ok). They're observable via stderr but not status,
+  // so we don't include them as direct branch tests.
+
+  #[test]
+  fn arith_for_loop_with_arithmetic_in_body() {
+    let g = TestGuard::new();
+    test_input("total=0; for (( i=1; i<=3; i=i+1 )); do total=$((total+i)); done; echo $total")
+      .unwrap();
+    let out = g.read_output();
+    assert!(out.contains("6"), "expected 1+2+3=6, got: {out:?}");
+  }
+
+  #[test]
+  fn arith_for_loop_with_redirect_on_done() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    test_input(format!(
+      "for (( i=0; i<2; i=i+1 )); do echo $i; done > {}",
+      path.display()
+    ))
+    .unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(content, "0\n1\n");
+  }
+}
+
+#[cfg(test)]
+mod compound_parse_error_tests {
+  //! Targets uncovered error paths in compound parsing. We use
+  //! `get_ast` which returns Err when parsing fails; for happy-path
+  //! coverage of normally-reached-but-missed branches, we run the
+  //! input end-to-end via `test_input`.
+
+  use crate::tests::testutil::{TestGuard, get_ast, test_input};
+
+  // ─── subshell body errors ──────────────────────────────────────────
+
+  #[test]
+  fn subshell_with_leading_pipe_errors() {
+    // `parse_conjunction` returns None when next is an operator that
+    // can't start a command. The else-branch error fires.
+    let _g = TestGuard::new();
+    assert!(get_ast("( | echo foo )").is_err());
+  }
+
+  #[test]
+  fn unclosed_subshell_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("(echo foo").is_err());
+  }
+
+  // ─── brace group body errors ───────────────────────────────────────
+
+  #[test]
+  fn brace_group_with_leading_pipe_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("{ | echo foo; }").is_err());
+  }
+
+  #[test]
+  fn unclosed_brace_group_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("{ echo foo").is_err());
+  }
+
+  // ─── case parsing errors ───────────────────────────────────────────
+
+  #[test]
+  fn bare_case_with_no_pattern_token_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("case").is_err());
+  }
+
+  #[test]
+  fn case_immediately_followed_by_in_keyword_errors() {
+    // Hits the explicit `pat_tk.span.as_str() == "in"` check.
+    let _g = TestGuard::new();
+    assert!(get_ast("case in foo) ;; esac").is_err());
+  }
+
+  #[test]
+  fn case_missing_in_after_variable_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("case x foo) ;; esac").is_err());
+  }
+
+  // ─── case double-semi happy path (the *normal* break) ──────────────
+
+  #[test]
+  fn case_with_empty_arm_takes_double_semi_break() {
+    // `;;` immediately after the pattern — the `if sep.has_double_semi()`
+    // branch in the inner `while check_separator` loop fires.
+    let g = TestGuard::new();
+    test_input("case foo in foo) ;; esac").unwrap();
+    let out = g.read_output();
+    assert_eq!(out, "");
+  }
+
+  // ─── parse_time happy path ─────────────────────────────────────────
+
+  #[test]
+  fn time_wraps_a_command() {
+    // Whole function body — `time` keyword consumed, inner command
+    // parsed via parse_block(true), flags walked.
+    let g = TestGuard::new();
+    test_input("time echo hello_from_time").unwrap();
+    assert!(g.read_output().contains("hello_from_time"));
+  }
+
+  #[test]
+  fn time_with_no_following_command_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("time").is_err());
+  }
+
+  // ─── parse_arith happy path ────────────────────────────────────────
+
+  #[test]
+  fn standalone_arithmetic_command_parses() {
+    // (( expr )) as a standalone command — exercises parse_arith
+    // from check_flags(IS_ARITH) through to the Arithmetic node.
+    let _g = TestGuard::new();
+    test_input("(( 1 + 2 ))").unwrap();
+  }
+
+  #[test]
+  fn arithmetic_command_with_trailing_arg_errors() {
+    // The `matches!(self.next_tk_class(), TkRule::Str)` check after
+    // parse_redir fires.
+    let _g = TestGuard::new();
+    assert!(get_ast("(( 1 + 2 )) extra_arg").is_err());
+  }
+
+  // ─── negation error ────────────────────────────────────────────────
+
+  #[test]
+  fn bare_bang_with_no_command_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("!").is_err());
+  }
+
+  // ─── if-then missing ───────────────────────────────────────────────
+
+  #[test]
+  fn if_without_then_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("if echo foo; echo bar; fi").is_err());
+  }
+
+  // ─── C-style for: missing do / commands / done ─────────────────────
+
+  #[test]
+  fn arith_for_without_do_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for (( i=0; i<3; i=i+1 )); echo $i; done").is_err());
+  }
+
+  #[test]
+  fn arith_for_with_empty_body_errors() {
+    // parse_cmd_list returns None when next is the `done` keyword.
+    let _g = TestGuard::new();
+    assert!(get_ast("for (( i=0; i<3; i=i+1 )); do done").is_err());
+  }
+
+  #[test]
+  fn arith_for_without_done_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for (( i=0; i<3; i=i+1 )); do echo $i;").is_err());
+  }
+
+  // ─── array-style for: missing var / do / done / commands ───────────
+
+  #[test]
+  fn for_with_in_but_no_variable_errors() {
+    // `for in 1 2 3` — first token after `for` is `in`, so vars stays
+    // empty and the early bail at 637 fires.
+    let _g = TestGuard::new();
+    assert!(get_ast("for in 1 2 3; do echo $x; done").is_err());
+  }
+
+  #[test]
+  fn for_arr_without_do_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for x in 1 2 3; echo $x; done").is_err());
+  }
+
+  #[test]
+  fn for_arr_with_empty_body_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for x in 1 2 3; do done").is_err());
+  }
+
+  #[test]
+  fn for_arr_without_done_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for x in 1 2 3; do echo $x;").is_err());
+  }
+
+  // ─── while/until: missing command after keyword / missing do ───────
+
+  #[test]
+  fn while_with_no_condition_command_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("while ; do echo; done").is_err());
+  }
+
+  #[test]
+  fn until_with_no_condition_command_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("until ; do echo; done").is_err());
+  }
+
+  #[test]
+  fn while_without_do_after_condition_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("while true; echo; done").is_err());
+  }
+
+  #[test]
+  fn until_without_do_after_condition_errors() {
+    let _g = TestGuard::new();
+    assert!(get_ast("until false; echo; done").is_err());
   }
 }

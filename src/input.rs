@@ -83,6 +83,141 @@ fn read_input() -> ShResult<String> {
   Ok(String::from_utf8_lossy(&input).to_string())
 }
 
+#[cfg(test)]
+mod dispatch_input_tests {
+  //! Tests for `dispatch_input`'s routing logic.
+  //!
+  //! What's covered: the `exec_dash_c` and `read_commands` branches —
+  //! both reachable through TestGuard without touching signal handlers,
+  //! sockets, or rc files.
+  //!
+  //! What's not covered: every `edit_script=true` arm and the no-input
+  //! interactive fallback route to `interactive::shed_interactive`,
+  //! which installs process-wide signal handlers, opens a control
+  //! socket on disk, and may execute the user's real ~/.shedrc — not
+  //! safe to invoke from tests without a hermetic harness. The
+  //! `run_script` arm is also gated by stdin being a real tty, which
+  //! TestGuard can't currently provide.
+
+  use super::*;
+  use crate::lifecycle::ShedArgs;
+  use crate::state;
+  use crate::tests::testutil::TestGuard;
+
+  /// Build a minimally-set ShedArgs for the non-interactive paths.
+  fn args(command: Option<&str>, stdin: bool, script_args: Vec<String>) -> ShedArgs {
+    ShedArgs {
+      command: command.map(String::from),
+      script_args,
+      version: false,
+      interactive: false,
+      stdin,
+      login_shell: false,
+      welcome: false,
+      no_rc: true,
+      set: vec![],
+      edit_script: false,
+    }
+  }
+
+  // ─── -c <command> path ──────────────────────────────────────────
+
+  #[test]
+  fn dispatch_command_runs_exec_dash_c() {
+    let g = TestGuard::new();
+    dispatch_input(args(Some("echo cmd_route"), false, vec![])).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("cmd_route"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn dispatch_command_passes_script_args_as_positional() {
+    let g = TestGuard::new();
+    // For -c, script_args become $0, $1, ... so the printed args should
+    // show 'hello' and 'world'.
+    dispatch_input(args(
+      Some("echo $1 $2"),
+      false,
+      vec!["progname".into(), "hello".into(), "world".into()],
+    ))
+    .unwrap();
+    let out = g.read_output();
+    assert!(out.contains("hello world"), "got: {out:?}");
+  }
+
+  #[test]
+  fn dispatch_command_nonzero_exit_propagates_status() {
+    let _g = TestGuard::new();
+    dispatch_input(args(Some("false"), false, vec![])).ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  // ─── read-from-stdin path (explicit -s flag) ────────────────────
+
+  #[test]
+  fn dispatch_stdin_flag_routes_to_read_commands() {
+    let mut g = TestGuard::new();
+    g.feed_stdin(b"echo from_stdin\n");
+    dispatch_input(args(None, true, vec![])).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("from_stdin"), "got: {out:?}");
+  }
+
+  #[test]
+  fn dispatch_stdin_passes_script_args_as_positional() {
+    let mut g = TestGuard::new();
+    g.feed_stdin(b"echo $1 $2\n");
+    // For the stdin path, script_args are pushed wholesale as $1, $2,
+    // ... after preserving the existing $0 (unlike -c, which consumes
+    // the first as the script name).
+    dispatch_input(args(None, true, vec!["one".into(), "two".into()])).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("one two"), "got: {out:?}");
+  }
+
+  // ─── auto-stdin path (no flags, stdin is a pipe → not-a-tty) ────
+
+  #[test]
+  fn dispatch_no_flags_with_non_tty_stdin_reads_commands() {
+    // TestGuard's stdin is a pipe, so isatty(stdin)=false and the
+    // implicit-stdin branch fires without the user setting -s.
+    let mut g = TestGuard::new();
+    g.feed_stdin(b"echo implicit_stdin\n");
+    dispatch_input(args(None, false, vec![])).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("implicit_stdin"), "got: {out:?}");
+  }
+
+  // ─── precedence: -c beats every other arm ───────────────────────
+
+  #[test]
+  fn dispatch_command_beats_stdin_flag() {
+    let mut g = TestGuard::new();
+    // If precedence were wrong, the stdin contents would run and
+    // produce 'should_not_run'; -c's command should win.
+    g.feed_stdin(b"echo should_not_run\n");
+    dispatch_input(args(Some("echo cmd_wins"), true, vec![])).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("cmd_wins"), "got: {out:?}");
+    assert!(!out.contains("should_not_run"), "got: {out:?}");
+  }
+
+  // ─── empty stdin is OK (read returns 0 immediately) ─────────────
+
+  #[test]
+  fn dispatch_stdin_empty_input_is_noop() {
+    let mut g = TestGuard::new();
+    g.feed_stdin(b""); // closes write end → immediate EOF
+    dispatch_input(args(None, true, vec![])).unwrap();
+    // Nothing should have run; status stays whatever the previous test
+    // left, so just check we returned without erroring and produced no
+    // shell output.
+    let out = g.read_output();
+    assert_eq!(out, "");
+  }
+}
+
 pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
   let path = path.as_ref();
   let path_raw = path.to_string_lossy().to_string();

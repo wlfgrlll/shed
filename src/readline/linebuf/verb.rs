@@ -37,6 +37,7 @@ impl super::LineBuf {
       Verb::KillPut /*=================*/ => self.kill_put(),
       Verb::Rot13 /*-------------------*/ => self.rot13(cmd),
       Verb::ReplaceChar(ch) /*=========*/ => self.replace_char(cmd, *ch),
+      Verb::ReplaceCharInplace(ch, count) => self.replace_char_inplace(cmd, *ch, *count),
       Verb::ToggleCaseRange /*---------*/ => self.toggle_case_range(cmd),
       Verb::ToLower /*=================*/ => self.make_lower(cmd),
       Verb::ToUpper /*-----------------*/ => self.make_upper(cmd),
@@ -61,7 +62,6 @@ impl super::LineBuf {
       Verb::Insert(s) /*---------------*/ => Ok(self.insert_str(s)),
       Verb::AcceptLineOrNewline /*-----*/ => Ok(self.insert(Grapheme::from('\n'))),
       Verb::EndOfFile /*===============*/ => Ok(self.lines.clear()),
-      Verb::ReplaceCharInplace(ch, count) => Ok(self.inplace_mutation(*count, |_| Grapheme::from(*ch))),
 
       Verb::Complete
       | Verb::ExMode
@@ -269,6 +269,13 @@ impl super::LineBuf {
     };
     self.motion_mutation(&motion, |_| Grapheme::from(ch));
     self.move_to_start(motion);
+    Ok(())
+  }
+  fn replace_char_inplace(&mut self, cmd: &EditCmd, ch: char, count: u16) -> ShResult<()> {
+    self.inplace_mutation(count, |_| Grapheme::from(ch));
+    if let Some(motion) = self.eval_motion_with_hint(cmd)? {
+      self.apply_motion_with_hint(motion)?;
+    }
     Ok(())
   }
   fn toggle_case_range(&mut self, cmd: &EditCmd) -> ShResult<()> {
@@ -490,16 +497,35 @@ impl super::LineBuf {
     let mut row = self.row();
     let mut count = count;
     if self.select_range().is_some() {
-      let Some(MotionKind::Line {
-        start,
-        end,
-        inclusive,
-      }) = self.eval_motion(cmd)?
-      else {
-        unreachable!()
+      // Derive the row range to join. Prefer a resolved motion (e.g.
+      // when a caller passed Motion::WholeLine); fall back to the
+      // visual selection when the EditCmd carries no motion — that's
+      // the path taken by ViVisual's `J` arm.
+      let (start_row, end_row) = match self.eval_motion(cmd)? {
+        Some(MotionKind::Line { start, end, .. }) => (start, end),
+        Some(MotionKind::Char { start, end, .. }) => (start.row, end.row),
+        Some(MotionKind::Block { .. }) => return Ok(()),
+        None => match self.select_range() {
+          Some(Motion::CharRange(s, e)) => (s.row, e.row),
+          Some(Motion::LineRange(s_addr, e_addr)) => {
+            let s = self
+              .resolve_line_addr(&s_addr)
+              .ok()
+              .flatten()
+              .unwrap_or(self.row());
+            let e = self
+              .resolve_line_addr(&e_addr)
+              .ok()
+              .flatten()
+              .unwrap_or(self.row());
+            (s, e)
+          }
+          Some(Motion::BlockRange(s, e)) => (s.row, e.row),
+          _ => return Ok(()),
+        },
       };
-      let (s, e) = ordered(start, end);
-      count = if inclusive { e - s + 1 } else { e - s };
+      let (s, e) = ordered(start_row, end_row);
+      count = (e - s).max(1);
       row = s;
     }
     self.cursor.exclusive = false;

@@ -2,11 +2,8 @@ use std::{
   collections::{HashMap, HashSet, VecDeque},
   fmt::Write,
   os::{
-    fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
-    unix::{
-      fs::PermissionsExt,
-      net::{UnixListener, UnixStream},
-    },
+    fd::{AsFd, OwnedFd},
+    unix::{fs::PermissionsExt, net::UnixStream},
   },
   path::{Path, PathBuf},
   rc::Rc,
@@ -16,7 +13,7 @@ use std::{
 };
 
 use super::{
-  ShErr, ShResult, Shed,
+  ShResult, Shed,
   builtin::BUILTIN_NAMES,
   crate_util as util,
   expand::{expand_keymap, glob_to_regex},
@@ -24,395 +21,23 @@ use super::{
   keys::KeyEvent,
   logic::AutoCmdKind,
   match_loop,
-  procio::MIN_INTERNAL_FD,
   readline::{Candidate, CompSpec, LineData},
-  sherr, try_var,
+  sherr, socket,
   util::query_db,
-  var,
-  vars::{VarFlags, VarKind},
-  writefd,
+  var, writefd,
 };
-use itertools::{Itertools, izip};
+use itertools::izip;
 use nix::{
   errno::Errno,
-  fcntl::{FcntlArg, fcntl},
   poll::PollTimeout,
   sys::{
     resource::{Usage, UsageWho, getrusage},
-    stat::{FchmodatFlags, Mode, fchmodat},
     time::TimeVal,
     wait::WaitStatus as WtStat,
   },
-  unistd::{Pid, read, write},
+  unistd::{read, write},
 };
 use regex::Regex;
-
-#[derive(Debug)]
-pub(crate) enum StatusHeader {
-  ExitCode,
-  CommandName,
-  Runtime,
-  Pid,
-  Pgid,
-}
-
-#[derive(Debug)]
-pub(crate) enum QueryHeader {
-  Cwd,
-  GetVar(String),
-  SetVar(String, String, VarFlags),
-  Status(Vec<StatusHeader>),
-}
-
-#[derive(Debug)]
-pub(crate) enum SocketRequest {
-  /// Posts a system message. System messages appear above the prompt, the same way that job status notifications do.
-  /// Useful for important information.
-  PostSystemMessage(String),
-  /// Posts a status message. Status messages appear under the prompt, and are short lived. Will only survive redraws for a few seconds.
-  /// Useful for quick notifications.
-  PostStatusMessage(String),
-
-  /// Requests information from the shell. The shell will respond with a SocketResponse containing the requested information, or an error if the query was invalid.
-  Query(QueryHeader),
-
-  /// Opens a subscription to the shell's event stream. The shell will send a SocketResponse for each event that occurs, until the socket or connnection is closed.
-  Subscribe,
-
-  /// Requests the shell to redraw the prompt. The shell will respond by redrawing the prompt, and sending a SocketResponse confirming the redraw.
-  RefreshPrompt,
-
-  LineGet(LineHeader),
-  LineSet(LineHeader, String),
-  LineSendKeys(Vec<KeyEvent>),
-}
-
-#[derive(Debug)]
-pub(crate) enum LineHeader {
-  Buffer,
-  Cursor,
-  Hint,
-  Mode,
-  Anchor,
-}
-
-impl FromStr for SocketRequest {
-  type Err = ShErr;
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    let request_kind = s
-      .chars()
-      .peeking_take_while(|c| c.is_ascii_alphabetic())
-      .collect::<String>()
-      .to_lowercase();
-
-    // take care of no-argument requests
-    match request_kind.trim() {
-      "subscribe" => return Ok(Self::Subscribe),
-      "redraw" => return Ok(Self::RefreshPrompt),
-      _ => {}
-    }
-
-    let rest = s[request_kind.len()..].trim();
-    let mut sep = String::new();
-    let mut rest_chars = rest.chars().peekable();
-
-    // collect the separator
-    while let Some(ch) = rest_chars.peek() {
-      if !ch.is_ascii_alphanumeric() && ch.is_ascii_graphic() {
-        sep.push(*ch);
-        rest_chars.next();
-      } else {
-        break;
-      }
-    }
-    let rest = rest_chars.collect::<String>();
-    let mut args = rest.split(&sep);
-
-    match request_kind.trim() {
-      "msg" => {
-        let Some(msg_kind) = args.next() else {
-          return Err(sherr!(ParseErr, "Missing message kind in 'msg' request",));
-        };
-        match msg_kind.to_lowercase().as_str() {
-          "system" => {
-            let Some(msg) = args.next() else {
-              return Err(sherr!(ParseErr, "Missing message in system msg request",));
-            };
-            Ok(Self::PostSystemMessage(msg.to_string()))
-          }
-          "status" => {
-            let Some(msg) = args.next() else {
-              return Err(sherr!(ParseErr, "Missing message in status msg request",));
-            };
-            Ok(Self::PostStatusMessage(msg.to_string()))
-          }
-          _ => Err(sherr!(
-            ParseErr,
-            "Unknown message kind in 'msg' request: {}",
-            msg_kind,
-          )),
-        }
-      }
-
-      "query" => {
-        let Some(query_kind) = args.next() else {
-          return Err(sherr!(ParseErr, "Missing query kind in 'query' request",));
-        };
-        match query_kind.to_lowercase().as_str() {
-          "cwd" => Ok(Self::Query(QueryHeader::Cwd)),
-          "status" => {
-            let mut headers = vec![];
-            while let Some(header) = args.next() {
-              let status_header = match header.to_lowercase().as_str() {
-                "code" => StatusHeader::ExitCode,
-                "command" => StatusHeader::CommandName,
-                "runtime" => StatusHeader::Runtime,
-                "pid" => StatusHeader::Pid,
-                "pgid" => StatusHeader::Pgid,
-                _ => {
-                  return Err(sherr!(
-                    ParseErr,
-                    "Unknown status header in 'query status' request: {}",
-                    header,
-                  ));
-                }
-              };
-              headers.push(status_header);
-            }
-            if headers.is_empty() {
-              headers = vec![
-                StatusHeader::ExitCode,
-                StatusHeader::CommandName,
-                StatusHeader::Runtime,
-                StatusHeader::Pid,
-                StatusHeader::Pgid,
-              ];
-            }
-            Ok(Self::Query(QueryHeader::Status(headers)))
-          }
-          "var" => {
-            let Some(kind) = args.next() else {
-              return Err(sherr!(ParseErr, "Expected 'get' or 'set' in 'var' query",));
-            };
-            match kind {
-              "get" => {
-                let Some(var_name) = args.next() else {
-                  return Err(sherr!(
-                    ParseErr,
-                    "Missing variable name in 'query var get' request",
-                  ));
-                };
-                Ok(Self::Query(QueryHeader::GetVar(var_name.to_string())))
-              }
-              "set" => {
-                let Some(var_name) = args.next() else {
-                  return Err(sherr!(
-                    ParseErr,
-                    "Missing variable name in 'query var set' request",
-                  ));
-                };
-                let Some(value) = args.next() else {
-                  return Err(sherr!(
-                    ParseErr,
-                    "Missing variable value in 'query var set' request",
-                  ));
-                };
-                let mut flags = VarFlags::empty();
-                while let Some(flag) = args.next() {
-                  match flag.to_lowercase().as_str() {
-                    "export" => flags |= VarFlags::EXPORT,
-                    "local" => flags |= VarFlags::LOCAL,
-                    "readonly" => flags |= VarFlags::READONLY,
-                    _ => {
-                      return Err(sherr!(
-                        ParseErr,
-                        "Unknown variable flag in 'query var set' request: {}",
-                        flag,
-                      ));
-                    }
-                  }
-                }
-                Ok(Self::Query(QueryHeader::SetVar(
-                  var_name.to_string(),
-                  value.to_string(),
-                  flags,
-                )))
-              }
-              _ => Err(sherr!(
-                ParseErr,
-                "Unknown query kind in 'query var' request: {}",
-                kind,
-              )),
-            }
-          }
-          _ => Err(sherr!(
-            ParseErr,
-            "Unknown query kind in 'query' request: {}",
-            query_kind,
-          )),
-        }
-      }
-
-      "line" => {
-        let Some(header) = args.next() else {
-          return Err(sherr!(ParseErr, "Missing line header in 'line' request",));
-        };
-        match header {
-          "get" => {
-            let Some(header2) = args.next() else {
-              return Err(sherr!(
-                ParseErr,
-                "Missing line header kind in 'line get' request",
-              ));
-            };
-            match header2 {
-              "buffer" => Ok(Self::LineGet(LineHeader::Buffer)),
-              "cursor" => Ok(Self::LineGet(LineHeader::Cursor)),
-              "hint" => Ok(Self::LineGet(LineHeader::Hint)),
-              "mode" => Ok(Self::LineGet(LineHeader::Mode)),
-              "anchor" => Ok(Self::LineGet(LineHeader::Anchor)),
-              _ => Err(sherr!(
-                ParseErr,
-                "Unknown line header kind in 'line get' request: {header2}"
-              )),
-            }
-          }
-          "set" => {
-            let Some(header2) = args.next() else {
-              return Err(sherr!(
-                ParseErr,
-                "Missing line header kind in 'line set' request",
-              ));
-            };
-            let Some(value) = args.next() else {
-              return Err(sherr!(ParseErr, "Missing value in 'line set' request",));
-            };
-            match header2 {
-              "buffer" => Ok(Self::LineSet(LineHeader::Buffer, value.to_string())),
-              "cursor" => Ok(Self::LineSet(LineHeader::Cursor, value.to_string())),
-              "hint" => Ok(Self::LineSet(LineHeader::Hint, value.to_string())),
-              "mode" => Ok(Self::LineSet(LineHeader::Mode, value.to_string())),
-              "anchor" => Ok(Self::LineSet(LineHeader::Anchor, value.to_string())),
-              _ => Err(sherr!(
-                ParseErr,
-                "Unknown line header kind in 'line set' request: {header2}"
-              )),
-            }
-          }
-          "keys" => {
-            let Some(value) = args.next() else {
-              return Err(sherr!(ParseErr, "Missing value in 'line keys' request",));
-            };
-            let events = expand_keymap(value);
-            Ok(Self::LineSendKeys(events))
-          }
-          _ => Err(sherr!(
-            ParseErr,
-            "Unknown line request kind in 'line' request: {header}"
-          )),
-        }
-      }
-      _ => Err(sherr!(
-        ParseErr,
-        "Unknown socket request kind: {}",
-        request_kind,
-      )),
-    }
-  }
-}
-
-/// The socket used to expose the system/status message interface
-#[derive(Debug)]
-pub(crate) struct ShedSocket {
-  listener: UnixListener,
-  pid: Pid,
-  path: PathBuf,
-}
-
-impl ShedSocket {
-  pub fn dir() -> String {
-    try_var!("XDG_RUNTIME_DIR").unwrap_or_else(|| format!("/tmp/shed-{}", nix::unistd::getuid()))
-  }
-  pub fn path() -> String {
-    let pid = Pid::this();
-    let runtime_dir = Self::dir();
-    format!("{runtime_dir}/shed/{pid}.sock")
-  }
-  pub fn mode() -> Mode {
-    var!("SHED_SOCK_MODE")
-      .parse::<u32>()
-      .ok()
-      .and_then(Mode::from_bits)
-      .unwrap_or(Mode::S_IRUSR | Mode::S_IWUSR)
-  }
-  pub fn new() -> ShResult<Self> {
-    let runtime_dir = Self::dir();
-    std::fs::create_dir_all(format!("{runtime_dir}/shed"))?;
-
-    let sock_path = Self::path();
-    std::fs::remove_file(&sock_path).ok();
-
-    let listener = UnixListener::bind(&sock_path)?;
-
-    // set the permissions for the socket
-    // default is read/write for user, no access for group/other
-    // this can be overridden using the $SHED_SOCK_MODE env var.
-    let mode = Self::mode();
-
-    fchmodat(
-      nix::fcntl::AT_FDCWD,
-      Path::new(&sock_path),
-      mode,
-      FchmodatFlags::FollowSymlink,
-    )?;
-
-    let high_fd = {
-      let old = listener; // move listener into this lower scope
-      fcntl(old, FcntlArg::F_DUPFD_CLOEXEC(MIN_INTERNAL_FD))
-    }?; // listener drops here, closes
-
-    // repack the high fd here
-    let listener = unsafe { UnixListener::from_raw_fd(high_fd) };
-    listener.set_nonblocking(true).ok();
-
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "SHED_SOCK",
-        VarKind::Str(sock_path.clone()),
-        VarFlags::EXPORT,
-      )
-    })
-    .ok();
-    Ok(Self {
-      listener,
-      pid: Pid::this(),
-      path: PathBuf::from(sock_path),
-    })
-  }
-  pub fn listener(&self) -> &UnixListener {
-    &self.listener
-  }
-}
-
-impl AsRawFd for ShedSocket {
-  fn as_raw_fd(&self) -> RawFd {
-    self.listener.as_raw_fd()
-  }
-}
-
-impl AsFd for ShedSocket {
-  fn as_fd(&self) -> BorrowedFd<'_> {
-    self.listener.as_fd()
-  }
-}
-
-impl Drop for ShedSocket {
-  fn drop(&mut self) {
-    if Pid::this() == self.pid {
-      std::fs::remove_file(&self.path).ok();
-    }
-  }
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct CmdTimer {
@@ -816,7 +441,7 @@ pub(crate) struct MetaTab {
   runtime_start: Option<Instant>,
   runtime_stop: Option<Instant>,
 
-  socket: Option<Arc<ShedSocket>>,
+  socket: Option<Arc<socket::ShedSocket>>,
   subscribers: Vec<Arc<UnixStream>>,
   last_job: Option<Job>,
 
@@ -955,7 +580,7 @@ impl MetaTab {
 
   pub fn save_procsub_fd(&mut self, fd: OwnedFd) {
     if self.procsub_stack.is_empty() {
-      self.push_procsub_frame();
+      self.procsub_stack.push(vec![]);
     }
     if let Some(frame) = self.procsub_stack.last_mut() {
       frame.push(fd);
@@ -1236,14 +861,14 @@ impl MetaTab {
     files
   }
   pub fn create_socket(&mut self) -> ShResult<()> {
-    let sock = ShedSocket::new()?;
+    let sock = socket::ShedSocket::new()?;
     self.socket = Some(sock.into());
     Ok(())
   }
-  pub fn get_socket(&self) -> Option<Arc<ShedSocket>> {
+  pub fn get_socket(&self) -> Option<Arc<socket::ShedSocket>> {
     self.socket.as_ref().cloned()
   }
-  pub fn read_socket(&mut self) -> ShResult<Vec<(UnixStream, SocketRequest)>> {
+  pub fn read_socket(&mut self) -> ShResult<Vec<(UnixStream, socket::SocketRequest)>> {
     let mut requests = vec![];
     let Some(listener) = self.get_socket() else {
       return Ok(requests);
@@ -1257,7 +882,7 @@ impl MetaTab {
 
     Ok(requests)
   }
-  pub fn read_request(&self, conn: &UnixStream) -> Option<SocketRequest> {
+  pub fn read_request(&self, conn: &UnixStream) -> Option<socket::SocketRequest> {
     conn.set_nonblocking(false).ok();
     let mut bytes = vec![];
     loop {
@@ -1279,7 +904,7 @@ impl MetaTab {
       }
     }
     let input = String::from_utf8_lossy(&bytes).to_string();
-    let request = match SocketRequest::from_str(&input) {
+    let request = match socket::SocketRequest::from_str(&input) {
       Ok(req) => req,
       Err(e) => {
         write(
@@ -1506,5 +1131,352 @@ impl MetaTab {
   }
   pub fn dirs_mut(&mut self) -> &mut VecDeque<PathBuf> {
     &mut self.dir_stack
+  }
+}
+
+#[cfg(test)]
+mod read_request_tests {
+  use crate::socket::SocketRequest;
+  use crate::state::Shed;
+  use crate::tests::testutil::TestGuard;
+  use std::io::Write;
+  use std::os::unix::net::UnixStream;
+
+  /// Set up a UnixStream pair; the test writes a request to `writer`
+  /// then calls read_request on `reader`.
+  fn pair() -> (UnixStream, UnixStream) {
+    UnixStream::pair().unwrap()
+  }
+
+  #[test]
+  fn read_request_subscribe() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    writer.write_all(b"subscribe\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    assert!(matches!(req, SocketRequest::Subscribe));
+  }
+
+  #[test]
+  fn read_request_redraw() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    writer.write_all(b"redraw\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    assert!(matches!(req, SocketRequest::RefreshPrompt));
+  }
+
+  #[test]
+  fn read_request_msg_system() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    writer.write_all(b"msg::system::hello world\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    match req {
+      SocketRequest::PostSystemMessage(msg) => assert_eq!(msg, "hello world"),
+      other => panic!("expected PostSystemMessage, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_request_msg_status() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    writer.write_all(b"msg::status::saved\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    match req {
+      SocketRequest::PostStatusMessage(msg) => assert_eq!(msg, "saved"),
+      other => panic!("expected PostStatusMessage, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_request_invalid_returns_none_after_write_error() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    writer.write_all(b"nonsense_request\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader));
+    assert!(req.is_none());
+  }
+
+  #[test]
+  fn read_request_handles_buffered_split_across_reads() {
+    let _g = TestGuard::new();
+    let (mut writer, reader) = pair();
+    // Write in two chunks to exercise the loop's accumulator branch.
+    writer.write_all(b"subscr").unwrap();
+    writer.write_all(b"ibe\n").unwrap();
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    assert!(matches!(req, SocketRequest::Subscribe));
+  }
+
+  #[test]
+  fn read_request_eof_without_newline_parses_buffered() {
+    let _g = TestGuard::new();
+    let (writer, reader) = pair();
+    {
+      let mut w = writer;
+      w.write_all(b"subscribe").unwrap();
+      // Drop writer → EOF on reader side; the loop's Ok(0) branch
+      // fires and we parse what we have.
+    }
+    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    assert!(matches!(req, SocketRequest::Subscribe));
+  }
+}
+
+#[cfg(test)]
+mod cmd_timer_tests {
+  //! Coverage targets the cold parts of CmdTimer: the still_running
+  //! Err returns on every reporting method, the `hours > 0` branch in
+  //! format_ms, and the format_report %-spec branches.
+
+  use super::*;
+  use crate::tests::testutil::TestGuard;
+
+  fn running_timer() -> CmdTimer {
+    CmdTimer::new("test_cmd".into(), true).unwrap()
+  }
+
+  fn stopped_timer() -> CmdTimer {
+    let mut t = CmdTimer::new("test_cmd".into(), true).unwrap();
+    t.stop().unwrap();
+    t
+  }
+
+  // ===================== still_running guards =====================
+
+  #[test]
+  fn cpu_pct_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().cpu_pct().is_err());
+  }
+
+  #[test]
+  fn max_rss_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().max_rss().is_err());
+  }
+
+  #[test]
+  fn total_wall_ms_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_wall_ms().is_err());
+  }
+
+  #[test]
+  fn total_user_ms_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_user_ms().is_err());
+  }
+
+  #[test]
+  fn total_sys_ms_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_sys_ms().is_err());
+  }
+
+  #[test]
+  fn total_wall_formatted_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_wall_formatted().is_err());
+  }
+
+  #[test]
+  fn total_user_formatted_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_user_formatted().is_err());
+  }
+
+  #[test]
+  fn total_sys_formatted_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().total_sys_formatted().is_err());
+  }
+
+  #[test]
+  fn format_report_errors_when_still_running() {
+    let _g = TestGuard::new();
+    assert!(running_timer().format_report("%E").is_err());
+  }
+
+  // ===================== format_ms =====================
+
+  #[test]
+  fn format_ms_zero() {
+    assert_eq!(CmdTimer::format_ms(0), "0m0.000");
+  }
+
+  #[test]
+  fn format_ms_sub_second_pads_millis() {
+    assert_eq!(CmdTimer::format_ms(7), "0m0.007");
+    assert_eq!(CmdTimer::format_ms(123), "0m0.123");
+  }
+
+  #[test]
+  fn format_ms_seconds_only() {
+    assert_eq!(CmdTimer::format_ms(45_000), "0m45.000");
+  }
+
+  #[test]
+  fn format_ms_with_minutes_and_seconds() {
+    // 5 min 30.250s
+    assert_eq!(CmdTimer::format_ms(5 * 60_000 + 30_250), "5m30.250");
+  }
+
+  #[test]
+  fn format_ms_includes_hours_when_over_one_hour() {
+    // Exercises the `if hours > 0 { write!(result, "{hours}h") }` branch
+    // that was uncovered. 2h 15m 7.500s.
+    let total = 2 * 3_600_000 + 15 * 60_000 + 7_500;
+    assert_eq!(CmdTimer::format_ms(total), "2h15m7.500");
+  }
+
+  // ===================== format_report happy paths =====================
+
+  #[test]
+  fn format_report_literal_text_passes_through() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("hello world").unwrap(), "hello world");
+  }
+
+  #[test]
+  fn format_report_backslash_escapes_next_char() {
+    // `\X` consumes the backslash and pushes X verbatim — no special
+    // interpretation (so \n is the literal char 'n').
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("\\n").unwrap(), "n");
+    assert_eq!(t.format_report("a\\\\b").unwrap(), "a\\b");
+  }
+
+  #[test]
+  fn format_report_j_emits_command_name() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("%J").unwrap(), "test_cmd");
+  }
+
+  #[test]
+  fn format_report_e_emits_wall_seconds() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    let out = t.format_report("%E").unwrap();
+    assert!(out.chars().all(|c| c.is_ascii_digit()), "got: {out:?}");
+  }
+
+  #[test]
+  fn format_report_u_and_s_emit_seconds() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert!(!t.format_report("%U").unwrap().is_empty());
+    assert!(!t.format_report("%S").unwrap().is_empty());
+  }
+
+  #[test]
+  fn format_report_p_emits_percentage_with_trailing_pct() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    let out = t.format_report("%P").unwrap();
+    assert!(out.ends_with('%'), "got: {out:?}");
+  }
+
+  #[test]
+  fn format_report_m_emits_maxrss() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    let out = t.format_report("%M").unwrap();
+    // Just digits (or possibly a sign on weird platforms).
+    assert!(
+      out.chars().all(|c| c.is_ascii_digit() || c == '-'),
+      "got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn format_report_ms_and_us_subspecs_emit_integer_strings() {
+    // %mE / %mU / %mS — wall/user/sys in milliseconds.
+    // %uE / %uU / %uS — wall/user/sys in microseconds.
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    for spec in ["%mE", "%mU", "%mS", "%uE", "%uU", "%uS"] {
+      let out = t.format_report(spec).unwrap();
+      assert!(
+        out.chars().all(|c| c.is_ascii_digit() || c == '-'),
+        "{spec} → {out:?}"
+      );
+    }
+  }
+
+  #[test]
+  fn format_report_star_routes_through_format_ms() {
+    // %*E / %*U / %*S all run their ms value through CmdTimer::format_ms.
+    // We pinned format_ms's shape above ("Xm" + "Y.ZZZ"), so the output
+    // here must contain at least an 'm' and a '.'.
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    for spec in ["%*E", "%*U", "%*S"] {
+      let out = t.format_report(spec).unwrap();
+      assert!(out.contains('m') && out.contains('.'), "{spec} → {out:?}");
+    }
+  }
+
+  // ===================== format_report fallthrough / edge =====================
+
+  #[test]
+  fn format_report_unknown_m_subspec_passes_through_literally() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("%mZ").unwrap(), "%mZ");
+  }
+
+  #[test]
+  fn format_report_unknown_u_subspec_passes_through_literally() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("%uZ").unwrap(), "%uZ");
+  }
+
+  #[test]
+  fn format_report_unknown_star_subspec_passes_through_literally() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("%*Z").unwrap(), "%*Z");
+  }
+
+  #[test]
+  fn format_report_unknown_top_level_spec_breaks_loop() {
+    // The catchall `_` arm in the %-dispatch pushes %{param} and breaks,
+    // so anything after the unknown spec is silently dropped.
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    let out = t.format_report("%Q extra").unwrap();
+    assert!(out.contains("%Q"), "got: {out:?}");
+    assert!(!out.contains("extra"), "got: {out:?}");
+  }
+
+  #[test]
+  fn format_report_trailing_percent_terminates_cleanly() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("hello%").unwrap(), "hello");
+  }
+
+  #[test]
+  fn format_report_trailing_backslash_terminates_cleanly() {
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    assert_eq!(t.format_report("hello\\").unwrap(), "hello");
+  }
+
+  #[test]
+  fn format_report_trailing_m_with_no_subspec_breaks() {
+    // `%m` with nothing after — the inner `let Some(param2) = chars.next() else { break; };`
+    // fires on the missing subspec.
+    let _g = TestGuard::new();
+    let t = stopped_timer();
+    let out = t.format_report("ms=%m").unwrap();
+    assert_eq!(out, "ms=");
   }
 }

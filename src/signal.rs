@@ -460,3 +460,227 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
   }
   Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::ShErrKind;
+  use crate::state::logic::TrapTarget;
+  use crate::tests::testutil::TestGuard;
+
+  /// Reset all signal-related global state so tests don't pollute each
+  /// other. Call at the top of every check_signals test.
+  fn reset_signal_state() {
+    SIGNALS.store(0, Ordering::SeqCst);
+    SHOULD_QUIT.store(false, Ordering::SeqCst);
+    QUIT_CODE.store(0, Ordering::SeqCst);
+    GOT_SIGWINCH.store(false, Ordering::SeqCst);
+    GOT_SIGUSR1.store(false, Ordering::SeqCst);
+    JOB_DONE.store(false, Ordering::SeqCst);
+  }
+
+  fn set_signal(sig: Signal) {
+    SIGNALS.fetch_or(1 << sig as u64, Ordering::SeqCst);
+  }
+
+  // ─── No pending signals ──────────────────────────────────────────────
+
+  #[test]
+  fn check_signals_no_pending_is_ok() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    assert!(check_signals().is_ok());
+  }
+
+  #[test]
+  fn check_signals_clears_pending_bitmask() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    // Set a "misc" signal that has no special handler — it'll just run a
+    // trap (none defined) and not return Err. Then verify the bit got
+    // cleared.
+    set_signal(Signal::SIGUSR2);
+    assert!(check_signals().is_ok());
+    assert_eq!(SIGNALS.load(Ordering::SeqCst), 0);
+  }
+
+  // ─── SIGINT → interrupt + Err(Interrupt) ─────────────────────────────
+
+  #[test]
+  fn check_signals_sigint_returns_interrupt_err() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGINT);
+    let err = check_signals().expect_err("SIGINT should return Err");
+    assert!(matches!(err.kind(), ShErrKind::Interrupt));
+  }
+
+  // ─── SIGHUP → SHOULD_QUIT + QUIT_CODE=1 ──────────────────────────────
+
+  #[test]
+  fn check_signals_sighup_sets_should_quit() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGHUP);
+    // hang_up() sets SHOULD_QUIT and QUIT_CODE; the post-loop check
+    // converts that into Err(CleanExit).
+    let err = check_signals().expect_err("SIGHUP should trigger CleanExit");
+    assert!(matches!(err.kind(), ShErrKind::CleanExit(1)));
+    assert!(SHOULD_QUIT.load(Ordering::SeqCst));
+  }
+
+  // ─── SIGCHLD: gated by REAPING_ENABLED ──────────────────────────────
+
+  #[test]
+  fn check_signals_sigchld_when_reaping_disabled_is_noop() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    disable_reaping();
+    // The defer here ensures we re-enable for other tests in the same
+    // run-thread.
+    scopeguard::defer! { enable_reaping(); }
+    set_signal(Signal::SIGCHLD);
+    assert!(
+      check_signals().is_ok(),
+      "SIGCHLD with reaping disabled should not error"
+    );
+  }
+
+  #[test]
+  fn check_signals_sigchld_with_no_children_is_ok() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    enable_reaping();
+    set_signal(Signal::SIGCHLD);
+    // wait_child does WNOHANG and breaks on StillAlive — with no
+    // children it returns immediately.
+    assert!(check_signals().is_ok());
+  }
+
+  // ─── SIGWINCH → sets GOT_SIGWINCH ───────────────────────────────────
+
+  #[test]
+  fn check_signals_sigwinch_sets_flag() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGWINCH);
+    check_signals().unwrap();
+    assert!(GOT_SIGWINCH.load(Ordering::SeqCst));
+  }
+
+  // ─── SIGUSR1 → sets GOT_SIGUSR1 ─────────────────────────────────────
+
+  #[test]
+  fn check_signals_sigusr1_sets_flag() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGUSR1);
+    check_signals().unwrap();
+    assert!(GOT_SIGUSR1.load(Ordering::SeqCst));
+  }
+
+  // ─── SIGTERM: branches on interactive_shell flag ────────────────────
+
+  #[test]
+  fn check_signals_sigterm_in_non_interactive_shell_quits() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    Shed::meta_mut(|m| m.set_interactive_shell(false));
+    set_signal(Signal::SIGTERM);
+    let err = check_signals().expect_err("SIGTERM in non-interactive quits");
+    assert!(matches!(err.kind(), ShErrKind::CleanExit(_)));
+    assert!(SHOULD_QUIT.load(Ordering::SeqCst));
+    assert_eq!(
+      QUIT_CODE.load(Ordering::SeqCst),
+      SIG_EXIT_OFFSET + Signal::SIGTERM as i32
+    );
+  }
+
+  #[test]
+  fn check_signals_sigterm_in_interactive_shell_is_ignored() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    Shed::meta_mut(|m| m.set_interactive_shell(true));
+    set_signal(Signal::SIGTERM);
+    // POSIX: interactive shell ignores SIGTERM except for trap firing.
+    assert!(check_signals().is_ok());
+    assert!(!SHOULD_QUIT.load(Ordering::SeqCst));
+  }
+
+  // ─── Combined: pending SHOULD_QUIT triggers CleanExit at end ────────
+
+  #[test]
+  fn check_signals_should_quit_already_set_returns_clean_exit() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    SHOULD_QUIT.store(true, Ordering::SeqCst);
+    QUIT_CODE.store(42, Ordering::SeqCst);
+    let err = check_signals().expect_err("SHOULD_QUIT set → CleanExit");
+    assert!(matches!(err.kind(), ShErrKind::CleanExit(42)));
+  }
+
+  // ─── Misc signal traps fire ─────────────────────────────────────────
+
+  #[test]
+  fn check_signals_misc_signal_runs_trap() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    // Install a trap on SIGUSR2 that sets a variable.
+    Shed::logic_mut(|l| {
+      l.insert_trap(
+        TrapTarget::Signal(Signal::SIGUSR2),
+        "export TRAP_FIRED=1".into(),
+      );
+    });
+    set_signal(Signal::SIGUSR2);
+    check_signals().unwrap();
+    assert_eq!(crate::var!("TRAP_FIRED"), "1");
+  }
+
+  #[test]
+  fn check_signals_sigwinch_trap_fires_alongside_flag() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    Shed::logic_mut(|l| {
+      l.insert_trap(
+        TrapTarget::Signal(Signal::SIGWINCH),
+        "export WINCH_TRAP=yes".into(),
+      );
+    });
+    set_signal(Signal::SIGWINCH);
+    check_signals().unwrap();
+    // Both the flag AND the trap should have effect.
+    assert!(GOT_SIGWINCH.load(Ordering::SeqCst));
+    assert_eq!(crate::var!("WINCH_TRAP"), "yes");
+  }
+
+  // ─── Multiple signals in one swap ───────────────────────────────────
+
+  #[test]
+  fn check_signals_processes_winch_and_usr1_in_one_call() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGWINCH);
+    set_signal(Signal::SIGUSR1);
+    check_signals().unwrap();
+    assert!(GOT_SIGWINCH.load(Ordering::SeqCst));
+    assert!(GOT_SIGUSR1.load(Ordering::SeqCst));
+  }
+
+  // ─── SIGINT short-circuits later signals ────────────────────────────
+
+  #[test]
+  fn check_signals_sigint_short_circuits_other_signals() {
+    let _g = TestGuard::new();
+    reset_signal_state();
+    set_signal(Signal::SIGINT);
+    set_signal(Signal::SIGWINCH); // would normally set GOT_SIGWINCH
+    let err = check_signals().expect_err("SIGINT returns early");
+    assert!(matches!(err.kind(), ShErrKind::Interrupt));
+    // SIGWINCH never got processed because SIGINT returned early.
+    assert!(
+      !GOT_SIGWINCH.load(Ordering::SeqCst),
+      "SIGINT should have returned before reaching SIGWINCH"
+    );
+  }
+}

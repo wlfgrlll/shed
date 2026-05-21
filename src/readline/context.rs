@@ -1604,10 +1604,8 @@ fn lex_backtick(chars: &mut Peekable<CharIndices>) -> (bool, usize) {
   };
 
   match_loop!(advance(chars, &mut consumed) => ch, {
-    '\\' => {
-      if !qt_state.in_single() || chars.peek().is_some_and(|(_,c)| *c == '\'') {
-        advance(chars, &mut consumed);
-      }
+    '\\' if (!qt_state.in_single() || chars.peek().is_some_and(|(_,c)| *c == '\'')) => {
+      advance(chars, &mut consumed);
     }
     '"' => qt_state.toggle_double(),
     '\'' => qt_state.toggle_single(),
@@ -1647,10 +1645,8 @@ fn lex_delim(chars: &mut Peekable<CharIndices>, opener: char) -> (bool, usize) {
   };
 
   match_loop!(advance(chars, &mut consumed) => ch, {
-    '\\' => {
-      if !qt_state.in_single() || chars.peek().is_some_and(|(_,c)| *c == '\'') {
-        advance(chars, &mut consumed);
-      }
+    '\\' if (!qt_state.in_single() || chars.peek().is_some_and(|(_,c)| *c == '\'')) => {
+      advance(chars, &mut consumed);
     }
     '"' => qt_state.toggle_double(),
     '\'' => qt_state.toggle_single(),
@@ -1911,5 +1907,514 @@ mod tests {
     let tk = parse_first(src);
     let n = find(&tk, CtxTkRule::ArithNumber).expect("ArithNumber");
     assert_eq!(span_str(n, src), "42");
+  }
+
+  // ─── scan_subspans branch coverage ──────────────────────────────────
+  //
+  // The branches not exercised by the tests above. Each test pokes one
+  // arm of scan_subspans's giant match.
+
+  // SingleString — '...' with no interior expansion
+
+  #[test]
+  fn single_string_simple() {
+    let src = "'hello world'";
+    let tk = parse_first(src);
+    let s = find(&tk, CtxTkRule::SingleString).expect("SingleString");
+    assert_eq!(span_str(s, src), "'hello world'");
+  }
+
+  #[test]
+  fn single_string_suppresses_dollar_and_bang() {
+    // Inside single quotes, $foo and !foo should NOT produce sub-tokens.
+    let src = "'$foo and !bang'";
+    let tk = parse_first(src);
+    let s = find(&tk, CtxTkRule::SingleString).expect("SingleString");
+    assert!(
+      find(s, CtxTkRule::VarSub).is_none(),
+      "VarSub should not appear inside single-quoted string"
+    );
+    assert!(
+      find(s, CtxTkRule::HistExp).is_none(),
+      "HistExp should not appear inside single-quoted string"
+    );
+  }
+
+  // Glob: *, ?, [...]
+
+  #[test]
+  fn glob_star() {
+    let src = "*.rs";
+    let tk = parse_first(src);
+    let g = find(&tk, CtxTkRule::Glob).expect("Glob");
+    assert_eq!(span_str(g, src), "*");
+  }
+
+  #[test]
+  fn glob_question() {
+    let src = "a?.rs";
+    let tk = parse_first(src);
+    let g = find(&tk, CtxTkRule::Glob).expect("Glob");
+    assert_eq!(span_str(g, src), "?");
+  }
+
+  #[test]
+  fn glob_bracket_class() {
+    let src = "[abc].txt";
+    let tk = parse_first(src);
+    let g = find(&tk, CtxTkRule::Glob).expect("Glob");
+    assert_eq!(span_str(g, src), "[abc]");
+  }
+
+  #[test]
+  fn glob_bracket_handles_escaped_close() {
+    let src = r"[a\]b]";
+    let tk = parse_first(src);
+    let g = find(&tk, CtxTkRule::Glob).expect("Glob");
+    // The scanner should consume up through the *unescaped* ']'.
+    assert_eq!(span_str(g, src), r"[a\]b]");
+  }
+
+  // Tilde
+
+  #[test]
+  fn tilde_classified_as_tilde() {
+    let src = "~/bin";
+    let tk = parse_first(src);
+    let t = find(&tk, CtxTkRule::Tilde).expect("Tilde");
+    assert_eq!(span_str(t, src), "~");
+  }
+
+  // History expansion
+
+  #[test]
+  fn hist_exp_double_bang() {
+    let src = "echo !!";
+    let tks = get_context_tokens(src);
+    let h = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::HistExp))
+      .expect("HistExp");
+    assert_eq!(span_str(h, src), "!!");
+  }
+
+  #[test]
+  fn hist_exp_bang_dollar() {
+    let src = "echo !$";
+    let tks = get_context_tokens(src);
+    let h = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::HistExp))
+      .expect("HistExp");
+    assert_eq!(span_str(h, src), "!$");
+  }
+
+  #[test]
+  fn hist_exp_bang_word() {
+    let src = "echo !cmd";
+    let tks = get_context_tokens(src);
+    let h = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::HistExp))
+      .expect("HistExp");
+    assert_eq!(span_str(h, src), "!cmd");
+  }
+
+  // Backtick command substitution
+
+  #[test]
+  fn backtick_cmd_sub() {
+    let src = "`echo hi`";
+    let tk = parse_first(src);
+    let b = find(&tk, CtxTkRule::BacktickSub).expect("BacktickSub");
+    assert_eq!(span_str(b, src), "`echo hi`");
+  }
+
+  // Process substitution
+
+  #[test]
+  fn proc_sub_in() {
+    let src = "cat <(echo hi)";
+    let tks = get_context_tokens(src);
+    let p = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::ProcSubIn))
+      .expect("ProcSubIn");
+    assert_eq!(span_str(p, src), "<(echo hi)");
+  }
+
+  #[test]
+  fn proc_sub_out() {
+    let src = "tee >(grep foo)";
+    let tks = get_context_tokens(src);
+    let p = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::ProcSubOut))
+      .expect("ProcSubOut");
+    assert_eq!(span_str(p, src), ">(grep foo)");
+  }
+
+  // Dollar-quoted string $'...'
+
+  #[test]
+  fn dollar_quoted_string() {
+    let src = r#"$'hello\n'"#;
+    let tk = parse_first(src);
+    let d = find(&tk, CtxTkRule::DollarString).expect("DollarString");
+    assert_eq!(span_str(d, src), r#"$'hello\n'"#);
+    // The escape inside should be recognized.
+    assert!(
+      find(d, CtxTkRule::Escape).is_some(),
+      "expected Escape inside $'...'"
+    );
+  }
+
+  // Parameter expansion variations
+
+  #[test]
+  fn param_expansion_bare() {
+    let src = "${foo}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    assert_eq!(span_str(v, src), "${foo}");
+    let name = find(v, CtxTkRule::ParamName).expect("ParamName");
+    assert_eq!(span_str(name, src), "foo");
+  }
+
+  #[test]
+  fn param_expansion_length_prefix() {
+    let src = "${#foo}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    assert_eq!(span_str(v, src), "${#foo}");
+    let prefix = find(v, CtxTkRule::ParamPrefix).expect("ParamPrefix");
+    assert_eq!(span_str(prefix, src), "#");
+  }
+
+  #[test]
+  fn param_expansion_indirect_prefix() {
+    let src = "${!foo}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let prefix = find(v, CtxTkRule::ParamPrefix).expect("ParamPrefix");
+    assert_eq!(span_str(prefix, src), "!");
+  }
+
+  #[test]
+  fn param_expansion_assign_default() {
+    // Use a command context — at the top level, `${foo:=...}` looks too
+    // assignment-like for the lexer to split correctly.
+    let src = "echo ${foo:=bar}";
+    let tks = get_context_tokens(src);
+    let v = tks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::VarSub))
+      .expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), ":=");
+  }
+
+  #[test]
+  fn param_expansion_error_if_unset() {
+    let src = "${foo:?nope}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), ":?");
+  }
+
+  #[test]
+  fn param_expansion_alternate_if_set() {
+    let src = "${foo:+bar}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), ":+");
+  }
+
+  #[test]
+  fn param_expansion_no_colon_operators() {
+    // The non-colon ops -, =, ?, + (treat empty differently from :-).
+    // Wrap in a command context to avoid assignment-like ambiguity for `=`.
+    for (op_str, body) in [
+      ("-", "${foo-x}"),
+      ("=", "${foo=x}"),
+      ("?", "${foo?x}"),
+      ("+", "${foo+x}"),
+    ] {
+      let src = format!("echo {body}");
+      let tks = get_context_tokens(&src);
+      let v = tks
+        .iter()
+        .find_map(|t| find(t, CtxTkRule::VarSub))
+        .unwrap_or_else(|| panic!("VarSub missing for {src}"));
+      let op = find(v, CtxTkRule::ParamOp).unwrap_or_else(|| panic!("ParamOp missing for {src}"));
+      assert_eq!(span_str(op, &src), op_str, "src was {src}");
+    }
+  }
+
+  #[test]
+  fn param_expansion_hash_prefix_strip() {
+    let src = "${foo#prefix}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), "#");
+  }
+
+  #[test]
+  fn param_expansion_double_hash_greedy_prefix() {
+    let src = "${foo##prefix}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), "##");
+  }
+
+  #[test]
+  fn param_expansion_percent_suffix_strip() {
+    let src = "${foo%suffix}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), "%");
+  }
+
+  #[test]
+  fn param_expansion_double_percent_greedy_suffix() {
+    let src = "${foo%%suffix}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    let op = find(v, CtxTkRule::ParamOp).expect("ParamOp");
+    assert_eq!(span_str(op, src), "%%");
+  }
+
+  #[test]
+  fn param_expansion_substring_offset_only() {
+    let src = "${foo:1}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    assert_eq!(span_str(v, src), "${foo:1}");
+  }
+
+  #[test]
+  fn param_expansion_substring_offset_and_length() {
+    let src = "${foo:1:3}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    assert_eq!(span_str(v, src), "${foo:1:3}");
+  }
+
+  #[test]
+  fn param_expansion_array_index() {
+    let src = "${arr[0]}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    assert_eq!(span_str(v, src), "${arr[0]}");
+    let idx = find(v, CtxTkRule::ParamIndex).expect("ParamIndex");
+    assert_eq!(span_str(idx, src), "[0]");
+  }
+
+  #[test]
+  fn param_expansion_empty_body() {
+    let src = "${}";
+    let tk = parse_first(src);
+    let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
+    // Empty body still produces a wrapper span covering both braces.
+    assert_eq!(span_str(v, src), "${}");
+  }
+
+  // Escape handling outside strings
+
+  #[test]
+  fn escape_outside_string() {
+    // Bare escape — should produce Escape sub-token.
+    let src = r#"a\b"#;
+    let tk = parse_first(src);
+    let _ = find(&tk, CtxTkRule::Escape).expect("Escape");
+  }
+
+  // Quotes inside double strings should NOT toggle quote state out
+
+  #[test]
+  fn single_quote_inside_double_is_literal() {
+    let src = r#""it's""#;
+    let tk = parse_first(src);
+    let s = find(&tk, CtxTkRule::DoubleString).expect("DoubleString");
+    assert_eq!(span_str(s, src), r#""it's""#);
+  }
+
+  // Mixed: command sub containing single quotes containing !
+  // (the regression case from the comment in linebuf/mod.rs)
+
+  #[test]
+  fn cmd_sub_with_inner_single_quotes() {
+    let src = r#""foo $(echo 'bar!') biz""#;
+    let tk = parse_first(src);
+    let cs = find(&tk, CtxTkRule::CmdSub).expect("CmdSub");
+    assert_eq!(span_str(cs, src), "$(echo 'bar!')");
+    // The HistExp inside should NOT trigger because it's inside single quotes.
+    let inner_ss = find(cs, CtxTkRule::SingleString).expect("SingleString");
+    assert!(
+      find(inner_ss, CtxTkRule::HistExp).is_none(),
+      "HistExp must not appear inside single-quoted body of cmd sub"
+    );
+  }
+
+  // ===================== promote_exec_wrappers =====================
+
+  use crate::tests::testutil::{TestGuard, has_cmd};
+
+  /// Find the first token in `tokens` whose span text equals `text`.
+  fn find_by_text<'a>(tokens: &'a [CtxTk], text: &str, src: &str) -> Option<&'a CtxTk> {
+    tokens.iter().find(|t| span_str(t, src) == text)
+  }
+
+  #[test]
+  fn sudo_is_promoted_to_keyword() {
+    if !has_cmd("sudo") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo something";
+    let tokens = get_context_tokens(src);
+    let sudo_tk = find_by_text(&tokens, "sudo", src).expect("sudo token");
+    assert_eq!(*sudo_tk.class(), CtxTkRule::Keyword);
+  }
+
+  #[test]
+  fn token_following_sudo_promoted_to_command() {
+    if !has_cmd("sudo") || !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo cat";
+    let tokens = get_context_tokens(src);
+    let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
+    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+  }
+
+  #[test]
+  fn unknown_command_after_sudo_is_invalid_command() {
+    if !has_cmd("sudo") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo definitely_not_a_real_cmd_xyzzy";
+    let tokens = get_context_tokens(src);
+    let cmd_tk = find_by_text(&tokens, "definitely_not_a_real_cmd_xyzzy", src).expect("token");
+    assert_eq!(*cmd_tk.class(), CtxTkRule::InvalidCommand);
+  }
+
+  #[test]
+  fn dash_option_after_sudo_skipped_and_next_promoted() {
+    if !has_cmd("sudo") || !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo -E cat";
+    let tokens = get_context_tokens(src);
+    let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
+    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+  }
+
+  #[test]
+  fn assignment_after_sudo_skipped_and_next_promoted() {
+    if !has_cmd("sudo") || !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo FOO=bar cat";
+    let tokens = get_context_tokens(src);
+    let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
+    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+  }
+
+  #[test]
+  fn chained_wrappers_promote_target_correctly() {
+    // `sudo strace cmd`: both sudo and strace become Keywords; cmd gets
+    // ValidCommand. The inner-loop `continue 'outer` ensures strace
+    // gets reprocessed.
+    if !has_cmd("sudo") || !has_cmd("strace") || !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "sudo strace cat";
+    let tokens = get_context_tokens(src);
+    let sudo_tk = find_by_text(&tokens, "sudo", src).expect("sudo");
+    let strace_tk = find_by_text(&tokens, "strace", src).expect("strace");
+    let cat_tk = find_by_text(&tokens, "cat", src).expect("cat");
+    assert_eq!(*sudo_tk.class(), CtxTkRule::Keyword);
+    assert_eq!(*strace_tk.class(), CtxTkRule::Keyword);
+    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+  }
+
+  #[test]
+  fn run0_is_recognized_as_wrapper() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let _g = TestGuard::new();
+    let src = "run0 cat";
+    let tokens = get_context_tokens(src);
+    let run0_tk = find_by_text(&tokens, "run0", src);
+    let cat_tk = find_by_text(&tokens, "cat", src).expect("cat");
+    // run0 is in EXEC_WRAPPERS, but `is_exec_wrapper` also checks
+    // is_valid_cmd — so this fires only if run0 is itself in PATH.
+    // We don't assume it is; just assert "if recognized as wrapper,
+    // cat is promoted; otherwise cat is whatever the leader would be".
+    if let Some(tk) = run0_tk {
+      if *tk.class() == CtxTkRule::Keyword {
+        assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+      }
+    }
+  }
+
+  #[test]
+  fn non_wrapper_command_not_promoted() {
+    // `echo foo` — echo isn't an exec wrapper.
+    let _g = TestGuard::new();
+    let src = "echo foo";
+    let tokens = get_context_tokens(src);
+    let echo_tk = find_by_text(&tokens, "echo", src).expect("echo");
+    // echo should NOT be Keyword (it's not a wrapper).
+    assert_ne!(*echo_tk.class(), CtxTkRule::Keyword);
+  }
+
+  // ===================== CtxTk::from_tk extra branches =====================
+
+  /// An argument that resolves to an existing path is tagged as
+  /// CtxTkRule::ArgumentFile. We use /tmp which always exists on
+  /// Unix-like CI.
+  #[test]
+  fn existing_path_arg_classified_as_argument_file() {
+    let _g = TestGuard::new();
+    let src = "echo /tmp";
+    let tokens = get_context_tokens(src);
+    let path_tk = find_by_text(&tokens, "/tmp", src).expect("path token");
+    assert_eq!(*path_tk.class(), CtxTkRule::ArgumentFile);
+  }
+
+  /// A non-existent path-shaped argument falls through to the default
+  /// `Argument` classification.
+  #[test]
+  fn nonexistent_path_arg_classified_as_plain_argument() {
+    let _g = TestGuard::new();
+    let src = "echo /this/does/not/exist/zzzqqq";
+    let tokens = get_context_tokens(src);
+    let arg_tk = find_by_text(&tokens, "/this/does/not/exist/zzzqqq", src).expect("arg token");
+    assert_eq!(*arg_tk.class(), CtxTkRule::Argument);
+  }
+
+  /// Keyword classification: `if` is a shell keyword and should not
+  /// be subdivided into sub-tokens.
+  #[test]
+  fn keyword_token_has_no_subtokens() {
+    let _g = TestGuard::new();
+    let src = "if true; then :; fi";
+    let tokens = get_context_tokens(src);
+    let if_tk = find_by_text(&tokens, "if", src).expect("if token");
+    assert_eq!(*if_tk.class(), CtxTkRule::Keyword);
+    assert!(if_tk.sub_tokens.is_empty());
   }
 }

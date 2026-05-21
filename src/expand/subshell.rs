@@ -136,4 +136,98 @@ mod tests {
     let result = expand_cmd_sub("(1+2)").unwrap();
     assert_eq!(result, "3");
   }
+
+  #[test]
+  fn cmd_sub_only_final_newline_is_stripped() {
+    // Internal newlines must survive; just the trailing run is removed.
+    let _g = TestGuard::new();
+    let result = expand_cmd_sub("printf 'a\\nb\\nc\\n'").unwrap();
+    assert_eq!(result, "a\nb\nc");
+  }
+
+  #[test]
+  fn cmd_sub_empty_output() {
+    let _g = TestGuard::new();
+    let result = expand_cmd_sub("true").unwrap();
+    assert_eq!(result, "");
+  }
+
+  #[test]
+  fn cmd_sub_sets_status_to_child_exit_code() {
+    // `(exit N)` would hit the arithmetic fast-path; use a bare
+    // command that genuinely exits with the desired status.
+    let _g = TestGuard::new();
+    expand_cmd_sub("false").unwrap();
+    assert_eq!(state::Shed::get_status(), 1);
+  }
+
+  #[test]
+  fn cmd_sub_zero_status_on_success() {
+    let _g = TestGuard::new();
+    expand_cmd_sub("true").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn cmd_sub_arithmetic_distinguished_from_subshell_grouping() {
+    // The outer-parens-check fast-path routes "(N+M)" to the arithmetic
+    // expander, not to fork+exec. Verify by giving an arithmetic input
+    // that wouldn't be valid as a shell command.
+    let result = expand_cmd_sub("(10*5)").unwrap();
+    assert_eq!(result, "50");
+  }
+
+  #[test]
+  fn cmd_sub_large_output_does_not_deadlock() {
+    // Parent reads from the pipe before waitpid; otherwise a child
+    // writing more than the pipe buffer would block forever. Build
+    // the payload via shell-only string doubling + `echo` (builtin,
+    // so no execve / ARG_MAX involvement) — no PATH dependency.
+    let _g = TestGuard::new();
+    // 2^18 = 262144 chars — comfortably above a typical 64KB pipe buf.
+    let result = expand_cmd_sub(
+      "s=x; for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do s=$s$s; done; echo \"$s\"",
+    )
+    .unwrap();
+    assert_eq!(result.len(), 1 << 18);
+    assert!(result.chars().all(|c| c == 'x'));
+  }
+
+  // ===================== expand_proc_sub =====================
+
+  #[test]
+  fn proc_sub_input_returns_proc_self_fd_path() {
+    // is_input=true: path points at the writer fd we hold open in the
+    // parent (so we could write through it); the format is the
+    // /proc/self/fd/N path.
+    let _g = TestGuard::new();
+    let path = expand_proc_sub("echo hello", true).unwrap();
+    assert!(
+      path.starts_with("/proc/self/fd/"),
+      "expected /proc/self/fd/... path, got: {path:?}"
+    );
+  }
+
+  #[test]
+  fn proc_sub_output_returns_proc_self_fd_path() {
+    // is_input=false: path points at the reader fd; same shape.
+    let _g = TestGuard::new();
+    let path = expand_proc_sub("cat > /dev/null", false).unwrap();
+    assert!(
+      path.starts_with("/proc/self/fd/"),
+      "expected /proc/self/fd/... path, got: {path:?}"
+    );
+  }
+
+  #[test]
+  fn proc_sub_input_path_is_readable_with_command_output() {
+    // <(cmd) — reading from the returned path should yield the
+    // command's stdout. This exercises the full plumbing: dup target
+    // fd 1 in the child, parent reads via /proc/self/fd.
+    let _g = TestGuard::new();
+    let path = expand_proc_sub("echo proc_sub_marker_xyz", false).unwrap();
+    // Open the path and read; the child writes 'proc_sub_marker_xyz\n'.
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(content.contains("proc_sub_marker_xyz"), "got: {content:?}");
+  }
 }

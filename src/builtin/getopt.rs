@@ -579,4 +579,242 @@ mod tests {
     // -e enables escapes, -n suppresses newline
     assert_eq!(out, "hello");
   }
+
+  // ===================== sort_tks_raw =====================
+
+  /// Lex without Soi/Eoi/Sep markers so non_opts holds only real args.
+  fn lex_clean(input: &str) -> Vec<Tk> {
+    use crate::eval::lex::TkRule;
+    LexStream::new(input.into(), LexFlags::empty())
+      .collect::<ShResult<Vec<Tk>>>()
+      .unwrap()
+      .into_iter()
+      .filter(|t| {
+        !matches!(
+          t.class,
+          TkRule::Soi | TkRule::Eoi | TkRule::Sep | TkRule::Null
+        )
+      })
+      .collect()
+  }
+
+  fn raw_specs_v_flag_and_single() -> Vec<OptSpec> {
+    vec![
+      OptSpec {
+        opt: Opt::Short('v'),
+        takes_arg: OptArg::None,
+      },
+      OptSpec {
+        opt: Opt::Short('o'),
+        takes_arg: OptArg::Single,
+      },
+    ]
+  }
+
+  #[test]
+  fn raw_parses_bare_flag() {
+    let tokens = lex_clean("-v");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert!(non_opts.is_empty());
+    assert_eq!(opts, vec![Opt::Short('v')]);
+  }
+
+  #[test]
+  fn raw_parses_flag_with_single_arg() {
+    let tokens = lex_clean("-o out.txt");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert!(non_opts.is_empty());
+    assert_eq!(opts, vec![Opt::ShortWithArg('o', "out.txt".into())]);
+  }
+
+  #[test]
+  fn raw_separates_double_dash_terminates_opts() {
+    let tokens = lex_clean("-v -- -not-a-flag plain");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert_eq!(opts, vec![Opt::Short('v')]);
+    let strs: Vec<String> = non_opts.iter().map(|t| t.to_string()).collect();
+    assert_eq!(strs, vec!["-not-a-flag", "plain"]);
+  }
+
+  #[test]
+  fn raw_bare_double_dash_at_end_kept_in_non_opts() {
+    let tokens = lex_clean("-v --");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert_eq!(opts, vec![Opt::Short('v')]);
+    assert_eq!(non_opts.len(), 1);
+    assert_eq!(non_opts[0].to_string(), "--");
+  }
+
+  #[test]
+  fn raw_unknown_opt_non_strict_goes_to_non_opts() {
+    let tokens = lex_clean("-z");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert!(opts.is_empty());
+    assert_eq!(non_opts.len(), 1);
+  }
+
+  #[test]
+  fn raw_unknown_opt_strict_errors() {
+    let tokens = lex_clean("-z");
+    let strict_specs = raw_specs_v_flag_and_single();
+    let result = super::sort_tks_raw(tokens, &strict_specs, true);
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn raw_plain_arg_goes_to_non_opts() {
+    let tokens = lex_clean("hello");
+    let (non_opts, opts) =
+      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+    assert!(opts.is_empty());
+    assert_eq!(non_opts.len(), 1);
+    assert_eq!(non_opts[0].to_string(), "hello");
+  }
+
+  #[test]
+  fn raw_exact_arg_count_consumes_n_args() {
+    let tokens = lex_clean("-s name buf cur extra");
+    let specs = vec![OptSpec::exact_args('s', 3)];
+    let (non_opts, opts) = get_opts_from_tokens_raw(tokens, &specs).unwrap();
+    match &opts[..] {
+      [Opt::ShortWithList('s', args)] => {
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], "name");
+        assert_eq!(args[1], "buf");
+        assert_eq!(args[2], "cur");
+      }
+      other => panic!("expected ShortWithList('s', 3 args), got {other:?}"),
+    }
+    assert_eq!(non_opts.len(), 1);
+    assert_eq!(non_opts[0].to_string(), "extra");
+  }
+
+  #[test]
+  fn raw_exact_arg_count_too_few_errors() {
+    let tokens = lex_clean("-s only_one_arg");
+    let specs = vec![OptSpec::exact_args('s', 3)];
+    let result = get_opts_from_tokens_raw(tokens, &specs);
+    assert!(result.is_err());
+  }
+
+  // ===================== sort_tks (expansion-aware) =====================
+
+  fn specs_v_and_o_single() -> Vec<OptSpec> {
+    vec![
+      OptSpec {
+        opt: Opt::Short('v'),
+        takes_arg: OptArg::None,
+      },
+      OptSpec {
+        opt: Opt::Short('o'),
+        takes_arg: OptArg::Single,
+      },
+    ]
+  }
+
+  /// sort_tks expands variables before classifying; a single token
+  /// holding `-v -o file` should split into three words via get_words.
+  #[test]
+  fn sort_tks_expands_var_holding_multiple_flags() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "GETOPT_ARGS",
+        VarKind::Str("-v -o out.txt".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
+    let tokens = lex("$GETOPT_ARGS");
+    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    assert_eq!(
+      opts,
+      vec![Opt::Short('v'), Opt::ShortWithArg('o', "out.txt".into()),]
+    );
+    assert!(non_opts.is_empty());
+  }
+
+  /// Unrecognized options in strict mode must surface as ShErr,
+  /// even when they're hidden inside an expansion.
+  #[test]
+  fn sort_tks_strict_rejects_unknown_from_expansion() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| v.set_var("BAD", VarKind::Str("-z".into()), VarFlags::empty())).unwrap();
+    let tokens = lex("$BAD");
+    let res = get_opts_from_tokens_strict(tokens, &specs_v_and_o_single());
+    assert!(res.is_err());
+  }
+
+  /// `--` arriving via expansion still terminates option parsing.
+  #[test]
+  fn sort_tks_double_dash_from_expansion_terminates_opts() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SEP",
+        VarKind::Str("-v -- -not-an-opt".into()),
+        VarFlags::empty(),
+      )
+    })
+    .unwrap();
+    let tokens = lex("$SEP");
+    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    assert_eq!(opts, vec![Opt::Short('v')]);
+    let strs: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
+    assert_eq!(strs, vec!["-not-an-opt"]);
+  }
+
+  /// Empty bare `--` after the only flag is preserved as a non_opt
+  /// (the `if rest.is_empty()` branch in sort_tks).
+  #[test]
+  fn sort_tks_bare_trailing_double_dash_kept_in_non_opts() {
+    let tokens = lex("-v --");
+    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    assert_eq!(opts, vec![Opt::Short('v')]);
+    let strs: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
+    assert_eq!(strs, vec!["--"]);
+  }
+
+  /// Exact-arg option through sort_tks (this branch of the
+  /// inner match — duplicated from raw — is still its own line).
+  #[test]
+  fn sort_tks_exact_arg_count_consumes_n_args() {
+    let tokens = lex("-s a b c extra");
+    let specs = vec![OptSpec::exact_args('s', 3)];
+    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs).unwrap();
+    match &opts[..] {
+      [Opt::ShortWithList('s', args)] => {
+        assert_eq!(
+          args,
+          &vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+      }
+      other => panic!("expected ShortWithList('s'), got {other:?}"),
+    }
+    let strs: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
+    assert_eq!(strs, vec!["extra"]);
+  }
+
+  /// Exact-arg with not enough following args → ParseErr.
+  #[test]
+  fn sort_tks_exact_arg_count_too_few_errors() {
+    let tokens = lex("-s only");
+    let specs = vec![OptSpec::exact_args('s', 3)];
+    let res = get_opts_from_tokens(tokens, &specs);
+    assert!(res.is_err());
+  }
+
+  /// `OptArg::Single` with no following word — `.next()` returns
+  /// None and the arg becomes empty (unwrap_or_default).
+  #[test]
+  fn sort_tks_single_arg_missing_uses_empty_string() {
+    let tokens = lex("-o");
+    let (_non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    assert_eq!(opts, vec![Opt::ShortWithArg('o', "".into())]);
+  }
 }

@@ -220,3 +220,200 @@ impl From<&u16> for ModKeys {
     ModKeys::from(*value)
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::expand::expand_keymap;
+
+  fn seq_of(code: KeyCode, mods: ModKeys) -> String {
+    KeyEvent(code, mods).as_vim_seq().unwrap()
+  }
+
+  /// Round-trip helper: render the event to a vim seq, parse it back, and
+  /// require the result to be exactly one KeyEvent equal to the input.
+  fn assert_round_trips(code: KeyCode, mods: ModKeys) {
+    let original = KeyEvent(code.clone(), mods);
+    let seq = original.as_vim_seq().unwrap();
+    let parsed = expand_keymap(&seq);
+    assert_eq!(
+      parsed.len(),
+      1,
+      "expected single event from {seq:?}, got {parsed:?}"
+    );
+    assert_eq!(parsed[0], original, "round-trip failed for {seq:?}");
+  }
+
+  // ─── Plain char (no mods) — no angle brackets ───────────────────────
+
+  #[test]
+  fn as_vim_seq_plain_char() {
+    assert_eq!(seq_of(KeyCode::Char('a'), ModKeys::NONE), "a");
+    assert_eq!(seq_of(KeyCode::Char('Z'), ModKeys::NONE), "Z");
+    assert_eq!(seq_of(KeyCode::Char('5'), ModKeys::NONE), "5");
+    assert_eq!(seq_of(KeyCode::Char('!'), ModKeys::NONE), "!");
+  }
+
+  // ─── Special keys — angle-bracketed names ───────────────────────────
+
+  #[test]
+  fn as_vim_seq_special_keys() {
+    assert_eq!(seq_of(KeyCode::Enter, ModKeys::NONE), "<Enter>");
+    assert_eq!(seq_of(KeyCode::Esc, ModKeys::NONE), "<Esc>");
+    assert_eq!(seq_of(KeyCode::Tab, ModKeys::NONE), "<Tab>");
+    assert_eq!(seq_of(KeyCode::Backspace, ModKeys::NONE), "<BS>");
+    assert_eq!(seq_of(KeyCode::Delete, ModKeys::NONE), "<Del>");
+    assert_eq!(seq_of(KeyCode::Insert, ModKeys::NONE), "<Insert>");
+    assert_eq!(seq_of(KeyCode::Home, ModKeys::NONE), "<Home>");
+    assert_eq!(seq_of(KeyCode::End, ModKeys::NONE), "<End>");
+    assert_eq!(seq_of(KeyCode::PageUp, ModKeys::NONE), "<PgUp>");
+    assert_eq!(seq_of(KeyCode::PageDown, ModKeys::NONE), "<PgDn>");
+    assert_eq!(seq_of(KeyCode::Up, ModKeys::NONE), "<Up>");
+    assert_eq!(seq_of(KeyCode::Down, ModKeys::NONE), "<Down>");
+    assert_eq!(seq_of(KeyCode::Left, ModKeys::NONE), "<Left>");
+    assert_eq!(seq_of(KeyCode::Right, ModKeys::NONE), "<Right>");
+    assert_eq!(seq_of(KeyCode::ExMode, ModKeys::NONE), "<CMD>");
+  }
+
+  #[test]
+  fn as_vim_seq_function_keys() {
+    assert_eq!(seq_of(KeyCode::F(1), ModKeys::NONE), "<F1>");
+    assert_eq!(seq_of(KeyCode::F(5), ModKeys::NONE), "<F5>");
+    assert_eq!(seq_of(KeyCode::F(12), ModKeys::NONE), "<F12>");
+  }
+
+  #[test]
+  fn as_vim_seq_mouse_clicks_carry_coords() {
+    assert_eq!(
+      seq_of(KeyCode::LeftClick(3, 7), ModKeys::NONE),
+      "<LeftClick(3,7)>"
+    );
+    assert_eq!(
+      seq_of(KeyCode::MiddleClick(10, 20), ModKeys::NONE),
+      "<MiddleClick(10,20)>"
+    );
+    assert_eq!(
+      seq_of(KeyCode::RightClick(0, 0), ModKeys::NONE),
+      "<RightClick(0,0)>"
+    );
+    assert_eq!(
+      seq_of(KeyCode::MousePos(5, 9), ModKeys::NONE),
+      "<MousePos(5,9)>"
+    );
+  }
+
+  #[test]
+  fn as_vim_seq_scroll_and_history_buttons() {
+    assert_eq!(seq_of(KeyCode::ScrollUp, ModKeys::NONE), "<ScrollUp>");
+    assert_eq!(seq_of(KeyCode::ScrollDown, ModKeys::NONE), "<ScrollDown>");
+    assert_eq!(seq_of(KeyCode::Back, ModKeys::NONE), "<Back>");
+    assert_eq!(seq_of(KeyCode::Forward, ModKeys::NONE), "<Forward>");
+  }
+
+  #[test]
+  fn as_vim_seq_verbatim_emits_raw_string_with_no_brackets() {
+    use std::sync::Arc;
+    let raw: Arc<str> = Arc::from("abc");
+    assert_eq!(seq_of(KeyCode::Verbatim(raw), ModKeys::NONE), "abc");
+  }
+
+  // ─── Modifier rendering ──────────────────────────────────────────────
+
+  #[test]
+  fn as_vim_seq_single_modifier_with_char() {
+    assert_eq!(seq_of(KeyCode::Char('a'), ModKeys::CTRL), "<C-a>");
+    assert_eq!(seq_of(KeyCode::Char('a'), ModKeys::ALT), "<A-a>");
+    assert_eq!(seq_of(KeyCode::Char('a'), ModKeys::SHIFT), "<S-a>");
+  }
+
+  #[test]
+  fn as_vim_seq_combined_modifiers_order_is_c_a_s() {
+    let all_mods = ModKeys::CTRL | ModKeys::ALT | ModKeys::SHIFT;
+    assert_eq!(seq_of(KeyCode::Char('x'), all_mods), "<C-A-S-x>");
+  }
+
+  #[test]
+  fn as_vim_seq_modifier_on_special_key() {
+    assert_eq!(seq_of(KeyCode::Enter, ModKeys::CTRL), "<C-Enter>");
+    assert_eq!(seq_of(KeyCode::Tab, ModKeys::SHIFT), "<S-Tab>");
+    assert_eq!(
+      seq_of(KeyCode::F(5), ModKeys::CTRL | ModKeys::ALT),
+      "<C-A-F5>"
+    );
+  }
+
+  // ─── Round-trip: render then parse ───────────────────────────────────
+  //
+  // expand_keymap parses the rendered string back into KeyEvents. For
+  // the variants both halves understand, the round-trip should be
+  // lossless.
+
+  #[test]
+  fn round_trip_plain_chars() {
+    for ch in ['a', 'Z', '0', '!', '~'] {
+      assert_round_trips(KeyCode::Char(ch), ModKeys::NONE);
+    }
+  }
+
+  #[test]
+  fn round_trip_special_keys() {
+    let specials = [
+      KeyCode::Enter,
+      KeyCode::Esc,
+      KeyCode::Tab,
+      KeyCode::Backspace,
+      KeyCode::Delete,
+      KeyCode::Insert,
+      KeyCode::Home,
+      KeyCode::End,
+      KeyCode::PageUp,
+      KeyCode::PageDown,
+      KeyCode::Up,
+      KeyCode::Down,
+      KeyCode::Left,
+      KeyCode::Right,
+      KeyCode::ExMode,
+    ];
+    for code in specials {
+      assert_round_trips(code, ModKeys::NONE);
+    }
+  }
+
+  #[test]
+  fn round_trip_chars_with_single_modifier() {
+    for mods in [ModKeys::CTRL, ModKeys::ALT, ModKeys::SHIFT] {
+      assert_round_trips(KeyCode::Char('a'), mods);
+    }
+  }
+
+  #[test]
+  fn round_trip_chars_with_combined_modifiers() {
+    assert_round_trips(KeyCode::Char('x'), ModKeys::CTRL | ModKeys::ALT);
+    assert_round_trips(KeyCode::Char('x'), ModKeys::CTRL | ModKeys::SHIFT);
+    assert_round_trips(KeyCode::Char('x'), ModKeys::ALT | ModKeys::SHIFT);
+    assert_round_trips(
+      KeyCode::Char('x'),
+      ModKeys::CTRL | ModKeys::ALT | ModKeys::SHIFT,
+    );
+  }
+
+  #[test]
+  fn round_trip_special_key_with_modifier() {
+    assert_round_trips(KeyCode::Enter, ModKeys::CTRL);
+    assert_round_trips(KeyCode::Tab, ModKeys::SHIFT);
+    assert_round_trips(KeyCode::Esc, ModKeys::ALT);
+  }
+
+  #[test]
+  fn round_trip_function_keys() {
+    for n in 1u8..=12 {
+      assert_round_trips(KeyCode::F(n), ModKeys::NONE);
+    }
+  }
+
+  #[test]
+  fn round_trip_function_keys_with_modifier() {
+    assert_round_trips(KeyCode::F(5), ModKeys::CTRL);
+    assert_round_trips(KeyCode::F(12), ModKeys::CTRL | ModKeys::SHIFT);
+  }
+}

@@ -238,3 +238,131 @@ impl Register {
     }
   }
 }
+
+#[cfg(test)]
+mod register_append_tests {
+  use super::*;
+  use crate::readline::linebuf::Line;
+
+  fn line(s: &str) -> Line {
+    let mut l = Line::default();
+    l.push_str(s);
+    l
+  }
+
+  fn reg_with(content: RegisterContent) -> Register {
+    let mut r = Register::default();
+    r.write(content);
+    r
+  }
+
+  // ─── Empty source is a no-op ─────────────────────────────────────
+
+  #[test]
+  fn appending_empty_into_existing_is_noop() {
+    let mut r = reg_with(RegisterContent::Span(vec![line("hello")]));
+    r.append(RegisterContent::Empty);
+    match r.content() {
+      RegisterContent::Span(lines) => {
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].to_string(), "hello");
+      }
+      other => panic!("expected Span, got {other:?}"),
+    }
+  }
+
+  // ─── Empty target adopts the new content ────────────────────────
+
+  #[test]
+  fn appending_into_empty_overwrites() {
+    let mut r = Register::default();
+    r.append(RegisterContent::Span(vec![line("first")]));
+    match r.content() {
+      RegisterContent::Span(lines) => {
+        assert_eq!(lines[0].to_string(), "first");
+      }
+      other => panic!("expected Span, got {other:?}"),
+    }
+  }
+
+  // ─── Same-shape text-into-text ───────────────────────────────────
+
+  #[test]
+  fn span_into_span_extends() {
+    let mut r = reg_with(RegisterContent::Span(vec![line("a"), line("b")]));
+    r.append(RegisterContent::Span(vec![line("c")]));
+    match r.content() {
+      RegisterContent::Span(lines) => {
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[2].to_string(), "c");
+      }
+      other => panic!("expected Span, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn line_into_block_extends_in_place() {
+    let mut r = reg_with(RegisterContent::Block(vec![line("x")]));
+    r.append(RegisterContent::Line(vec![line("y")]));
+    match r.content() {
+      RegisterContent::Block(lines) => assert_eq!(lines.len(), 2),
+      other => panic!("expected Block, got {other:?}"),
+    }
+  }
+
+  // ─── Macro-into-macro ────────────────────────────────────────────
+
+  #[test]
+  fn macro_into_macro_extends() {
+    use crate::keys::{KeyCode, KeyEvent, ModKeys};
+    let mut r = reg_with(RegisterContent::Macro(vec![KeyEvent(
+      KeyCode::Char('a'),
+      ModKeys::empty(),
+    )]));
+    r.append(RegisterContent::Macro(vec![KeyEvent(
+      KeyCode::Char('b'),
+      ModKeys::empty(),
+    )]));
+    match r.content() {
+      RegisterContent::Macro(keys) => assert_eq!(keys.len(), 2),
+      other => panic!("expected Macro, got {other:?}"),
+    }
+  }
+
+  // ─── Text-into-macro: expand_keymap parses ──────────────────────
+
+  #[test]
+  fn text_into_macro_parses_as_keys() {
+    use crate::keys::KeyEvent;
+    let mut r = reg_with(RegisterContent::Macro(Vec::<KeyEvent>::new()));
+    r.append(RegisterContent::Span(vec![line("ab")]));
+    match r.content() {
+      RegisterContent::Macro(keys) => {
+        // expand_keymap("ab") produces 2 key events.
+        assert_eq!(keys.len(), 2);
+      }
+      other => panic!("expected Macro, got {other:?}"),
+    }
+  }
+
+  // ─── Macro-into-text: renders as vim seq, pushed as one Line ────
+
+  #[test]
+  fn macro_into_text_renders_to_line() {
+    use crate::keys::{KeyCode, KeyEvent, ModKeys};
+    let mut r = reg_with(RegisterContent::Span(vec![line("existing")]));
+    r.append(RegisterContent::Macro(vec![
+      KeyEvent(KeyCode::Char('a'), ModKeys::empty()),
+      KeyEvent(KeyCode::Char('b'), ModKeys::empty()),
+    ]));
+    match r.content() {
+      RegisterContent::Span(lines) => {
+        // Original line + one rendered macro line.
+        assert_eq!(lines.len(), 2);
+        // Rendered "ab" as vim seq is "ab".
+        assert_eq!(lines[1].to_string(), "ab");
+      }
+      other => panic!("expected Span, got {other:?}"),
+    }
+  }
+}

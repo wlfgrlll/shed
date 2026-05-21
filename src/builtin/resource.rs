@@ -327,6 +327,111 @@ mod tests {
     assert_eq!(state::Shed::get_status(), 0);
   }
 
+  // ─── all branches via "set to current" no-ops ────────────────────
+  // setrlimit accepts soft <= hard, so setting to the current soft is
+  // always safe and exercises the per-flag setrlimit path without
+  // breaking the test process.
+
+  #[test]
+  fn ulimit_no_opts_succeeds() {
+    let _g = TestGuard::new();
+    test_input("ulimit").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn ulimit_set_fds_to_current() {
+    let _g = TestGuard::new();
+    let (current, _) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+    test_input(format!("ulimit -n {current}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_NOFILE).unwrap().0, current);
+  }
+
+  #[test]
+  fn ulimit_set_procs_to_current() {
+    let _g = TestGuard::new();
+    let (current, _) = getrlimit(Resource::RLIMIT_NPROC).unwrap();
+    test_input(format!("ulimit -u {current}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_NPROC).unwrap().0, current);
+  }
+
+  #[test]
+  fn ulimit_set_stack_to_current() {
+    let _g = TestGuard::new();
+    let (current, _) = getrlimit(Resource::RLIMIT_STACK).unwrap();
+    test_input(format!("ulimit -s {current}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_STACK).unwrap().0, current);
+  }
+
+  #[test]
+  fn ulimit_set_vmem_to_current() {
+    let _g = TestGuard::new();
+    let (current, _) = getrlimit(Resource::RLIMIT_AS).unwrap();
+    test_input(format!("ulimit -v {current}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_AS).unwrap().0, current);
+  }
+
+  // ─── observable state change for core (the safe-to-vary one) ────
+
+  #[test]
+  fn ulimit_set_core_to_nonzero_value() {
+    let _g = TestGuard::new();
+    let (_, hard) = getrlimit(Resource::RLIMIT_CORE).unwrap();
+    // Pick a value well within the hard cap; 4096 bytes is plenty
+    // small that any reasonable system allows it.
+    let target = if hard >= 4096 { 4096 } else { hard };
+    test_input(format!("ulimit -c {target}")).unwrap();
+    assert_eq!(getrlimit(Resource::RLIMIT_CORE).unwrap().0, target);
+    // Restore to 0 to leave the test process where it was.
+    let _ = nix::sys::resource::setrlimit(Resource::RLIMIT_CORE, 0, hard);
+  }
+
+  // ─── multi-flag invocation ───────────────────────────────────────
+
+  #[test]
+  fn ulimit_applies_multiple_options_in_one_call() {
+    let _g = TestGuard::new();
+    let (fds_current, _) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+    test_input(format!("ulimit -c 0 -n {fds_current}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_CORE).unwrap().0, 0);
+    assert_eq!(getrlimit(Resource::RLIMIT_NOFILE).unwrap().0, fds_current);
+  }
+
+  // ─── non-numeric value errors for each flag ──────────────────────
+
+  #[test]
+  fn ulimit_non_numeric_u() {
+    let _g = TestGuard::new();
+    test_input("ulimit -u abc").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn ulimit_non_numeric_s() {
+    let _g = TestGuard::new();
+    test_input("ulimit -s abc").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn ulimit_non_numeric_c() {
+    let _g = TestGuard::new();
+    test_input("ulimit -c abc").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn ulimit_non_numeric_v() {
+    let _g = TestGuard::new();
+    test_input("ulimit -v abc").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
   // ===================== umask =====================
 
   fn with_umask(mask: u32, f: impl FnOnce()) {

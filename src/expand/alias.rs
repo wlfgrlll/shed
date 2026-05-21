@@ -170,6 +170,11 @@ pub fn parse_key_alias(alias: &str) -> Option<KeyEvent> {
     "CMD" => KeyCode::ExMode,
     "PGUP" | "PAGEUP" => KeyCode::PageUp,
     "PGDN" | "PAGEDOWN" => KeyCode::PageDown,
+    // F-keys: F1..F12 (any u8 the user writes — let the renderer decide
+    // what's reasonable). Matches the rendering produced by as_vim_seq.
+    k if k.starts_with('F') && k.len() > 1 && k[1..].parse::<u8>().is_ok() => {
+      KeyCode::F(k[1..].parse::<u8>().unwrap())
+    }
     k if k.len() == 1 => KeyCode::Char(raw_key.chars().next().unwrap()),
     _ => return None,
   };

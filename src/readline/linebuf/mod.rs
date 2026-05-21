@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Display, ops::Range};
+use std::{collections::VecDeque, ops::Range};
 
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
@@ -10,12 +10,11 @@ use super::{
   editcmd::{EditCmd, Motion, Verb},
   editmode, eval,
   eval::lex::{LexFlags, LexStream, TkFlags, TkRule},
-  expand::{expand_alias_with_pos, markers},
+  expand::expand_alias_with_pos,
   highlight,
   history::History,
-  match_loop, motion, procio, register, sherr, shopt, stash, state, status_msg, system_msg,
-  try_var,
-  util::{QuoteState, ShResult, ordered},
+  motion, procio, register, sherr, shopt, stash, state, status_msg, system_msg, try_var,
+  util::{ShResult, ordered},
 };
 
 mod char_class;
@@ -42,6 +41,35 @@ pub use util::{rot13_char, toggle_case_char};
 
 pub(crate) const DEFAULT_VIEWPORT_HEIGHT: usize = 40;
 
+/// Holds and manages edits for the current in-progress command.
+/// This struct is the beating heart of `shed`'s line editor.
+///
+/// Consumes `EditCmd`s to perform edits.
+///
+/// # Structure
+///
+/// As opposed to traditional flat-string style approaches for line editors
+/// like `zsh`'s `zle` or `bash`'s `readline`, we instead use a `Lines`, which nests data
+/// three layers deep:
+/// 1. `Lines(Vec<Line>)` - has methods for operating on ranges of lines
+/// 2. `Line(Vec<Grapheme>)` - has methods for operating on ranges of graphemes
+/// 3. `Grapheme(SmallVec<[char;4]>)` - has methods for closely inspecting UTF-8 grapheme clusters
+///
+/// This results in a 2D grid of graphemes. Linewise operations become very simple;
+/// lookup is an O(1) index into a vector, operations on whole lines can just use a range like
+/// `self.lines[0..5]`, etc. Cursor columns are also simpler in this case; an emoji with
+/// several zero-width-joiners is the exact same size as an ascii character. We can perform
+/// operations without needing to tip-toe around `char` boundaries.
+///
+/// # Tradeoffs
+///
+/// The tradeoff is that contiguous operations spanning multiple lines become somewhat complex to handle.
+/// With a flat string you just include the newline in the operation. With our model, we don't have newlines.
+///
+/// Personally I think the tradeoff is worth it, after working with both the flat string model and the 2D grid model.
+/// Scanning for newlines has proven to be an exceptionally fragile method of performing linewise operations, which
+/// is what necessitated this design in the first place. In order to have robust support for many of `vim`'s more in-depth
+/// features such as line-addressed ex mode commands, this design was what I landed on.
 #[derive(Debug, Clone)]
 pub struct LineBuf {
   lines: Lines,
@@ -290,185 +318,6 @@ impl LineBuf {
     }
   }
 
-  /// The inner logic of `attempt_history_expansion()`. This function calls itself recursively when it encounters command substitutions.
-  /// This is necessary because of the following nasty edge case:
-  /// ```bash
-  /// echo "foo $(echo 'bar!') biz"
-  /// ```
-  /// The exclamation point is inside of both double and single quotes here. According to shell language though, it's really just in single quotes because the command substitution is it's own parsing context.
-  /// Pressing enter on this case with a normal flat parse will attempt history expansion. But a parse that recurses into command subs will not.
-  /// The easiest way to handle this is to simply do lightweight recursive descent whenever we see the start of a command sub.
-  pub fn find_history_expansions(
-    &mut self,
-    changes: &mut Vec<((Pos, Pos), String)>,
-    positions: impl Iterator<Item = (Pos, Grapheme)>,
-    history: &History,
-    offset: Pos,
-  ) -> bool {
-    let mut positions = positions.peekable();
-    let mut qt_state = QuoteState::default();
-
-    // Map a sub-buffer position to the original buffer's coordinate space.
-    // On row 0 of the sub-buffer, columns are offset from the anchor point.
-    // On subsequent rows, columns map directly (same line structure).
-    let map_pos = |slf: &Self, sub_pos: Pos, offset: Pos| -> Pos {
-      if sub_pos.row == 0 {
-        let (r, c) = slf.offset_col_wrapping_at(offset.row, sub_pos.col as isize, offset);
-        Pos::new(r, c)
-      } else {
-        Pos::new(offset.row + sub_pos.row, sub_pos.col)
-      }
-    };
-
-    while let Some((pos, gr)) = positions.next() {
-      let Some(ch) = gr.as_char() else { continue };
-      match ch {
-        symbol @ ('$' | '`') if qt_state.in_double() => {
-          let mut lines = vec![];
-          let mut cur_line = vec![];
-          if let Some((_, gr2)) = positions.peek()
-            && let Some('(') = gr2.as_char()
-          {
-            // command substitution. read until we find matching paren.
-            let mut paren_depth = 1;
-            match_loop!(positions.next() => (_,gr) => gr.as_char(), {
-              Some('\\') => {
-                if let Some((_,gr2)) = positions.next() {
-                  cur_line.push(gr2.clone());
-                }
-              }
-              Some('$') => {
-                let Some((pos,gr2)) = positions.peek() else {
-                  cur_line.push(gr.clone());
-                  continue
-                };
-                let Some('(') = gr2.as_char() else {
-                  cur_line.push(gr.clone());
-                  continue
-                };
-
-                positions.next();
-                paren_depth += 1;
-                cur_line.push(Grapheme::from('$'));
-                cur_line.push(Grapheme::from('('));
-              }
-              Some(')') => {
-                paren_depth -= 1;
-                if paren_depth == 0 {
-                  break;
-                }
-                cur_line.push(Grapheme::from(')'));
-              }
-
-              _ if gr.is_lf() => lines.push(Line(std::mem::take(&mut cur_line))),
-              _ => cur_line.push(gr.clone()),
-            });
-
-            lines.push(Line(cur_line));
-            let sub_positions = Self::enumerate_graphemes(&Lines(lines)).into_iter();
-            // offset past "$(" - 2 chars from the '$' position
-            let sub_offset = map_pos(self, pos.col_add(2), offset);
-
-            // now we recurse.
-            self.find_history_expansions(changes, sub_positions, history, sub_offset);
-          } else if symbol == '`' {
-            // also command substitution.
-            match_loop!(positions.next() => (_,gr) => gr.as_char(), {
-              Some('\\') => {
-                if let Some((_,gr2)) = positions.next() {
-                  cur_line.push(gr2.clone());
-                }
-              }
-              Some('`') => break,
-
-              _ if gr.is_lf() => lines.push(Line(std::mem::take(&mut cur_line))),
-              _ => cur_line.push(gr.clone()),
-            });
-
-            lines.push(Line(cur_line));
-            let sub_positions = Self::enumerate_graphemes(&Lines(lines)).into_iter();
-            // offset past "`" - 1 char from the backtick position
-            let sub_offset = map_pos(self, pos.col_add(1), offset);
-
-            // now we recurse.
-            self.find_history_expansions(changes, sub_positions, history, sub_offset);
-          } else {
-            positions.next();
-            continue;
-          };
-        }
-        '\\' | '$' => {
-          positions.next();
-        }
-        '\'' => qt_state.toggle_single(),
-        '"' => qt_state.toggle_double(),
-        '!' if !qt_state.in_single() => {
-          let start = pos;
-          let Some((pos2, gr2)) = positions.next() else {
-            continue;
-          };
-          let Some(ch) = gr2.as_char() else {
-            continue;
-          };
-          match ch {
-            '!' => {
-              if let Some(prev) = history.last() {
-                let raw = prev.command();
-                let start = map_pos(self, start, offset);
-                changes.push(((start, start.col_add(1)), raw.to_string()));
-              }
-            }
-            '$' => {
-              if let Some(prev) = history.last() {
-                let raw = prev.command();
-                let start = map_pos(self, start, offset);
-                if let Some(last_word) = raw.split_whitespace().last() {
-                  changes.push(((start, start.col_add(1)), last_word.to_string()));
-                }
-              }
-            }
-            ch if !ch.is_whitespace() => {
-              if ch == '"' && qt_state.in_double() {
-                qt_state.toggle_double();
-                continue;
-              }
-              let mut end = pos2;
-              let cur_row = end.row;
-              while let Some((pos3, gr3)) = positions.next() {
-                if pos3.row > cur_row {
-                  break;
-                }; // break on linefeed
-                let Some(ch) = gr3.as_char() else { break }; // break on non-ascii
-                if ch.is_whitespace() {
-                  break; // break on whitespace
-                } else if matches!(ch, ';' | '&' | '|' | '(' | ')' | '<' | '>') {
-                  break; // break on shell metacharacters
-                } else if ch == '"' && qt_state.in_double() {
-                  qt_state.toggle_double();
-                  break;
-                };
-                end = pos3;
-              }
-              let pos2 = map_pos(self, pos2, offset);
-              let start = map_pos(self, start, offset);
-              let end = map_pos(self, end, offset);
-
-              let span = self.yank_span((pos2, end), true);
-              let token = span.join();
-              let cmd = history.resolve_hist_token(&token).unwrap_or(token);
-
-              changes.push(((start, end), cmd));
-            }
-            _ => {}
-          }
-        }
-        _ => {}
-      }
-    }
-
-    !changes.is_empty()
-  }
-
   pub fn attempt_history_expansion(&mut self, history: &History) -> bool {
     let buf = self.joined();
     let tks = get_context_tokens(&buf);
@@ -537,93 +386,5 @@ impl LineBuf {
     } else {
       vec![]
     }
-  }
-}
-
-impl Display for LineBuf {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let mut cloned = self.lines.clone();
-
-    // Layer 1: search match highlighting
-    if let Some(pat) = self.pending_search.as_ref()
-      && !pat.is_empty()
-      && let Ok(re) = Shed::meta_mut(|m| m.get_regex(pat.clone()))
-    {
-      let buf = self.joined();
-      // Collect (start_pos, end_pos) pairs first, then insert in reverse
-      // so earlier insertions don't shift later byte offsets
-      // Build a one-shot byte-to-pos index since we can't mutate the cache
-      // through &self.
-      let positions = self.byte_positions();
-      let lookup = |b: usize| -> Option<Pos> {
-        positions
-          .iter()
-          .find_map(|(off, p)| (*off >= b).then_some(*p))
-      };
-      let mut spans: Vec<(Pos, Pos)> = re
-        .find_iter(&buf)
-        .filter_map(|m| Some((lookup(m.start())?, lookup(m.end())?)))
-        .collect();
-      // Sort by start descending so later positions are inserted first
-      spans.sort_by(|a, b| b.0.cmp(&a.0));
-      for (s, e) in spans {
-        // Insert end marker first (still on its row), then start marker
-        if e.col >= cloned[e.row].len() {
-          cloned[e.row].push_char(markers::MATCH_END);
-        } else {
-          cloned[e.row].insert(e.col, markers::MATCH_END.into());
-        }
-        cloned[s.row].insert(s.col, markers::MATCH_START.into());
-      }
-    }
-
-    // Layer 2: visual mode selection highlighting
-    if let Some(select) = self.select_mode.as_ref() {
-      match select {
-        SelectMode::Char(pos) => {
-          let (s, e) = ordered(self.cursor.pos, *pos);
-          if s.row == e.row {
-            // Same line: insert end first to avoid shifting start index
-            let line = &mut cloned[s.row];
-            if e.col + 1 >= line.len() {
-              line.push_char(markers::VISUAL_MODE_END);
-            } else {
-              line.insert(e.col + 1, markers::VISUAL_MODE_END.into());
-            }
-            line.insert(s.col, markers::VISUAL_MODE_START.into());
-          } else {
-            // Start line: highlight from s.col to end
-            cloned[s.row].insert(s.col, markers::VISUAL_MODE_START.into());
-            cloned[s.row].push_char(markers::VISUAL_MODE_END);
-
-            // Middle lines: fully highlighted
-            for row in cloned.iter_mut().skip(s.row + 1).take(e.row - s.row - 1) {
-              row.insert(0, markers::VISUAL_MODE_START.into());
-              row.push_char(markers::VISUAL_MODE_END);
-            }
-
-            // End line: highlight from start to e.col
-            let end_line = &mut cloned[e.row];
-            if e.col + 1 >= end_line.len() {
-              end_line.push_char(markers::VISUAL_MODE_END);
-            } else {
-              end_line.insert(e.col + 1, markers::VISUAL_MODE_END.into());
-            }
-            end_line.insert(0, markers::VISUAL_MODE_START.into());
-          }
-        }
-        SelectMode::Line(pos) => {
-          let (s, e) = ordered(self.row(), pos.row);
-          for row in cloned.iter_mut().take(e + 1).skip(s) {
-            row.insert(0, markers::VISUAL_MODE_START.into());
-          }
-          cloned[e].push_char(markers::VISUAL_MODE_END);
-        }
-        SelectMode::Block(_pos) => unimplemented!(),
-      }
-    }
-
-    let lines: Vec<String> = cloned.0.iter().map(|line| line.to_string()).collect();
-    write!(f, "{}", lines.join("\n"))
   }
 }

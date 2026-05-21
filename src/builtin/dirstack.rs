@@ -555,4 +555,179 @@ pub mod tests {
     test_input("pushd /nonexistent_dir_12345").ok();
     assert_ne!(state::Shed::get_status(), 0);
   }
+
+  // ===================== Dirs::execute =====================
+
+  fn clear_stack() {
+    Shed::meta_mut(|m| m.dirs_mut().clear());
+  }
+
+  #[test]
+  fn dirs_default_prints_current_dir() {
+    let g = TestGuard::new();
+    clear_stack();
+    test_input("dirs").unwrap();
+    let out = g.read_output();
+    // The default fmt always includes cwd; we just verify some output.
+    assert!(!out.is_empty(), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn dirs_p_one_per_line() {
+    let g = TestGuard::new();
+    clear_stack();
+    let t1 = TempDir::new().unwrap();
+    test_input(format!("pushd {}", t1.path().display())).unwrap();
+    g.read_output();
+    test_input("dirs -p").unwrap();
+    let out = g.read_output();
+    // -p separates entries with newlines; with 2 dirs we'd have one '\n'.
+    assert!(out.contains('\n'), "got: {out:?}");
+  }
+
+  #[test]
+  fn dirs_v_indexed_listing() {
+    let g = TestGuard::new();
+    clear_stack();
+    let t1 = TempDir::new().unwrap();
+    test_input(format!("pushd {}", t1.path().display())).unwrap();
+    g.read_output();
+    test_input("dirs -v").unwrap();
+    let out = g.read_output();
+    // -v prefixes entries with their index, so "0\t" appears.
+    assert!(out.contains("0\t"), "got: {out:?}");
+  }
+
+  #[test]
+  fn dirs_c_clears_stack() {
+    let _g = TestGuard::new();
+    clear_stack();
+    let t1 = TempDir::new().unwrap();
+    test_input(format!("pushd {}", t1.path().display())).unwrap();
+    let len_before = Shed::meta(|m| m.dirs().len());
+    assert!(len_before > 0);
+    test_input("dirs -c").unwrap();
+    let len_after = Shed::meta(|m| m.dirs().len());
+    assert_eq!(len_after, 0);
+  }
+
+  #[test]
+  fn dirs_with_plus_index_picks_from_top() {
+    let g = TestGuard::new();
+    clear_stack();
+    let t1 = TempDir::new().unwrap();
+    let t2 = TempDir::new().unwrap();
+    test_input(format!("pushd {}", t1.path().display())).unwrap();
+    test_input(format!("pushd {}", t2.path().display())).unwrap();
+    g.read_output();
+    // +0 is cwd; +1 is the top of the saved stack.
+    test_input("dirs +0").unwrap();
+    let out = g.read_output();
+    assert!(!out.is_empty(), "got: {out:?}");
+  }
+
+  #[test]
+  fn dirs_index_out_of_range_errors() {
+    let _g = TestGuard::new();
+    clear_stack();
+    test_input("dirs +99").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn dirs_unknown_arg_errors() {
+    let _g = TestGuard::new();
+    clear_stack();
+    test_input("dirs random_garbage_arg").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn dirs_l_flag_disables_home_truncation() {
+    // -l makes the listing show absolute paths rather than truncating
+    // $HOME to ~. Without inspecting the contents we just verify the
+    // command succeeds.
+    let _g = TestGuard::new();
+    clear_stack();
+    test_input("dirs -l").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ===================== PopDir::execute extra branches =====================
+
+  #[test]
+  fn popd_plus_zero_acts_like_plain_popd() {
+    let _g = TestGuard::new();
+    clear_stack();
+    let original = env::current_dir().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().to_path_buf();
+    test_input(format!("pushd {}", path.display())).unwrap();
+    test_input("popd +0").unwrap();
+    // +0 pops top and cds back.
+    assert_eq!(env::current_dir().unwrap(), original);
+  }
+
+  #[test]
+  fn popd_plus_index_out_of_range_errors() {
+    let _g = TestGuard::new();
+    clear_stack();
+    let tmp = TempDir::new().unwrap();
+    test_input(format!("pushd {}", tmp.path().display())).unwrap();
+    test_input("popd +99").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn popd_minus_index_removes_from_bottom() {
+    let _g = TestGuard::new();
+    clear_stack();
+    let tmp1 = TempDir::new().unwrap();
+    let tmp2 = TempDir::new().unwrap();
+    let path1 = tmp1.path().to_path_buf();
+    let path2 = tmp2.path().to_path_buf();
+    // Stack: cwd=path2, dirs=[path1, original]
+    test_input(format!("pushd {}", path1.display())).unwrap();
+    test_input(format!("pushd {}", path2.display())).unwrap();
+    // -0 is the bottom of the stack: `original`. Removing it should
+    // leave dirs=[path1] and cwd untouched (no cd on indexed popd).
+    test_input("popd -0").unwrap();
+    assert_eq!(env::current_dir().unwrap(), path2);
+    let stack = Shed::meta(|m| m.dirs().clone());
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack[0], path1);
+  }
+
+  #[test]
+  fn popd_minus_index_out_of_range_errors() {
+    let _g = TestGuard::new();
+    clear_stack();
+    test_input("popd -5").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn popd_n_flag_pops_without_cd() {
+    let _g = TestGuard::new();
+    clear_stack();
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().to_path_buf();
+    test_input(format!("pushd {}", path.display())).unwrap();
+    let before_cwd = env::current_dir().unwrap();
+    test_input("popd -n").unwrap();
+    // -n: pop the saved dir but do NOT cd.
+    assert_eq!(env::current_dir().unwrap(), before_cwd);
+    let stack = Shed::meta(|m| m.dirs().clone());
+    assert_eq!(stack.len(), 0);
+  }
+
+  #[test]
+  fn popd_n_flag_on_empty_stack_is_ok() {
+    // With -n we skip the empty-stack ExecFail and just return 0.
+    let _g = TestGuard::new();
+    clear_stack();
+    test_input("popd -n").unwrap();
+    assert_eq!(state::Shed::get_status(), 0);
+  }
 }

@@ -149,6 +149,7 @@ pub(crate) fn width_calculator() -> Box<dyn WidthCalculator> {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColorMode {
   Truecolor,
   Palette256,
@@ -232,4 +233,82 @@ pub(super) fn enable_cooked_mode(term: &mut Termios) {
   // Restore VMIN/VTIME to canonical mode defaults
   term.control_chars[termios::SpecialCharacterIndices::VMIN as usize] = 1;
   term.control_chars[termios::SpecialCharacterIndices::VTIME as usize] = 0;
+}
+
+#[cfg(test)]
+mod truncate_visual_tests {
+  use super::*;
+
+  const RESET: &str = "\x1b[0m";
+
+  #[test]
+  fn empty_string_returns_empty_no_reset() {
+    // Nothing visible was written → no SGR reset appended.
+    assert_eq!(truncate_visual("", 10), "");
+  }
+
+  #[test]
+  fn short_string_passes_through_with_reset() {
+    // Plain text shorter than max_width returns the full string +
+    // trailing SGR reset.
+    let out = truncate_visual("hi", 10);
+    assert_eq!(out, format!("hi{RESET}"));
+  }
+
+  #[test]
+  fn exact_fit_passes_through() {
+    let out = truncate_visual("hello", 5);
+    assert_eq!(out, format!("hello{RESET}"));
+  }
+
+  #[test]
+  fn over_long_is_truncated() {
+    let out = truncate_visual("hello world", 5);
+    assert_eq!(out, format!("hello{RESET}"));
+  }
+
+  #[test]
+  fn zero_max_width_with_only_visible_input_drops_everything() {
+    let out = truncate_visual("hello", 0);
+    // No visible char fits, so wrote_anything_visible stays false and
+    // the reset is *not* appended.
+    assert_eq!(out, "");
+  }
+
+  #[test]
+  fn ansi_escape_does_not_count_against_width() {
+    // The CSI sequence itself contributes width 0, so even with a
+    // tight budget the visible chars after still survive.
+    let input = "\x1b[31mhi\x1b[0m";
+    let out = truncate_visual(input, 2);
+    // Both visible chars + the inline escapes survive; an extra
+    // reset is then appended.
+    assert_eq!(out, format!("\x1b[31mhi\x1b[0m{RESET}"));
+  }
+
+  #[test]
+  fn wide_grapheme_counted_as_its_width() {
+    // CJK character takes width 2 in monospace terminals.
+    let out = truncate_visual("漢字", 2);
+    // Only one CJK char fits in width 2.
+    assert_eq!(out, format!("漢{RESET}"));
+  }
+
+  #[test]
+  fn ansi_only_input_writes_no_reset() {
+    // The bytes are pushed into the output (esc_seq path doesn't
+    // break the loop), but no visible char triggered the reset.
+    // We're really just pinning the wrote_anything_visible branch.
+    let input = "\x1b[31m";
+    let out = truncate_visual(input, 5);
+    assert_eq!(out, "\x1b[31m");
+  }
+
+  #[test]
+  fn truncation_breaks_before_overrun() {
+    // "abcdef" with width 4 stops after "abcd"; the 'e' check sees
+    // visible(4) + w(1) > 4 and breaks before pushing.
+    let out = truncate_visual("abcdef", 4);
+    assert_eq!(out, format!("abcd{RESET}"));
+  }
 }

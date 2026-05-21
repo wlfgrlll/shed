@@ -31,7 +31,11 @@ impl super::LineBuf {
     else {
       return Ok(());
     };
-    let ExNode { address, kind } = node;
+    let ExNode {
+      address,
+      bang,
+      kind,
+    } = node;
     let address = address.clone();
 
     match kind {
@@ -46,7 +50,7 @@ impl super::LineBuf {
       ExNdRule::Shell(sh_cmd) /*=============*/ => self.ex_shell_cmd(cmd, sh_cmd),
       ExNdRule::Stash(stash_args) /*---------*/ => self.ex_stash(stash_args),
       ExNdRule::Substitute { pat, repl, flags } => self.ex_substitute(cmd, pat, repl, *flags, address.clone()),
-      ExNdRule::Global { negated, pat, nested } => self.ex_global(cmd, *negated, pat, nested, address),
+      ExNdRule::Global { pat, nested } => self.ex_global(cmd, *bang, pat, nested, address),
 
       ExNdRule::Normal {..} /*---------------*/ |
       ExNdRule::Quit /*======================*/ => unreachable!(/* handled in readline/mod.rs */),
@@ -604,14 +608,10 @@ impl super::LineBuf {
   ///   Each layer of Global narrows the set.
   pub fn lines_for_ex_node(&self, node: &ExNode) -> ShResult<Vec<usize>> {
     match &node.kind {
-      ExNdRule::Global {
-        negated,
-        pat,
-        nested,
-      } => {
+      ExNdRule::Global { pat, nested } => {
         let range = node.address.clone().unwrap_or_else(AddressRange::all_lines);
         let constraint = range.as_motion();
-        let outer = self.get_matching_lines(&constraint, pat, *negated)?;
+        let outer = self.get_matching_lines(&constraint, pat, node.bang)?;
 
         // If the nested node also narrows the set (another Global), intersect.
         // Otherwise the outer match is the answer.
@@ -666,6 +666,7 @@ fn merge_repeat_addr(new_cmd: &EditCmd, saved: &EditCmd) -> Option<EditCmd> {
 
   let new_node = ExNode {
     address: new_address,
+    bang: saved_node.bang,
     kind: saved_node.kind.clone(),
   };
 
@@ -673,4 +674,475 @@ fn merge_repeat_addr(new_cmd: &EditCmd, saved: &EditCmd) -> Option<EditCmd> {
     verb: Some(verb!(Verb::ExCmd(new_node))),
     ..new_cmd.clone()
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::readline::LineBuf;
+  use crate::readline::stash::Stash;
+  use crate::tests::testutil::TestGuard;
+
+  fn make_buf(content: &str) -> LineBuf {
+    let mut buf = LineBuf::default();
+    buf.set_buffer(content.into());
+    buf
+  }
+
+  // ─── Push ────────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_push_clears_buffer_and_persists_to_stack() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("echo hello");
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    assert_eq!(buf.joined(), "", "push should clear the buffer");
+
+    let stash = Stash::new().unwrap();
+    assert_eq!(stash.stack_len(), 1, "stack should have one entry");
+  }
+
+  #[test]
+  fn stash_push_named_does_not_increase_stack_count() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("named cmd");
+    buf
+      .ex_stash(&StashArgs::Push(Some("my_name".into())))
+      .unwrap();
+    let stash = Stash::new().unwrap();
+    // Named entries don't count toward stack_len (only unnamed do).
+    assert_eq!(stash.stack_len(), 0);
+    // But the named entry should be retrievable.
+    let entry = stash.get("my_name").unwrap();
+    assert!(entry.is_some());
+    assert_eq!(entry.unwrap().buffer, "named cmd");
+  }
+
+  #[test]
+  fn stash_push_on_empty_buffer_is_noop() {
+    let _g = TestGuard::new();
+    let mut buf = LineBuf::default();
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    let stash = Stash::new().unwrap();
+    assert_eq!(stash.stack_len(), 0, "empty push should not persist");
+  }
+
+  // ─── Pop ─────────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_pop_restores_buffer_and_removes_from_stack() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("first cmd");
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    assert_eq!(buf.joined(), "");
+
+    buf.ex_stash(&StashArgs::Pop(None)).unwrap();
+    assert_eq!(buf.joined(), "first cmd");
+    let stash = Stash::new().unwrap();
+    assert_eq!(stash.stack_len(), 0);
+  }
+
+  #[test]
+  fn stash_pop_empty_is_noop() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("starting content");
+    buf.ex_stash(&StashArgs::Pop(None)).unwrap();
+    // Buffer untouched when there's nothing to pop.
+    assert_eq!(buf.joined(), "starting content");
+  }
+
+  #[test]
+  fn stash_pop_by_index() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("entry one");
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    buf.set_buffer("entry two".into());
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    // stack now: [entry one, entry two] (idx 0 oldest, idx 1 newest)
+
+    buf.ex_stash(&StashArgs::Pop(Some("0".into()))).unwrap();
+    assert_eq!(buf.joined(), "entry one");
+    let stash = Stash::new().unwrap();
+    assert_eq!(stash.stack_len(), 1, "only one left after popping idx 0");
+  }
+
+  // ─── Drop ────────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_drop_removes_entry_without_touching_buffer() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("to be stashed");
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    buf.set_buffer("current work".into());
+
+    buf.ex_stash(&StashArgs::Drop(Some("0".into()))).unwrap();
+    assert_eq!(
+      buf.joined(),
+      "current work",
+      "drop should not modify the buffer"
+    );
+    let stash = Stash::new().unwrap();
+    assert_eq!(stash.stack_len(), 0);
+  }
+
+  // ─── Apply ───────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_apply_named_replaces_buffer_but_keeps_entry() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("saved cmd");
+    buf.ex_stash(&StashArgs::Push(Some("snap".into()))).unwrap();
+    buf.set_buffer("now editing".into());
+
+    buf
+      .ex_stash(&StashArgs::Apply(Some("snap".into())))
+      .unwrap();
+    assert_eq!(buf.joined(), "saved cmd");
+
+    // Apply should NOT remove the named entry.
+    let stash = Stash::new().unwrap();
+    assert!(stash.get("snap").unwrap().is_some());
+  }
+
+  #[test]
+  fn stash_apply_unknown_name_is_noop() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("current");
+    buf
+      .ex_stash(&StashArgs::Apply(Some("nope_doesnt_exist".into())))
+      .unwrap();
+    assert_eq!(buf.joined(), "current");
+  }
+
+  // ─── Insert ──────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_insert_pastes_into_existing_buffer() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("stash content");
+    buf
+      .ex_stash(&StashArgs::Push(Some("piece".into())))
+      .unwrap();
+
+    buf.set_buffer("hello world".into());
+    // Cursor defaults to (0,0); insert at start.
+    buf
+      .ex_stash(&StashArgs::Insert(Some("piece".into())))
+      .unwrap();
+    // The stashed content gets pasted; exact concatenation depends on
+    // insert_lines_at semantics, but the result must contain both.
+    let result = buf.joined();
+    assert!(result.contains("stash content"), "got: {result:?}");
+    assert!(result.contains("hello world"), "got: {result:?}");
+  }
+
+  // ─── List ────────────────────────────────────────────────────────────
+
+  #[test]
+  fn stash_list_does_not_panic_on_empty_or_populated_stash() {
+    let _g = TestGuard::new();
+    let mut buf = make_buf("");
+    // Empty case — should post a "no entries" status_msg, not panic.
+    buf.ex_stash(&StashArgs::List(None)).unwrap();
+    buf
+      .ex_stash(&StashArgs::List(Some(StashListArg::Stack)))
+      .unwrap();
+    buf
+      .ex_stash(&StashArgs::List(Some(StashListArg::Named)))
+      .unwrap();
+
+    // Populate and list again.
+    buf.set_buffer("on the stack".into());
+    buf.ex_stash(&StashArgs::Push(None)).unwrap();
+    buf.set_buffer("by name".into());
+    buf
+      .ex_stash(&StashArgs::Push(Some("alpha".into())))
+      .unwrap();
+
+    buf.ex_stash(&StashArgs::List(None)).unwrap();
+    buf
+      .ex_stash(&StashArgs::List(Some(StashListArg::Stack)))
+      .unwrap();
+    buf
+      .ex_stash(&StashArgs::List(Some(StashListArg::Named)))
+      .unwrap();
+  }
+
+  // ===================== run_shell_cmd =====================
+
+  mod run_shell_cmd_tests {
+    use super::*;
+    use crate::tests::testutil::has_cmd;
+
+    // ─── stdin path: capture_command ────────────────────────────────
+
+    #[test]
+    fn with_stdin_captures_command_output() {
+      if !has_cmd("cat") {
+        return;
+      }
+      let _g = TestGuard::new();
+      let mut buf = make_buf("");
+      let out = buf
+        .run_shell_cmd("cat", Some("hello-from-stdin\n"))
+        .unwrap()
+        .unwrap();
+      assert!(out.contains("hello-from-stdin"), "got: {out:?}");
+    }
+
+    #[test]
+    fn with_empty_stdin_runs_command() {
+      // `echo` is a shell builtin in shed, so no external binary is
+      // required here — no `has_cmd` guard needed.
+      let _g = TestGuard::new();
+      let mut buf = make_buf("");
+      let out = buf
+        .run_shell_cmd("echo captured", Some(""))
+        .unwrap()
+        .unwrap();
+      assert!(out.contains("captured"), "got: {out:?}");
+    }
+
+    // ─── no-stdin path: exec_int ───────────────────────────────────
+    //
+    // Note: the no-stdin path runs via `exec_int` (interactive mode).
+    // External commands (`true`, `:`) would fork and trigger
+    // `wait_fg → attach → tcsetpgrp`, which fails with ENOTTY in the
+    // test harness (the test process isn't in the pty's session).
+    // We restrict no-stdin tests to assignment commands which run
+    // in-process without forking.
+
+    #[test]
+    fn without_stdin_returns_none() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("original");
+      let result = buf.run_shell_cmd("BUFFER=stays", None).unwrap();
+      assert_eq!(result, None);
+    }
+
+    // ─── BUFFER var modifications round-trip into LineBuf ──────────
+
+    #[test]
+    fn buffer_var_set_in_shell_cmd_updates_linebuf() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("original");
+      // The command runs in the current shell process; assigning
+      // BUFFER updates the shell var, which the function reads back.
+      buf.run_shell_cmd("BUFFER=replaced", None).unwrap();
+      assert_eq!(buf.joined(), "replaced");
+    }
+
+    // ─── CURSOR var modifications round-trip ───────────────────────
+
+    #[test]
+    fn cursor_var_set_to_valid_pos_moves_cursor() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("abcdef");
+      buf.set_cursor_from_flat(0);
+      buf.run_shell_cmd("CURSOR=3", None).unwrap();
+      assert_eq!(buf.cursor_to_flat(), 3);
+    }
+
+    #[test]
+    fn cursor_var_invalid_falls_back_to_original_position() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("abcdef");
+      buf.set_cursor_from_flat(2);
+      // 'garbage' isn't a valid flat index or row:col → falls back.
+      buf.run_shell_cmd("CURSOR=garbage", None).unwrap();
+      assert_eq!(buf.cursor_to_flat(), 2);
+    }
+
+    // ─── BUFFER + CURSOR together — typical widget pattern ────────
+
+    #[test]
+    fn buffer_and_cursor_replacement_together() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("original");
+      buf.run_shell_cmd("BUFFER=replaced;CURSOR=4", None).unwrap();
+      assert_eq!(buf.joined(), "replaced");
+      assert_eq!(buf.cursor_to_flat(), 4);
+    }
+
+    // ─── Stdin path doesn't get to mutate shell-side BUFFER ───────
+
+    #[test]
+    fn stdin_path_does_not_round_trip_buffer_via_child() {
+      // With stdin, capture_command forks. The child can read BUFFER
+      // (it's exported) but its writes to BUFFER stay in the child's
+      // env and never reach the parent's shell vars. So the parent
+      // restores the original buffer regardless of what the child did.
+      let _g = TestGuard::new();
+      let mut buf = make_buf("stays_the_same");
+      buf
+        .run_shell_cmd("BUFFER=should_not_leak", Some(""))
+        .unwrap();
+      assert_eq!(buf.joined(), "stays_the_same");
+    }
+  }
+
+  // ===================== ex_write =====================
+
+  mod ex_write_tests {
+    use super::*;
+    use crate::readline::editcmd::WriteDest;
+
+    #[test]
+    fn write_to_file_creates_and_truncates() {
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let path = dir.path().join("out.txt");
+      // Pre-existing content should be truncated.
+      std::fs::write(&path, "OLD_CONTENT_TO_BE_OVERWRITTEN").unwrap();
+      let mut buf = make_buf("new buffer content");
+      buf.ex_write(&WriteDest::File(path.clone())).unwrap();
+      let content = std::fs::read_to_string(&path).unwrap();
+      assert_eq!(content, "new buffer content");
+    }
+
+    #[test]
+    fn write_to_file_creates_when_missing() {
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let path = dir.path().join("newfile.txt");
+      let mut buf = make_buf("hello");
+      buf.ex_write(&WriteDest::File(path.clone())).unwrap();
+      assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+    }
+
+    #[test]
+    fn write_to_file_append_does_not_truncate() {
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let path = dir.path().join("append.txt");
+      std::fs::write(&path, "first ").unwrap();
+      let mut buf = make_buf("second");
+      buf.ex_write(&WriteDest::FileAppend(path.clone())).unwrap();
+      let content = std::fs::read_to_string(&path).unwrap();
+      assert_eq!(content, "first second");
+    }
+
+    #[test]
+    fn write_to_file_in_unwritable_dir_is_silent_ok() {
+      // Pinning current behavior: ex_write swallows open errors and
+      // returns Ok (the user sees a system_msg about it).
+      let _g = TestGuard::new();
+      let mut buf = make_buf("anything");
+      let bad_path = std::path::PathBuf::from("/this/does/not/exist/xyz/out.txt");
+      let res = buf.ex_write(&WriteDest::File(bad_path));
+      assert!(res.is_ok());
+    }
+
+    // Note: `WriteDest::Cmd` pipes the buffer to a shell command via
+    // exec_nonint. Forking shell commands in the test harness can hit
+    // tcsetpgrp ENOTTY issues; we skip direct testing of that arm.
+  }
+
+  // ===================== ex_read =====================
+
+  mod ex_read_tests {
+    use super::*;
+    use crate::readline::editcmd::ReadSrc;
+
+    #[test]
+    fn read_file_inserts_contents_into_buffer() {
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let path = dir.path().join("in.txt");
+      std::fs::write(&path, "line one\nline two\n").unwrap();
+      let mut buf = make_buf("");
+      buf.ex_read(&ReadSrc::File(path)).unwrap();
+      let joined = buf.joined();
+      assert!(joined.contains("line one"), "got: {joined:?}");
+      assert!(joined.contains("line two"), "got: {joined:?}");
+    }
+
+    #[test]
+    fn read_missing_file_is_silent_ok() {
+      // Non-existent paths are not errors — `system_msg!` informs the
+      // user and the function returns Ok with the buffer untouched.
+      let _g = TestGuard::new();
+      let mut buf = make_buf("original");
+      let bad_path = std::path::PathBuf::from("/this/does/not/exist/zzz.txt");
+      buf.ex_read(&ReadSrc::File(bad_path)).unwrap();
+      assert_eq!(buf.joined(), "original");
+    }
+
+    #[test]
+    fn read_directory_path_is_silent_ok() {
+      // path.is_file() returns false for a directory → same not-a-file
+      // branch as a missing path.
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let mut buf = make_buf("untouched");
+      buf
+        .ex_read(&ReadSrc::File(dir.path().to_path_buf()))
+        .unwrap();
+      assert_eq!(buf.joined(), "untouched");
+    }
+
+    #[test]
+    fn read_file_clears_indent_cache() {
+      // ex_read sets self.indent_cache = None as part of the successful
+      // path. We pin this by reading something in and checking the
+      // cache afterward.
+      let _g = TestGuard::new();
+      let dir = tempfile::TempDir::new().unwrap();
+      let path = dir.path().join("c.txt");
+      std::fs::write(&path, "x").unwrap();
+      let mut buf = make_buf("");
+      buf.ex_read(&ReadSrc::File(path)).unwrap();
+      assert!(buf.indent_cache.is_none());
+    }
+
+    // Note: `ReadSrc::Cmd` runs capture_command which forks. Like
+    // `WriteDest::Cmd` above, that arm is skipped due to fork/tty
+    // issues in the test harness.
+  }
+
+  // ===================== ex_shell_cmd =====================
+
+  mod ex_shell_cmd_tests {
+    use super::*;
+    use crate::readline::editcmd::{Cmd, EditCmd, LineAddr, Motion};
+
+    /// No motion attached → ex_shell_cmd falls through to
+    /// `run_shell_cmd(_, None)` and the buffer is mutated only by
+    /// side effects the shell command itself causes.
+    #[test]
+    fn no_motion_runs_command_without_replacing_lines() {
+      let _g = TestGuard::new();
+      let mut buf = make_buf("first\nsecond\nthird");
+      let cmd = EditCmd::new();
+      // Assigning BUFFER inside the no-stdin path updates the linebuf
+      // via run_shell_cmd's read-back. Use it to confirm the command
+      // ran rather than the line-range path being taken.
+      buf.ex_shell_cmd(&cmd, "BUFFER=after_no_motion").unwrap();
+      assert_eq!(buf.joined(), "after_no_motion");
+    }
+
+    /// With a Line motion attached, ex_shell_cmd drains the indicated
+    /// lines, pipes their text to the shell command, and splices the
+    /// output back in their place. `cat` is a faithful echo, so the
+    /// extracted lines should round-trip identically.
+    #[test]
+    fn line_motion_replaces_with_cat_output() {
+      use crate::tests::testutil::has_cmd;
+      if !has_cmd("cat") {
+        return;
+      }
+      let _g = TestGuard::new();
+      let mut buf = make_buf("alpha\nbeta\ngamma");
+      // Single-line motion targeting row 1 (zero-indexed: "beta").
+      let mut cmd = EditCmd::new();
+      cmd.set_motion(Cmd(1, Motion::Line(LineAddr::Number(2))));
+      buf.ex_shell_cmd(&cmd, "cat").unwrap();
+      // Buffer should still contain all three originals — cat echoes
+      // back what it read, so the splice replaces with identical text.
+      let joined = buf.joined();
+      assert!(joined.contains("alpha"), "got: {joined:?}");
+      assert!(joined.contains("beta"), "got: {joined:?}");
+      assert!(joined.contains("gamma"), "got: {joined:?}");
+    }
+  }
 }

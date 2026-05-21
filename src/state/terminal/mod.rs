@@ -178,7 +178,11 @@ impl Terminal {
   }
 
   pub fn color_mode(&self) -> Option<ColorMode> {
-    if !try_var!("NO_COLOR")?.is_empty() {
+    // NO_COLOR semantics: disable color iff the var is set AND
+    // non-empty. The previous version used `try_var!("NO_COLOR")?`
+    // which propagated None when the var was unset — making the
+    // function return None ("no color") in the common case.
+    if try_var!("NO_COLOR").is_some_and(|v| !v.is_empty()) {
       return None;
     }
 
@@ -1042,5 +1046,193 @@ impl std::io::Write for Terminal {
     }
     self.input_buf.clear();
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod color_mode_tests {
+  use super::*;
+  use crate::state::Shed;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+
+  fn unset_all_color_vars() {
+    Shed::vars_mut(|v| {
+      v.unset_var("NO_COLOR").ok();
+      v.unset_var("SHED_COLOR_MODE").ok();
+      v.unset_var("TERM").ok();
+    });
+  }
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::empty())
+        .unwrap();
+    });
+  }
+
+  fn color_mode() -> Option<ColorMode> {
+    Shed::term(|t| t.color_mode())
+  }
+
+  // ─── NO_COLOR ─────────────────────────────────────────────────────
+
+  #[test]
+  fn default_returns_palette16_when_no_relevant_vars_set() {
+    // Regression: previously the `try_var!("NO_COLOR")?` used `?` to
+    // propagate None, which returned None whenever NO_COLOR was
+    // unset — i.e., the common case.
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  #[test]
+  fn no_color_set_to_non_empty_disables_color() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("NO_COLOR", "1");
+    assert_eq!(color_mode(), None);
+  }
+
+  #[test]
+  fn no_color_empty_value_is_ignored() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("NO_COLOR", "");
+    // Empty NO_COLOR is treated as unset — fall through to Palette16.
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  // ─── SHED_COLOR_MODE ─────────────────────────────────────────────
+
+  #[test]
+  fn shed_color_mode_truecolor() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    assert_eq!(color_mode(), Some(ColorMode::Truecolor));
+  }
+
+  #[test]
+  fn shed_color_mode_24bit_alias() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "24bit");
+    assert_eq!(color_mode(), Some(ColorMode::Truecolor));
+  }
+
+  #[test]
+  fn shed_color_mode_256() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "256");
+    assert_eq!(color_mode(), Some(ColorMode::Palette256));
+  }
+
+  #[test]
+  fn shed_color_mode_256color_alias() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "256color");
+    assert_eq!(color_mode(), Some(ColorMode::Palette256));
+  }
+
+  #[test]
+  fn shed_color_mode_16() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "16");
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  #[test]
+  fn shed_color_mode_8_alias() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "8");
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  #[test]
+  fn shed_color_mode_none_disables() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "none");
+    assert_eq!(color_mode(), None);
+  }
+
+  #[test]
+  fn shed_color_mode_off_alias_disables() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "off");
+    assert_eq!(color_mode(), None);
+  }
+
+  #[test]
+  fn shed_color_mode_unrecognized_falls_through() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "bananas");
+    // Unrecognized value → match arm doesn't return, falls through to
+    // term_caps check (empty in tests) then TERM check (unset) then
+    // Palette16 fallback.
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  // ─── TERM env var ────────────────────────────────────────────────
+
+  #[test]
+  fn term_dumb_disables_color() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("TERM", "dumb");
+    assert_eq!(color_mode(), None);
+  }
+
+  #[test]
+  fn term_with_256color_substring_returns_palette256() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("TERM", "xterm-256color");
+    assert_eq!(color_mode(), Some(ColorMode::Palette256));
+  }
+
+  #[test]
+  fn term_screen_256color_substring_match() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("TERM", "screen-256color");
+    assert_eq!(color_mode(), Some(ColorMode::Palette256));
+  }
+
+  #[test]
+  fn term_other_value_falls_back_to_palette16() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("TERM", "vt100");
+    assert_eq!(color_mode(), Some(ColorMode::Palette16));
+  }
+
+  // ─── Precedence ────────────────────────────────────────────────
+
+  #[test]
+  fn no_color_beats_shed_color_mode() {
+    // NO_COLOR is checked first.
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("NO_COLOR", "1");
+    set_var("SHED_COLOR_MODE", "truecolor");
+    assert_eq!(color_mode(), None);
+  }
+
+  #[test]
+  fn shed_color_mode_beats_term() {
+    let _g = TestGuard::new();
+    unset_all_color_vars();
+    set_var("SHED_COLOR_MODE", "truecolor");
+    set_var("TERM", "dumb");
+    assert_eq!(color_mode(), Some(ColorMode::Truecolor));
   }
 }

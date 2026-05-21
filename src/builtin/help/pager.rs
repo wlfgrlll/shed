@@ -518,3 +518,279 @@ impl Iterator for HintChars {
     self.seq.pop()
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::keys::{KeyCode as K, KeyEvent, ModKeys};
+  use crate::tests::testutil::TestGuard;
+
+  /// Standard sample with multiple lines so scrolling actually has somewhere
+  /// to go. Each line is short — the layout machinery just needs *something*
+  /// to scroll over.
+  const SAMPLE: &str =
+    "line 1\nline 2\nline 3\nline 4\nline 5\nfoo bar baz\nline 7\nfoo again\nline 9";
+
+  fn pager_with(content: &str) -> (TestGuard, HelpPager) {
+    let g = TestGuard::new();
+    let p = HelpPager::new(content.into(), 0, None)
+      .expect("HelpPager::new should succeed under TestGuard's pty");
+    (g, p)
+  }
+
+  fn key(code: K) -> KeyEvent {
+    KeyEvent(code, ModKeys::empty())
+  }
+
+  // ─── Exit / quit ─────────────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_q_exits() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('q'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Exit));
+  }
+
+  #[test]
+  fn handle_key_esc_with_no_state_exits() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Esc)).unwrap();
+    assert!(matches!(ev, PagerEvent::Exit));
+  }
+
+  // ─── Scroll motions ──────────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_j_scrolls_down_one_line() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let before = p.scroll_offset;
+    p.handle_key(key(K::Char('j'))).unwrap();
+    assert_eq!(p.scroll_offset, (before + 1).min(p.max_scroll()));
+  }
+
+  #[test]
+  fn handle_key_k_scrolls_up_one_line() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    // Move down first so there's somewhere to come back from.
+    p.handle_key(key(K::Char('j'))).unwrap();
+    p.handle_key(key(K::Char('j'))).unwrap();
+    let before = p.scroll_offset;
+    p.handle_key(key(K::Char('k'))).unwrap();
+    assert_eq!(p.scroll_offset, before.saturating_sub(1));
+  }
+
+  #[test]
+  fn handle_key_g_jumps_to_top() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    // Get away from the top, then bounce back.
+    p.handle_key(key(K::Char('G'))).unwrap();
+    assert!(p.scroll_offset > 0 || p.max_scroll() == 0);
+    p.handle_key(key(K::Char('g'))).unwrap();
+    assert_eq!(p.scroll_offset, 0);
+  }
+
+  #[test]
+  fn handle_key_capital_g_jumps_to_bottom() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('G'))).unwrap();
+    assert_eq!(p.scroll_offset, p.max_scroll());
+  }
+
+  #[test]
+  fn handle_key_arrow_down_and_scroll_down_match_j() {
+    for code in [K::Down, K::ScrollDown] {
+      let (_g, mut p) = pager_with(SAMPLE);
+      p.handle_key(key(code)).unwrap();
+      assert_eq!(p.scroll_offset, 1.min(p.max_scroll()));
+    }
+  }
+
+  #[test]
+  fn handle_key_arrow_up_and_scroll_up_match_k() {
+    for code in [K::Up, K::ScrollUp] {
+      let (_g, mut p) = pager_with(SAMPLE);
+      p.handle_key(key(K::Char('j'))).unwrap();
+      p.handle_key(key(K::Char('j'))).unwrap();
+      let before = p.scroll_offset;
+      p.handle_key(key(code)).unwrap();
+      assert_eq!(p.scroll_offset, before.saturating_sub(1));
+    }
+  }
+
+  #[test]
+  fn handle_key_d_half_page_down() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let jump = p.jump_dist;
+    p.handle_key(key(K::Char('d'))).unwrap();
+    assert_eq!(p.scroll_offset, jump.min(p.max_scroll()));
+  }
+
+  #[test]
+  fn handle_key_u_half_page_up() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('G'))).unwrap();
+    let before = p.scroll_offset;
+    let jump = p.jump_dist;
+    p.handle_key(key(K::Char('u'))).unwrap();
+    assert_eq!(p.scroll_offset, before.saturating_sub(jump));
+  }
+
+  // ─── History navigation ──────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_h_returns_back() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('h'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Back));
+  }
+
+  #[test]
+  fn handle_key_l_returns_forward() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('l'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Forward));
+  }
+
+  #[test]
+  fn handle_key_left_and_back_match_h() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Left)).unwrap();
+    assert!(matches!(ev, PagerEvent::Back));
+    let ev = p.handle_key(key(K::Back)).unwrap();
+    assert!(matches!(ev, PagerEvent::Back));
+  }
+
+  #[test]
+  fn handle_key_right_and_forward_match_l() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Right)).unwrap();
+    assert!(matches!(ev, PagerEvent::Forward));
+    let ev = p.handle_key(key(K::Forward)).unwrap();
+    assert!(matches!(ev, PagerEvent::Forward));
+  }
+
+  // ─── Search mode ─────────────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_slash_starts_forward_search() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('/'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    assert!(p.search.active);
+    assert!(matches!(p.search.dir, Direction::Forward));
+  }
+
+  #[test]
+  fn handle_key_question_starts_backward_search() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('?'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    assert!(p.search.active);
+    assert!(matches!(p.search.dir, Direction::Backward));
+  }
+
+  #[test]
+  fn handle_key_chars_in_search_mode_go_to_query_editor() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('/'))).unwrap();
+    p.handle_key(key(K::Char('f'))).unwrap();
+    p.handle_key(key(K::Char('o'))).unwrap();
+    p.handle_key(key(K::Char('o'))).unwrap();
+    assert!(p.search.active);
+    // The query editor's buffer should reflect what we typed.
+    assert_eq!(p.search.editor.buf.joined(), "foo");
+  }
+
+  #[test]
+  fn handle_key_enter_in_search_mode_executes_and_deactivates() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('/'))).unwrap();
+    p.handle_key(key(K::Char('f'))).unwrap();
+    p.handle_key(key(K::Char('o'))).unwrap();
+    p.handle_key(key(K::Char('o'))).unwrap();
+    p.handle_key(key(K::Enter)).unwrap();
+    // Search no longer active, but results remain so they highlight.
+    assert!(!p.search.active);
+  }
+
+  #[test]
+  fn handle_key_esc_in_search_mode_cancels_search() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('/'))).unwrap();
+    p.handle_key(key(K::Char('x'))).unwrap();
+    let ev = p.handle_key(key(K::Esc)).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    assert!(!p.search.active);
+  }
+
+  #[test]
+  fn handle_key_backspace_on_empty_search_query_cancels_search() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.handle_key(key(K::Char('/'))).unwrap();
+    // Buffer is empty, no chars typed yet — backspace exits search mode.
+    let ev = p.handle_key(key(K::Backspace)).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    assert!(!p.search.active);
+  }
+
+  // ─── Hint mode (Tab) ─────────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_tab_with_no_refs_in_view_still_continues() {
+    // Our SAMPLE has no cross-refs, so enter_hint_mode produces an empty
+    // ref_keys list. Either way the function should not error.
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Tab)).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+  }
+
+  #[test]
+  fn handle_key_tab_again_clears_existing_hint_keys() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    // Manually populate ref_keys so the "non-empty branch" is exercised.
+    p.ref_keys = vec![(0, 'a'), (1, 'b')];
+    p.handle_key(key(K::Tab)).unwrap();
+    assert!(p.ref_keys.is_empty(), "second Tab should clear ref_keys");
+  }
+
+  #[test]
+  fn handle_key_esc_in_hint_mode_clears_refs_but_doesnt_exit() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.ref_keys = vec![(0, 'a')];
+    let ev = p.handle_key(key(K::Esc)).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    assert!(p.ref_keys.is_empty());
+  }
+
+  #[test]
+  fn handle_key_unmatched_char_in_hint_mode_clears_and_reprocesses() {
+    // Provide a fake ref_keys list, then send a char that DOESN'T match;
+    // the function clears refs and recursively re-handles the key. Since
+    // 'q' is "exit", we should get Exit back.
+    let (_g, mut p) = pager_with(SAMPLE);
+    p.ref_keys = vec![(0, 'a')];
+    let ev = p.handle_key(key(K::Char('q'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Exit));
+    assert!(p.ref_keys.is_empty());
+  }
+
+  // ─── Match navigation (n / N) ────────────────────────────────────────
+
+  #[test]
+  fn handle_key_n_capital_n_dont_error_with_no_search() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('n'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+    let ev = p.handle_key(key(K::Char('N'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+  }
+
+  // ─── Unhandled keys ──────────────────────────────────────────────────
+
+  #[test]
+  fn handle_key_unhandled_char_is_continue() {
+    let (_g, mut p) = pager_with(SAMPLE);
+    let ev = p.handle_key(key(K::Char('z'))).unwrap();
+    assert!(matches!(ev, PagerEvent::Continue));
+  }
+}

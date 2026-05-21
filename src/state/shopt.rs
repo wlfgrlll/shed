@@ -1,10 +1,16 @@
+use std::{fmt::Display, str::FromStr, time::Duration};
+
 use nix::unistd::write;
 
 use shed_macros::ShOptGroup;
 
 use super::{
-  ShResult, Shed, crate_util::ansi_from_description, eval::lex::Span, expand::expand_keymap,
-  procio::stderr_fileno, sherr, two_way_display,
+  ShErr, ShResult, Shed,
+  crate_util::{ansi_from_description, format_time},
+  eval::lex::Span,
+  expand::expand_keymap,
+  procio::stderr_fileno,
+  sherr, two_way_display,
 };
 use crate::shopt;
 
@@ -352,6 +358,69 @@ fn validate_leader(v: &String) -> Result<(), String> {
   }
 }
 
+#[derive(Clone, Debug, Copy)]
+pub(crate) struct IdleTime(Duration);
+
+impl IdleTime {
+  pub fn is_zero(&self) -> bool {
+    self.0.is_zero()
+  }
+  pub fn duration(&self) -> Duration {
+    self.0
+  }
+}
+
+impl Default for IdleTime {
+  fn default() -> Self {
+    IdleTime(Duration::from_secs(0))
+  }
+}
+
+impl From<i32> for IdleTime {
+  fn from(value: i32) -> Self {
+    IdleTime(Duration::from_secs(value as u64))
+  }
+}
+
+impl From<f64> for IdleTime {
+  fn from(value: f64) -> Self {
+    IdleTime(Duration::from_secs_f64(value))
+  }
+}
+
+impl Display for IdleTime {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", format_time(self.0))
+  }
+}
+
+impl FromStr for IdleTime {
+  type Err = ShErr;
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if let Ok(n) = s.parse::<u64>() {
+      return Ok(IdleTime(Duration::from_secs(n)));
+    }
+    if let Ok(n) = s.parse::<f64>() {
+      return Duration::try_from_secs_f64(n)
+        .map(IdleTime)
+        .map_err(|_| sherr!(SyntaxErr, "invalid idle time value '{s}'"));
+    }
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (num_str, unit) = s.split_at(split);
+    let n: u64 = num_str
+      .parse()
+      .map_err(|_| sherr!(SyntaxErr, "invalid idle time value '{s}'"))?;
+    let dur = match unit {
+      "ms" => Duration::from_millis(n),
+      "s" => Duration::from_secs(n),
+      "m" => Duration::from_secs(n.saturating_mul(60)),
+      "h" => Duration::from_secs(n.saturating_mul(3600)),
+      _ => return Err(sherr!(SyntaxErr, "invalid idle time unit in '{s}'")),
+    };
+    Ok(IdleTime(dur))
+  }
+}
+
 #[derive(Clone, Debug, ShOptGroup)]
 #[group_name = "prompt"]
 pub(crate) struct ShOptPrompt {
@@ -373,8 +442,8 @@ pub(crate) struct ShOptPrompt {
   pub screensaver_cmd: String,
 
   /// Idle time in seconds before running screensaver_cmd (0 = disabled)
-  #[default(0usize)]
-  pub screensaver_idle_time: usize,
+  #[default(IdleTime::default())]
+  pub screensaver_idle_time: IdleTime,
 
   /// Whether tab completion matching is case-insensitive
   #[default(false)]
@@ -582,5 +651,126 @@ mod tests {
 
     let line_output = opts.get("line").unwrap().unwrap();
     assert!(line_output.contains("tab_width"));
+  }
+
+  // ===================== IdleTime::from_str =====================
+
+  use std::str::FromStr;
+
+  #[test]
+  fn idle_time_parses_bare_integer_as_seconds() {
+    let t: IdleTime = "30".parse().unwrap();
+    assert_eq!(t.0, Duration::from_secs(30));
+  }
+
+  #[test]
+  fn idle_time_parses_float_as_seconds() {
+    let t: IdleTime = "1.5".parse().unwrap();
+    // Use sub-second precision via from_secs_f64.
+    let expected = Duration::from_secs_f64(1.5);
+    assert_eq!(t.0, expected);
+  }
+
+  #[test]
+  fn idle_time_ms_suffix() {
+    let t: IdleTime = "500ms".parse().unwrap();
+    assert_eq!(t.0, Duration::from_millis(500));
+  }
+
+  #[test]
+  fn idle_time_s_suffix() {
+    let t: IdleTime = "45s".parse().unwrap();
+    assert_eq!(t.0, Duration::from_secs(45));
+  }
+
+  #[test]
+  fn idle_time_m_suffix() {
+    let t: IdleTime = "5m".parse().unwrap();
+    assert_eq!(t.0, Duration::from_secs(300));
+  }
+
+  #[test]
+  fn idle_time_h_suffix() {
+    let t: IdleTime = "2h".parse().unwrap();
+    assert_eq!(t.0, Duration::from_secs(7200));
+  }
+
+  #[test]
+  fn idle_time_unknown_unit_errors() {
+    assert!(IdleTime::from_str("5d").is_err());
+    assert!(IdleTime::from_str("10x").is_err());
+  }
+
+  #[test]
+  fn idle_time_empty_string_errors() {
+    assert!(IdleTime::from_str("").is_err());
+  }
+
+  #[test]
+  fn idle_time_nonsense_errors() {
+    assert!(IdleTime::from_str("abc").is_err());
+  }
+
+  #[test]
+  fn idle_time_negative_value_errors() {
+    // Negative parses as f64 -1.0 but try_from_secs_f64 rejects it.
+    assert!(IdleTime::from_str("-1").is_err());
+  }
+
+  #[test]
+  fn idle_time_unit_with_no_digits_errors() {
+    // "ms" alone — num_str is empty → parse fails.
+    assert!(IdleTime::from_str("ms").is_err());
+  }
+
+  // ===================== validate_viewport_height =====================
+
+  #[test]
+  fn viewport_height_accepts_valid_percent() {
+    assert!(validate_viewport_height(&"50%".to_string()).is_ok());
+    assert!(validate_viewport_height(&"1%".to_string()).is_ok());
+    assert!(validate_viewport_height(&"100%".to_string()).is_ok());
+  }
+
+  #[test]
+  fn viewport_height_rejects_zero_percent() {
+    assert!(validate_viewport_height(&"0%".to_string()).is_err());
+  }
+
+  #[test]
+  fn viewport_height_rejects_over_100_percent() {
+    assert!(validate_viewport_height(&"101%".to_string()).is_err());
+    assert!(validate_viewport_height(&"200%".to_string()).is_err());
+  }
+
+  #[test]
+  fn viewport_height_rejects_non_numeric_percent() {
+    assert!(validate_viewport_height(&"abc%".to_string()).is_err());
+    assert!(validate_viewport_height(&"%".to_string()).is_err());
+    assert!(validate_viewport_height(&"-5%".to_string()).is_err());
+  }
+
+  #[test]
+  fn viewport_height_accepts_positive_integer() {
+    assert!(validate_viewport_height(&"50".to_string()).is_ok());
+    assert!(validate_viewport_height(&"1".to_string()).is_ok());
+    assert!(validate_viewport_height(&"1000".to_string()).is_ok());
+  }
+
+  #[test]
+  fn viewport_height_rejects_zero_integer() {
+    assert!(validate_viewport_height(&"0".to_string()).is_err());
+  }
+
+  #[test]
+  fn viewport_height_rejects_negative_integer() {
+    assert!(validate_viewport_height(&"-5".to_string()).is_err());
+  }
+
+  #[test]
+  fn viewport_height_rejects_non_numeric() {
+    assert!(validate_viewport_height(&"abc".to_string()).is_err());
+    assert!(validate_viewport_height(&"".to_string()).is_err());
+    assert!(validate_viewport_height(&"5.5".to_string()).is_err());
   }
 }

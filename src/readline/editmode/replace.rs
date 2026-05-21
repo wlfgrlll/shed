@@ -35,7 +35,9 @@ impl EditMode for ViReplace {
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     match key {
       E(K::Char(ch), M::NONE) => {
-        self.pending_cmd.set_verb(verb!(Verb::ReplaceChar(ch)));
+        self
+          .pending_cmd
+          .set_verb(verb!(Verb::ReplaceCharInplace(ch, 1)));
         self.pending_cmd.set_motion(motion!(Motion::ForwardChar));
         self.register_and_return()
       }

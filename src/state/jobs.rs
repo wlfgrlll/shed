@@ -492,10 +492,8 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
           WtStat::Stopped(_, _) => {
             was_stopped = true;
           }
-          WtStat::Signaled(_, sig, _) => {
-            if *sig == Signal::SIGTSTP {
-              was_stopped = true;
-            }
+          WtStat::Signaled(_, sig, _) if *sig == Signal::SIGTSTP => {
+            was_stopped = true;
           }
           _ => {}
         }
@@ -874,5 +872,718 @@ impl JobTab {
       self.remove_job(id);
     }
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::tests::testutil::TestGuard;
+  use nix::unistd::{ForkResult, fork};
+
+  // ─── No-fork paths ───────────────────────────────────────────────────
+
+  #[test]
+  fn wait_bg_pid_no_such_child_returns_ok() {
+    let _g = TestGuard::new();
+    // Use a pid that almost certainly doesn't exist as our child.
+    // waitpid returns ECHILD; wait_bg swallows that as Ok.
+    let result = wait_bg(JobID::Pid(Pid::from_raw(1)));
+    // root pid 1 IS alive but isn't our child → ECHILD.
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn wait_bg_unknown_table_id_errors() {
+    let _g = TestGuard::new();
+    // No job with TableID 99999 — remove_job returns None, wait_bg errors.
+    let result = wait_bg(JobID::TableID(99999));
+    assert!(result.is_err());
+  }
+
+  #[test]
+  fn wait_bg_unknown_pgid_errors() {
+    let _g = TestGuard::new();
+    let result = wait_bg(JobID::Pgid(Pid::from_raw(99999)));
+    assert!(result.is_err());
+  }
+
+  // ─── Fork-based happy paths ──────────────────────────────────────────
+  //
+  // These tests fork a real child, have it exit quickly, then wait
+  // for it via wait_bg. The child must _exit() (not std::process::exit)
+  // so the test framework's cleanup doesn't run twice.
+
+  #[test]
+  fn wait_bg_pid_reaps_child_with_exit_zero() {
+    let _g = TestGuard::new();
+    let pid = match unsafe { fork() }.unwrap() {
+      ForkResult::Child => {
+        // Don't let test machinery run in the child.
+        unsafe { nix::libc::_exit(0) };
+      }
+      ForkResult::Parent { child } => child,
+    };
+    wait_bg(JobID::Pid(pid)).unwrap();
+    assert_eq!(Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn wait_bg_pid_reaps_child_with_nonzero_exit() {
+    let _g = TestGuard::new();
+    let pid = match unsafe { fork() }.unwrap() {
+      ForkResult::Child => {
+        unsafe { nix::libc::_exit(42) };
+      }
+      ForkResult::Parent { child } => child,
+    };
+    wait_bg(JobID::Pid(pid)).unwrap();
+    assert_eq!(Shed::get_status(), 42);
+  }
+
+  #[test]
+  fn wait_bg_pid_handles_signal_killed_child() {
+    let _g = TestGuard::new();
+    let pid = match unsafe { fork() }.unwrap() {
+      ForkResult::Child => {
+        // Kill self with SIGTERM. The parent should see Signaled.
+        unsafe { nix::libc::raise(nix::libc::SIGTERM) };
+        // Should never reach here, but just in case:
+        unsafe { nix::libc::_exit(0) };
+      }
+      ForkResult::Parent { child } => child,
+    };
+    wait_bg(JobID::Pid(pid)).unwrap();
+    // code_from_status maps Signaled(sig) → SIG_EXIT_OFFSET + sig.
+    assert_eq!(Shed::get_status(), SIG_EXIT_OFFSET + Signal::SIGTERM as i32);
+  }
+
+  // ===================== Job::display =====================
+
+  use crate::state::meta::CmdTimer;
+
+  /// Strip ANSI CSI sequences so we can assert on the visible text.
+  fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+      if c == '\x1b' && chars.peek() == Some(&'[') {
+        chars.next(); // [
+        while let Some(&next) = chars.peek() {
+          chars.next();
+          // CSI ends at a byte in 0x40..=0x7E (letter / @ / etc.)
+          if next.is_ascii_alphabetic() || matches!(next, '@'..='`') {
+            break;
+          }
+        }
+      } else {
+        out.push(c);
+      }
+    }
+    out
+  }
+
+  fn mk_child(pid: i32, cmd: &str, stat: WtStat) -> ChildProc {
+    ChildProc {
+      pgid: Pid::from_raw(pid),
+      pid: Pid::from_raw(pid),
+      command: Some(cmd.to_string()),
+      stat,
+      timer: CmdTimer::new(cmd.into(), false).unwrap(),
+    }
+  }
+
+  fn mk_job(table_id: usize, children: Vec<ChildProc>) -> Job {
+    let pgid = children.first().map(|c| c.pid).unwrap_or(Pid::from_raw(0));
+    Job {
+      table_id: Some(table_id),
+      pgid,
+      children,
+      notify: false,
+      send_hup: true,
+    }
+  }
+
+  // ─── id-box symbol per job_order position ──────────────────────────
+
+  #[test]
+  fn display_current_job_gets_plus_symbol() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(100, "ls", WtStat::Exited(Pid::from_raw(100), 0))],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("[1]+"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_prev_job_gets_minus_symbol() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      1,
+      vec![mk_child(100, "ls", WtStat::Exited(Pid::from_raw(100), 0))],
+    );
+    // order = [0, 1, 2]: current=2, prev=1 → job with id=1 gets "-".
+    let out = strip_ansi(&job.display(&[0, 1, 2], JobCmdFlags::empty()));
+    assert!(out.contains("[2]-"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_neither_current_nor_prev_gets_space_symbol() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(100, "ls", WtStat::Exited(Pid::from_raw(100), 0))],
+    );
+    // order = [3, 1, 2]: current=2, prev=1 → job with id=0 is neither.
+    let out = strip_ansi(&job.display(&[3, 1, 2], JobCmdFlags::empty()));
+    assert!(out.contains("[1] "), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_prev_is_none_when_order_len_le_two() {
+    let _g = TestGuard::new();
+    // order = [0, 1]: len <= 2 → prev is None. Job with id=0 should not
+    // get "-"; only job with id=1 (current) gets "+".
+    let job = mk_job(
+      0,
+      vec![mk_child(100, "ls", WtStat::Exited(Pid::from_raw(100), 0))],
+    );
+    let out = strip_ansi(&job.display(&[0, 1], JobCmdFlags::empty()));
+    // id=0 is neither current nor prev → " " (note: trailing space).
+    assert!(out.contains("[1] "), "got: {out:?}");
+    assert!(!out.contains("[1]-"), "got: {out:?}");
+  }
+
+  // ─── status-text per WaitStatus variant ────────────────────────────
+
+  #[test]
+  fn display_exited_zero_shows_done() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(100, "ls", WtStat::Exited(Pid::from_raw(100), 0))],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("done"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_exited_nonzero_shows_failed_with_code() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        100,
+        "false",
+        WtStat::Exited(Pid::from_raw(100), 42),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("failed: 42"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_still_alive_shows_running() {
+    let _g = TestGuard::new();
+    let job = mk_job(0, vec![mk_child(100, "sleep 99", WtStat::StillAlive)]);
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("running"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_stopped_shows_stopped_with_signal() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        100,
+        "cat",
+        WtStat::Stopped(Pid::from_raw(100), Signal::SIGTSTP),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("stopped"), "got: {out:?}");
+    assert!(out.contains("SIGTSTP"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_signaled_shows_signaled_with_signal() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        100,
+        "loop",
+        WtStat::Signaled(Pid::from_raw(100), Signal::SIGKILL, false),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(out.contains("signaled"), "got: {out:?}");
+    assert!(out.contains("SIGKILL"), "got: {out:?}");
+  }
+
+  // ─── flags: LONG / PIDS / INIT ────────────────────────────────────
+
+  #[test]
+  fn display_long_flag_includes_first_child_pid_at_head() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        12345,
+        "ls",
+        WtStat::Exited(Pid::from_raw(12345), 0),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::LONG));
+    assert!(out.contains("12345"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_pids_flag_includes_pid_in_status_line() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        54321,
+        "ls",
+        WtStat::Exited(Pid::from_raw(54321), 0),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::PIDS));
+    assert!(out.contains("54321"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_init_flag_includes_pid_in_status_line() {
+    // INIT goes through the same `pids || init` branch as PIDS.
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        67890,
+        "ls",
+        WtStat::Exited(Pid::from_raw(67890), 0),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::INIT));
+    assert!(out.contains("67890"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_default_flags_omits_pid_text() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![mk_child(
+        11111,
+        "ls",
+        WtStat::Exited(Pid::from_raw(11111), 0),
+      )],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    assert!(!out.contains("11111"), "got: {out:?}");
+  }
+
+  // ─── multi-child pipeline ─────────────────────────────────────────
+
+  #[test]
+  fn display_multi_child_uses_pipe_marker_except_on_last() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![
+        mk_child(101, "echo hi", WtStat::Exited(Pid::from_raw(101), 0)),
+        mk_child(102, "cat", WtStat::Exited(Pid::from_raw(102), 0)),
+        mk_child(103, "wc", WtStat::Exited(Pid::from_raw(103), 0)),
+      ],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    // First two cmds carry a trailing " |"; the last does not.
+    assert!(out.contains("echo hi |"), "got: {out:?}");
+    assert!(out.contains("cat |"), "got: {out:?}");
+    // "wc" should NOT be followed by " |" — the final cmd has no pipe.
+    assert!(!out.contains("wc |"), "got: {out:?}");
+    assert!(out.contains("wc"), "got: {out:?}");
+  }
+
+  #[test]
+  fn display_multi_child_emits_one_line_per_child() {
+    let _g = TestGuard::new();
+    let job = mk_job(
+      0,
+      vec![
+        mk_child(101, "a", WtStat::Exited(Pid::from_raw(101), 0)),
+        mk_child(102, "b", WtStat::Exited(Pid::from_raw(102), 0)),
+        mk_child(103, "c", WtStat::Exited(Pid::from_raw(103), 0)),
+      ],
+    );
+    let out = strip_ansi(&job.display(&[0], JobCmdFlags::empty()));
+    // Three children → three trailing-newline lines in the body.
+    assert_eq!(out.matches('\n').count(), 3, "got: {out:?}");
+  }
+
+  // ===================== Job::update_by_id =====================
+
+  /// Build a 3-child job for the update tests. table_id=5, pgid taken
+  /// from first child.
+  fn three_child_job() -> Job {
+    mk_job(
+      5,
+      vec![
+        mk_child(100, "alpha cmd", WtStat::StillAlive),
+        mk_child(200, "beta cmd", WtStat::StillAlive),
+        mk_child(300, "gamma cmd", WtStat::StillAlive),
+      ],
+    )
+  }
+
+  // ─── JobID::Pid ───────────────────────────────────────────────────
+
+  #[test]
+  fn update_by_id_pid_matches_single_child() {
+    let mut job = three_child_job();
+    let new_stat = WtStat::Exited(Pid::from_raw(200), 0);
+    job
+      .update_by_id(JobID::Pid(Pid::from_raw(200)), new_stat)
+      .unwrap();
+    let stats = job.get_stats();
+    // Only the child with pid=200 should be updated.
+    assert_eq!(stats[0], WtStat::StillAlive);
+    assert_eq!(stats[1], new_stat);
+    assert_eq!(stats[2], WtStat::StillAlive);
+  }
+
+  #[test]
+  fn update_by_id_pid_no_match_is_noop() {
+    let mut job = three_child_job();
+    job
+      .update_by_id(
+        JobID::Pid(Pid::from_raw(9999)),
+        WtStat::Exited(Pid::from_raw(9999), 1),
+      )
+      .unwrap();
+    for stat in job.get_stats() {
+      assert_eq!(stat, WtStat::StillAlive);
+    }
+  }
+
+  // ─── JobID::Command ──────────────────────────────────────────────
+
+  #[test]
+  fn update_by_id_command_substring_match_updates_first_match() {
+    let mut job = three_child_job();
+    let new_stat = WtStat::Exited(Pid::from_raw(100), 42);
+    // "alpha" matches "alpha cmd" (substring).
+    job
+      .update_by_id(JobID::Command("alpha".into()), new_stat)
+      .unwrap();
+    let stats = job.get_stats();
+    assert_eq!(stats[0], new_stat);
+    assert_eq!(stats[1], WtStat::StillAlive);
+    assert_eq!(stats[2], WtStat::StillAlive);
+  }
+
+  #[test]
+  fn update_by_id_command_finds_first_match_only() {
+    // Both children contain "cmd"; only the first matching child gets
+    // updated.
+    let mut job = three_child_job();
+    let new_stat = WtStat::Exited(Pid::from_raw(100), 1);
+    job
+      .update_by_id(JobID::Command("cmd".into()), new_stat)
+      .unwrap();
+    let stats = job.get_stats();
+    assert_eq!(stats[0], new_stat);
+    assert_eq!(stats[1], WtStat::StillAlive);
+    assert_eq!(stats[2], WtStat::StillAlive);
+  }
+
+  #[test]
+  fn update_by_id_command_no_match_is_noop() {
+    let mut job = three_child_job();
+    job
+      .update_by_id(
+        JobID::Command("zzz".into()),
+        WtStat::Exited(Pid::from_raw(100), 1),
+      )
+      .unwrap();
+    for stat in job.get_stats() {
+      assert_eq!(stat, WtStat::StillAlive);
+    }
+  }
+
+  // ─── JobID::TableID ──────────────────────────────────────────────
+
+  #[test]
+  fn update_by_id_table_id_matches_updates_all_children() {
+    let mut job = three_child_job();
+    let new_stat = WtStat::Exited(Pid::from_raw(0), 7);
+    job.update_by_id(JobID::TableID(5), new_stat).unwrap();
+    // table_id matched → every child gets the new stat.
+    for stat in job.get_stats() {
+      assert_eq!(stat, new_stat);
+    }
+  }
+
+  #[test]
+  fn update_by_id_table_id_no_match_is_noop() {
+    let mut job = three_child_job();
+    job
+      .update_by_id(JobID::TableID(99), WtStat::Exited(Pid::from_raw(0), 1))
+      .unwrap();
+    for stat in job.get_stats() {
+      assert_eq!(stat, WtStat::StillAlive);
+    }
+  }
+
+  #[test]
+  fn update_by_id_table_id_with_unset_tableid_is_noop() {
+    // Build a job whose table_id is None (e.g., a fresh job not yet
+    // inserted into the table). update_by_id with TableID should be a
+    // no-op.
+    let mut job = mk_job(0, vec![mk_child(100, "x", WtStat::StillAlive)]);
+    job.set_tabid(usize::MAX); // ensure it's Some but doesn't collide
+    let _ = job.update_by_id(JobID::TableID(0), WtStat::Exited(Pid::from_raw(0), 99));
+    assert_eq!(job.get_stats()[0], WtStat::StillAlive);
+  }
+
+  // ─── JobID::Pgid ─────────────────────────────────────────────────
+
+  #[test]
+  fn update_by_id_pgid_matches_updates_all_children() {
+    let mut job = three_child_job();
+    // mk_job took pgid from first child = pid 100.
+    let new_stat = WtStat::Exited(Pid::from_raw(100), 0);
+    job
+      .update_by_id(JobID::Pgid(Pid::from_raw(100)), new_stat)
+      .unwrap();
+    for stat in job.get_stats() {
+      assert_eq!(stat, new_stat);
+    }
+  }
+
+  #[test]
+  fn update_by_id_pgid_no_match_is_noop() {
+    let mut job = three_child_job();
+    job
+      .update_by_id(
+        JobID::Pgid(Pid::from_raw(9999)),
+        WtStat::Exited(Pid::from_raw(9999), 1),
+      )
+      .unwrap();
+    for stat in job.get_stats() {
+      assert_eq!(stat, WtStat::StillAlive);
+    }
+  }
+
+  // ===================== report_timer =====================
+
+  use crate::state::logic::{AutoCmd, AutoCmdKind};
+
+  /// Build a CmdTimer that's already stopped, ready for reporting.
+  fn complete_timer(cmd: &str) -> CmdTimer {
+    let mut t = CmdTimer::new(cmd.into(), true).unwrap();
+    t.stop().unwrap();
+    t
+  }
+
+  #[test]
+  fn report_timer_no_autocmds_writes_default_format_to_stderr() {
+    let g = TestGuard::new();
+    // Make sure no OnTimeReport autocmds are registered.
+    Shed::logic_mut(|l| l.clear_autocmds(AutoCmdKind::OnTimeReport));
+    let timer = complete_timer("sleep 0");
+    report_timer(&timer).unwrap();
+    let out = g.read_output();
+    // Default fmt is "\nreal\t%*E\nuser\t%*U\nsys\t%*S" — three labels.
+    assert!(out.contains("real"), "got: {out:?}");
+    assert!(out.contains("user"), "got: {out:?}");
+    assert!(out.contains("sys"), "got: {out:?}");
+  }
+
+  #[test]
+  #[allow(non_snake_case)] // name preserves the TIMEFMT env-var spelling
+  fn report_timer_respects_TIMEFMT_var() {
+    let g = TestGuard::new();
+    Shed::logic_mut(|l| l.clear_autocmds(AutoCmdKind::OnTimeReport));
+    // Custom format with our own marker text.
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "TIMEFMT",
+        crate::state::vars::VarKind::Str("CUSTOM_TIMEFMT_MARKER".into()),
+        crate::state::vars::VarFlags::empty(),
+      )
+      .unwrap();
+    });
+    let timer = complete_timer("dummy");
+    report_timer(&timer).unwrap();
+    let out = g.read_output();
+    assert!(out.contains("CUSTOM_TIMEFMT_MARKER"), "got: {out:?}");
+  }
+
+  #[test]
+  fn report_timer_with_autocmd_fires_with_time_vars_set() {
+    // Register an OnTimeReport autocmd that echoes the command and
+    // wall-time vars. Verify both surface in the captured output.
+    let g = TestGuard::new();
+    Shed::logic_mut(|l| {
+      l.clear_autocmds(AutoCmdKind::OnTimeReport);
+      l.insert_autocmd(AutoCmd::new(
+        AutoCmdKind::OnTimeReport,
+        "echo CMD=$TIME_CMD RFM=$TIME_REAL_FMT".into(),
+      ));
+    });
+    let timer = complete_timer("my-traced-cmd");
+    report_timer(&timer).unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("CMD=my-traced-cmd"),
+      "expected TIME_CMD to be set; got: {out:?}"
+    );
+    assert!(
+      out.contains("RFM="),
+      "expected TIME_REAL_FMT to be set; got: {out:?}"
+    );
+    // The default-format path should NOT have run.
+    assert!(!out.contains("\nreal\t"), "default format leaked: {out:?}");
+  }
+
+  // ===================== JobTab::print_jobs =====================
+
+  /// Insert a fake job into the live job table. Mark its child
+  /// StillAlive by default so prune_jobs doesn't drop it. Returns the
+  /// assigned tabid.
+  fn insert_real_job(pid: i32, cmd: &str, stat: WtStat) -> usize {
+    let child = mk_child(pid, cmd, stat);
+    let mut bldr = JobBldr::new();
+    bldr.push_child(child);
+    bldr.set_pgid(Pid::from_raw(pid));
+    let job = bldr.build();
+    Shed::jobs_mut(|j| j.insert_job(job, true)).unwrap()
+  }
+
+  fn drain_jobs() {
+    Shed::jobs_mut(|j| {
+      // Mark all jobs done so prune sweeps them.
+      let ids: Vec<JobID> = j
+        .jobs()
+        .iter()
+        .flatten()
+        .filter_map(|job| job.tabid().map(JobID::TableID))
+        .collect();
+      for id in ids {
+        j.remove_job(id);
+      }
+    });
+  }
+
+  #[test]
+  fn print_jobs_no_jobs_no_output() {
+    let g = TestGuard::new();
+    drain_jobs();
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::empty())).unwrap();
+    assert_eq!(g.read_output(), "");
+  }
+
+  #[test]
+  fn print_jobs_running_job_appears_in_output() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(50001, "running_cmd", WtStat::StillAlive);
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::empty())).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(out.contains("running_cmd"), "got: {out:?}");
+  }
+
+  #[test]
+  fn print_jobs_running_filter_includes_alive_jobs() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(50010, "alive_cmd", WtStat::StillAlive);
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::RUNNING)).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(out.contains("alive_cmd"), "got: {out:?}");
+  }
+
+  #[test]
+  fn print_jobs_running_filter_excludes_stopped_jobs() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(
+      50020,
+      "stopped_cmd",
+      WtStat::Stopped(Pid::from_raw(50020), Signal::SIGTSTP),
+    );
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::RUNNING)).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(!out.contains("stopped_cmd"), "got: {out:?}");
+  }
+
+  #[test]
+  fn print_jobs_stopped_filter_includes_stopped_jobs() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(
+      50030,
+      "stop_me",
+      WtStat::Stopped(Pid::from_raw(50030), Signal::SIGTSTP),
+    );
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::STOPPED)).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(out.contains("stop_me"), "got: {out:?}");
+  }
+
+  #[test]
+  fn print_jobs_stopped_filter_excludes_running_jobs() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(50040, "alive_one", WtStat::StillAlive);
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::STOPPED)).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(!out.contains("alive_one"), "got: {out:?}");
+  }
+
+  #[test]
+  fn print_jobs_exited_jobs_get_removed_after_print() {
+    let g = TestGuard::new();
+    drain_jobs();
+    let id = insert_real_job(50050, "done_cmd", WtStat::Exited(Pid::from_raw(50050), 0));
+    assert!(Shed::jobs(|j| j.query(JobID::TableID(id)).is_some()));
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::empty())).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(out.contains("done_cmd"), "got: {out:?}");
+    // After print, exited jobs are swept.
+    assert!(
+      !Shed::jobs(|j| j.query(JobID::TableID(id)).is_some()),
+      "exited job should have been removed"
+    );
+  }
+
+  #[test]
+  fn print_jobs_alive_jobs_not_removed() {
+    let g = TestGuard::new();
+    drain_jobs();
+    let id = insert_real_job(50060, "still_running", WtStat::StillAlive);
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::empty())).unwrap();
+    g.read_output();
+    assert!(
+      Shed::jobs(|j| j.query(JobID::TableID(id)).is_some()),
+      "alive job should not be removed"
+    );
+  }
+
+  #[test]
+  fn print_jobs_multiple_jobs_all_printed() {
+    let g = TestGuard::new();
+    drain_jobs();
+    insert_real_job(50070, "first_cmd", WtStat::StillAlive);
+    insert_real_job(50071, "second_cmd", WtStat::StillAlive);
+    Shed::jobs_mut(|j| j.print_jobs(JobCmdFlags::empty())).unwrap();
+    let out = strip_ansi(&g.read_output());
+    assert!(out.contains("first_cmd"), "got: {out:?}");
+    assert!(out.contains("second_cmd"), "got: {out:?}");
   }
 }

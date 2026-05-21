@@ -1,4 +1,4 @@
-use std::{env, fmt::Debug, fmt::Write as FmtWrite};
+use std::{fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 

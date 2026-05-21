@@ -1072,6 +1072,7 @@ impl Dispatcher {
       // if we are here, argv is empty. set assignments and return.
       if !assignments.is_empty() {
         if let Err(e) = self.set_assignments(assignments, assign_behavior) {
+          Shed::set_status(1);
           e.print_error();
         };
         return Ok(());
@@ -1880,5 +1881,451 @@ mod tests {
     test_input("foo=(bar biz bam); echo \"$(echo ${foo[$(echo 1) + 1]})\"").unwrap();
     let out = g.read_output();
     assert_eq!(out, "bam\n");
+  }
+
+  // ===================== Assignment operators =====================
+
+  use crate::var;
+
+  // ─── Eq ─────────────────────────────────────────────────────────────
+
+  #[test]
+  fn assign_eq_basic() {
+    let _g = TestGuard::new();
+    test_input("x=hello").unwrap();
+    assert_eq!(var!("x"), "hello");
+  }
+
+  #[test]
+  fn assign_eq_overwrites() {
+    let _g = TestGuard::new();
+    test_input("x=hello").unwrap();
+    test_input("x=world").unwrap();
+    assert_eq!(var!("x"), "world");
+  }
+
+  // ─── PlusEq on strings ──────────────────────────────────────────────
+
+  #[test]
+  fn assign_plus_eq_numeric_strings_adds() {
+    // Two parseable-as-int strings: `+=` does arithmetic addition.
+    let _g = TestGuard::new();
+    test_input("x=5; x+=3").unwrap();
+    assert_eq!(var!("x"), "8");
+  }
+
+  #[test]
+  fn assign_plus_eq_non_numeric_concatenates() {
+    let _g = TestGuard::new();
+    test_input("x=hello; x+=world").unwrap();
+    assert_eq!(var!("x"), "helloworld");
+  }
+
+  #[test]
+  fn assign_plus_eq_mixed_falls_back_to_concat() {
+    let _g = TestGuard::new();
+    test_input("x=5; x+=hello").unwrap();
+    // RHS not parseable as int → concatenation.
+    assert_eq!(var!("x"), "5hello");
+  }
+
+  // ─── MinusEq / MultEq / DivEq ───────────────────────────────────────
+
+  #[test]
+  fn assign_minus_eq_int_subtracts() {
+    let _g = TestGuard::new();
+    test_input("x=10; x-=4").unwrap();
+    assert_eq!(var!("x"), "6");
+  }
+
+  #[test]
+  fn assign_mult_eq_multiplies() {
+    let _g = TestGuard::new();
+    test_input("x=6; x*=7").unwrap();
+    assert_eq!(var!("x"), "42");
+  }
+
+  #[test]
+  fn assign_div_eq_divides() {
+    let _g = TestGuard::new();
+    test_input("x=20; x/=4").unwrap();
+    assert_eq!(var!("x"), "5");
+  }
+
+  // Failed standalone assignments set status=1 AND leave the var
+  // unchanged. We check both, since either alone is weaker.
+
+  #[test]
+  fn assign_div_eq_by_zero_errors_and_leaves_var_unchanged() {
+    let _g = TestGuard::new();
+    test_input("x=5; x/=0").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+    assert_eq!(var!("x"), "5");
+  }
+
+  #[test]
+  fn assign_minus_eq_on_non_numeric_string_errors_and_leaves_var_unchanged() {
+    let _g = TestGuard::new();
+    test_input("x=hello; x-=3").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+    assert_eq!(var!("x"), "hello");
+  }
+
+  #[test]
+  fn assign_mult_eq_on_non_numeric_string_errors_and_leaves_var_unchanged() {
+    let _g = TestGuard::new();
+    test_input("x=hello; x*=3").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+    assert_eq!(var!("x"), "hello");
+  }
+
+  // ─── Compound ops on undefined var (treated as empty) ───────────────
+
+  #[test]
+  fn assign_plus_eq_on_undefined_var_uses_empty_string() {
+    let _g = TestGuard::new();
+    // No prior `x=`. += starts from an empty Str default.
+    test_input("x+=hello").unwrap();
+    assert_eq!(var!("x"), "hello");
+  }
+
+  // ─── Compound ops on arrays ─────────────────────────────────────────
+
+  #[test]
+  fn assign_plus_eq_on_array_appends_scalar() {
+    let g = TestGuard::new();
+    test_input("arr=(a b c); arr+=d; echo ${arr[3]}").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("d"), "got: {out:?}");
+  }
+
+  #[test]
+  fn assign_plus_eq_on_array_extends_with_array() {
+    let g = TestGuard::new();
+    test_input("arr=(a b); arr+=(c d); echo \"${arr[@]}\"").unwrap();
+    let out = g.read_output();
+    assert_eq!(out.trim(), "a b c d");
+  }
+
+  #[test]
+  fn assign_minus_eq_on_array_errors_and_leaves_array_unchanged() {
+    let g = TestGuard::new();
+    // Standalone `arr-=1` errors and sets status=1; subsequent
+    // statements still run, so the echo proves the array wasn't
+    // mutated.
+    test_input("arr=(a b); arr-=1").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+    test_input("echo \"${arr[@]}\"").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.ends_with("a b") || out.contains("\na b"),
+      "got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn assign_mult_eq_on_array_errors_and_leaves_array_unchanged() {
+    let g = TestGuard::new();
+    test_input("arr=(a b); arr*=2").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+    test_input("echo \"${arr[@]}\"").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.ends_with("a b") || out.contains("\na b"),
+      "got: {out:?}"
+    );
+  }
+
+  // ─── Indexed-array assignment ───────────────────────────────────────
+
+  #[test]
+  fn assign_eq_with_index_sets_element() {
+    let g = TestGuard::new();
+    test_input("arr=(a b c); arr[1]=X; echo \"${arr[@]}\"").unwrap();
+    let out = g.read_output();
+    assert_eq!(out.trim(), "a X c");
+  }
+
+  #[test]
+  fn assign_eq_with_index_extends_array() {
+    let g = TestGuard::new();
+    // Setting an index past the end should extend.
+    test_input("arr=(a b); arr[3]=z; echo ${arr[3]}").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("z"));
+  }
+
+  // ─── Export behavior ────────────────────────────────────────────────
+
+  #[test]
+  fn assign_with_export_sets_export_flag() {
+    let g = TestGuard::new();
+    // Inline assignment before a command (env var for that command).
+    test_input("FOO=bar env | grep ^FOO=").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("FOO=bar"), "got: {out:?}");
+  }
+
+  // ─── allexport shopt ────────────────────────────────────────────────
+
+  #[test]
+  fn assign_with_allexport_promotes_to_export() {
+    let g = TestGuard::new();
+    test_input("set -a; FOO=allexported; env | grep ^FOO=").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("FOO=allexported"), "got: {out:?}");
+  }
+
+  // ===================== is_in_path =====================
+  mod is_in_path_tests {
+    use super::super::is_in_path;
+    use super::super::{Span, Tk};
+    use crate::eval::lex::TkRule;
+    use crate::tests::testutil::{TestGuard, test_input};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::rc::Rc;
+    use tempfile::TempDir;
+
+    fn tk(s: &str) -> Tk {
+      let src: Rc<str> = s.into();
+      let span = Span::new(0..s.len(), src);
+      Tk::new(TkRule::Str, span)
+    }
+
+    fn make_exec(dir: &Path, name: &str) -> std::path::PathBuf {
+      let p = dir.join(name);
+      std::fs::write(&p, "#!/bin/sh\n").unwrap();
+      let mut perms = std::fs::metadata(&p).unwrap().permissions();
+      perms.set_mode(0o755);
+      std::fs::set_permissions(&p, perms).unwrap();
+      p
+    }
+
+    fn make_non_exec(dir: &Path, name: &str) -> std::path::PathBuf {
+      let p = dir.join(name);
+      std::fs::write(&p, "data").unwrap();
+      let mut perms = std::fs::metadata(&p).unwrap().permissions();
+      perms.set_mode(0o644);
+      std::fs::set_permissions(&p, perms).unwrap();
+      p
+    }
+
+    // ─── absolute paths ──────────────────────────────────────────────
+
+    #[test]
+    fn abs_path_to_executable_returns_true() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      let exe = make_exec(dir.path(), "prog");
+      assert!(is_in_path(tk(&exe.to_string_lossy())));
+    }
+
+    #[test]
+    fn abs_path_to_nonexistent_returns_false() {
+      let _g = TestGuard::new();
+      assert!(!is_in_path(tk("/this/path/should/never/exist/xyz123")));
+    }
+
+    #[test]
+    fn abs_path_to_directory_returns_false() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      assert!(!is_in_path(tk(&dir.path().to_string_lossy())));
+    }
+
+    #[test]
+    fn abs_path_to_non_executable_returns_false() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      let p = make_non_exec(dir.path(), "data.txt");
+      assert!(!is_in_path(tk(&p.to_string_lossy())));
+    }
+
+    #[test]
+    fn abs_path_executable_only_group_bit_returns_true() {
+      // 0o111 mask matches any of user/group/other exec bits.
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      let p = dir.path().join("only_group");
+      std::fs::write(&p, "").unwrap();
+      let mut perms = std::fs::metadata(&p).unwrap().permissions();
+      perms.set_mode(0o010); // group-execute only
+      std::fs::set_permissions(&p, perms).unwrap();
+      assert!(is_in_path(tk(&p.to_string_lossy())));
+    }
+
+    // ─── bare names searched in PATH ─────────────────────────────────
+
+    #[test]
+    fn bare_name_found_in_path() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      make_exec(dir.path(), "myprog");
+      test_input(format!("PATH={}", dir.path().display())).unwrap();
+      assert!(is_in_path(tk("myprog")));
+    }
+
+    #[test]
+    fn bare_name_not_in_path_returns_false() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      test_input(format!("PATH={}", dir.path().display())).unwrap();
+      assert!(!is_in_path(tk("definitely_not_a_program_xyz")));
+    }
+
+    #[test]
+    fn bare_name_found_in_second_path_entry() {
+      let _g = TestGuard::new();
+      let d1 = TempDir::new().unwrap();
+      let d2 = TempDir::new().unwrap();
+      make_exec(d2.path(), "second");
+      test_input(format!(
+        "PATH={}:{}",
+        d1.path().display(),
+        d2.path().display()
+      ))
+      .unwrap();
+      assert!(is_in_path(tk("second")));
+    }
+
+    #[test]
+    fn bare_name_first_match_wins_even_if_later_entries_have_it() {
+      // First entry has it; we still return true. Sanity check that the
+      // loop terminates on first hit (no panic, correct result).
+      let _g = TestGuard::new();
+      let d1 = TempDir::new().unwrap();
+      let d2 = TempDir::new().unwrap();
+      make_exec(d1.path(), "dup");
+      make_exec(d2.path(), "dup");
+      test_input(format!(
+        "PATH={}:{}",
+        d1.path().display(),
+        d2.path().display()
+      ))
+      .unwrap();
+      assert!(is_in_path(tk("dup")));
+    }
+
+    #[test]
+    fn bare_name_skips_directory_entry() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      // Create a *directory* with the program name — should not match.
+      std::fs::create_dir(dir.path().join("subprog")).unwrap();
+      test_input(format!("PATH={}", dir.path().display())).unwrap();
+      assert!(!is_in_path(tk("subprog")));
+    }
+
+    #[test]
+    fn bare_name_skips_non_executable() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      make_non_exec(dir.path(), "noexec");
+      test_input(format!("PATH={}", dir.path().display())).unwrap();
+      assert!(!is_in_path(tk("noexec")));
+    }
+
+    #[test]
+    fn bare_name_falls_through_nonexistent_path_entry() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      make_exec(dir.path(), "real");
+      test_input(format!("PATH=/nonexistent/xyz:{}", dir.path().display())).unwrap();
+      assert!(is_in_path(tk("real")));
+    }
+
+    #[test]
+    fn bare_name_with_unset_path_returns_false() {
+      let _g = TestGuard::new();
+      // Use `unset` so try_var!("PATH") returns None.
+      test_input("unset PATH").unwrap();
+      assert!(!is_in_path(tk("ls")));
+    }
+
+    // ─── relative paths ──────────────────────────────────────────────
+
+    #[test]
+    fn dot_slash_executable_in_cwd_returns_true() {
+      let mut g = TestGuard::new();
+      let dir = g.in_temp_dir();
+      make_exec(&dir, "prog");
+      assert!(is_in_path(tk("./prog")));
+    }
+
+    #[test]
+    fn dot_slash_nonexistent_returns_false() {
+      let mut g = TestGuard::new();
+      let _dir = g.in_temp_dir();
+      assert!(!is_in_path(tk("./nope_xyz")));
+    }
+
+    #[test]
+    fn dot_slash_non_executable_returns_false() {
+      let mut g = TestGuard::new();
+      let dir = g.in_temp_dir();
+      make_non_exec(&dir, "data.txt");
+      assert!(!is_in_path(tk("./data.txt")));
+    }
+
+    #[test]
+    fn dot_slash_directory_returns_false() {
+      let mut g = TestGuard::new();
+      let dir = g.in_temp_dir();
+      std::fs::create_dir(dir.join("subdir")).unwrap();
+      assert!(!is_in_path(tk("./subdir")));
+    }
+
+    #[test]
+    fn dotdot_slash_executable_returns_true() {
+      let mut g = TestGuard::new();
+      let dir = g.in_temp_dir();
+      make_exec(&dir, "outerprog");
+      let inner = dir.join("inner");
+      std::fs::create_dir(&inner).unwrap();
+      std::env::set_current_dir(&inner).unwrap();
+      assert!(is_in_path(tk("../outerprog")));
+    }
+
+    // ─── absolute paths take precedence over PATH ────────────────────
+
+    #[test]
+    fn absolute_path_does_not_consult_path_var() {
+      // Even with a bogus PATH, an absolute path is resolved directly.
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      let exe = make_exec(dir.path(), "prog");
+      test_input("PATH=/nonexistent/xyz").unwrap();
+      assert!(is_in_path(tk(&exe.to_string_lossy())));
+    }
+
+    // ─── expansion behavior ──────────────────────────────────────────
+
+    #[test]
+    fn expansion_resolves_var_to_path() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      let exe = make_exec(dir.path(), "prog");
+      test_input(format!("MYEXE={}", exe.display())).unwrap();
+      assert!(is_in_path(tk("$MYEXE")));
+    }
+
+    #[test]
+    fn expansion_resolves_var_to_bare_name_in_path() {
+      let _g = TestGuard::new();
+      let dir = TempDir::new().unwrap();
+      make_exec(dir.path(), "myprog");
+      test_input(format!("PATH={}", dir.path().display())).unwrap();
+      test_input("NAME=myprog").unwrap();
+      assert!(is_in_path(tk("$NAME")));
+    }
+
+    #[test]
+    fn unset_var_expansion_yields_empty_returns_false() {
+      let _g = TestGuard::new();
+      // An unset, unquoted var expands to nothing; first word is None,
+      // so the function bails out with false.
+      assert!(!is_in_path(tk("$UNSET_VAR_FOR_ISINPATH_TEST_xyz")));
+    }
   }
 }

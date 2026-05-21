@@ -459,8 +459,8 @@ impl vte::Perform for EventParser {
           27 => KeyCode::Esc,
           127 => KeyCode::Backspace,
           _ => {
-            if let Some(ch) = char::from_u32(codepoint as u32) {
-              KeyCode::Char(ch)
+            if let Some(c) = char::from_u32(ch as u32) {
+              KeyCode::Char(c)
             } else {
               return;
             }
@@ -686,5 +686,561 @@ impl PollReader {
 impl Default for PollReader {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::keys::{KeyCode, KeyEvent, ModKeys};
+
+  /// Feed bytes through a fresh vte parser into an EventParser and
+  /// return every event produced.
+  fn feed(bytes: &[u8]) -> Vec<TermEvent> {
+    let mut parser = vte::Parser::new();
+    let mut ep = EventParser::new();
+    parser.advance(&mut ep, bytes);
+    let mut events = vec![];
+    while let Some(e) = ep.pop() {
+      events.push(e);
+    }
+    events
+  }
+
+  /// Convenience: expect exactly one Key event with the given code and mods.
+  fn expect_key(bytes: &[u8], code: KeyCode, mods: ModKeys) {
+    let events = feed(bytes);
+    assert_eq!(
+      events.len(),
+      1,
+      "expected exactly 1 event for {bytes:?}, got {events:?}"
+    );
+    match &events[0] {
+      TermEvent::Key(KeyEvent(c, m)) => {
+        assert_eq!(c, &code, "key code mismatch for {bytes:?}");
+        assert_eq!(m, &mods, "mod mismatch for {bytes:?}");
+      }
+      other => panic!("expected Key event for {bytes:?}, got {other:?}"),
+    }
+  }
+
+  // ─── CursorPos: CSI <row>;<col> R ───────────────────────────────────
+
+  #[test]
+  fn csi_cursor_pos() {
+    let events = feed(b"\x1b[27;1R");
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+      TermEvent::CursorPos(Rows(r), Cols(c)) => {
+        assert_eq!(*r, 27);
+        assert_eq!(*c, 1);
+      }
+      other => panic!("expected CursorPos, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn csi_cursor_pos_missing_params_zeros() {
+    let events = feed(b"\x1b[R");
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], TermEvent::CursorPos(Rows(0), Cols(0))));
+  }
+
+  // ─── Arrow keys: CSI A/B/C/D ─────────────────────────────────────────
+
+  #[test]
+  fn csi_arrow_up_plain() {
+    expect_key(b"\x1b[A", KeyCode::Up, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_arrow_down_plain() {
+    expect_key(b"\x1b[B", KeyCode::Down, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_arrow_right_plain() {
+    expect_key(b"\x1b[C", KeyCode::Right, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_arrow_left_plain() {
+    expect_key(b"\x1b[D", KeyCode::Left, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_arrow_up_with_shift() {
+    // CSI 1;2 A — mod 2 = Shift
+    expect_key(b"\x1b[1;2A", KeyCode::Up, ModKeys::SHIFT);
+  }
+
+  #[test]
+  fn csi_arrow_down_with_ctrl() {
+    // mod 5 = Ctrl
+    expect_key(b"\x1b[1;5B", KeyCode::Down, ModKeys::CTRL);
+  }
+
+  // ─── Home/End: CSI H/F ──────────────────────────────────────────────
+
+  #[test]
+  fn csi_home_plain() {
+    expect_key(b"\x1b[H", KeyCode::Home, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_end_plain() {
+    expect_key(b"\x1b[F", KeyCode::End, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_home_with_mods() {
+    expect_key(b"\x1b[1;5H", KeyCode::Home, ModKeys::CTRL);
+  }
+
+  // ─── Shift+Tab: CSI Z ───────────────────────────────────────────────
+
+  #[test]
+  fn csi_shift_tab() {
+    expect_key(b"\x1b[Z", KeyCode::Tab, ModKeys::SHIFT);
+  }
+
+  // ─── Tilde sequences: CSI <num>~ ────────────────────────────────────
+
+  #[test]
+  fn csi_tilde_home_via_1() {
+    expect_key(b"\x1b[1~", KeyCode::Home, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_home_via_7() {
+    expect_key(b"\x1b[7~", KeyCode::Home, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_insert() {
+    expect_key(b"\x1b[2~", KeyCode::Insert, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_delete() {
+    expect_key(b"\x1b[3~", KeyCode::Delete, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_end_via_4() {
+    expect_key(b"\x1b[4~", KeyCode::End, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_end_via_8() {
+    expect_key(b"\x1b[8~", KeyCode::End, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_pageup() {
+    expect_key(b"\x1b[5~", KeyCode::PageUp, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_pagedown() {
+    expect_key(b"\x1b[6~", KeyCode::PageDown, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_f5_through_f12() {
+    expect_key(b"\x1b[15~", KeyCode::F(5), ModKeys::empty());
+    expect_key(b"\x1b[17~", KeyCode::F(6), ModKeys::empty());
+    expect_key(b"\x1b[18~", KeyCode::F(7), ModKeys::empty());
+    expect_key(b"\x1b[19~", KeyCode::F(8), ModKeys::empty());
+    expect_key(b"\x1b[20~", KeyCode::F(9), ModKeys::empty());
+    expect_key(b"\x1b[21~", KeyCode::F(10), ModKeys::empty());
+    expect_key(b"\x1b[23~", KeyCode::F(11), ModKeys::empty());
+    expect_key(b"\x1b[24~", KeyCode::F(12), ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_with_mods() {
+    expect_key(b"\x1b[5;5~", KeyCode::PageUp, ModKeys::CTRL);
+  }
+
+  #[test]
+  fn csi_tilde_bracket_paste_markers() {
+    expect_key(b"\x1b[200~", KeyCode::BracketedPasteStart, ModKeys::empty());
+    expect_key(b"\x1b[201~", KeyCode::BracketedPasteEnd, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_tilde_unknown_num_produces_no_event() {
+    let events = feed(b"\x1b[99~");
+    assert!(
+      events.is_empty(),
+      "unknown tilde num should not produce an event, got {events:?}"
+    );
+  }
+
+  // ─── Kitty kbd: CSI <code>;<mod>;<text> u ───────────────────────────
+
+  #[test]
+  fn csi_kitty_tab() {
+    expect_key(b"\x1b[9u", KeyCode::Tab, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_kitty_enter() {
+    expect_key(b"\x1b[13u", KeyCode::Enter, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_kitty_esc() {
+    expect_key(b"\x1b[27u", KeyCode::Esc, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_kitty_backspace() {
+    expect_key(b"\x1b[127u", KeyCode::Backspace, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_kitty_plain_char() {
+    // 'a' = 97
+    expect_key(b"\x1b[97u", KeyCode::Char('a'), ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_kitty_char_with_ctrl() {
+    expect_key(b"\x1b[97;5u", KeyCode::Char('a'), ModKeys::CTRL);
+  }
+
+  #[test]
+  fn csi_kitty_shift_disambiguation_uses_text() {
+    // codepoint=55 ('7'), mod=2 (SHIFT), text=38 ('&').
+    // Handler should drop the SHIFT modifier and report the actual char.
+    expect_key(b"\x1b[55;2;38u", KeyCode::Char('&'), ModKeys::empty());
+  }
+
+  // ─── Private-mode replies: CSI ? <num> c/u ───────────────────────────
+
+  #[test]
+  fn csi_primary_dev_attr() {
+    let events = feed(b"\x1b[?1;2c");
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], TermEvent::PrimaryDevAttr));
+  }
+
+  #[test]
+  fn csi_kitty_kbd_flags() {
+    let events = feed(b"\x1b[?5u");
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], TermEvent::KittyKbdFlags));
+  }
+
+  // ─── SGR mouse: CSI < <btn>;<x>;<y> M ───────────────────────────────
+
+  #[test]
+  fn csi_mouse_release_produces_no_event() {
+    // lowercase 'm' = release event, ignored.
+    let events = feed(b"\x1b[<0;10;5m");
+    assert!(events.is_empty());
+  }
+
+  #[test]
+  fn csi_mouse_scroll_up() {
+    expect_key(b"\x1b[<64;0;0M", KeyCode::ScrollUp, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_mouse_scroll_down() {
+    expect_key(b"\x1b[<65;0;0M", KeyCode::ScrollDown, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_mouse_back_button() {
+    expect_key(b"\x1b[<128;0;0M", KeyCode::Back, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_mouse_forward_button() {
+    expect_key(b"\x1b[<129;0;0M", KeyCode::Forward, ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_mouse_left_click_carries_position() {
+    expect_key(
+      b"\x1b[<0;12;7M",
+      KeyCode::LeftClick(7, 12),
+      ModKeys::empty(),
+    );
+  }
+
+  #[test]
+  fn csi_mouse_middle_click() {
+    expect_key(
+      b"\x1b[<1;3;9M",
+      KeyCode::MiddleClick(9, 3),
+      ModKeys::empty(),
+    );
+  }
+
+  #[test]
+  fn csi_mouse_right_click() {
+    expect_key(
+      b"\x1b[<2;15;20M",
+      KeyCode::RightClick(20, 15),
+      ModKeys::empty(),
+    );
+  }
+
+  #[test]
+  fn csi_mouse_position_report() {
+    expect_key(b"\x1b[<35;4;2M", KeyCode::MousePos(2, 4), ModKeys::empty());
+  }
+
+  #[test]
+  fn csi_mouse_unknown_button_produces_no_event() {
+    let events = feed(b"\x1b[<99;0;0M");
+    assert!(events.is_empty());
+  }
+
+  // ─── Unknown sequence: no event ──────────────────────────────────────
+
+  #[test]
+  fn csi_unknown_final_byte_produces_no_event() {
+    let events = feed(b"\x1b[?123!");
+    assert!(events.is_empty());
+  }
+
+  // ===================== XtVersion::parse_iterm2 =====================
+
+  fn parse_iterm2(raw: &str) -> Option<XtVersion> {
+    XtVersion::parse_iterm2(raw)
+  }
+
+  #[test]
+  fn parse_iterm2_full_version() {
+    let v = parse_iterm2("iTerm2 3.5.12").unwrap();
+    match v {
+      XtVersion::Iterm2(sv) => assert_eq!(sv, semver!(3, 5, 12)),
+      other => panic!("expected Iterm2, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_iterm2_zero_version() {
+    let v = parse_iterm2("iTerm2 0.0.0").unwrap();
+    match v {
+      XtVersion::Iterm2(sv) => assert_eq!(sv, semver!(0, 0, 0)),
+      other => panic!("got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_iterm2_wrong_program_name() {
+    assert!(parse_iterm2("Alacritty 0.13.0").is_none());
+    assert!(parse_iterm2("xterm 1.2.3").is_none());
+  }
+
+  #[test]
+  fn parse_iterm2_no_space_returns_none() {
+    assert!(parse_iterm2("iTerm2").is_none());
+    assert!(parse_iterm2("nothing").is_none());
+    assert!(parse_iterm2("").is_none());
+  }
+
+  #[test]
+  fn parse_iterm2_missing_patch_returns_none() {
+    // "iTerm2 3.5" — third .parse() encounters None.
+    assert!(parse_iterm2("iTerm2 3.5").is_none());
+  }
+
+  #[test]
+  fn parse_iterm2_missing_minor_and_patch_returns_none() {
+    assert!(parse_iterm2("iTerm2 3").is_none());
+  }
+
+  #[test]
+  fn parse_iterm2_non_numeric_components_return_none() {
+    assert!(parse_iterm2("iTerm2 a.b.c").is_none());
+    assert!(parse_iterm2("iTerm2 3.5.x").is_none());
+    assert!(parse_iterm2("iTerm2 3.y.12").is_none());
+  }
+
+  #[test]
+  fn parse_iterm2_extra_trailing_components_ignored() {
+    // parts.next() only takes the first three; anything after is fine.
+    let v = parse_iterm2("iTerm2 3.5.12.beta").unwrap();
+    match v {
+      XtVersion::Iterm2(sv) => assert_eq!(sv, semver!(3, 5, 12)),
+      other => panic!("got {other:?}"),
+    }
+  }
+
+  // ─── via the public XtVersion::parse entry point ────────────────
+
+  #[test]
+  fn xtversion_parse_iterm2_route() {
+    let v = XtVersion::parse("iTerm2 3.5.12");
+    assert!(matches!(v, XtVersion::Iterm2(_)));
+  }
+
+  #[test]
+  fn xtversion_parse_iterm2_invalid_falls_to_unknown() {
+    let v = XtVersion::parse("iTerm2 abc.def.ghi");
+    assert!(matches!(v, XtVersion::Unknown(_)));
+  }
+
+  // ===================== PollReader::read_event =====================
+
+  fn pr_with_bytes(bytes: &[u8]) -> PollReader {
+    let mut r = PollReader::new();
+    r.feed_bytes(bytes);
+    r
+  }
+
+  #[test]
+  fn read_event_empty_buf_returns_none() {
+    let mut r = PollReader::new();
+    let ev = r.read_event().unwrap();
+    assert!(ev.is_none());
+  }
+
+  #[test]
+  fn read_event_lone_esc_byte_returns_escape_key() {
+    let mut r = pr_with_bytes(b"\x1b");
+    let ev = r.read_event().unwrap();
+    match ev {
+      Some(TermEvent::Key(KeyEvent(KeyCode::Esc, m))) => {
+        assert_eq!(m, ModKeys::empty());
+      }
+      other => panic!("expected Esc key, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_event_esc_plus_printable_returns_alt_key() {
+    // ESC + 'a' → Alt+A (upper-cased per the implementation).
+    let mut r = pr_with_bytes(b"\x1ba");
+    let ev = r.read_event().unwrap();
+    match ev {
+      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), m))) => {
+        assert_eq!(c, 'A');
+        assert_eq!(m, ModKeys::ALT);
+      }
+      other => panic!("expected Alt+char, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_event_esc_plus_unhandled_returns_lone_escape() {
+    // ESC + 0x7f (DEL) — falls into the "unknown" arm → standalone Esc.
+    let mut r = pr_with_bytes(b"\x1b\x7f");
+    let ev = r.read_event().unwrap();
+    assert!(matches!(
+      ev,
+      Some(TermEvent::Key(KeyEvent(KeyCode::Esc, _)))
+    ));
+  }
+
+  #[test]
+  fn read_event_csi_prefix_parses_through() {
+    // ESC + '[' starts a CSI sequence; feed cursor-pos response.
+    let mut r = pr_with_bytes(b"\x1b[5;10R");
+    let ev = r.read_event().unwrap();
+    match ev {
+      Some(TermEvent::CursorPos(Rows(r), Cols(c))) => {
+        assert_eq!(r, 5);
+        assert_eq!(c, 10);
+      }
+      other => panic!("expected CursorPos, got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_event_plain_printable_char_returns_key() {
+    let mut r = pr_with_bytes(b"x");
+    let ev = r.read_event().unwrap();
+    match ev {
+      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), m))) => {
+        assert_eq!(c, 'x');
+        assert_eq!(m, ModKeys::empty());
+      }
+      other => panic!("expected key 'x', got {other:?}"),
+    }
+  }
+
+  #[test]
+  fn read_event_consumes_bytes() {
+    let mut r = pr_with_bytes(b"ab");
+    let _ = r.read_event().unwrap();
+    // After consuming 'a', the buf still has 'b'.
+    let ev = r.read_event().unwrap();
+    match ev {
+      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), _))) => {
+        assert_eq!(c, 'b');
+      }
+      other => panic!("expected 'b', got {other:?}"),
+    }
+  }
+
+  // ===================== EventParser::print =====================
+  // Indirectly drive `print` via the feed() helper. SS3 sequences are
+  // ESC O <char>.
+
+  #[test]
+  fn print_plain_char_emits_key() {
+    expect_key(b"a", KeyCode::Char('a'), ModKeys::empty());
+  }
+
+  #[test]
+  fn print_del_byte_emits_backspace() {
+    expect_key(b"\x7f", KeyCode::Backspace, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_a_is_up() {
+    expect_key(b"\x1bOA", KeyCode::Up, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_b_is_down() {
+    expect_key(b"\x1bOB", KeyCode::Down, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_c_is_right() {
+    expect_key(b"\x1bOC", KeyCode::Right, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_d_is_left() {
+    expect_key(b"\x1bOD", KeyCode::Left, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_h_is_home() {
+    expect_key(b"\x1bOH", KeyCode::Home, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_capital_f_is_end() {
+    expect_key(b"\x1bOF", KeyCode::End, ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_p_q_r_s_are_f1_f4() {
+    expect_key(b"\x1bOP", KeyCode::F(1), ModKeys::empty());
+    expect_key(b"\x1bOQ", KeyCode::F(2), ModKeys::empty());
+    expect_key(b"\x1bOR", KeyCode::F(3), ModKeys::empty());
+    expect_key(b"\x1bOS", KeyCode::F(4), ModKeys::empty());
+  }
+
+  #[test]
+  fn print_ss3_unrecognized_char_falls_through() {
+    // ESC O Z — Z isn't in the SS3 table; falls through to the Char path.
+    let events = feed(b"\x1bOZ");
+    // The 'Z' should appear as a Char event somewhere.
+    let has_z = events
+      .iter()
+      .any(|e| matches!(e, TermEvent::Key(KeyEvent(KeyCode::Char('Z'), _))));
+    assert!(has_z, "expected Char('Z') event, got: {events:?}");
   }
 }
