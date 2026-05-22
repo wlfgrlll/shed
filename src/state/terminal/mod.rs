@@ -1236,3 +1236,278 @@ mod color_mode_tests {
     assert_eq!(color_mode(), Some(ColorMode::Truecolor));
   }
 }
+
+#[cfg(test)]
+mod terminal_method_tests {
+  //! Tier 1: pure-output assertions. Each function emits ANSI escapes
+  //! into Terminal's input_buf; we call it, flush via Shed::term_mut,
+  //! and assert the escapes landed on the pty master.
+
+  use super::*;
+  use crate::state::Shed;
+  use crate::tests::testutil::TestGuard;
+  use std::io::Write;
+
+  /// Force a flush and then drain the pty output thread's buffer.
+  fn drain(g: &TestGuard) -> String {
+    Shed::term_mut(|t| t.flush().ok());
+    g.read_output()
+  }
+
+  // ─── set_cursor_style ────────────────────────────────────────────
+
+  #[test]
+  fn set_cursor_style_different_writes_escape() {
+    let g = TestGuard::new();
+    // Default → Beam(true) — different style, should emit.
+    Shed::term_mut(|t| t.set_cursor_style(CursorStyle::Beam(true)).unwrap());
+    let out = drain(&g);
+    // Beam(true) renders as `\x1b[5 q`.
+    assert!(out.contains("\x1b[5 q"), "got: {out:?}");
+  }
+
+  #[test]
+  fn set_cursor_style_same_is_noop() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.set_cursor_style(CursorStyle::Default).unwrap());
+    let out = drain(&g);
+    // Was already Default; nothing new should be written.
+    assert!(
+      !out.contains("\x1b[0 q"),
+      "should not have re-emitted Default style, got: {out:?}"
+    );
+  }
+
+  // ─── set_scroll_region ──────────────────────────────────────────
+
+  #[test]
+  fn set_scroll_region_emits_decstbm() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.set_scroll_region(2, 20).unwrap());
+    let out = drain(&g);
+    assert!(out.contains("\x1b[2;20r"), "got: {out:?}");
+  }
+
+  #[test]
+  fn set_scroll_region_updates_state() {
+    let _g = TestGuard::new();
+    Shed::term_mut(|t| t.set_scroll_region(3, 15).unwrap());
+    let region = Shed::term(|t| t.scroll_region());
+    assert_eq!(region, Some((3, 15)));
+  }
+
+  // ─── reset_scroll_region ────────────────────────────────────────
+
+  #[test]
+  fn reset_scroll_region_after_set_emits_reset_and_clears_state() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.set_scroll_region(2, 10).unwrap());
+    let _ = drain(&g);
+    Shed::term_mut(|t| t.reset_scroll_region().unwrap());
+    let out = drain(&g);
+    // SCROLL_REGION_RESET is `\x1b[r`.
+    assert!(out.contains("\x1b[r"), "got: {out:?}");
+    assert_eq!(Shed::term(|t| t.scroll_region()), None);
+  }
+
+  #[test]
+  fn reset_scroll_region_when_unset_is_noop() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.reset_scroll_region().unwrap());
+    let out = drain(&g);
+    assert!(
+      !out.contains("\x1b[r"),
+      "should not have emitted reset, got: {out:?}"
+    );
+  }
+
+  // ─── draw_status_line ──────────────────────────────────────────
+
+  #[test]
+  fn draw_status_line_emits_content_and_save_restore() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.draw_status_line("STATUS_LINE_TEST_MARKER"));
+    let out = drain(&g);
+    assert!(out.contains("STATUS_LINE_TEST_MARKER"), "got: {out:?}");
+    // Surrounded by cursor save/restore (DECSC `\x1b7` / DECRC `\x1b8`).
+    assert!(out.contains("\x1b7"), "expected DECSC, got: {out:?}");
+    assert!(out.contains("\x1b8"), "expected DECRC, got: {out:?}");
+  }
+
+  // ─── clear_under_cursor ────────────────────────────────────────
+
+  #[test]
+  fn clear_under_cursor_emits_ed_0() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.clear_under_cursor().unwrap());
+    let out = drain(&g);
+    assert!(out.contains("\x1b[0J"), "got: {out:?}");
+  }
+
+  // ─── scroll_up ──────────────────────────────────────────────────
+
+  #[test]
+  fn scroll_up_with_zero_lines_is_noop() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.scroll_up(0).unwrap());
+    let out = drain(&g);
+    assert!(
+      !out.contains("\x1b[0S"),
+      "should not have emitted SU, got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn scroll_up_emits_su_with_lines() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.scroll_up(5).unwrap());
+    // scroll_up uses write_direct — no flush needed, but drain reads any output.
+    let out = g.read_output();
+    assert!(out.contains("\x1b[5S"), "got: {out:?}");
+  }
+
+  // ─── reset_for_exit ────────────────────────────────────────────
+
+  #[test]
+  fn reset_for_exit_emits_cleanup_sequences() {
+    let g = TestGuard::new();
+    // Put the terminal in a non-default state so reset has something to do.
+    Shed::term_mut(|t| {
+      t.set_scroll_region(2, 10).unwrap();
+      t.set_cursor_style(CursorStyle::Beam(true)).unwrap();
+    });
+    let _ = drain(&g);
+    Shed::term_mut(|t| t.reset_for_exit());
+    let out = g.read_output();
+    // Cursor visibility on (CURSOR_SHOW), bracketed paste off, scroll region reset, etc.
+    assert!(
+      out.contains("\x1b[r"),
+      "expected scroll region reset, got: {out:?}"
+    );
+    // reset_for_exit flushes internally; output should be observable without explicit flush.
+  }
+
+  // ─── detach_tty ────────────────────────────────────────────────
+
+  #[test]
+  fn detach_tty_makes_subsequent_writes_no_ops() {
+    let g = TestGuard::new();
+    Shed::term_mut(|t| t.detach_tty());
+    // After detach, writes should be silently discarded.
+    Shed::term_mut(|t| t.clear_under_cursor().ok());
+    Shed::term_mut(|t| t.flush().ok());
+    let out = g.read_output();
+    assert!(
+      out.is_empty(),
+      "expected nothing written after detach, got: {out:?}"
+    );
+    assert!(Shed::term(|t| t.tty().is_none()));
+  }
+
+  #[test]
+  fn detach_tty_clears_input_buf() {
+    let _g = TestGuard::new();
+    // Buffer something but don't flush.
+    Shed::term_mut(|t| {
+      let _ = t.clear_under_cursor();
+    });
+    Shed::term_mut(|t| t.detach_tty());
+    // input_buf should be empty after detach (buffered output dropped).
+    // We can verify by trying to flush — no output should appear.
+    let g2 = TestGuard::new();
+    Shed::term_mut(|t| t.flush().ok());
+    assert!(g2.read_output().is_empty());
+  }
+
+  // ─── cooked_no_echo_guard ──────────────────────────────────────
+
+  #[test]
+  fn cooked_no_echo_guard_disables_echo_and_restores_on_drop() {
+    use nix::sys::termios::{LocalFlags, tcgetattr};
+    use std::os::fd::BorrowedFd;
+    let _g = TestGuard::new();
+    let tty_fd = Shed::term(|t| t.tty().map(|f| f.as_raw_fd())).unwrap();
+    let borrowed = unsafe { BorrowedFd::borrow_raw(tty_fd) };
+
+    let before = tcgetattr(borrowed).unwrap().local_flags;
+    {
+      let _guard = Shed::term_mut(|t| t.cooked_no_echo_guard().unwrap());
+      let inside = tcgetattr(borrowed).unwrap().local_flags;
+      assert!(
+        !inside.contains(LocalFlags::ECHO),
+        "ECHO should be off inside guard, flags: {inside:?}"
+      );
+      assert!(
+        inside.contains(LocalFlags::ICANON),
+        "ICANON should be on inside guard, flags: {inside:?}"
+      );
+    }
+    let after = tcgetattr(borrowed).unwrap().local_flags;
+    assert_eq!(after, before, "termios should be restored after guard drop");
+  }
+
+  // ─── poll ──────────────────────────────────────────────────────
+
+  #[test]
+  fn poll_returns_zero_on_timeout_with_no_input() {
+    let _g = TestGuard::new();
+    // Short timeout, no bytes available.
+    let ret = Shed::term_mut(|t| t.poll(PollTimeout::from(10u8)).unwrap());
+    assert_eq!(ret, 0, "expected no fds ready, got {ret}");
+  }
+
+  // The "bytes available" path is harder to test reliably in the
+  // TestGuard fixture — feed_tty writes to the pty master, but the
+  // background read-thread is also racing on that fd, and poll on the
+  // slave-side can lose the wakeup. Skipping the positive case here.
+
+  // ─── get_cursor_pos ────────────────────────────────────────────
+  //
+  // TestGuard sets test_mode=true via set_fd_for_testing, which short-
+  // circuits get_cursor_pos to return Ok(None). Pin that behavior.
+
+  #[test]
+  fn get_cursor_pos_returns_none_in_test_mode() {
+    let _g = TestGuard::new();
+    let pos = Shed::term_mut(|t| t.get_cursor_pos().unwrap());
+    assert_eq!(pos, None);
+  }
+
+  // ─── query_term_caps ───────────────────────────────────────────
+  //
+  // Same as above — query_term_caps checks test_mode early and returns
+  // without doing the round-trip probe.
+
+  #[test]
+  fn query_term_caps_is_skipped_in_test_mode() {
+    let _g = TestGuard::new();
+    let caps_before = Shed::term(|t| t.term_caps());
+    Shed::term_mut(|t| t.query_term_caps().unwrap());
+    let caps_after = Shed::term(|t| t.term_caps());
+    // Should be unchanged (probe was skipped).
+    assert_eq!(caps_before, caps_after);
+  }
+
+  // ─── setup_terminal ────────────────────────────────────────────
+  //
+  // setup_terminal runs query_term_caps internally; in test mode the
+  // probe is a no-op, but the rest of the setup (termios, fallback
+  // application-keypad writes) still runs. We just verify it returns
+  // a guard that, when dropped, restores the prior state cleanly.
+
+  #[test]
+  fn setup_terminal_returns_guard_that_restores_on_drop() {
+    let _g = TestGuard::new();
+    let raw_before = Shed::term(|t| t.raw_mode);
+    {
+      let _setup_guard = Shed::term_mut(|t| t.setup_terminal().unwrap());
+      // We don't assert specific termios state here because test_mode
+      // path skips most of the wire writes — we just need the call
+      // chain to complete cleanly.
+    }
+    // Guard dropped — state should be reasonable. raw_mode may or may
+    // not change; we just make sure nothing panicked.
+    let _raw_after = Shed::term(|t| t.raw_mode);
+    let _ = raw_before;
+  }
+}

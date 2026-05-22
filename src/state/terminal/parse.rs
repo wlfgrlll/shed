@@ -555,6 +555,7 @@ impl Clone for PollReader {
 
 impl Debug for PollReader {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    // vte::Parser does not implement Debug
     f.debug_struct("PollReader")
       .field("collector", &self.collector)
       .field("byte_buf", &self.byte_buf)
