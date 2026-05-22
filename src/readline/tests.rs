@@ -862,7 +862,13 @@ fn alias_no_expand_when_disabled() {
 // ===================== Hint Tests =====================
 //
 // prepopulates some commands into the test harness command history
-// then does line editor stuff that would interact with the hint system
+// then does line editor stuff that would interact with the hint system.
+//
+// Uses `expand_keymap` (same as emacs_test!/visual_test!) to parse
+// vim-keymap notation like `<Up>`, `<C-a>`, `<BS>` into KeyEvents
+// directly. Feeding raw bytes one-at-a-time would mangle CSI sequences
+// like `\x1b[A` for arrow keys, since each byte gets processed before
+// the next arrives.
 macro_rules! hint_test {
   { $($name:ident
       : $hist:expr
@@ -872,6 +878,7 @@ macro_rules! hint_test {
   } => {
     mod hint {
       use super::*;
+      use crate::expand::expand_keymap;
       $(#[test]
         fn $name() {
           Shed::shopts_mut(|o| {
@@ -886,11 +893,8 @@ macro_rules! hint_test {
           line.history.refresh_hist_entries();
           line.history.constrain_entries(None);
 
-          for byte in $input.as_bytes() {
-            Shed::term_mut(|t| t.feed_bytes(&[*byte]));
-            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
-            line.process_input(keys).unwrap();
-          }
+          let keys = expand_keymap($input);
+          line.process_input(keys).unwrap();
 
           assert_eq!(line.editor.joined(), $expected_buf, "buffer mismatch");
           assert_eq!(
@@ -906,6 +910,15 @@ macro_rules! hint_test {
 }
 
 hint_test! {
+  edit_repopulates_hint
+    : &[
+      "command one",
+      "command two",
+      "command three",
+    ]
+    => "<Up><Esc>$bC"
+    => "command ", "command two", 8;
+
   prefix_suggests_hint
     : &["echo foo bar"]
     => "echo"
@@ -913,42 +926,42 @@ hint_test! {
 
   full_accept_by_l
     : &["echo foo bar"]
-    => "echo\x1bl"
+    => "echo<Esc>l"
     => "echo foo bar", "", 11;
 
   word_accept
     : &["echo foo bar"]
-    => "echo\x1bw"
+    => "echo<Esc>w"
     => "echo f", "echo foo bar", 5;
 
   escape_preserves_buffer
     : &["echo foo bar"]
-    => "echo\x1b"
+    => "echo<Esc>"
     => "echo", "echo foo bar", 3;
 
   word_through_brace
     : &["flog -p \"[%H:%M:%S {level}\" info foo"]
-    => "flog -p \"[%H:%M:%S {\x1bww"
+    => "flog -p \"[%H:%M:%S {<Esc>ww"
     => "flog -p \"[%H:%M:%S {level}", "flog -p \"[%H:%M:%S {level}\" info foo", 25;
 
   word_across_line_boundary
     : &["echo foo\necho bar"]
-    => "echo foo\x1bww"
+    => "echo foo<Esc>ww"
     => "echo foo\necho b", "echo foo\necho bar", 14;
 
   back_motion_no_accept
     : &["echo foo bar"]
-    => "echo\x1bb"
+    => "echo<Esc>b"
     => "echo", "echo foo bar", 0;
 
   j_accepts_downward
     : &["echo foo\necho bar\necho biz"]
-    => "echo f\x1bj"
+    => "echo f<Esc>j"
     => "echo foo\necho b", "echo foo\necho bar\necho biz", 14;
 
   j_accepts_downward_insert_mode_inclusive
     : &["echo foo\necho bar\necho biz"]
-    => "echo \x0fj" // ctrl+o, j
+    => "echo <C-o>j"
     => "echo foo\necho ", "echo foo\necho bar\necho biz", 14;
 
   most_recent_wins
@@ -987,7 +1000,7 @@ hint_test! {
     : &[
       "echo foobar",
     ]
-    => "echo z\x7f"
+    => "echo z<BS>"
     => "echo ", "echo foobar", 5;
 
   hint_constrained
@@ -996,7 +1009,7 @@ hint_test! {
       "echo foo",
       "echo foooooo"
     ]
-    => "echo foob\x1be"
+    => "echo foob<Esc>e"
     => "echo foobar", "", 10;
 
   divergence_clears_hint

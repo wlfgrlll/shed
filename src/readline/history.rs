@@ -796,12 +796,19 @@ impl History {
   }
 
   pub fn update_pending_cmd(&mut self, buf: (&str, usize)) {
-    if !self.at_pending() {
-      // Don't overwrite the saved pending command while browsing history
-      return;
-    }
     let cmd = buf.0.to_string();
     let cursor_pos = buf.1;
+
+    if !self.at_pending() {
+      // we are looking at an old command
+      // compare it to the one in history
+      // if it's different, reset our cursor and stuff
+      let browsed_cmd = self.search_mask.get(self.cursor).map(|e| e.command());
+      if browsed_cmd == Some(cmd.as_str()) {
+        return;
+      }
+      self.reset_to_pending();
+    }
 
     if let Some(pending) = &mut self.pending {
       pending.set_buffer(cmd);
