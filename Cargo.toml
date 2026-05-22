@@ -13,6 +13,11 @@ edition = "2024"
 [profile.release]
 debug = true
 
+[profile.dist]
+inherits = "release"
+debug = false
+strip = true
+
 [dependencies]
 shed_macros = { path = "./crates/shed_macros" }
 ariadne = "0.6.0"

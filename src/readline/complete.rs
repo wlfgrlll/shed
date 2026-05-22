@@ -2331,6 +2331,114 @@ mod tests {
     assert!(matches!(result, CompResult::Many { .. }));
   }
 
+  // ===================== CompResult::try_collapse_by_prefix =====================
+  //
+  // The zsh-style "first Tab advances to common prefix, second Tab opens
+  // the selector" behavior. Pre-tab collapse: Many; post-collapse: either
+  // Single (when LCP extends the typed input) or unchanged Many (when
+  // LCP can't help). Tests cover both branches plus the edge cases.
+
+  fn many(cands: &[&str]) -> CompResult {
+    CompResult::from_candidates(cands.iter().map(|s| Candidate::from(*s)).collect())
+  }
+
+  fn collapsed_single(result: &CompResult) -> Option<&str> {
+    if let CompResult::Single { result } = result {
+      Some(result.content())
+    } else {
+      None
+    }
+  }
+
+  // ─── Happy path: LCP extends user input ───────────────────────────
+
+  #[test]
+  fn collapse_advances_to_common_prefix() {
+    // User typed "gi", candidates {git-clean, gitlab, github} share LCP "git".
+    let result = many(&["git-clean", "gitlab", "github"]).try_collapse_by_prefix("gi");
+    assert_eq!(collapsed_single(&result), Some("git"));
+  }
+
+  #[test]
+  fn collapse_with_empty_typed_extends_to_full_lcp() {
+    // User hasn't typed anything yet; any common prefix wins.
+    let result = many(&["foobar", "foobaz"]).try_collapse_by_prefix("");
+    assert_eq!(collapsed_single(&result), Some("fooba"));
+  }
+
+  // ─── No-collapse cases: LCP not longer than typed ─────────────────
+
+  #[test]
+  fn collapse_noop_when_lcp_equals_typed() {
+    // User already typed the full LCP; nothing more to advance to.
+    // (This is the post-first-Tab state where selector should open.)
+    let result = many(&["git-clean", "gitlab", "github"]).try_collapse_by_prefix("git");
+    assert!(matches!(result, CompResult::Many { .. }));
+  }
+
+  #[test]
+  fn collapse_noop_when_no_common_prefix() {
+    // No shared prefix → no collapse possible.
+    let result = many(&["alpha", "beta", "gamma"]).try_collapse_by_prefix("");
+    assert!(matches!(result, CompResult::Many { .. }));
+  }
+
+  #[test]
+  fn collapse_noop_when_case_differs_at_position_0() {
+    // Case-sensitive LCP: candidates differing in case at the first char
+    // produce an empty common prefix and fall through to selector.
+    // Verifies the "show selector for case-ambiguous candidates" property.
+    let result = many(&["file", "fiLE", "File"]).try_collapse_by_prefix("fi");
+    assert!(matches!(result, CompResult::Many { .. }));
+  }
+
+  // ─── Edge cases ────────────────────────────────────────────────────
+
+  #[test]
+  fn collapse_preserves_single_unchanged() {
+    let single = CompResult::Single {
+      result: Candidate::from("only"),
+    };
+    let result = single.try_collapse_by_prefix("o");
+    assert!(matches!(result, CompResult::Single { .. }));
+    assert_eq!(collapsed_single(&result), Some("only"));
+  }
+
+  #[test]
+  fn collapse_preserves_no_match_unchanged() {
+    let result = CompResult::NoMatch.try_collapse_by_prefix("foo");
+    assert!(matches!(result, CompResult::NoMatch));
+  }
+
+  #[test]
+  fn collapse_handles_multibyte_chars_at_lcp_boundary() {
+    // Common prefix straddles a multi-byte char. Without proper byte-
+    // boundary handling, slicing `first[..end]` would panic with
+    // "byte index N is not a char boundary" or produce garbage.
+    let result = many(&["café_a", "café_b"]).try_collapse_by_prefix("ca");
+    // LCP is "café_" (5 chars, 6 bytes — é is 2 bytes).
+    assert_eq!(collapsed_single(&result), Some("café_"));
+  }
+
+  #[test]
+  fn collapse_first_candidate_is_full_lcp_when_others_extend_it() {
+    // first = "foo" (length 3), others = "foobar", "foobaz". The LCP
+    // can't exceed len(first) = 3 because first is a prefix of itself.
+    // typed = "" so we advance to "foo".
+    let result = many(&["foo", "foobar", "foobaz"]).try_collapse_by_prefix("");
+    assert_eq!(collapsed_single(&result), Some("foo"));
+  }
+
+  #[test]
+  fn collapse_lcp_shorter_than_typed_does_not_truncate() {
+    // Guard against a hypothetical regression where typed is longer
+    // than LCP — we should keep the Many state, not collapse to a
+    // prefix shorter than what the user typed.
+    let result = many(&["abXYZ", "abLMN"]).try_collapse_by_prefix("abc");
+    // LCP is "ab" (2 bytes), typed is "abc" (3 bytes). LCP not > typed.
+    assert!(matches!(result, CompResult::Many { .. }));
+  }
+
   // ===================== complete_signals =====================
 
   #[test]

@@ -5,6 +5,7 @@ perf*
 lcov.*
 crap.*
 coverage
+release
 .idea
 *.iml
 /result*
