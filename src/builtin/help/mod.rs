@@ -818,9 +818,6 @@ mod get_all_tags_tests {
     });
     let tags = get_all_tags().unwrap();
     let names: Vec<&str> = tags.iter().map(|t| t.tag.candidate.content()).collect();
-    assert!(
-      names.iter().any(|n| *n == "hpath-skip-test-tag"),
-      "got: {names:?}"
-    );
+    assert!(names.contains(&"hpath-skip-test-tag"), "got: {names:?}");
   }
 }

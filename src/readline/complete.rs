@@ -2426,7 +2426,7 @@ mod tests {
     let result = comp.get_candidates(line, cursor).unwrap();
     let cs = contents(&result);
     assert!(
-      cs.iter().any(|c| *c == "UNIQUE_COMP_TEST_VAR_XYZZY"),
+      cs.contains(&"UNIQUE_COMP_TEST_VAR_XYZZY"),
       "expected UNIQUE_COMP_TEST_VAR_XYZZY in candidates, got: {cs:?}"
     );
   }
@@ -2504,8 +2504,11 @@ mod tests {
     std::fs::write(dir.path().join("file.txt"), "").unwrap();
     std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
-    let mut comp = SimpleCompleter::default();
-    comp.dirs_only = true;
+    let mut comp = SimpleCompleter {
+      dirs_only: true,
+      ..Default::default()
+    };
+
     let line = format!("ls {}/", dir.path().display());
     let cursor = line.len();
     let result = comp.get_candidates(line, cursor).unwrap();

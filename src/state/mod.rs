@@ -61,6 +61,36 @@ impl Display for Message {
   }
 }
 
+macro_rules! access {
+  ($shed:ident, $field:ident, $f:expr) => {{
+    let caller = ::std::panic::Location::caller();
+    $shed.with(|shed| {
+      let field = shed.$field.try_borrow().unwrap_or_else(|_| {
+        panic!(
+          "Shed::{} already borrowed (called from {caller})",
+          stringify!($field)
+        )
+      });
+      $f(&field)
+    })
+  }};
+}
+
+macro_rules! access_mut {
+  ($shed:ident, $field:ident, $f:expr) => {{
+    let caller = ::std::panic::Location::caller();
+    $shed.with(|shed| {
+      let mut field = shed.$field.try_borrow_mut().unwrap_or_else(|_| {
+        panic!(
+          "Shed::{} already borrowed (called from {caller})",
+          stringify!($field)
+        )
+      });
+      $f(&mut field)
+    })
+  }};
+}
+
 /// The shell
 ///
 /// Every bit of data that this program needs to track over
@@ -117,7 +147,7 @@ impl Shed {
    * is to make positively sure that the lifetimes of the borrows are handled safely.
    *
    * The idea is that this makes it much harder to have overlapping borrows of the same field.
-   * Like, you wouldn't call Shed::vars() inside of Shed::vars(), for instance.
+   * Like, you wouldn't call Shed::vars() inside of Shed::vars(), for instance. (hopefully)
    *
    * The main footgun associated with using these is re-entrancy.
    * For instance, If you call Shed::vars_mut() in a place that can be accessed
@@ -130,72 +160,104 @@ impl Shed {
    *
    * The second part is pretty much entirely housed within this module.
    * These two parts must be as separated as possible. It's not possible to get complete isolation,
-   * since codepaths like expansion can find ways to escape back into regular execution contexts.
+   * since codepaths like expansion can find ways to escape back into regular execution contexts (command substitution).
    *
    * Overall, if we only use these to get and set data and not perform any actual calculations, we should be fine.
    */
 
   /// Read from the job table
-  pub fn jobs<T, F: FnOnce(&jobs::JobTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&shed.jobs.borrow()))
+  #[track_caller]
+  pub fn jobs<T, F>(f: F) -> T
+  where
+    F: FnOnce(&jobs::JobTab) -> T,
+  {
+    access!(SHED, jobs, f)
   }
-  pub fn jobs_mut<T, F: FnOnce(&mut jobs::JobTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&mut shed.jobs.borrow_mut()))
+  #[track_caller]
+  pub fn jobs_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut jobs::JobTab) -> T,
+  {
+    access_mut!(SHED, jobs, f)
   }
 
   /// Read from the var scope stack
-  pub fn vars<T, F: FnOnce(&scopes::ScopeStack) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&shed.var_scopes.borrow()))
+  #[track_caller]
+  pub fn vars<T, F>(f: F) -> T
+  where
+    F: FnOnce(&scopes::ScopeStack) -> T,
+  {
+    access!(SHED, var_scopes, f)
   }
-  pub fn vars_mut<T, F: FnOnce(&mut scopes::ScopeStack) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&mut shed.var_scopes.borrow_mut()))
+  #[track_caller]
+  pub fn vars_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut scopes::ScopeStack) -> T,
+  {
+    access_mut!(SHED, var_scopes, f)
   }
 
   /// Read from the metadata table
-  pub fn meta<T, F: FnOnce(&meta::MetaTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&shed.meta.borrow()))
+  #[track_caller]
+  pub fn meta<T, F>(f: F) -> T
+  where
+    F: FnOnce(&meta::MetaTab) -> T,
+  {
+    access!(SHED, meta, f)
   }
-  pub fn meta_mut<T, F: FnOnce(&mut meta::MetaTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&mut shed.meta.borrow_mut()))
+  #[track_caller]
+  pub fn meta_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut meta::MetaTab) -> T,
+  {
+    access_mut!(SHED, meta, f)
   }
 
   /// Read from the logic table
-  pub fn logic<T, F: FnOnce(&logic::LogTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&shed.logic.borrow()))
+  #[track_caller]
+  pub fn logic<T, F>(f: F) -> T
+  where
+    F: FnOnce(&logic::LogTab) -> T,
+  {
+    access!(SHED, logic, f)
   }
-  pub fn logic_mut<T, F: FnOnce(&mut logic::LogTab) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&mut shed.logic.borrow_mut()))
+  #[track_caller]
+  pub fn logic_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut logic::LogTab) -> T,
+  {
+    access_mut!(SHED, logic, f)
   }
 
   /// Read from the shell options
-  pub fn shopts<T, F: FnOnce(&shopt::ShOpts) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&shed.shopts.borrow()))
+  #[track_caller]
+  pub fn shopts<T, F>(f: F) -> T
+  where
+    F: FnOnce(&shopt::ShOpts) -> T,
+  {
+    access!(SHED, shopts, f)
   }
-  pub fn shopts_mut<T, F: FnOnce(&mut shopt::ShOpts) -> T>(f: F) -> T {
-    SHED.with(|shed| f(&mut shed.shopts.borrow_mut()))
+  #[track_caller]
+  pub fn shopts_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut shopt::ShOpts) -> T,
+  {
+    access_mut!(SHED, shopts, f)
   }
 
   #[track_caller]
-  pub fn term<T, F: FnOnce(&terminal::Terminal) -> T>(f: F) -> T {
-    let caller = std::panic::Location::caller();
-    SHED.with(|shed| {
-      let term = shed
-        .terminal
-        .try_borrow()
-        .unwrap_or_else(|_| panic!("with_term: RefCell already borrowed (called from {caller})"));
-      f(&term)
-    })
+  pub fn term<T, F>(f: F) -> T
+  where
+    F: FnOnce(&terminal::Terminal) -> T,
+  {
+    access!(SHED, terminal, f)
   }
   #[track_caller]
-  pub fn term_mut<T, F: FnOnce(&mut terminal::Terminal) -> T>(f: F) -> T {
-    let caller = std::panic::Location::caller();
-    SHED.with(|shed| {
-      let mut term = shed
-        .terminal
-        .try_borrow_mut()
-        .unwrap_or_else(|_| panic!("with_term: RefCell already borrowed (called from {caller})"));
-      f(&mut term)
-    })
+  pub fn term_mut<T, F>(f: F) -> T
+  where
+    F: FnOnce(&mut terminal::Terminal) -> T,
+  {
+    access_mut!(SHED, terminal, f)
   }
 
   pub fn system_msg_pending() -> bool {
