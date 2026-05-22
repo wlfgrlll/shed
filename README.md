@@ -3,7 +3,7 @@
 </h1>
 <p align="center">
 	<img alt="Coveralls" src="https://img.shields.io/coverallsCoverage/github/km-clay/shed?color=%23178f2d">
-	<img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/km-clay/shed/ci.yml">
+	<img alt="Test Suite Status" src="https://img.shields.io/github/actions/workflow/status/km-clay/shed/ci.yml?label=tests">
 	<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/km-clay/shed">
 </p>
 <h6 align="center">
