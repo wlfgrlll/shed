@@ -368,11 +368,14 @@ impl IdleTime {
   pub fn duration(&self) -> Duration {
     self.0
   }
+  pub fn zero() -> Self {
+    IdleTime(Duration::from_secs(0))
+  }
 }
 
 impl Default for IdleTime {
   fn default() -> Self {
-    IdleTime(Duration::from_secs(0))
+    Self::zero()
   }
 }
 
@@ -397,6 +400,9 @@ impl Display for IdleTime {
 impl FromStr for IdleTime {
   type Err = ShErr;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if s.trim().is_empty() {
+      return Ok(IdleTime::zero());
+    }
     if let Ok(n) = s.parse::<u64>() {
       return Ok(IdleTime(Duration::from_secs(n)));
     }
@@ -658,6 +664,12 @@ mod tests {
   use std::str::FromStr;
 
   #[test]
+  fn empty_string_parses_as_zero() {
+    let t: IdleTime = "".parse().unwrap();
+    assert!(t.is_zero());
+  }
+
+  #[test]
   fn idle_time_parses_bare_integer_as_seconds() {
     let t: IdleTime = "30".parse().unwrap();
     assert_eq!(t.0, Duration::from_secs(30));
@@ -699,11 +711,6 @@ mod tests {
   fn idle_time_unknown_unit_errors() {
     assert!(IdleTime::from_str("5d").is_err());
     assert!(IdleTime::from_str("10x").is_err());
-  }
-
-  #[test]
-  fn idle_time_empty_string_errors() {
-    assert!(IdleTime::from_str("").is_err());
   }
 
   #[test]
