@@ -35,8 +35,6 @@ impl KeyEvent {
         seq.push_str("BS");
         needs_angle_bracket = true;
       }
-      KeyCode::BracketedPasteStart => todo!(),
-      KeyCode::BracketedPasteEnd => todo!(),
       KeyCode::Delete => {
         seq.push_str("Del");
         needs_angle_bracket = true;
@@ -141,8 +139,6 @@ impl KeyEvent {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum KeyCode {
   Backspace,
-  BracketedPasteStart,
-  BracketedPasteEnd,
   Char(char),
   Verbatim(Arc<str>), // For sequences that should be treated as literal input, not parsed into a KeyCode
   Delete,

@@ -778,10 +778,7 @@ mod get_all_tags_tests {
     });
     let tags = get_all_tags().unwrap();
     let names: Vec<&str> = tags.iter().map(|t| t.tag.candidate.content()).collect();
-    assert!(
-      names.iter().any(|n| *n == "unique-test-tag-xyz"),
-      "got: {names:?}"
-    );
+    assert!(names.contains(&"unique-test-tag-xyz"), "got: {names:?}");
   }
 
   #[test]

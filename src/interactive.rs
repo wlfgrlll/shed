@@ -244,6 +244,7 @@ fn shed_loop_iter(
   // 4. we get back to the loop here, grandchild alters termios
   // 5. shell is softlocked
   Shed::term_mut(|t| t.enforce_raw_mode())?;
+  Shed::term_mut(|t| t.toggle_bracketed_paste(true))?;
 
   state::util::try_hash();
   util::flog::update_log_level();

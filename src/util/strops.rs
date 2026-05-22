@@ -313,7 +313,7 @@ pub(crate) fn format_time(dur: std::time::Duration) -> String {
     aeons = epochs / 1000;
     epochs %= 1000;
   }
-  if aeons >= ETERNITY {
+  if aeons == ETERNITY {
     eternities = aeons / ETERNITY;
     aeons %= ETERNITY;
   }

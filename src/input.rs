@@ -83,6 +83,34 @@ fn read_input() -> ShResult<String> {
   Ok(String::from_utf8_lossy(&input).to_string())
 }
 
+pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
+  let path = path.as_ref();
+  let path_raw = path.to_string_lossy().to_string();
+  if !path.is_file() {
+    errln!("shed: Failed to open input file: {}", path.display());
+    QUIT_CODE.store(1, Ordering::SeqCst);
+    return Err(sherr!(CleanExit(1), "input file not found",));
+  }
+  let Ok(input) = std::fs::read_to_string(path) else {
+    errln!("shed: Failed to read input file: {}", path.display());
+    QUIT_CODE.store(1, Ordering::SeqCst);
+    return Err(sherr!(CleanExit(1), "failed to read input file",));
+  };
+
+  let path_str = path.to_string_lossy().to_string();
+  Shed::vars_mut(|v| {
+    v.set_param(state::vars::ShellParam::ShellName, &path_str); // $0
+    let scope = v.cur_scope_mut();
+    scope.sh_argv_mut().clear();
+    scope.bpush_arg(path_str.clone());
+    for arg in args {
+      scope.bpush_arg(arg);
+    }
+  });
+
+  exec_nonint(input, Some(path_raw.into()))
+}
+
 #[cfg(test)]
 mod dispatch_input_tests {
   //! Tests for `dispatch_input`'s routing logic.
@@ -216,32 +244,4 @@ mod dispatch_input_tests {
     let out = g.read_output();
     assert_eq!(out, "");
   }
-}
-
-pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
-  let path = path.as_ref();
-  let path_raw = path.to_string_lossy().to_string();
-  if !path.is_file() {
-    errln!("shed: Failed to open input file: {}", path.display());
-    QUIT_CODE.store(1, Ordering::SeqCst);
-    return Err(sherr!(CleanExit(1), "input file not found",));
-  }
-  let Ok(input) = std::fs::read_to_string(path) else {
-    errln!("shed: Failed to read input file: {}", path.display());
-    QUIT_CODE.store(1, Ordering::SeqCst);
-    return Err(sherr!(CleanExit(1), "failed to read input file",));
-  };
-
-  let path_str = path.to_string_lossy().to_string();
-  Shed::vars_mut(|v| {
-    v.set_param(state::vars::ShellParam::ShellName, &path_str); // $0
-    let scope = v.cur_scope_mut();
-    scope.sh_argv_mut().clear();
-    scope.bpush_arg(path_str.clone());
-    for arg in args {
-      scope.bpush_arg(arg);
-    }
-  });
-
-  exec_nonint(input, Some(path_raw.into()))
 }

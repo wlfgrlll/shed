@@ -157,6 +157,7 @@ fn parse_leading_u32(s: &str) -> Option<u32> {
 struct EventParser {
   events: VecDeque<TermEvent>,
   ss3_pending: bool,
+  paste_buf: Option<String>,
   dcs_buf: Option<String>,
   dcs_kind: Option<DcsKind>,
   dcs_supported: bool,
@@ -167,6 +168,7 @@ impl EventParser {
     Self {
       events: VecDeque::new(),
       ss3_pending: false,
+      paste_buf: None,
       dcs_buf: None,
       dcs_kind: None,
       dcs_supported: false,
@@ -287,6 +289,11 @@ impl vte::Perform for EventParser {
   }
 
   fn print(&mut self, c: char) {
+    if let Some(buf) = self.paste_buf.as_mut() {
+      buf.push(c);
+      return;
+    }
+
     // vte routes 0x7f (DEL) to print instead of execute
     if self.ss3_pending {
       self.ss3_pending = false;
@@ -347,6 +354,10 @@ impl vte::Perform for EventParser {
 
   fn execute(&mut self, byte: u8) {
     log::trace!("execute: {byte:#04x}");
+    if let Some(buf) = self.paste_buf.as_mut() {
+      buf.push(byte as char);
+      return;
+    }
     let event = match byte {
       0x00 => TermEvent::Key(KeyEvent(KeyCode::Char(' '), ModKeys::CTRL)), // Ctrl+Space / Ctrl+@
       0x09 => TermEvent::Key(KeyEvent(KeyCode::Tab, ModKeys::empty())),    // Tab (Ctrl+I)
@@ -432,8 +443,19 @@ impl vte::Perform for EventParser {
           21 => KeyCode::F(10),
           23 => KeyCode::F(11),
           24 => KeyCode::F(12),
-          200 => KeyCode::BracketedPasteStart,
-          201 => KeyCode::BracketedPasteEnd,
+          200 => {
+            self.paste_buf = Some(String::new());
+            return;
+          }
+          201 => {
+            if let Some(buf) = self.paste_buf.take() {
+              self.events.push_back(TermEvent::Key(KeyEvent(
+                KeyCode::Verbatim(buf.into()),
+                ModKeys::empty(),
+              )));
+            }
+            return;
+          }
           _ => return,
         };
         TermEvent::Key(KeyEvent(key, mods))
@@ -518,7 +540,6 @@ pub(crate) struct PollReader {
   collector: EventParser,
   byte_buf: VecDeque<u8>,
   pub verbatim_single: bool,
-  pub verbatim: bool,
 }
 
 impl Clone for PollReader {
@@ -528,7 +549,6 @@ impl Clone for PollReader {
       collector: self.collector.clone(),
       byte_buf: self.byte_buf.clone(),
       verbatim_single: self.verbatim_single,
-      verbatim: self.verbatim,
     }
   }
 }
@@ -539,7 +559,6 @@ impl Debug for PollReader {
       .field("collector", &self.collector)
       .field("byte_buf", &self.byte_buf)
       .field("verbatim_single", &self.verbatim_single)
-      .field("verbatim", &self.verbatim)
       .finish()
   }
 }
@@ -551,27 +570,7 @@ impl PollReader {
       collector: EventParser::new(),
       byte_buf: VecDeque::new(),
       verbatim_single: false,
-      verbatim: false,
     }
-  }
-
-  pub fn handle_bracket_paste(&mut self) -> Option<KeyEvent> {
-    let end_marker = b"\x1b[201~";
-    let mut raw = vec![];
-    while let Some(byte) = self.byte_buf.pop_front() {
-      raw.push(byte);
-      if raw.ends_with(end_marker) {
-        // Strip the end marker from the raw sequence
-        raw.truncate(raw.len() - end_marker.len());
-        let paste = String::from_utf8_lossy(&raw).to_string();
-        self.verbatim = false;
-        return Some(KeyEvent(KeyCode::Verbatim(paste.into()), ModKeys::empty()));
-      }
-    }
-
-    self.verbatim = true;
-    self.byte_buf.extend(raw);
-    None
   }
 
   pub fn read_one_verbatim(&mut self) -> Option<KeyEvent> {
@@ -625,13 +624,7 @@ impl PollReader {
       }
       return Ok(None);
     }
-    if self.verbatim {
-      if let Some(paste) = self.handle_bracket_paste() {
-        return Ok(Some(TermEvent::Key(paste)));
-      }
-      // If we're in verbatim mode but haven't seen the end marker yet, don't attempt to parse keys
-      return Ok(None);
-    } else if self.byte_buf.front() == Some(&b'\x1b') {
+    if self.byte_buf.front() == Some(&b'\x1b') {
       if self.byte_buf.len() == 1 {
         // ESC is the only byte - emit standalone Escape
         self.byte_buf.pop_front();
@@ -667,16 +660,7 @@ impl PollReader {
     while let Some(byte) = self.byte_buf.pop_front() {
       self.parser.advance(&mut self.collector, &[byte]);
       if let Some(event) = self.collector.pop() {
-        match event {
-          TermEvent::Key(KeyEvent(KeyCode::BracketedPasteStart, _)) => {
-            if let Some(paste) = self.handle_bracket_paste() {
-              return Ok(Some(TermEvent::Key(paste)));
-            } else {
-              continue;
-            }
-          }
-          _ => return Ok(Some(event)),
-        }
+        return Ok(Some(event));
       }
     }
     Ok(None)
@@ -861,12 +845,6 @@ mod tests {
   #[test]
   fn csi_tilde_with_mods() {
     expect_key(b"\x1b[5;5~", KeyCode::PageUp, ModKeys::CTRL);
-  }
-
-  #[test]
-  fn csi_tilde_bracket_paste_markers() {
-    expect_key(b"\x1b[200~", KeyCode::BracketedPasteStart, ModKeys::empty());
-    expect_key(b"\x1b[201~", KeyCode::BracketedPasteEnd, ModKeys::empty());
   }
 
   #[test]
