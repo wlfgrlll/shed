@@ -191,19 +191,25 @@ bitflags! {
   }
 }
 
+/// The ex mode commands, mapped to their ExCommand enum members
+///
+/// Order matters because we allow prefix matching.
+/// It iterates through these to find a prefix of a command.
+/// This means that common ones like `edit`, `read`, and `write`
+/// should be at the top
 const COMMANDS: &[(&str, ExCommand)] = &[
-  ("substitute", ExCommand::Substitute),
-  ("global", ExCommand::Global),
-  ("normal", ExCommand::Normal),
-  ("delete", ExCommand::Delete),
-  ("yank", ExCommand::Yank),
-  ("expand", ExCommand::Expand),
-  ("put", ExCommand::Put),
   ("edit", ExCommand::Edit),
   ("read", ExCommand::Read),
   ("write", ExCommand::Write),
-  ("stash", ExCommand::Stash),
+  ("delete", ExCommand::Delete),
   ("quit", ExCommand::Quit),
+  ("yank", ExCommand::Yank),
+  ("put", ExCommand::Put),
+  ("substitute", ExCommand::Substitute),
+  ("global", ExCommand::Global),
+  ("normal", ExCommand::Normal),
+  ("stash", ExCommand::Stash),
+  ("expand", ExCommand::Expand),
   ("help", ExCommand::Help),
 ];
 
@@ -275,6 +281,12 @@ pub enum ExCommand {
 pub struct ExTk {
   class: ExTkRule,
   span: Span,
+}
+
+impl ExTk {
+  pub fn unpack(self) -> (ExTkRule, Span) {
+    (self.class, self.span)
+  }
 }
 
 impl From<Tk> for ExTk {
@@ -503,20 +515,52 @@ impl<'a> ExLexer<'a> {
         let Some(start_pos) = self.peek_pos() else {
           return;
         };
+        // For `:r!` and `:w!`, the bang shifts the rest into shell-command
+        // mode (pipe-to-shell / read-from-shell). For other commands a
+        // trailing bang is the vim "force" modifier and args are still paths.
+        let has_bang = self
+          .tokens
+          .iter()
+          .any(|tk| matches!(tk.class, ExTkRule::Bang));
+        let shell_mode = has_bang && matches!(cmd, ExCommand::Read | ExCommand::Write);
+
         let is_write = matches!(cmd, ExCommand::Write);
         let rest = self.chars.by_ref().map(|(_, ch)| ch).collect::<String>();
+        let outer = Span::new(0..self.input.len(), self.input.clone());
         let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
           .filter_map(Result::ok)
           .filter_map(|tk| tk.filter_meta().then_some(tk))
-          .map(ExTk::from);
+          .map(|tk| tk.rebase_into(&outer, start_pos));
+
+        // In file-arg mode we strip every flag that would make the shell
+        // highlighter classify the token in command-position (IS_CMD,
+        // BUILTIN, KEYWORD, FUNCNAME, ASSIGN). We keep flags that affect
+        // *inner structure* highlighting (IS_SUBSH, IS_CMDSUB, IS_ARITH,
+        // IS_HEREDOC, IS_PROCSUB) so `$()`/`$(())`/`${}` inside args still
+        // get highlighted properly.
+        const FILE_ARG_STRIP: lex::TkFlags = lex::TkFlags::IS_CMD
+          .union(lex::TkFlags::BUILTIN)
+          .union(lex::TkFlags::KEYWORD)
+          .union(lex::TkFlags::FUNCNAME)
+          .union(lex::TkFlags::ASSIGN);
         let mut pushed = false;
 
-        for mut tk in stream {
-          let inner = tk.span.range();
-          tk.span = Span::new(
-            (inner.start + start_pos)..(inner.end + start_pos),
-            self.input.clone(),
-          );
+        for mut shell_tk in stream {
+          if shell_mode {
+            // Keep IS_CMD on the first token (the shell command name),
+            // strip it from subsequent args so they're not all re-treated
+            // as commands by the shell highlighter.
+            if pushed {
+              shell_tk.flags.remove(lex::TkFlags::IS_CMD);
+            }
+          } else {
+            shell_tk.flags.remove(FILE_ARG_STRIP);
+          }
+          let outer_span = shell_tk.span.clone();
+          let mut tk = ExTk {
+            class: ExTkRule::ShellTk(shell_tk),
+            span: outer_span,
+          };
           if !pushed && is_write && tk.span.as_str() == ">>" {
             tk.class = ExTkRule::Append;
           }
@@ -591,20 +635,18 @@ impl<'a> ExLexer<'a> {
       rest.push(ch)
     }
 
+    let outer = Span::new(0..self.input.len(), self.input.clone());
     let stream = LexStream::new(rest.into(), LexFlags::LEX_UNFINISHED)
       .filter_map(Result::ok)
       .filter_map(|tk| tk.filter_meta().then_some(tk))
-      .map(ExTk::from);
+      .map(|tk| tk.rebase_into(&outer, start_pos));
 
-    for mut tk in stream {
-      // The inner LexStream's span points into `rest`; rebuild against the
-      // outer input with absolute byte offsets.
-      let inner = tk.span.range();
-      tk.span = Span::new(
-        (inner.start + start_pos)..(inner.end + start_pos),
-        self.input.clone(),
-      );
-      self.tokens.push(tk);
+    for shell_tk in stream {
+      let outer_span = shell_tk.span.clone();
+      self.tokens.push(ExTk {
+        class: ExTkRule::ShellTk(shell_tk),
+        span: outer_span,
+      });
     }
   }
   fn parse_address(&mut self) {
@@ -914,7 +956,7 @@ impl ExParser {
       ExCommand::Put => ExR::success(ExNdRule::Put(Anchor::After)),
       ExCommand::Quit => ExR::success(ExNdRule::Quit),
       ExCommand::Unknown => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
-      _ => unreachable!(),
+      ExCommand::Expand => todo!(),
     }
   }
   fn parse_shell(&mut self) -> ExR<ExNdRule> {

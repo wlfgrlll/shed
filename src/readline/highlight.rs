@@ -4,7 +4,7 @@ use yansi::Paint;
 
 use super::{
   Shed,
-  context::{CtxTk, CtxTkRule, get_context_tokens},
+  context::{CtxTk, CtxTkRule, get_context_tokens, get_ex_context_tokens},
   state::shopt::ShOptHighlight,
   util::{PaletteEntry, style_from_description},
 };
@@ -131,6 +131,9 @@ impl Palette {
       CtxTkRule::HereDocStart => self.operator,
       CtxTkRule::HereDocBody => self.string,
       CtxTkRule::HereDocEnd => self.operator,
+      CtxTkRule::ExAddress => self.string,
+      CtxTkRule::ExBang => self.glob,
+      CtxTkRule::ExPattern => self.operator,
     }
   }
 }
@@ -141,6 +144,11 @@ impl Default for Palette {
   }
 }
 
+pub fn highlight_ex(input: &str, palette: &Palette, editor_cursor_pos: usize) -> String {
+  let tks: Vec<CtxTk> = get_ex_context_tokens(input);
+  highlight_inner(input, tks, palette, editor_cursor_pos, vec![])
+}
+
 /// entry point for the highlighter
 pub fn highlight(
   input: &str,
@@ -149,6 +157,16 @@ pub fn highlight(
   selections: Vec<Range<usize>>,
 ) -> String {
   let tks = get_context_tokens(input);
+  highlight_inner(input, tks, palette, editor_cursor_pos, selections)
+}
+
+fn highlight_inner(
+  input: &str,
+  tks: Vec<CtxTk>,
+  palette: &Palette,
+  editor_cursor_pos: usize,
+  selections: Vec<Range<usize>>,
+) -> String {
   let mut out = String::with_capacity(input.len() * 2); // pre-allocate some extra space for ANSI codes
   let mut cursor = 0;
   for tk in &tks {

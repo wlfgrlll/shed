@@ -1718,7 +1718,7 @@ impl ShedLine {
 
     // write sub-prompts for stuff like ex mode
     if let ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search = self.mode.report_mode() {
-      let pending_seq = self.mode.pending_seq().unwrap_or_default();
+      let mut pending_seq = self.mode.pending_seq().unwrap_or_default();
       let prefix_seq = match self.mode.report_mode() {
         ModeReport::Ex => ": ",
         ModeReport::RevSearch => "?",
@@ -1731,6 +1731,13 @@ impl ShedLine {
       } else {
         String::new()
       };
+      if let ModeReport::Ex = self.mode.report_mode()
+        && shopt!(highlight.enable)
+      {
+        let cursor_pos = self.focused_editor().cursor_to_flat();
+        pending_seq = highlight::highlight_ex(&pending_seq, &highlight::Palette::new(), cursor_pos)
+      }
+
       write_term!("{move_down}\x1b[1G\n{prefix_seq}{pending_seq}").unwrap();
       new_layout.end.row += 1;
       new_layout.cursor.row = new_layout.end.row;

@@ -6,6 +6,7 @@ use bitflags::bitflags;
 
 use super::{
   Shed,
+  editmode::{ExCommand, ExLineAddr, ExTk, ExTkRule},
   eval::{
     execute::{in_cd_path, is_in_path},
     lex::{LexFlags, LexStream, Span, Tk, TkFlags, TkRule},
@@ -38,14 +39,26 @@ use super::{
 
 /// Turn raw shell input into CtxTks
 pub fn get_context_tokens(input: &str) -> Vec<CtxTk> {
-  let mut out: Vec<CtxTk> = LexStream::new(input.into(), LexFlags::LEX_UNFINISHED)
+  let out: Vec<CtxTk> = LexStream::new(input.into(), LexFlags::LEX_UNFINISHED)
     .filter_map(Result::ok)
     .filter(Tk::filter_meta)
     .flat_map(CtxTk::from_tk)
     .collect();
 
-  // we unpacked the heredoc tokens, but they arent in their literal positions
-  // so we now have to sort by span start
+  process_ctx_tokens(out)
+}
+
+pub fn get_ex_context_tokens(input: &str) -> Vec<CtxTk> {
+  let out: Vec<CtxTk> = super::editmode::ExLexer::new(input)
+    .lex()
+    .into_iter()
+    .flat_map(CtxTk::from_ex_tk)
+    .collect();
+
+  process_ctx_tokens(out)
+}
+
+fn process_ctx_tokens(mut out: Vec<CtxTk>) -> Vec<CtxTk> {
   out.sort_by_key(|t| t.span.range().start);
 
   // promote exec wrappers like 'sudo' and 'strace' to keyword status
@@ -269,6 +282,11 @@ pub enum CtxTkRule {
   HereDocStart,
   HereDocBody,
   HereDocEnd,
+
+  // ex mode rules
+  ExAddress,
+  ExBang,
+  ExPattern,
 }
 
 /// A token with richer contextual data than `Tk`
@@ -503,6 +521,46 @@ impl CtxTk {
     }
 
     found
+  }
+
+  pub fn leaf(span: Span, class: CtxTkRule) -> Self {
+    Self {
+      span,
+      class,
+      sub_tokens: vec![],
+    }
+  }
+
+  pub fn from_ex_tk(tk: ExTk) -> Vec<Self> {
+    let (class, span) = tk.unpack();
+    match class {
+      ExTkRule::Bang => vec![Self::leaf(span, CtxTkRule::ExBang)],
+      ExTkRule::Append => vec![Self::leaf(span, CtxTkRule::Operator)],
+      ExTkRule::NormalSeq => vec![Self::leaf(span, CtxTkRule::Argument)],
+      ExTkRule::Argument => vec![Self::leaf(span, CtxTkRule::Argument)],
+      ExTkRule::Address(addr) => match addr {
+        ExLineAddr::Number
+        | ExLineAddr::Dot
+        | ExLineAddr::Dollar
+        | ExLineAddr::Percent
+        | ExLineAddr::Offset
+        | ExLineAddr::Mark => vec![Self::leaf(span, CtxTkRule::ExAddress)],
+
+        ExLineAddr::Pattern | ExLineAddr::PatternRev => {
+          vec![Self::leaf(span, CtxTkRule::ExPattern)]
+        }
+
+        ExLineAddr::Comma => vec![Self::leaf(span, CtxTkRule::Separator)],
+      },
+      ExTkRule::Command(cmd) => {
+        if let ExCommand::Unknown = cmd {
+          vec![Self::leaf(span, CtxTkRule::InvalidCommand)]
+        } else {
+          vec![Self::leaf(span, CtxTkRule::ValidCommand)]
+        }
+      }
+      ExTkRule::ShellTk(tk) => Self::from_tk(tk),
+    }
   }
 
   /// Create a CtxTk from a Tk

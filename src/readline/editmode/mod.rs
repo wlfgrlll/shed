@@ -25,7 +25,9 @@ mod verbatim;
 mod visual;
 
 pub(super) use emacs::Emacs;
-pub(super) use ex::{AddressRange, ExNdRule, ExNode, SubFlags, ViEx};
+pub(super) use ex::{
+  AddressRange, ExCommand, ExLexer, ExLineAddr, ExNdRule, ExNode, ExTk, ExTkRule, SubFlags, ViEx,
+};
 pub(super) use insert::ViInsert;
 pub(super) use normal::ViNormal;
 pub(super) use parse::{ParseResult, ViParser};

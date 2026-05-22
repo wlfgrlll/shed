@@ -250,6 +250,9 @@ impl CompStrat {
       | CtxTkRule::Operator
       | CtxTkRule::HereDocStart
       | CtxTkRule::HereDocBody
+      | CtxTkRule::ExAddress
+      | CtxTkRule::ExBang
+      | CtxTkRule::ExPattern
       | CtxTkRule::HereDocEnd => Self::Null,
     };
     // VarSub/ParamName get a narrowed span (`${name`) so trailing param
@@ -318,6 +321,9 @@ impl CompStrat {
       | CtxTkRule::ParamOp
       | CtxTkRule::ParamArg
       | CtxTkRule::AssignmentLeft
+      | CtxTkRule::ExAddress
+      | CtxTkRule::ExBang
+      | CtxTkRule::ExPattern
       | CtxTkRule::AssignmentOp => Self::Null,
     }
   }
