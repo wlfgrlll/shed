@@ -4,14 +4,49 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
   flake-utils.lib.eachDefaultSystem (system:
   let
-    pkgs = import nixpkgs { inherit system; };
+    pkgs = import nixpkgs {
+      inherit system;
+      overlays = [ rust-overlay.overlays.default ];
+    };
+
+    # Rust toolchain with the musl target std lib available, so
+    # `cargo build --target x86_64-unknown-linux-musl` works inside
+    # `nix develop` without needing rustup.
+    rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+      targets = [ "x86_64-unknown-linux-musl" ];
+    };
   in
   {
+    devShells.default = pkgs.mkShell {
+      buildInputs = [
+        rustToolchain
+        pkgs.pkgsCross.musl64.stdenv.cc  # musl linker for the cross build
+      ];
+
+      # Tell cargo which linker to use for the musl target.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER =
+        "${pkgs.pkgsCross.musl64.stdenv.cc}/bin/${pkgs.pkgsCross.musl64.stdenv.cc.targetPrefix}cc";
+
+      # Tell the `cc` crate (used by libsqlite3-sys build script and any
+      # other -sys crate compiling C code) to use the musl cross-cc when
+      # building for the musl target. Without this it falls back to host
+      # gcc, which produces glibc-flavored object files that don't link
+      # against musl ("undefined reference to open64 / __memcpy_chk").
+      CC_x86_64_unknown_linux_musl =
+        "${pkgs.pkgsCross.musl64.stdenv.cc}/bin/${pkgs.pkgsCross.musl64.stdenv.cc.targetPrefix}cc";
+      AR_x86_64_unknown_linux_musl =
+        "${pkgs.pkgsCross.musl64.stdenv.cc}/bin/${pkgs.pkgsCross.musl64.stdenv.cc.targetPrefix}ar";
+    };
+
     packages.default = pkgs.rustPlatform.buildRustPackage {
       pname = "shed";
       version = "0.19.0";
