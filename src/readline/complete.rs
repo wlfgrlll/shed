@@ -1130,6 +1130,43 @@ impl CompResult {
       Self::Many { candidates }
     }
   }
+
+  pub fn try_collapse_by_prefix(self, typed: &str) -> Self {
+    let Self::Many { candidates } = self else {
+      return self;
+    };
+    let min_end = typed.len();
+
+    let Some(first) = candidates.first() else {
+      return Self::Many { candidates };
+    };
+    let f_content = first.content();
+    let mut end = first.len();
+
+    for cand in &candidates[1..] {
+      let c = cand.content();
+      let common_bytes = first
+        .char_indices()
+        .zip(c.char_indices())
+        .take_while(|((_, c1), (_, c2))| c1 == c2)
+        .last()
+        .map(|((i, ch), _)| i + ch.len_utf8())
+        .unwrap_or(0);
+      end = end.min(common_bytes);
+
+      if end == 0 {
+        return Self::Many { candidates }; // no common prefix, can't collapse
+      }
+    }
+
+    if end > min_end {
+      Self::Single {
+        result: f_content[..end].into(),
+      }
+    } else {
+      Self::Many { candidates }
+    }
+  }
 }
 
 pub(crate) enum CompResponse {
@@ -2212,7 +2249,10 @@ impl SimpleCompleter {
       candidates.dedup();
     }
 
-    Ok(result)
+    // lastly, if all of the candidates contain a common prefix
+    // then collapse them into a single candidate with just the prefix
+    let typed = &line[self.token_span.0..self.token_span.1];
+    Ok(result.try_collapse_by_prefix(typed))
   }
 }
 
