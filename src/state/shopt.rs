@@ -462,7 +462,7 @@ pub(crate) struct ShOptPrompt {
 #[group_name = "statline"]
 pub(crate) struct ShOptStatLine {
   /// Whether to enable the status line
-  #[default(true)]
+  #[default(false)]
   pub enable: bool,
 
   /// The raw string used for the left side of the status line.
