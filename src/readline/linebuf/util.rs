@@ -50,7 +50,9 @@ impl super::LineBuf {
       inclusive: true,
     };
     let content = self.extract_range(&motion);
-    self.set_cursor(s);
+    let row = s.row.min(self.lines.len().saturating_sub(1));
+    let col = s.col.min(self.lines[row].len());
+    self.cursor.pos = Pos { row, col };
     self.insert_str(new);
     content
   }
@@ -892,13 +894,22 @@ impl super::LineBuf {
   }
   /// Returns the start/end span of a number at a given position, if any
   pub(super) fn number_at(&self, mut pos: Pos) -> Option<(Pos, Pos)> {
+    pos = self.clamp_pos(pos);
+
+    // Radix-prefixed literals (0x.., 0o.., 0b..) are checked first
+    // because their digit predicates overlap with plain decimal,
+    // cursor on the leading `0` of `0x...` would otherwise be parsed
+    // as a standalone "0" with the decimal scanner.
+    if let Some(range) = self.try_radix_literal_at(pos) {
+      return Some(range);
+    }
+
     let is_number_char = |gr: &Grapheme| {
       gr.as_char()
         .is_some_and(|c| c == '.' || c == '-' || c.is_ascii_digit())
     };
     let is_digit = |gr: &Grapheme| gr.as_char().is_some_and(|c| c.is_ascii_digit());
 
-    pos = self.clamp_pos(pos);
     if !is_number_char(self.gr_at(pos)?) {
       return None;
     }
@@ -931,6 +942,95 @@ impl super::LineBuf {
       start.col -= 1;
     }
 
+    Some((start, end))
+  }
+
+  /// If `pos` is on (or inside) a `0x.../0o.../0b...` literal, return
+  /// the literal's full span. Handles the three cursor positions:
+  ///   - on the leading `0` (next char is the marker)
+  ///   - on the marker `x`/`o`/`b` itself
+  ///   - on any body digit (scan backward through digit chars to the
+  ///     marker, verify a `0` precedes it)
+  fn try_radix_literal_at(&self, pos: Pos) -> Option<(Pos, Pos)> {
+    let line = &self.lines[pos.row].0;
+    let row = pos.row;
+    let char_at = |col: usize| -> Option<char> { line.get(col)?.as_char() };
+
+    // What predicate to use for digit bodies depends on the marker.
+    fn predicate_for(marker: char) -> Option<fn(char) -> bool> {
+      match marker {
+        'x' | 'X' => Some(|c: char| c.is_ascii_hexdigit()),
+        'o' | 'O' => Some(|c: char| matches!(c, '0'..='7')),
+        'b' | 'B' => Some(|c: char| c == '0' || c == '1'),
+        _ => None,
+      }
+    }
+
+    let cur = char_at(pos.col)?;
+    let marker_col: usize = if cur == '0'
+      && char_at(pos.col + 1).is_some_and(|c| {
+        predicate_for(c).is_some() || matches!(c, 'x' | 'X' | 'o' | 'O' | 'b' | 'B')
+      }) {
+      // Cursor on leading '0'; next char is the marker
+      let next = char_at(pos.col + 1)?;
+      if !matches!(next, 'x' | 'X' | 'o' | 'O' | 'b' | 'B') {
+        return None;
+      }
+      pos.col + 1
+    } else if matches!(cur, 'x' | 'X' | 'o' | 'O' | 'b' | 'B')
+      && pos.col > 0
+      && char_at(pos.col - 1) == Some('0')
+    {
+      // Cursor directly on the marker, preceded by '0'
+      pos.col
+    } else if cur.is_ascii_hexdigit() {
+      // Cursor on a body digit — scan back through possible-hex chars
+      // for the marker. We use hex-digit because it's the most
+      // permissive of the three formats and any oct/bin digit is
+      // also a hex digit.
+      let mut col = pos.col;
+      while col > 0 && char_at(col - 1).is_some_and(|c| c.is_ascii_hexdigit()) {
+        col -= 1;
+      }
+      // `col` is now the leftmost char in the digit run. To be inside
+      // a radix literal, `col` must be preceded by a marker, which
+      // must in turn be preceded by '0'.
+      if col < 2 {
+        return None;
+      }
+      let marker = char_at(col - 1)?;
+      if !matches!(marker, 'x' | 'X' | 'o' | 'O' | 'b' | 'B') {
+        return None;
+      }
+      if char_at(col - 2) != Some('0') {
+        return None;
+      }
+      col - 1
+    } else {
+      return None;
+    };
+
+    let marker = char_at(marker_col)?;
+    let pred = predicate_for(marker)?;
+
+    // Walk forward through digits matching the format's predicate.
+    let mut end_col = marker_col + 1;
+    while end_col < line.len() && char_at(end_col).is_some_and(pred) {
+      end_col += 1;
+    }
+    if end_col == marker_col + 1 {
+      // No digits after the prefix = not a complete literal.
+      return None;
+    }
+
+    let start = Pos {
+      row,
+      col: marker_col - 1, // the leading '0'
+    };
+    let end = Pos {
+      row,
+      col: end_col - 1,
+    };
     Some((start, end))
   }
   pub(super) fn number_at_cursor(&self) -> Option<(Pos, Pos)> {

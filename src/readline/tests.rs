@@ -135,34 +135,13 @@ vi_test! {
   diW_big_inner            : "one-two three"                => "diW"                 => " three", 0;
   daW_big_around           : "one two-three end"            => "wdaW"                => "one end", 4;
   ciW_big                  : "one-two three"                => "ciWx\x1b"            => "x three", 0;
-
-  // ─── text_obj_word: cursor-on-whitespace branch ──────────────────
-  // diw/daw etc. when the cursor starts ON a whitespace char operate
-  // on the contiguous whitespace span (and, for `aw`, also consume the
-  // following word).
   diw_on_single_space      : "foo bar"                      => "f diw"               => "foobar", 3;
   diw_on_multi_space_run   : "a   b"                        => "f diw"               => "ab", 1;
   diW_on_whitespace        : "foo bar"                      => "f diW"               => "foobar", 3;
-  daw_on_whitespace_takes_following_word
-                           : "foo bar"                      => "f daw"               => "foo", 2;
-  daW_on_whitespace_takes_following_big_word
-                           : "a b-c d"                      => "f daW"               => "a d", 1;
-
-  // ─── text_obj_word: word-start branch, extra cases ───────────────
-  // Cursor in middle of word (not first char) — bkwd-extension path.
   diw_from_middle_of_word  : "one two three"                => "wldiw"               => "one  three", 4;
-  // Cursor at last char of word — fwd-extension reaches EOL.
   diw_at_last_char_of_word : "foo"                          => "$diw"                => "", 0;
-  // aw at end-of-buffer: no trailing ws to consume, so we leave the
-  // leading space behind (this pins shed's current behavior; vim itself
-  // would also eat the leading space here).
-  daw_at_buffer_end_keeps_leading_space
-                           : "foo bar"                      => "$daw"                => "foo ", 3;
-  // Big-word ignores punctuation: "one-two" as a unit.
   diW_from_middle_punct    : "one-two three"                => "lldiW"               => " three", 0;
-  // Around-word at start of buffer: no leading ws; trailing ws eaten.
   daw_at_buffer_start      : "foo bar baz"                  => "daw"                 => "bar baz", 0;
-  // Normal word splits on punctuation; iw on the '-' selects only it.
   diw_on_punctuation_char  : "one-two"                      => "llldiw"              => "onetwo", 3;
   di_dquote                : "one \"two\" three"            => "f\"di\""             => "one \"\" three", 5;
   da_dquote                : "one \"two\" three"            => "f\"da\""             => "one three", 4;
@@ -256,7 +235,7 @@ vi_test! {
   ctrl_a_negative          : "num -3 end"                   => "w\x01"               => "num -2 end", 5;
   ctrl_x_to_neg            : "num 0 end"                    => "w\x18"               => "num -1 end", 5;
   ctrl_a_count             : "num 5 end"                    => "w3\x01"              => "num 8 end", 4;
-  ctrl_a_width             : "num -00001 end"               => "w\x01"               => "num 00000 end", 8;
+  ctrl_a_width             : "num 0x000001 end"             => "w\x01"               => "num 0x000002 end", 11;
   delete_empty             : ""                             => "x"                   => "", 0;
   undo_on_empty            : ""                             => "u"                   => "", 0;
   w_single_char            : "a b c"                        => "w"                   => "a b c", 2;
@@ -298,18 +277,14 @@ vi_test! {
   count_n_bkwd             : "foo=(bar biz bam)"            => "/b\r2Nx"             => "foo=(bar iz bam)", 9;
   macro_record             : "foo bar biz"                  => "qacwbam\x1bwqQQ"     => "bam bam bam", 10;
   macro_double             : "foo BAR biz BAM"              => "qag~wwqqbguwwq@a@b"  => "FOO bar BIZ bam", 14;
-
-  // ─── ViNormal::handle_key — less-tested branches ────────────────
-  // V enters visual-line mode; following 'd' deletes the whole line.
   normal_V_line_visual_d   : "abc\ndef\nghi"                => "jVd"                 => "abc\nghi", 4;
-  // Ctrl+A (\x01) increments the number on the current line.
   normal_ctrl_a_increments : "42"                           => "\x01"                => "43", 1;
-  // Ctrl+X (\x18) decrements.
   normal_ctrl_x_decrements : "42"                           => "\x18"                => "41", 1;
-  // Ctrl+G (\x07) prints position; no buffer change.
+  ctrl_a_at_end_of_buffer  : "v0.19.5"                      => "$\x01"               => "v0.19.6", 6;
+  ctrl_x_at_end_of_buffer  : "v0.19.5"                      => "$\x18"               => "v0.19.4", 6;
+  ctrl_a_at_eob_grows_width: "v9"                           => "$\x01"               => "v10", 2;
+  ctrl_x_at_eob_shrinks_width: "v10"                        => "$\x18"               => "v9", 1;
   normal_ctrl_g_no_change  : "hello"                        => "\x07"                => "hello", 0;
-
-  // ─── ViReplace::handle_key (R from normal) ───────────────────────
   replace_one_char         : "hello"                        => "Rx\x1b"               => "xello", 0;
   replace_multiple_chars   : "hello"                        => "Rxy\x1b"              => "xyllo", 1;
   replace_then_backspace   : "hello"                        => "Rxy\x08\x1b"          => "xyllo", 0;
@@ -321,6 +296,22 @@ vi_test! {
     :  "alpha bravo\nalpha charlie\ndelta bravo\ngamma"
     => ":g/alpha/g/bravo/normal!dw\r"
     => "bravo\nalpha charlie\ndelta bravo\ngamma", 0;
+
+  daw_at_buffer_end_keeps_leading_space
+    : "foo bar"
+    => "$daw"
+    => "foo ", 3;
+
+  daw_on_whitespace_takes_following_word
+    : "foo bar"
+    => "f daw"
+    => "foo", 2;
+
+  daW_on_whitespace_takes_following_big_word
+    : "a b-c d"
+    => "f daW"
+    => "a d", 1;
+
 }
 
 // ===================== Vi Tests =====================

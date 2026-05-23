@@ -765,19 +765,13 @@ impl super::LineBuf {
 
       Some(format!("0o{new_num:0>width$o}"))
     } else if let Ok(num) = word.parse::<i64>() {
-      let width = word.len();
+      // Base-10 numbers track the natural width of the result — no
+      // leading-zero padding. Hex / octal / binary above DO pad to
+      // the original field width, since those forms commonly carry
+      // semantic width (`0x00ff` is structurally different from
+      // `0xff` even if numerically equal).
       let new_num = num + inc;
-
-      if new_num < 0 {
-        let abs = new_num.unsigned_abs();
-        let digit_width = if num < 0 { width - 1 } else { width };
-        Some(format!("-{abs:0>digit_width$}"))
-      } else if num < 0 {
-        let digit_width = width - 1;
-        Some(format!("{new_num:0>digit_width$}"))
-      } else {
-        Some(format!("{new_num:0>width$}"))
-      }
+      Some(format!("{new_num}"))
     } else {
       None
     }
