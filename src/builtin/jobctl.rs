@@ -9,7 +9,7 @@ use super::{
   getopt::{Opt, OptSpec},
   out, outln, sherr,
   signal::parse_signal,
-  state::jobs::{JobCmdFlags, JobID, wait_bg},
+  state::jobs::{JobCmdFlags, JobID, wait_bg, wait_fg},
   state::{self, Shed},
   util::{ShResult, ShResultExt, with_status},
 };
@@ -114,9 +114,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
   job.killpg(Signal::SIGCONT)?;
 
   match behavior {
-    JobBehavior::Foregound => {
-      Shed::jobs_mut(|j| j.new_fg(job))?;
-    }
+    JobBehavior::Foregound => wait_fg(job, true)?,
     JobBehavior::Background => {
       let job_order = Shed::jobs(|j| j.order().to_vec());
       out!("{}", job.display(&job_order, JobCmdFlags::PIDS));
