@@ -228,7 +228,7 @@ impl TerminatorCtx {
     let next_is =
       |chars: &mut Peekable<CharIndices>, c: char| chars.peek().is_some_and(|(_, ch)| *ch == c);
     match self {
-      Self::Eof => chars.peek().is_none(),
+      Self::Eof => false,
       Self::Arith | Self::ArithSub => ch == ')' && next_is(chars, ')'),
       Self::VarIndex => ch == ']',
       Self::ParamExpansion => ch == '}',
@@ -1293,11 +1293,10 @@ fn scan_subspans(
             });
             continue;
           };
-          let parsed = match ch {
+          match ch {
             '}' => {
               consume(chars, consumed);
               pos += 1;
-              true
             }
             ':' => {
               consume(chars, consumed);
@@ -1316,7 +1315,6 @@ fn scan_subspans(
                     2,
                     &mut var_sub_tokens,
                   );
-                  true
                 }
                 Some(_) => {
                   // Substring: ${var:N} or ${var:N:M}
@@ -1392,9 +1390,8 @@ fn scan_subspans(
                     consume(chars, consumed);
                     pos += 1;
                   }
-                  true
                 }
-                None => false,
+                None => {}
               }
             }
             '-' | '=' | '?' | '+' => {
@@ -1409,7 +1406,6 @@ fn scan_subspans(
                 1,
                 &mut var_sub_tokens,
               );
-              true
             }
             '#' | '%' => {
               let op_char = ch;
@@ -1431,7 +1427,6 @@ fn scan_subspans(
                 op_size,
                 &mut var_sub_tokens,
               );
-              true
             }
             '^' | ',' => {
               // Case modification: ${var^}, ${var^^}, ${var,}, ${var,,}
@@ -1455,7 +1450,6 @@ fn scan_subspans(
                 op_size,
                 &mut var_sub_tokens,
               );
-              true
             }
             '/' => {
               // Substitution: ${var/pat/rep}, ${var//pat/rep}, ${var/#pat/rep}, ${var/%pat/rep}
@@ -1540,10 +1534,9 @@ fn scan_subspans(
                 consume(chars, consumed);
                 pos += 1;
               }
-              true
             }
-            _ => false,
-          };
+            _ => {}
+          }
 
           // Wrap and push (whether or not the op was fully recognized - a
           // partial wrapper is better than none for completion dispatch).
@@ -1552,28 +1545,22 @@ fn scan_subspans(
             class: CtxTkRule::VarSub,
             sub_tokens: var_sub_tokens,
           });
-          let _ = parsed; // keep variable visible for clarity; unused now
         } else if scan_ctx.contains(S::VAR_SUB) {
-          let Some(&(_, first)) = chars.peek() else {
-            continue;
-          };
           let sub_start = i + span.range().start;
           let orig_consumed = *consumed;
+          let first = chars.peek().map(|(_, c)| *c);
 
-          let is_param = ShellParam::from_char(&first).is_some();
-          let is_digit = first.is_ascii_digit();
-          let is_var_char = first.is_ascii_alphabetic() || first == '_';
+          let is_param = first.is_some_and(|c| ShellParam::from_char(&c).is_some());
+          let is_digit = first.is_some_and(|c| c.is_ascii_digit());
+          let is_var_char = first.is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
 
           if is_param || is_digit {
             consume(chars, consumed);
-          } else if !is_var_char {
-            continue;
-          } else {
+          } else if is_var_char {
             while let Some(&(_, ch)) = chars.peek() {
               if !(ch.is_ascii_alphanumeric() || ch == '_') {
                 break;
               }
-
               consume(chars, consumed);
             }
           }
@@ -1581,15 +1568,15 @@ fn scan_subspans(
           let var_size = *consumed - orig_consumed;
           let sub_end = sub_start + 1 + var_size; // include the '$' in the span
 
-          let span = Span::new(sub_start..sub_end, span.get_source());
-          let sub_span = Span::new(sub_start + 1..sub_end, span.get_source());
+          let outer_span = Span::new(sub_start..sub_end, span.get_source());
+          let inner_span = Span::new(sub_start + 1..sub_end, span.get_source());
           let sub_token = CtxTk {
-            span: sub_span,
+            span: inner_span,
             class: CtxTkRule::ParamName,
             sub_tokens: vec![],
           };
           sub_tokens.push(CtxTk {
-            span,
+            span: outer_span,
             class: CtxTkRule::VarSub,
             sub_tokens: vec![sub_token],
           })
@@ -1796,6 +1783,39 @@ mod tests {
     let tk = parse_first(src);
     let v = find(&tk, CtxTkRule::VarSub).expect("VarSub");
     assert_eq!(span_str(v, src), "$foo");
+  }
+
+  #[test]
+  fn bare_dollar_emits_var_sub_with_empty_param_name() {
+    // A `$` not followed by a valid variable starter must still emit a
+    // VarSub wrapper containing a zero-width ParamName, otherwise the
+    // completion pipeline falls through to path completion instead of
+    // dispatching variable-name completion.
+    //
+    // Two arms to cover:
+    //   1. `$` at end of input (chars.peek() is None)
+    //   2. `$` followed by a non-var-char (e.g. '.', ' ')
+    let toks = get_context_tokens("echo $");
+    let last = toks.last().expect("trailing token");
+    let v = find(last, CtxTkRule::VarSub).expect("VarSub for bare $");
+    assert_eq!(v.span().as_str(), "$");
+    let n = find(v, CtxTkRule::ParamName).expect("zero-width ParamName under VarSub");
+    assert_eq!(n.span().as_str(), "");
+    // range_inclusive on the inner ParamName must catch the cursor at
+    // the position immediately after the `$`, so resolve() can dispatch
+    // to CompStrat::Var { prefix: "" }.
+    let cursor = "echo $".len();
+    assert!(n.range_inclusive().contains(&cursor));
+
+    // Arm 2: `$` followed by a non-var character.
+    let toks = get_context_tokens("echo $.");
+    let v = toks
+      .iter()
+      .find_map(|t| find(t, CtxTkRule::VarSub))
+      .expect("VarSub for `$` before `.`");
+    assert_eq!(v.span().as_str(), "$");
+    let n = find(v, CtxTkRule::ParamName).expect("ParamName for `$` before `.`");
+    assert_eq!(n.span().as_str(), "");
   }
 
   #[test]
@@ -2421,10 +2441,10 @@ mod tests {
     // is_valid_cmd — so this fires only if run0 is itself in PATH.
     // We don't assume it is; just assert "if recognized as wrapper,
     // cat is promoted; otherwise cat is whatever the leader would be".
-    if let Some(tk) = run0_tk {
-      if *tk.class() == CtxTkRule::Keyword {
-        assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
-      }
+    if let Some(tk) = run0_tk
+      && *tk.class() == CtxTkRule::Keyword
+    {
+      assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
     }
   }
 
