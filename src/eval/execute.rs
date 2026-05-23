@@ -16,7 +16,7 @@ use super::{
   jobs::{ChildProc, JobStack, dispatch_job},
   lex::{KEYWORDS, Span, Tk, TkFlags},
   procio::{self, PipeGenerator, RedirGuard, RedirSet, RedirSpec},
-  sherr,
+  sherr, shopt,
   signal::{check_signals, signals_pending},
   state::{
     self, Shed,
@@ -1008,10 +1008,15 @@ impl Dispatcher {
       && Shed::term(|t| t.interactive())
       && let Some((_, bottom)) = saved_region
     {
+      // We've gotta
       Shed::term_mut(|t| {
         use std::io::Write;
-        write!(t, "\n\n").ok(); // make room for the status line
-        t.move_cursor_abs(bottom, 1);
+        if shopt!(statline.enable) {
+          write!(t, "\n\n").ok();
+          t.move_cursor_abs(bottom, 1);
+        } else {
+          writeln!(t).ok();
+        }
       });
     }
 

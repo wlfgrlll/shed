@@ -474,7 +474,6 @@ fn handle_readline_event(
       }
 
       Shed::term_mut(|t| t.fix_cursor_column())?;
-      write_term!("\n\r")?;
 
       // Reset for next command with fresh prompt
       readline.reset(true)?;

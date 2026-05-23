@@ -1284,11 +1284,10 @@ impl ShedLine {
       }
       LineCmd::Quit => Ok(Some(ReadlineEvent::Eof)),
       LineCmd::ClearScreen => {
-        // When a scroll region is active (status line enabled), clear by
-        // scrolling the whole region's worth of content into scrollback and
-        // parking the cursor at the bottom of the region. The next redraw
-        // renders the prompt at the bottom, above the status line.
-        if let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region()) {
+        // if the status line is enabled, park the cursor at the bottom.
+        if shopt!(statline.enable)
+          && let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region())
+        {
           let region_height = (bottom.saturating_sub(top) + 1) as usize;
           Shed::term_mut(|t| t.scroll_up(region_height)).ok();
           Shed::term_mut(|t| t.move_cursor_abs(bottom, 1));
@@ -1538,6 +1537,28 @@ impl ShedLine {
         Ok(())
       })?;
     }
+
+    // if the cursor ended up in the status message area
+    // we have to rescue it.
+    if !final_draw
+      && !shopt!(statline.enable)
+      && let Some((_, bottom)) = Shed::term(|t| t.scroll_region())
+    {
+      let cursor_row = Shed::term_mut(|t| t.get_cursor_pos())
+        .ok()
+        .flatten()
+        .map(|(r, _)| r.0 as u16)
+        .unwrap_or(bottom);
+      if cursor_row > bottom {
+        Shed::term_mut(|t| {
+          t.move_cursor_abs(bottom, 1);
+          t.scroll_up(1)
+        })?;
+
+        self.old_layout = None; // stale after manual cursor move
+      }
+    }
+
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
@@ -1608,7 +1629,7 @@ impl ShedLine {
 
       let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
 
-      if Shed::term(|t| t.scroll_region()).is_some() && shopt!(statline.enable) {
+      if shopt!(statline.enable) {
         let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
         let mut new_h = new_layout.end.row as i32
           + predicted_overlay_rows as i32
