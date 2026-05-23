@@ -6,6 +6,7 @@ use bitflags::bitflags;
 
 use super::{
   Shed,
+  builtin::BUILTIN_NAMES,
   editmode::{ExCommand, ExLineAddr, ExTk, ExTkRule},
   eval::{
     execute::{in_cd_path, is_in_path},
@@ -70,59 +71,69 @@ fn process_ctx_tokens(mut out: Vec<CtxTk>) -> Vec<CtxTk> {
   out
 }
 
-const EXEC_WRAPPERS: [&str; 3] = ["sudo", "run0", "strace"];
 fn is_exec_wrapper(tk: &CtxTk) -> bool {
-  matches!(tk.class(), CtxTkRule::ValidCommand)
-    && get_exec_wrappers()
-      .into_iter()
-      .any(|wr| wr.as_str() == tk.span().as_str())
+  get_exec_wrappers()
+    .into_iter()
+    .any(|wr| wr.as_str() == tk.span().as_str())
     && is_valid_cmd(tk.as_tk())
 }
 
 fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
   let mut tokens = tokens.iter_mut().peekable();
+  let mut skip_to_next = false;
   'outer: while let Some(tk) = tokens.next() {
     promote_exec_wrappers(&mut tk.sub_tokens);
 
-    if is_exec_wrapper(tk) {
-      tk.class = CtxTkRule::Keyword;
+    if skip_to_next {
+      if let CtxTkRule::ValidCommand = tk.class() {
+        skip_to_next = false;
+      } else {
+        continue;
+      }
+    }
 
-      while let Some(target) = tokens.peek() {
-        match target.class {
-          CtxTkRule::Argument | CtxTkRule::ArgumentFile => {
-            if target.span.as_str().starts_with('-') || has_unescaped(target.span.as_str(), "=") {
-              // looks like an option or an assignment
-              tokens.next();
-              continue;
-            }
-            if EXEC_WRAPPERS.contains(&target.span.as_str()) {
-              // chaining exec wrappers is a thing people do, e.g. `sudo strace cmd`
-              // continue the outer loop and let it get picked up by the next iteration
-              // we don't use is_exec_wrapper() for this since it doesnt have the ValidCommand rule
-              continue 'outer;
-            }
-            let target = tokens.next().unwrap();
-            target.class = match is_valid_cmd(target.as_tk()) {
-              true => CtxTkRule::ValidCommand,
-              false => CtxTkRule::InvalidCommand,
-            };
-            break;
-          }
-          CtxTkRule::HereDocStart => {
+    if !is_exec_wrapper(tk) {
+      skip_to_next = true;
+      continue;
+    }
+
+    tk.class = CtxTkRule::Keyword;
+
+    while let Some(target) = tokens.peek() {
+      match target.class {
+        CtxTkRule::Argument | CtxTkRule::ArgumentFile => {
+          if target.span.as_str().starts_with('-') || has_unescaped(target.span.as_str(), "=") {
+            // looks like an option or an assignment
             tokens.next();
             continue;
           }
-          CtxTkRule::Redirect => {
-            tokens.next(); // consume it
-            let redir_target = tokens.next();
-            if redir_target
-              .is_none_or(|t| !matches!(t.class, CtxTkRule::Argument | CtxTkRule::ArgumentFile))
-            {
-              break;
-            }
+          if get_exec_wrappers().contains(&target.span.as_str().to_string()) {
+            // chaining exec wrappers is a thing people do, e.g. `sudo strace cmd`
+            // continue the outer loop and let it get picked up by the next iteration
+            // we don't use is_exec_wrapper() for this since it doesnt have the ValidCommand rule
+            continue 'outer;
           }
-          _ => break,
+          let target = tokens.next().unwrap();
+          target.class = match is_valid_cmd(target.as_tk()) {
+            true => CtxTkRule::ValidCommand,
+            false => CtxTkRule::InvalidCommand,
+          };
+          break;
         }
+        CtxTkRule::HereDocStart => {
+          tokens.next();
+          continue;
+        }
+        CtxTkRule::Redirect => {
+          tokens.next(); // consume it
+          let redir_target = tokens.next();
+          if redir_target
+            .is_none_or(|t| !matches!(t.class, CtxTkRule::Argument | CtxTkRule::ArgumentFile))
+          {
+            break;
+          }
+        }
+        _ => break,
       }
     }
   }
@@ -171,7 +182,7 @@ fn is_valid_cmd(command: Tk) -> bool {
     };
     meta.permissions().mode() & 0o111 != 0
   } else {
-    Shed::meta(|m| m.cache_contains(&name))
+    BUILTIN_NAMES.contains(&name.as_str()) || Shed::meta(|m| m.cache_contains(&name))
   }
 }
 
