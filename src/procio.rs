@@ -259,7 +259,9 @@ impl FromStr for RedirBldr {
         };
       }
       '&' => {
-        if chars.peek() == Some(&'-') {
+        if chars.peek() == Some(&'>') {
+          continue
+        } else if chars.peek() == Some(&'-') {
           chars.next();
           src_fd.push('-');
         } else {

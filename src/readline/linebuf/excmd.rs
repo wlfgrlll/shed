@@ -311,7 +311,7 @@ impl super::LineBuf {
           self.equalize_rows(line_range.collect());
         }
       }
-      StashArgs::Swap(_) => todo!(),
+      StashArgs::Swap(arg) => {}
       StashArgs::List(arg) => {
         let output = match arg {
           Some(StashListArg::Stack) => {

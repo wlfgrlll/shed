@@ -299,6 +299,7 @@ bitflags! {
     const TAB_HEREDOC  = 0b0000100000000000;
     const IS_ARITH     = 0b0001000000000000;
     const FUNCNAME		 = 0b0010000000000000;
+    const REDIR_ALL		 = 0b0100000000000000;
   }
 }
 
@@ -578,6 +579,8 @@ impl LexStream {
     let mut tk = Tk::default();
 
     match_loop!(chars.next() => ch, {
+      '&' if chars.peek() == Some(&'>') => {
+      }
       '>' => {
         if chars.peek() == Some(&'(') {
           return None; // It's a process sub
@@ -1430,22 +1433,56 @@ impl Iterator for LexStream {
         let ch_idx = self.cursor;
         self.inc_cursor(1);
         self.set_next_is_cmd(true);
+        let mut flags = TkFlags::empty();
 
-        let tk_type = if let Some('&') = get_char(&self.source, self.cursor) {
-          self.inc_cursor(1);
-          TkRule::And
-        } else {
-          TkRule::Bg
+        let tk_type = match get_char(&self.source, self.cursor) {
+          Some('&') => {
+            self.inc_cursor(1);
+            TkRule::And
+          }
+          Some('|') => {
+            self.inc_cursor(1);
+            TkRule::ErrPipe
+          }
+          Some('>') => {
+            self.inc_cursor(1);
+            let append = matches!(get_char(&self.source, self.cursor), Some('>'));
+            if append {
+              self.inc_cursor(1);
+            }
+
+            flags |= TkFlags::REDIR_ALL;
+            self.flags |= LexFlags::NEXT_IS_REDIR;
+            TkRule::Redir
+          }
+          _ => TkRule::Bg,
         };
-        self.get_token(ch_idx..self.cursor, tk_type)
+
+        let mut tk = self.get_token(ch_idx..self.cursor, tk_type);
+        tk.flags |= flags;
+        tk
       }
       _ => {
-        if let Some(tk) = self.read_redir() {
-          self.flags |= LexFlags::NEXT_IS_REDIR;
-          match tk {
-            Ok(tk) => tk,
+        if let Some(tk_result) = self.read_redir() {
+          let tk = match tk_result {
+            Ok(t) => t,
             Err(e) => return Some(Err(e)),
+          };
+          // we gotta check to see if this wants a file target or not
+          // if already points at a number or has '-', it doesn't.
+          let dup_style = tk
+            .span
+            .as_str()
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_digit() || c == '-');
+
+          if dup_style {
+            self.flags &= !LexFlags::NEXT_IS_REDIR;
+          } else {
+            self.flags |= LexFlags::NEXT_IS_REDIR;
           }
+          tk
         } else {
           let res = match self.read_string() {
             Ok(tk) => tk,

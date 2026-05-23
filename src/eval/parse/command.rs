@@ -63,6 +63,28 @@ impl ParseStream {
 
     redir_bldr.with_target(target).build()
   }
+  /// Build a RedirSpec from a token
+  ///
+  /// Handles desugaring of '&>' internally
+  fn push_redir<F: FnMut() -> Option<Tk>>(
+    redir_tk: &Tk,
+    next: F,
+    node_tks: &mut Vec<Tk>,
+    context: LabelCtx,
+    redirs: &mut Vec<RedirSpec>,
+  ) -> ShResult<()> {
+    let redir = Self::build_redir(redir_tk, next, node_tks, context)?;
+    redirs.push(redir);
+    if redir_tk.flags.contains(TkFlags::REDIR_ALL) {
+      redirs.push(RedirSpec::Dup {
+        from: 1,
+        to: 2,
+        mode: RedirType::Output,
+      });
+    }
+    Ok(())
+  }
+
   pub(super) fn parse_redir(
     &mut self,
     redirs: &mut Vec<RedirSpec>,
@@ -72,14 +94,10 @@ impl ParseStream {
       let tk = self.next_tk().unwrap();
       node_tks.push(tk.clone());
       let ctx = self.context.clone();
-      let redir = match Self::build_redir(&tk, || self.next_tk(), node_tks, ctx) {
-        Ok(r) => r,
-        Err(e) => {
-          self.panic_mode(node_tks);
-          return Err(e);
-        }
-      };
-      redirs.push(redir);
+      if let Err(e) = Self::push_redir(&tk, || self.next_tk(), node_tks, ctx, redirs) {
+        self.panic_mode(node_tks);
+        return Err(e);
+      }
     }
     Ok(())
   }
@@ -166,9 +184,15 @@ impl ParseStream {
         } else if is_keyword {
           return Ok(None);
         } else if prefix_tk.class == TkRule::Redir {
+          node_tks.push(prefix_tk.clone());
           let ctx = self.context.clone();
-          let redir = Self::build_redir(prefix_tk, || tk_iter.next().cloned(), &mut node_tks, ctx)?;
-          redirs.push(redir);
+          Self::push_redir(
+            prefix_tk,
+            || tk_iter.next().cloned(),
+            &mut node_tks,
+            ctx,
+            &mut redirs,
+          )?;
         } else if prefix_tk.class == TkRule::Sep {
           // Separator ends the prefix section - add it so commit() consumes it
           node_tks.push(prefix_tk.clone());
@@ -227,19 +251,20 @@ impl ParseStream {
           TkRule::HereDoc { .. } | TkRule::Redir => {
             node_tks.push(tk.clone());
             let ctx = self.context.clone();
-            let redir = match Self::build_redir(tk, || tk_iter.next().cloned(), &mut node_tks, ctx)
-            {
-              Ok(r) => r,
-
+            if let Err(e) = Self::push_redir(
+              tk,
+              || tk_iter.next().cloned(),
+              &mut node_tks,
+              ctx,
+              &mut redirs,
+            ) {
               // excluding from coverage reports, see the
               // comment at line 24
               // LCOV_EXCL_START
-              Err(e) => {
-                self.panic_mode(&mut node_tks);
-                return Err(e);
-              } // LCOV_EXCL_STOP
-            };
-            redirs.push(redir);
+              self.panic_mode(&mut node_tks);
+              return Err(e);
+              // LCOV_EXCL_STOP
+            }
           }
           _ => {
             break 'out Err(parse_err!(
@@ -504,5 +529,198 @@ mod command_parse_tests {
     let out = g.read_output();
     assert!(out.contains("a"), "got: {out:?}");
     assert!(out.contains("zb"), "got: {out:?}");
+  }
+
+  // ===================== &> / &>> REDIR_ALL =====================
+  //
+  // Pins the desugar from `&>file` / `&>>file` into a File redirect on
+  // fd 1 plus a Dup of fd 1 to fd 2. Covers both prefix and arg-loop
+  // positions and both truncate/append modes, since the four
+  // combinations exercise different code paths through parse_cmd
+  // and the lexer's `&` arm.
+
+  /// Run an `ls /nonexistent...` invocation with the given redirect
+  /// expression interpolated. ls writes its "No such file" error to
+  /// stderr; if both fds get routed to the file (REDIR_ALL working),
+  /// the error lands in the file rather than the terminal.
+  fn run_with_ls_stderr(cmd: String, path: &std::path::Path) -> String {
+    test_input(cmd).unwrap();
+    std::fs::read_to_string(path).unwrap()
+  }
+
+  #[test]
+  fn redir_all_prefix_captures_stderr_to_file() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    let cmd = format!("&> {} ls /nonexistent_marker_aaa", path.display());
+    let content = run_with_ls_stderr(cmd, &path);
+    assert!(
+      content.contains("nonexistent_marker_aaa"),
+      "stderr not captured by prefix `&>`: {content:?}"
+    );
+  }
+
+  #[test]
+  fn redir_all_arg_loop_captures_stderr_to_file() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    let cmd = format!("ls /nonexistent_marker_bbb &> {}", path.display());
+    let content = run_with_ls_stderr(cmd, &path);
+    assert!(
+      content.contains("nonexistent_marker_bbb"),
+      "stderr not captured by arg-loop `&>`: {content:?}"
+    );
+  }
+
+  #[test]
+  fn redir_all_prefix_truncates() {
+    // `&>` (single `>`) should truncate, not append. Write a sentinel,
+    // then run a `&>` that produces no stdout and a known stderr; the
+    // sentinel must be gone.
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    std::fs::write(&path, "PRIOR_CONTENT_SENTINEL\n").unwrap();
+    let cmd = format!("&> {} ls /nonexistent_truncate", path.display());
+    test_input(cmd).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      !content.contains("PRIOR_CONTENT_SENTINEL"),
+      "`&>` should truncate but prior content remained: {content:?}"
+    );
+    assert!(
+      content.contains("nonexistent_truncate"),
+      "`&>` did not capture new content: {content:?}"
+    );
+  }
+
+  #[test]
+  fn redir_all_append_prefix_preserves_prior_content() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    std::fs::write(&path, "PRIOR_CONTENT_KEPT\n").unwrap();
+    let cmd = format!("&>> {} ls /nonexistent_append", path.display());
+    test_input(cmd).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      content.contains("PRIOR_CONTENT_KEPT"),
+      "`&>>` should append but prior content was overwritten: {content:?}"
+    );
+    assert!(
+      content.contains("nonexistent_append"),
+      "`&>>` did not capture new content: {content:?}"
+    );
+  }
+
+  #[test]
+  fn redir_all_append_arg_loop_preserves_prior_content() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    std::fs::write(&path, "PRIOR_CONTENT_ARGLOOP\n").unwrap();
+    let cmd = format!("ls /nonexistent_argloop_append &>> {}", path.display());
+    test_input(cmd).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      content.contains("PRIOR_CONTENT_ARGLOOP"),
+      "arg-loop `&>>` should append but prior content was overwritten: {content:?}"
+    );
+    assert!(
+      content.contains("nonexistent_argloop_append"),
+      "arg-loop `&>>` did not capture new content: {content:?}"
+    );
+  }
+
+  #[test]
+  fn redir_all_routes_stdout_too() {
+    // Mirror of the stderr check — confirm that fd 1 (stdout) is also
+    // routed to the file. Use `echo` (a builtin) for stdout content.
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    let cmd = format!("&> {} echo STDOUT_VIA_REDIR_ALL", path.display());
+    test_input(cmd).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      content.contains("STDOUT_VIA_REDIR_ALL"),
+      "stdout not captured by prefix `&>`: {content:?}"
+    );
+  }
+
+  // ===================== prefix dup-style redirects =====================
+  //
+  // Pins the lex-level fix where dup-style Redir tokens (e.g. `2>&1`)
+  // no longer poison `NEXT_IS_REDIR` and prevent the following Str from
+  // being classified as IS_CMD. Without the fix, the prefix loop in
+  // parse_cmd would never identify the command word and parse_cmd would
+  // silently return Ok(None) — no command executes.
+
+  #[test]
+  fn prefix_dup_followed_by_command_executes() {
+    // `2>&1 echo MARKER` — the dup is a no-op at the shell level (we
+    // dup fd 1's terminal to fd 2, no visible change), but it must
+    // not prevent `echo MARKER` from being recognized as the command.
+    let g = TestGuard::new();
+    test_input("2>&1 echo prefix_dup_marker").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("prefix_dup_marker"),
+      "command after prefix `2>&1` did not execute: {out:?}"
+    );
+  }
+
+  #[test]
+  fn prefix_file_then_dup_routes_both_to_file() {
+    // `>>file 2>&1 cmd` — file redirect then dup, with both as
+    // prefixes. Apply order ([File, Dup]) means fd 1 points to file
+    // before the Dup borrows it, so fd 2 also lands in the file.
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    let cmd = format!(">> {} 2>&1 ls /nonexistent_prefix_dup_file", path.display());
+    test_input(cmd).unwrap();
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      content.contains("nonexistent_prefix_dup_file"),
+      "stderr not captured by prefix file+dup: {content:?}"
+    );
+  }
+
+  #[test]
+  fn prefix_redir_does_not_leak_to_shed_via_apply_persistent() {
+    // Regression for the node_tks asymmetry that caused commit() to
+    // short-advance: leftover redirect operators would reparse as a
+    // bare redirect-only command and call apply_persistent on shed's
+    // own fds. Symptom was "the redirect works for cat AND appears on
+    // the terminal." We verify the absence of that leak by running a
+    // prefix-redir command and then a subsequent plain echo whose
+    // output should still reach the test harness (which it wouldn't
+    // if shed's stdout had been silently redirected).
+    let g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("out.txt");
+    let cmd = format!(
+      "&> {} ls /nonexistent_no_leak ; echo POST_MARKER",
+      path.display()
+    );
+    test_input(cmd).unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("POST_MARKER"),
+      "shed's stdout was leaked by prefix-redir parse — POST_MARKER \
+       did not reach test harness: {out:?}"
+    );
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+      content.contains("nonexistent_no_leak"),
+      "prefix `&>` didn't capture stderr: {content:?}"
+    );
+    assert!(
+      !content.contains("POST_MARKER"),
+      "POST_MARKER leaked into the redirect-target file: {content:?}"
+    );
   }
 }
