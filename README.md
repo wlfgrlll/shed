@@ -285,6 +285,7 @@ Requires Rust (edition 2024).
 
 ```sh
 git clone https://github.com/km-clay/shed.git
+cd shed
 cargo build --release
 ```
 
