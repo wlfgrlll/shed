@@ -5,7 +5,7 @@ use nix::{
   sys::termios::{self, Termios},
 };
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use super::try_var;
 
@@ -93,31 +93,33 @@ pub(crate) fn get_width_calculator() -> &'static dyn WidthCalculator {
   WIDTH_CALC.get_or_init(width_calculator).as_ref()
 }
 
+fn is_visual_control(c: char) -> bool {
+  matches!(c, '\x00'..='\x08' | '\x0b'..='\x1f' | '\x7f')
+}
+
+fn cwidth(ch: char) -> usize {
+  if is_visual_control(ch) {
+    2
+  } else {
+    ch.width().unwrap_or(0)
+  }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct UnicodeWidth;
 
 impl WidthCalculator for UnicodeWidth {
   fn width(&self, text: &str) -> usize {
-    text.width()
+    text.chars().map(cwidth).sum()
   }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WcWidth;
 
-impl WcWidth {
-  pub fn cwidth(&self, ch: char) -> usize {
-    ch.width().unwrap()
-  }
-}
-
 impl WidthCalculator for WcWidth {
   fn width(&self, text: &str) -> usize {
-    let mut width = 0;
-    for ch in text.chars() {
-      width += self.cwidth(ch)
-    }
-    width
+    text.chars().map(cwidth).sum()
   }
 }
 

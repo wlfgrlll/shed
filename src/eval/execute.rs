@@ -1090,7 +1090,11 @@ impl Dispatcher {
 
     let fg_job = self.fg_job;
     let interactive = Shed::term(|t| t.interactive());
-    let child_logic = |_pgid: Option<Pid>| -> ! {
+
+    let child_logic = |pgid: Option<Pid>| -> ! {
+      if let Some(pgid) = pgid {
+        let _ = setpgid(Pid::from_raw(0), pgid);
+      }
       if let AssignBehavior::Export = assign_behavior
         && !assignments.is_empty()
       {
