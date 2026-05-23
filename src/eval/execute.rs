@@ -455,21 +455,21 @@ impl Dispatcher {
       unreachable!()
     };
     body.context.extend(ctx);
-    let name = name
+    let func_name = name
       .span
       .as_str()
       .strip_suffix("()")
       .unwrap_or(name.span.as_str());
 
-    if KEYWORDS.contains(&name) {
+    if KEYWORDS.contains(&func_name) || matches!(func_name, "builtin" | "command") {
       return Err(sherr!(
-        SyntaxErr @ blame,
-        "function: Forbidden function name `{name}`",
+        SyntaxErr @ name.span.clone(),
+        "function: Forbidden function name `{func_name}`",
       ));
     }
 
     let func = ShFunc::new(*body, blame);
-    Shed::logic_mut(|l| l.insert_func(name, func)); // Store the AST
+    Shed::logic_mut(|l| l.insert_func(func_name, func)); // Store the AST
     if Shed::term(|t| t.interactive()) {
       Shed::meta_mut(|m| {
         m.set_last_was_func_def(true);
