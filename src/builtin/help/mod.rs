@@ -83,8 +83,11 @@ impl super::Builtin for Help {
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let _guard = scopeguard::guard((), |_| {
-      Shed::meta_mut(|m| m.disable_welcome_message()).unwrap();
+      if !Shed::term(|t| t.test_mode()) {
+        Shed::meta_mut(|m| m.disable_welcome_message()).unwrap();
+      }
     });
+
     let mut argv = args.argv.into_iter().peekable();
     let list_tags =
       args.opts.contains(&Opt::Long("list-tags".into())) || args.opts.contains(&Opt::Short('l'));
@@ -235,6 +238,9 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
 }
 
 pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResult<()> {
+  if Shed::term(|t| t.test_mode()) {
+    return with_status(0);
+  }
   let Some(pager) = HelpPager::new(content.to_string(), line, filename) else {
     return Ok(()); // means stdout is not a terminal, so return
   };

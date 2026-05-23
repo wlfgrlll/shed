@@ -832,6 +832,23 @@ impl History {
     &self.search_mask
   }
 
+  /// Wipe the cross-test global caches for a given table name. Without this,
+  /// tests that push to a shared table (e.g. "shed_history") see entries
+  /// from earlier tests in the same process, breaking single-entry-count
+  /// assumptions.
+  #[cfg(test)]
+  pub fn clear_global_caches_for_test(table: &str) {
+    if let Ok(mut c) = HIST_ENTRIES.write() {
+      c.remove(table);
+    }
+    if let Ok(mut c) = SEARCH_ENTRIES.write() {
+      c.remove(table);
+    }
+    if let Ok(mut wm) = SEARCH_WATERMARKS.write() {
+      wm.remove(table);
+    }
+  }
+
   /// Get a hint by scanning the in-memory cache. No database access.
   pub fn get_hint(&self) -> Option<Hint> {
     if !self.at_pending() {

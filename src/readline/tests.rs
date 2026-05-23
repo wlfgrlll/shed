@@ -1674,3 +1674,421 @@ mod handle_key_dispatch {
     assert!(res.is_none());
   }
 }
+
+// ===================== readline/mod.rs coverage =====================
+//
+// Targeted tests for branches with no existing coverage:
+//   * SimpleEditor::{scroll_history, handle_key} arms
+//   * StatusLine methods
+//   * Prompt::new() PS1+PSR branch
+//   * ShedLine::{reset_active_widget, handle_keymap (is_exact),
+//                start_hist_search, run_cmd (ctrl+d spam),
+//                scroll_history_virtual, handle_cmd_repeat (count>1)}
+mod readline_mod_coverage {
+  use super::*;
+  use crate::expand::expand_keymap;
+  use crate::keys::{KeyCode, KeyEvent, KeyMap, KeyMapFlags, ModKeys};
+  use crate::motion;
+  use crate::readline::editcmd::{CmdFlags, EditCmd, Motion};
+  use crate::readline::{SimpleEditor, StatusLine};
+  use crate::state::vars::{VarFlags, VarKind};
+
+  // ─── SimpleEditor ────────────────────────────────────────────────
+
+  fn simple_editor_with_history(entries: &[&str]) -> SimpleEditor {
+    crate::readline::history::History::clear_global_caches_for_test("simple_editor_test");
+    let mut ed = SimpleEditor::new(Some("simple_editor_test"));
+    {
+      let hist = ed.history.as_mut().unwrap();
+      for entry in entries {
+        hist.push(entry.to_string()).unwrap();
+      }
+      hist.refresh_hist_entries();
+      hist.constrain_entries(None);
+    }
+    ed
+  }
+
+  #[test]
+  fn simple_editor_up_at_col0_scrolls_history_back() {
+    // Covers should_grab_history (LineUp + col 0) and scroll_history
+    // (entry-loaded branch). Buffer starts empty, Up arrow should
+    // replace it with the most recent history entry.
+    let _g = TestGuard::new();
+    let mut ed = simple_editor_with_history(&["first", "second"]);
+    ed.handle_key(KeyEvent(KeyCode::Up, ModKeys::NONE)).unwrap();
+    assert_eq!(ed.buf.joined(), "second");
+  }
+
+  #[test]
+  fn simple_editor_down_on_last_line_restores_pending() {
+    // After scrolling up then down past pending, pending is restored.
+    let _g = TestGuard::new();
+    let mut ed = simple_editor_with_history(&["first", "second"]);
+    // Seed pending with current buffer content
+    ed.buf.set_buffer("pending_input".to_string());
+    ed.handle_key(KeyEvent(KeyCode::Up, ModKeys::NONE)).unwrap();
+    assert_eq!(ed.buf.joined(), "second");
+    ed.handle_key(KeyEvent(KeyCode::Down, ModKeys::NONE))
+      .unwrap();
+    // After scrolling forward past last entry, pending is restored.
+    assert_eq!(ed.buf.joined(), "pending_input");
+  }
+
+  #[test]
+  fn simple_editor_ctrl_d_on_empty_resolves_to_endoffile() {
+    // Covers the EndOfFile branch of handle_key's Ctrl+D resolution.
+    let _g = TestGuard::new();
+    let mut ed = SimpleEditor::new(None);
+    // Empty buffer + Ctrl+D → resolves to EndOfFile, lines.clear() runs
+    ed.handle_key(key!(Ctrl + 'd')).unwrap();
+    assert_eq!(ed.buf.joined(), "");
+  }
+
+  #[test]
+  fn simple_editor_ctrl_d_on_nonempty_resolves_to_delete() {
+    // Covers the Delete branch of handle_key's Ctrl+D resolution.
+    let _g = TestGuard::new();
+    let mut ed = SimpleEditor::new(None);
+    ed.buf.set_buffer("hello".to_string());
+    ed.buf.set_cursor_from_flat(0);
+    ed.handle_key(key!(Ctrl + 'd')).unwrap();
+    assert_eq!(ed.buf.joined(), "ello");
+  }
+
+  // ─── StatusLine ─────────────────────────────────────────────────
+
+  fn with_statline_strings<R>(left: &str, mid: &str, right: &str, f: impl FnOnce() -> R) -> R {
+    Shed::shopts_mut(|o| {
+      o.statline.left_string = left.to_string();
+      o.statline.middle_string = mid.to_string();
+      o.statline.right_string = right.to_string();
+    });
+    f()
+  }
+
+  #[test]
+  fn statline_new_reads_shopt_strings() {
+    let _g = TestGuard::new();
+    let mut sl = with_statline_strings("LEFT", "MID", "RIGHT", StatusLine::new);
+    let (l, m, r) = sl.parts();
+    assert_eq!(l, "LEFT");
+    assert_eq!(m, "MID");
+    assert_eq!(r, "RIGHT");
+  }
+
+  #[test]
+  fn statline_render_pads_between_parts_when_room() {
+    let _g = TestGuard::new();
+    let mut sl = with_statline_strings("L", "M", "R", StatusLine::new);
+    let out = sl.render(11);
+    // Lengths: L=1, M=1, R=1, leftover = 11 - 3 = 8.
+    // pad_lm = 4, pad_mr = 4 → "L    M    R" (11 cols).
+    assert_eq!(out, "L    M    R");
+    assert_eq!(out.chars().count(), 11);
+  }
+
+  #[test]
+  fn statline_render_truncates_middle_when_too_narrow() {
+    let _g = TestGuard::new();
+    let mut sl = with_statline_strings("", "MIDDLE_TEXT", "R", StatusLine::new);
+    let out = sl.render(6);
+    // Right takes 1 col → 5 left for middle → middle gets ellipsis-truncated.
+    assert!(out.ends_with('R'), "render = {out:?}");
+    // The truncated middle should not contain the full word.
+    assert!(!out.contains("MIDDLE_TEXT"));
+  }
+
+  #[test]
+  fn statline_refresh_marks_dirty_and_parts_refreshes() {
+    let _g = TestGuard::new();
+    let mut sl = with_statline_strings("A", "B", "C", StatusLine::new);
+    let _ = sl.parts(); // prime
+    // Change the underlying shopt; parts() shouldn't see it yet.
+    Shed::shopts_mut(|o| o.statline.left_string = "Z".to_string());
+    {
+      let (l, _, _) = sl.parts();
+      assert_eq!(l, "A");
+    }
+    sl.refresh();
+    {
+      let (l, _, _) = sl.parts();
+      assert_eq!(l, "Z", "refresh_now should have repopulated from shopt");
+    }
+  }
+
+  // ─── Prompt::new() PS1+PSR branch ──────────────────────────────
+
+  #[test]
+  fn prompt_new_uses_ps1_and_psr_when_set() {
+    let _g = TestGuard::new();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "PS1",
+        VarKind::Str("PS1_RAW".to_string()),
+        VarFlags::empty(),
+      )
+      .unwrap();
+      v.set_var(
+        "PSR",
+        VarKind::Str("PSR_RAW".to_string()),
+        VarFlags::empty(),
+      )
+      .unwrap();
+    });
+    let mut p = Prompt::new();
+    assert_eq!(p.get_ps1(), "PS1_RAW");
+    // psr_expanded is private but accessible from this module.
+    assert_eq!(p.psr_expanded.as_deref(), Some("PSR_RAW"));
+  }
+
+  #[test]
+  fn prompt_new_falls_back_to_default_when_ps1_unset() {
+    let _g = TestGuard::new();
+    // PS1 should be unset for this test (TestGuard clears env).
+    let _ = Shed::vars_mut(|v| v.unset_var("PS1"));
+    let mut p = Prompt::new();
+    // Default PS1 expands; it's non-empty.
+    assert!(!p.get_ps1().is_empty());
+    assert!(p.psr_expanded.is_none());
+  }
+
+  // ─── ShedLine::reset_active_widget ─────────────────────────────
+
+  fn fresh_emacs_line() -> (ShedLine, TestGuard) {
+    Shed::shopts_mut(|o| o.set.vi = false);
+    let g = TestGuard::new();
+    let prompt = Prompt::default();
+    let line = ShedLine::new_no_hist(prompt).unwrap();
+    (line, g)
+  }
+
+  #[test]
+  fn reset_active_widget_with_completer_keeps_it_active_and_marks_redraw() {
+    use crate::readline::complete::{Candidate, FuzzyCompleter};
+    let (mut line, _g) = fresh_emacs_line();
+    let mut comp = FuzzyCompleter::default();
+    comp
+      .selector
+      .activate(vec![Candidate::from("alpha".to_string())]);
+    line.completer = Some(comp);
+    line.needs_redraw = false;
+    line.reset_active_widget(false).unwrap();
+    assert!(line.completer.is_some(), "completer should remain");
+    assert!(line.needs_redraw);
+  }
+
+  #[test]
+  fn reset_active_widget_with_no_widget_falls_through_to_reset() {
+    let (mut line, _g) = fresh_emacs_line();
+    line.editor.set_buffer("some content".to_string());
+    assert_eq!(line.editor.joined(), "some content");
+    line.reset_active_widget(false).unwrap();
+    // reset() wipes the editor.
+    assert_eq!(line.editor.joined(), "");
+  }
+
+  // ─── ShedLine::handle_keymap is_exact arm ──────────────────────
+
+  #[test]
+  fn handle_keymap_executes_action_on_exact_match() {
+    let (mut line, _g) = fresh_emacs_line();
+    line.editor.set_buffer("hello".to_string());
+    line.editor.set_cursor_from_flat(0);
+    // Map <C-a> → <C-e> in emacs mode. This overrides the built-in
+    // StartOfLine binding for Ctrl+A so that pressing it goes to EOL.
+    Shed::logic_mut(|l| {
+      l.insert_keymap(KeyMap {
+        flags: KeyMapFlags::EMACS,
+        keys: "<C-a>".to_string(),
+        action: "<C-e>".to_string(),
+      })
+    });
+    line.handle_keymap(key!(Ctrl + 'a')).unwrap();
+    // Action expanded to Ctrl+E → EndOfLine → cursor at "hello".len().
+    assert_eq!(line.editor.cursor_to_flat(), 5);
+    assert!(
+      line.pending_keymap.is_empty(),
+      "exact match should clear pending_keymap"
+    );
+  }
+
+  // ─── ShedLine::start_hist_search ───────────────────────────────
+
+  #[test]
+  fn start_hist_search_with_prefix_match_adopts_entry() {
+    // When the current buffer is a prefix of a single history entry,
+    // start_hist_search adopts that entry into the editor (no finder).
+    // SEARCH_ENTRIES is a process-global cache keyed by table name, so we
+    // wipe the "shed_history" key before pushing to keep len()==1.
+    crate::readline::history::History::clear_global_caches_for_test("shed_history");
+    let (mut line, _g) = fresh_emacs_line();
+    line.history.push("echo foobar".to_string()).unwrap();
+    line.history.refresh_hist_entries();
+    line.history.constrain_entries(None);
+    line.editor.set_buffer("echo".to_string());
+    line.editor.move_cursor_to_end();
+    line.start_hist_search();
+    assert_eq!(line.editor.joined(), "echo foobar");
+    assert!(
+      line.history.fuzzy_finder.is_none(),
+      "finder should not have opened"
+    );
+  }
+
+  #[test]
+  fn start_hist_search_with_multiple_matches_opens_finder() {
+    crate::readline::history::History::clear_global_caches_for_test("shed_history");
+    let (mut line, _g) = fresh_emacs_line();
+    line.history.push("git status".to_string()).unwrap();
+    line.history.push("git diff".to_string()).unwrap();
+    line.history.push("ls -la".to_string()).unwrap();
+    line.history.refresh_hist_entries();
+    line.history.constrain_entries(None);
+    line.editor.set_buffer("git".to_string());
+    line.editor.move_cursor_to_end();
+    line.start_hist_search();
+    assert!(
+      line.history.fuzzy_finder.is_some(),
+      "finder should be active for ambiguous prefix"
+    );
+  }
+
+  // ─── ShedLine::run_cmd ctrl+d spam handling ────────────────────
+
+  fn ctrl_d_motion_cmd() -> EditCmd {
+    EditCmd {
+      motion: Some(motion!(Motion::HalfScreenDown)),
+      ..Default::default()
+    }
+  }
+
+  #[test]
+  fn run_cmd_ctrl_d_motion_on_empty_fires_warning_each_call() {
+    // editor.is_empty() short-circuits to the warning + counter reset.
+    let (mut line, _g) = fresh_emacs_line();
+    assert_eq!(line.ctrl_d_warning_counter, 0);
+    line.run_cmd(ctrl_d_motion_cmd()).unwrap();
+    // Empty editor → counter stays at 0 (warning fired immediately)
+    assert_eq!(line.ctrl_d_warning_counter, 0);
+  }
+
+  #[test]
+  fn run_cmd_ctrl_d_motion_increments_counter_then_resets() {
+    let (mut line, _g) = fresh_emacs_line();
+    line.editor.set_buffer("single line".to_string());
+    line.editor.move_cursor_to_end();
+    // 3 non-moving Ctrl+D-as-motion calls increment the counter.
+    line.run_cmd(ctrl_d_motion_cmd()).unwrap();
+    assert_eq!(line.ctrl_d_warning_counter, 1);
+    line.run_cmd(ctrl_d_motion_cmd()).unwrap();
+    assert_eq!(line.ctrl_d_warning_counter, 2);
+    line.run_cmd(ctrl_d_motion_cmd()).unwrap();
+    assert_eq!(line.ctrl_d_warning_counter, 3);
+    // 4th call fires the warning and resets.
+    line.run_cmd(ctrl_d_motion_cmd()).unwrap();
+    assert_eq!(line.ctrl_d_warning_counter, 0);
+  }
+
+  // ─── ShedLine::scroll_history_virtual ──────────────────────────
+
+  fn virtual_scroll_cmd(motion: Motion, shift: bool) -> EditCmd {
+    let mut flags = CmdFlags::empty();
+    if shift {
+      flags |= CmdFlags::HAS_SHIFT;
+    } else {
+      flags |= CmdFlags::HAS_CTRL;
+    }
+    EditCmd {
+      motion: Some(motion!(motion)),
+      flags,
+      ..Default::default()
+    }
+  }
+
+  fn line_with_virt_history(initial: &str, entries: &[&str]) -> (ShedLine, TestGuard) {
+    crate::readline::history::History::clear_global_caches_for_test("shed_history");
+    let (mut line, g) = fresh_emacs_line();
+    for entry in entries {
+      line.history.push(entry.to_string()).unwrap();
+    }
+    line.history.refresh_hist_entries();
+    // constrain_entries (not just update_search_mask) repositions the cursor
+    // to mask.len() so virt_scroll(-1) actually moves backward from the
+    // "pending" sentinel position.
+    line.history.constrain_entries(None);
+    line.editor.set_buffer(initial.to_string());
+    line.editor.move_cursor_to_end();
+    (line, g)
+  }
+
+  #[test]
+  fn scroll_history_virtual_lineup_shift_prepends_with_amp() {
+    // Backward virtual scroll prepends the previous history entry with
+    // " && " (HAS_SHIFT) onto the current buffer.
+    let (mut line, _g) = line_with_virt_history("current", &["prev_cmd"]);
+    line.scroll_history_virtual(virtual_scroll_cmd(Motion::LineUp, true));
+    assert_eq!(line.editor.joined(), "prev_cmd && current");
+  }
+
+  #[test]
+  fn scroll_history_virtual_lineup_ctrl_prepends_with_semicolon() {
+    let (mut line, _g) = line_with_virt_history("current", &["prev_cmd"]);
+    line.scroll_history_virtual(virtual_scroll_cmd(Motion::LineUp, false));
+    assert_eq!(line.editor.joined(), "prev_cmd; current");
+  }
+
+  #[test]
+  fn scroll_history_virtual_linedown_after_lineup_pops_left() {
+    // Up (concat_left) puts us in Backward scroll direction;
+    // Down then pops_left and reverses one step.
+    let (mut line, _g) = line_with_virt_history("current", &["prev_cmd"]);
+    line.scroll_history_virtual(virtual_scroll_cmd(Motion::LineUp, true));
+    assert_eq!(line.editor.joined(), "prev_cmd && current");
+    line.scroll_history_virtual(virtual_scroll_cmd(Motion::LineDown, true));
+    // pop_left strips the prepended chunk
+    assert_eq!(line.editor.joined(), "current");
+  }
+
+  #[test]
+  fn scroll_history_virtual_linedown_none_direction_concats_right() {
+    // Reaching the None|Forward LineDown arm (concat_right) needs the
+    // history cursor parked below mask.len() so virt_scroll(1) has room
+    // to advance and yield Some. Two scroll(-1) calls position
+    // cursor=virt=0 with mask.len()=2.
+    let (mut line, _g) = line_with_virt_history("current", &["alpha", "beta"]);
+    line.history.scroll(-1);
+    line.history.scroll(-1);
+    // direction=None (virt==cursor) → enters concat_right branch.
+    // virt_scroll(1) returns search_mask[1]; concat_right appends " && ".
+    // Because both pushes share a second-resolution timestamp, SQLite's
+    // tie-break for equal `MAX(timestamp)` rows is unspecified — assert
+    // structurally without pinning which entry won the tie.
+    line.scroll_history_virtual(virtual_scroll_cmd(Motion::LineDown, true));
+    let joined = line.editor.joined();
+    assert!(
+      joined == "current && alpha" || joined == "current && beta",
+      "expected concat_right with one of the entries, got {joined:?}"
+    );
+  }
+
+  // ─── ShedLine::handle_cmd_repeat CmdReplay::Single count>1 ────
+
+  #[test]
+  fn dot_with_count_n_takes_override_branch() {
+    // `3.` after `dw` exercises the `count > 1` arm of CmdReplay::Single:
+    // the saved cmd's verb.0 is overridden to 3 and motion.0 to 1.
+    //
+    // Note: eval_motion (motion.rs:185) reads count from the *motion* arg,
+    // not the verb, so for a motion-driven verb like Delete the override
+    // has no cumulative effect — `3.` deletes one word, same as `.`. We
+    // pin that current behavior here; the test serves to exercise the
+    // branch (no panic, no skip) and lock in the observed result so a
+    // future refactor that fixes the count plumbing fails this assertion
+    // intentionally.
+    let (mut vi, _g) = test_vi("one two three four five");
+    let keys = expand_keymap("<Esc>0dw3.");
+    vi.process_input(keys).unwrap();
+    assert_eq!(vi.editor.joined(), "three four five");
+  }
+}

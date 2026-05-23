@@ -75,28 +75,14 @@ macro_rules! register_scripts {
     ];
 
     pub fn source_builtin_scripts() {
+      let mut code = 0;
       for (path, src) in SCRIPTS {
         if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
+          code = 2;
           e.print_error();
         }
       }
-    }
-
-    #[cfg(test)]
-    mod script_test {
-      #[test]
-      fn builtin_functions_pass() {
-        let failures: Vec<&str> = super::SCRIPTS.iter()
-          .filter(|(path,src)| {
-            $crate::eval::execute::exec_nonint(
-              src.to_string(),
-              Some(format!("{path}").into())
-            ).is_err()
-          })
-          .map(|(path,_)| *path)
-          .collect();
-        assert!(failures.is_empty(), "Functions failed to source: {failures:?}");
-      }
+      $crate::state::Shed::set_status(code);
     }
   };
 }
@@ -108,28 +94,14 @@ macro_rules! register_completions {
     ];
 
     pub fn source_builtin_completions() {
+      let mut code = 0;
       for (name, src) in COMPLETIONS {
         if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into())) {
+          code = 2;
           e.print_error();
         }
       }
-    }
-
-    #[cfg(test)]
-    mod comp_test {
-      #[test]
-      fn builtin_completions_pass() {
-        let failures: Vec<&str> = super::COMPLETIONS.iter()
-          .filter(|(name,src)| {
-            $crate::eval::execute::exec_nonint(
-              src.to_string(),
-              Some(format!("{name} comp").into())
-            ).is_err()
-          })
-          .map(|(name,_)| *name)
-          .collect();
-        assert!(failures.is_empty(), "Completions failed to source: {failures:?}");
-      }
+      $crate::state::Shed::set_status(code);
     }
   };
 }
@@ -563,6 +535,9 @@ impl Builtin for CommandBuiltin {
 #[cfg(test)]
 pub mod tests {
   use crate::{
+    assert_status_eq,
+    builtin::{source_builtin_completions, source_builtin_scripts},
+    eval::execute::exec_nonint,
     state,
     tests::testutil::{TestGuard, test_input},
   };
@@ -590,5 +565,50 @@ pub mod tests {
     test_input(":").unwrap();
 
     assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn builtin_scripts_pass() {
+    let _g = TestGuard::new();
+    source_builtin_scripts();
+    assert_status_eq!(0);
+
+    let failures: Vec<&str> = super::SCRIPTS
+      .iter()
+      .filter(|(path, src)| {
+        crate::eval::execute::exec_nonint(src.to_string(), Some(path.to_string().into())).is_err()
+      })
+      .map(|(path, _)| *path)
+      .collect();
+    assert!(
+      failures.is_empty(),
+      "Functions failed to source: {failures:?}"
+    );
+  }
+
+  #[test]
+  fn builtin_help_flag_works() {
+    let _g = TestGuard::new();
+    exec_nonint("echo --help".into(), Some("builtin help test".into())).unwrap();
+    assert_status_eq!(0);
+  }
+
+  #[test]
+  fn builtin_completions_pass() {
+    let _g = TestGuard::new();
+    source_builtin_completions();
+    assert_status_eq!(0);
+    let failures: Vec<&str> = super::COMPLETIONS
+      .iter()
+      .filter(|(name, src)| {
+        crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into()))
+          .is_err()
+      })
+      .map(|(name, _)| *name)
+      .collect();
+    assert!(
+      failures.is_empty(),
+      "Completions failed to source: {failures:?}"
+    );
   }
 }

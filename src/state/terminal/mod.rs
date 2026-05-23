@@ -1012,6 +1012,10 @@ impl Terminal {
       self.pop_termios().ok();
     }
   }
+
+  pub fn test_mode(&self) -> bool {
+    self.test_mode
+  }
 }
 
 impl Default for Terminal {
