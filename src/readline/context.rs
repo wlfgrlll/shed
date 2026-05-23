@@ -72,9 +72,10 @@ fn process_ctx_tokens(mut out: Vec<CtxTk>) -> Vec<CtxTk> {
 
 const EXEC_WRAPPERS: [&str; 3] = ["sudo", "run0", "strace"];
 fn is_exec_wrapper(tk: &CtxTk) -> bool {
-  get_exec_wrappers()
-    .into_iter()
-    .any(|wr| wr.as_str() == tk.span().as_str())
+  matches!(tk.class(), CtxTkRule::ValidCommand)
+    && get_exec_wrappers()
+      .into_iter()
+      .any(|wr| wr.as_str() == tk.span().as_str())
     && is_valid_cmd(tk.as_tk())
 }
 
