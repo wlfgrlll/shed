@@ -18,11 +18,11 @@
       overlays = [ rust-overlay.overlays.default ];
     };
 
-    # Rust toolchain with the musl target std lib available, so
-    # `cargo build --target x86_64-unknown-linux-musl` works inside
-    # `nix develop` without needing rustup.
     rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-      targets = [ "x86_64-unknown-linux-musl" ];
+      targets = [
+        "x86_64-unknown-linux-musl"
+        "x86_64-apple-darwin"
+      ];
     };
   in
   {
@@ -49,7 +49,7 @@
 
     packages.default = pkgs.rustPlatform.buildRustPackage {
       pname = "shed";
-      version = "0.19.3";
+      version = "0.19.5";
 
       src = self;
 

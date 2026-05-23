@@ -145,16 +145,7 @@ fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
     errln!("\n{welcome}\n\n");
   }
 
-  if shopt!(statline.enable) {
-    // statline enabled, reserve scroll region rows
-    // also move the cursor down there too
-    Shed::term_mut(|t| -> ShResult<()> {
-      let bottom = (t.t_rows() as u16).saturating_sub(2).max(1);
-      t.set_scroll_region(1, bottom)?;
-      t.move_cursor_abs(bottom, 1);
-      Ok(())
-    })?;
-  }
+  Shed::term_mut(|t| t.reserve_status_rows())?;
 
   Ok(raw_mode)
 }

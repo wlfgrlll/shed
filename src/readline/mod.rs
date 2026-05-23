@@ -538,8 +538,28 @@ impl ShedLine {
     if full_redraw {
       self.old_layout = None;
     }
-    if self.statline.is_none() {
-      self.statline = shopt!(statline.enable).then(StatusLine::new);
+    if self.statline.is_none() && shopt!(statline.enable) {
+      Shed::term_mut(|t| -> ShResult<()> {
+        let total_rows = t.t_rows() as u16;
+        let new_bottom = total_rows.saturating_sub(2).max(1);
+        let cursor_row = t
+          .get_cursor_pos()
+          .ok()
+          .flatten()
+          .map(|(r, _)| r.0 as u16)
+          .unwrap_or(new_bottom);
+        if cursor_row > new_bottom {
+          let scroll_amount = (cursor_row - new_bottom) as usize;
+          t.scroll_up(scroll_amount).ok();
+          // scroll_up shifts content; the visual cursor row doesn't
+          // change. Move it up so it tracks the prompt's new row.
+          t.write_direct(&format!("\x1b[{scroll_amount}A")).ok();
+        }
+        t.set_scroll_region(1, new_bottom)?;
+        Ok(())
+      })?;
+      self.old_layout = None;
+      self.statline = Some(StatusLine::new());
     }
     self.focused_history().pending = None;
     self.focused_history().reset();
@@ -1508,6 +1528,16 @@ impl ShedLine {
 
   pub fn print_line(&mut self, final_draw: bool) -> ShResult<()> {
     let _sync = SyncOutputGuard::begin();
+    if self.statline.is_some() && !shopt!(statline.enable) {
+      self.statline = None;
+      Shed::term_mut(|t| -> ShResult<()> {
+        let total_rows = t.t_rows() as u16;
+        let new_bottom = total_rows.saturating_sub(1).max(1);
+        t.with_saved_cursor(|t| t.write_direct(format!("\x1b[{total_rows};1H\x1b[2K").as_str()))?;
+        t.set_scroll_region(1, new_bottom)?;
+        Ok(())
+      })?;
+    }
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
@@ -1578,7 +1608,7 @@ impl ShedLine {
 
       let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
 
-      if Shed::term(|t| t.scroll_region()).is_some() {
+      if Shed::term(|t| t.scroll_region()).is_some() && shopt!(statline.enable) {
         let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
         let mut new_h = new_layout.end.row as i32
           + predicted_overlay_rows as i32
@@ -1781,7 +1811,10 @@ impl ShedLine {
       } else {
         String::new()
       };
-      Shed::term_mut(|t| t.draw_status_message(&content));
+
+      if !content.is_empty() {
+        Shed::term_mut(|t| t.draw_status_message(&content));
+      }
     }
 
     self.old_layout = Some(new_layout);

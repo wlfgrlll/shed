@@ -498,6 +498,10 @@ impl Terminal {
     Ok(())
   }
 
+  pub fn reserved_rows(&self) -> u16 {
+    if shopt!(statline.enable) { 2 } else { 1 }
+  }
+
   pub fn update_t_dims(&mut self) {
     let Some(tty) = self.tty() else { return };
     let (cols, rows) = get_win_size(tty.as_raw_fd());
@@ -508,7 +512,8 @@ impl Terminal {
     // new terminal size. Assumes the owner intends to reserve 2 rows at
     // the bottom (status line + gap above it).
     if let Some((top, _)) = self.scroll_region {
-      let new_bottom = (rows.saturating_sub(2)).max(top);
+      let reserved = self.reserved_rows();
+      let new_bottom = (rows.saturating_sub(reserved)).max(top);
       self.set_scroll_region(top, new_bottom).ok();
     }
   }
@@ -951,6 +956,16 @@ impl Terminal {
     write!(self, "\x1b[{row};{col}H").ok();
   }
 
+  pub fn reserve_status_rows(&mut self) -> ShResult<()> {
+    let reserved: u16 = self.reserved_rows();
+    let bottom = (self.t_rows() as u16).saturating_sub(reserved).max(1);
+    self.set_scroll_region(1, bottom)?;
+    if shopt!(statline.enable) {
+      self.move_cursor_abs(bottom, 1);
+    }
+    Ok(())
+  }
+
   /// Render the status line at the bottom row of the terminal.
   pub fn draw_status_line(&mut self, content: &str) {
     let bottom_row = self.t_rows as u16;
@@ -963,7 +978,11 @@ impl Terminal {
 
   /// Render an ephemeral status message on the row directly above the status line (`t_rows - 1`).
   pub fn draw_status_message(&mut self, content: &str) {
-    let row = (self.t_rows as u16).saturating_sub(1);
+    let row = if shopt!(statline.enable) {
+      (self.t_rows as u16).saturating_sub(1)
+    } else {
+      self.t_rows as u16
+    };
     self.with_saved_cursor(|this| {
       this.move_cursor_abs(row, 1);
       this.input_buf.push_str(Self::ROW_CLEAR);
