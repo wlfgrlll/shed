@@ -475,10 +475,6 @@ fn handle_readline_event(
 
       Shed::term_mut(|t| t.fix_cursor_column())?;
 
-      if shopt!(statline.enable) {
-        write_term!("\n")?;
-      }
-
       // Reset for next command with fresh prompt
       readline.reset(true)?;
       Ok(false)
