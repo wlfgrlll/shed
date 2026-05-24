@@ -194,6 +194,7 @@ AUTOCMD                                          *builtin-autocmd* *autocmd*
 
     `pre-cmd`               before a command is executed
     `post-cmd`              after a command completes
+    `on-command-not-found`  when command not found
     `pre-change-dir`        before `cd` changes the directory
     `post-change-dir`       after `cd` changes the directory
     `on-job-finish`         when a background job finishes
