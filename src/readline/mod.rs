@@ -1255,6 +1255,7 @@ impl ShedLine {
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
     let Some(linecmd) = self.resolve_key(&key)? else {
       self.update_editor_search();
+      self.needs_redraw = true;
       return Ok(None);
     };
     if !matches!(&linecmd, LineCmd::ScrollHistVirtual(_)) {

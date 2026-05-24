@@ -986,12 +986,11 @@ mod tests {
 
   #[test]
   fn handler_post_system_message_queues_msg() {
-    let _g = TestGuard::new();
+    let g = TestGuard::new();
     let mut rl = fresh_readline();
     let (_, _) = run_handler(SocketRequest::PostSystemMessage("queued".into()), &mut rl);
-    let popped = Shed::pop_system_msg();
-    assert!(popped.is_some());
-    assert!(popped.unwrap().contains("queued"));
+    let out = g.read_output();
+    assert!(out.contains("queued"), "got: {out:?}");
   }
 
   #[test]

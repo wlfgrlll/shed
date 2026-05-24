@@ -169,46 +169,42 @@ mod flog_execute_tests {
 
   #[test]
   fn flog_level_at_threshold_emits_message() {
-    let _g = TestGuard::new();
-    drain_system_msgs();
+    let g = TestGuard::new();
     set_var("FLOG_LEVEL", "DEBUG");
     test_input("flog INFO visible_info_message").unwrap();
-    let msgs = collect_system_msgs();
-    assert!(msgs.contains("visible_info_message"), "got: {msgs:?}");
+    let out = g.read_output();
+    assert!(out.contains("visible_info_message"), "got: {out:?}");
   }
 
   #[test]
   fn flog_p_flag_overrides_default_prefix() {
-    let _g = TestGuard::new();
-    drain_system_msgs();
+    let g = TestGuard::new();
     set_var("FLOG_LEVEL", "DEBUG");
     test_input("flog -p 'CUSTOM_TAG' INFO body_text").unwrap();
-    let msgs = collect_system_msgs();
-    assert!(msgs.contains("CUSTOM_TAG"), "got: {msgs:?}");
-    assert!(msgs.contains("body_text"), "got: {msgs:?}");
+    let out = g.read_output();
+    assert!(out.contains("CUSTOM_TAG"), "got: {out:?}");
+    assert!(out.contains("body_text"), "got: {out:?}");
   }
 
   #[test]
   fn flog_long_prefix_flag_overrides_default_prefix() {
-    let _g = TestGuard::new();
-    drain_system_msgs();
+    let g = TestGuard::new();
     set_var("FLOG_LEVEL", "DEBUG");
     test_input("flog --prefix 'LONG_TAG' INFO body_text2").unwrap();
-    let msgs = collect_system_msgs();
-    assert!(msgs.contains("LONG_TAG"), "got: {msgs:?}");
-    assert!(msgs.contains("body_text2"), "got: {msgs:?}");
+    let out = g.read_output();
+    assert!(out.contains("LONG_TAG"), "got: {out:?}");
+    assert!(out.contains("body_text2"), "got: {out:?}");
   }
 
   #[test]
   fn flog_default_prefix_contains_level_token() {
-    let _g = TestGuard::new();
-    drain_system_msgs();
+    let g = TestGuard::new();
     set_var("FLOG_LEVEL", "DEBUG");
     Shed::vars_mut(|v| v.unset_var("FLOG_FMT").ok());
     test_input("flog INFO check_default_prefix").unwrap();
-    let msgs = collect_system_msgs();
+    let out = g.read_output();
     // Default fmt is "[{level}] …" — at minimum the level name appears.
-    assert!(msgs.contains("INFO"), "got: {msgs:?}");
-    assert!(msgs.contains("check_default_prefix"), "got: {msgs:?}");
+    assert!(out.contains("INFO"), "got: {out:?}");
+    assert!(out.contains("check_default_prefix"), "got: {out:?}");
   }
 }
