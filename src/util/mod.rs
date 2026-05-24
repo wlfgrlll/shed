@@ -5,6 +5,7 @@ mod macros;
 mod pos;
 mod strops;
 mod ui;
+pub mod posix_extension;
 
 use std::os::fd::BorrowedFd;
 

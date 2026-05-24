@@ -2,8 +2,9 @@ use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, pat
 
 use nix::{
   errno::Errno,
-  unistd::{ForkResult, Pid, execve, execvpe, fork, isatty, setpgid},
+  unistd::{ForkResult, Pid, execve, fork, isatty, setpgid},
 };
+use crate::util::posix_extension::execvpe;
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
 
