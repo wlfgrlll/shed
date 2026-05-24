@@ -22,13 +22,13 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
       wpipe,
       rpipe,
       RedirType::Output,
-      format!("/proc/self/fd/{}", rpipe_raw),
+      format!("/dev/fd/{}", rpipe_raw),
     ),
     true => (
       rpipe,
       wpipe,
       RedirType::Input,
-      format!("/proc/self/fd/{}", wpipe_raw),
+      format!("/dev/fd/{}", wpipe_raw),
     ),
   };
 
@@ -196,26 +196,26 @@ mod tests {
   // ===================== expand_proc_sub =====================
 
   #[test]
-  fn proc_sub_input_returns_proc_self_fd_path() {
+  fn proc_sub_input_returns_dev_fd_path() {
     // is_input=true: path points at the writer fd we hold open in the
     // parent (so we could write through it); the format is the
     // /proc/self/fd/N path.
     let _g = TestGuard::new();
     let path = expand_proc_sub("echo hello", true).unwrap();
     assert!(
-      path.starts_with("/proc/self/fd/"),
-      "expected /proc/self/fd/... path, got: {path:?}"
+      path.starts_with("/dev/fd/"),
+      "expected /dev/fd/... path, got: {path:?}"
     );
   }
 
   #[test]
-  fn proc_sub_output_returns_proc_self_fd_path() {
+  fn proc_sub_output_returns_dev_fd_path() {
     // is_input=false: path points at the reader fd; same shape.
     let _g = TestGuard::new();
     let path = expand_proc_sub("cat > /dev/null", false).unwrap();
     assert!(
-      path.starts_with("/proc/self/fd/"),
-      "expected /proc/self/fd/... path, got: {path:?}"
+      path.starts_with("/dev/fd/"),
+      "expected /dev/fd/... path, got: {path:?}"
     );
   }
 
