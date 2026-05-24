@@ -9,7 +9,10 @@ use std::{
   sync::Arc,
 };
 
-use nix::unistd::{User, getuid};
+use nix::{
+  libc,
+  unistd::{User, getuid},
+};
 use rusqlite::Connection;
 use scopeguard::defer;
 use unicode_segmentation::UnicodeSegmentation;
@@ -124,16 +127,36 @@ where
   H: Into<HashMap<String, V>>,
   V: Into<Var>,
 {
-  let snapshot = Shed::vars(|v| v.clone());
   let vars = vars.into();
+  let restores: Vec<(String, Option<(VarKind, VarFlags)>)> = vars
+    .keys()
+    .map(|k| {
+      let prev = Shed::vars(|v| {
+        v.try_get_var_meta(k)
+          .map(|var| (var.kind().clone(), var.flags()))
+      });
+      (k.clone(), prev)
+    })
+    .collect();
+
   for (name, val) in vars {
     let val = val.into();
-    let kind = val.kind().clone();
-    let flags = val.flags();
-    Shed::vars_mut(|v| v.set_var(&name, kind, flags).unwrap());
+    Shed::vars_mut(|v| v.set_var(&name, val.kind().clone(), val.flags()).unwrap());
   }
-  let _guard = scopeguard::guard(snapshot, |snap| {
-    Shed::vars_mut(|v| *v = snap);
+
+  let _guard = scopeguard::guard(restores, |restores| {
+    Shed::vars_mut(|v| {
+      for (name, prev) in restores {
+        match prev {
+          Some((kind, flags)) => {
+            v.set_var(&name, kind, flags).ok();
+          }
+          None => {
+            v.unset_var(&name).ok();
+          }
+        }
+      }
+    })
   });
   f()
 }
@@ -455,6 +478,30 @@ pub fn open_db_conn() -> ShResult<Connection> {
   }
 
   Ok(Connection::open(&db_path)?)
+}
+
+pub fn get_default_path() -> Option<String> {
+  unsafe {
+    let needed = libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0);
+    if needed == 0 {
+      return None;
+    }
+    let mut buf = vec![0u8; needed];
+    let written = libc::confstr(
+      libc::_CS_PATH,
+      buf.as_mut_ptr() as *mut std::ffi::c_char,
+      needed,
+    );
+    if !(1..=needed).contains(&written) {
+      return None;
+    }
+
+    // check for null byte
+    if buf.ends_with(b"\0") {
+      buf.truncate(written - 1);
+    }
+    String::from_utf8(buf).ok()
+  }
 }
 
 pub fn get_home() -> Option<PathBuf> {
