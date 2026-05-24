@@ -229,6 +229,26 @@ BG                                               *builtin-bg* *bg*
   Resume a stopped job in the background. See |jobs-bg| for details.
 
 ==============================================================================
+BUILTIN                                          *builtin-builtin* *builtin-cmd*
+
+  `builtin {name} [argument ...]`
+
+  Execute the shell builtin named {name}, bypassing any function or
+  alias of the same name. Useful when you have defined a function that
+  wraps a builtin and want to call the underlying builtin from inside
+  the wrapper without recursing.
+
+  If {name} is not a recognized builtin, exits 127 with an error.
+
+  The name `builtin` itself is reserved and cannot be shadowed by an
+  alias.
+
+  Examples:
+
+      `cd() { builtin cd "$@" && ls; }`   wrap cd without recursing
+      `builtin echo hello`                bypass any user-defined echo
+
+==============================================================================
 CD                                               *builtin-cd* *cd*
 
   `cd [-L|-P] [{dir}]`
@@ -259,6 +279,56 @@ CD                                               *builtin-cd* *cd*
       `cd /tmp`             absolute path
       `cd -`                return to previous directory
       `cd -P ~/link`        resolve symlink before changing
+
+==============================================================================
+COMMAND                                          *builtin-command* *command*
+
+  `command [-p] {name} [argument ...]`
+  `command [-v | -V] {name}`
+
+  Execute {name} as a simple command, suppressing the shell function and
+  alias lookup that would normally happen first. Useful when you have
+  defined a function that shadows an external command and want to call
+  the original from inside the function without recursing.
+
+  With no options and no arguments, exits 0 silently.
+
+  `-p`     Perform the command search using a system default `$PATH` that
+           is guaranteed to find the standard POSIX utilities, even if the
+           user's `$PATH` has been overridden or cleared. The override is
+           scoped to this invocation only; the user's `$PATH` is restored
+           afterwards.
+
+  `-v`     Do not execute. Print how {name} would be resolved:
+             - external command:   absolute pathname
+             - shell builtin:      just the name
+             - shell function:     just the name
+             - shell keyword:      just the name
+             - alias:              `alias name='definition'` form
+             - not found:          no output, exit status 127
+
+  `-V`     Do not execute. Print a human-readable description of how
+           {name} would be interpreted:
+             - external command:   `name is /usr/bin/name`
+             - shell builtin:      `name is a shell builtin`
+             - shell function:     `name is a function`
+             - shell keyword:      `name is a shell keyword`
+             - alias:              `name is an alias for 'definition'`
+             - not found:          error to stderr, exit status 127
+
+  `-v` and `-V` cannot be combined; passing both is an error.
+
+  The name `command` itself is reserved and cannot be shadowed by an
+  alias.
+
+  Examples:
+
+      `command ls`               run external ls, bypassing functions
+      `command -p cat foo`       run cat from the system default $PATH
+      `command -v git`           print the absolute pathname of git
+      `command -v ll`            print: alias ll='ls -la'
+      `command -V if`            print: if is a shell keyword
+      `command -- -p`            treat -p as the command name, not a flag
 
 ==============================================================================
 COMPLETE                                         *builtin-complete* *complete*

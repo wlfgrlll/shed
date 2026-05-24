@@ -1,14 +1,18 @@
 use ariadne::Span as ASpan;
 use nix::unistd::Pid;
+use scopeguard::defer;
+
+use crate::state::meta::UtilKind;
 
 use super::{
   errln,
   eval::{
     self, NdFlags, NdRule, Node,
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
-    lex::{Span, Tk},
+    lex::{KEYWORDS, Span, Tk},
   },
-  expand, keys, match_loop, out, outln, procio,
+  expand::{self, as_var_val_display},
+  keys, match_loop, out, outln, procio,
   procio::RedirSet,
   readline, sherr, shopt, signal, state,
   state::{Shed, jobs::ChildProc, shopt as shopt_internal},
@@ -521,11 +525,132 @@ impl Builtin for CommandBuiltin {
     else {
       unreachable!()
     };
-    *argv = argv
-      .iter_mut()
-      .skip(1)
-      .map(|tk| tk.clone())
-      .collect::<Vec<Tk>>();
+    if !argv.is_empty() {
+      argv.remove(0);
+    }
+
+    let mut use_default_path = false;
+    let mut print_path = false;
+    let mut print_type = false;
+    let mut seen_dd = false;
+
+    let iter = std::mem::take(argv).into_iter();
+    let mut rest = vec![];
+
+    for tk in iter {
+      if !rest.is_empty() || seen_dd {
+        rest.push(tk);
+        continue;
+      }
+
+      match tk.as_str() {
+        "-p" => use_default_path = true,
+
+        "-v" if !print_type => print_path = true,
+        "-V" if !print_path => print_type = true,
+
+        "-v" if print_type => {
+          return Err(sherr!(InvalidOpt @ tk.span.clone(), "cannot specify both -v and -V"));
+        }
+        "-V" if print_path => {
+          return Err(sherr!(InvalidOpt @ tk.span.clone(), "cannot specify both -v and -V"));
+        }
+
+        "--" => seen_dd = true,
+        s if s.starts_with('-') => {
+          return Err(sherr!(InvalidOpt @ tk.span.clone(), "invalid option: {s}"));
+        }
+        _ => rest.push(tk),
+      }
+    }
+
+    if rest.is_empty() {
+      return with_status(0);
+    }
+
+    *argv = rest;
+
+    if use_default_path {
+      let Some(default_path) = state::util::get_default_path() else {
+        return Err(sherr!(ExecFail @ node.get_span(), "unable to get default path"));
+      };
+      // TODO: Find a way to do this that doesn't involve forcing a full PATH rehash twice
+      defer! {
+        Shed::meta_mut(|m| m.rehash());
+      }
+      state::util::with_vars([("PATH".to_string(), default_path)], || {
+        Shed::meta_mut(|m| m.rehash());
+        Self::execute_inner(print_path, print_type, node, dispatcher)
+      })
+    } else {
+      Self::execute_inner(print_path, print_type, node, dispatcher)
+    }
+  }
+}
+
+impl CommandBuiltin {
+  fn execute_inner(
+    print_path: bool,
+    print_type: bool,
+    node: Node,
+    dispatcher: &mut Dispatcher,
+  ) -> ShResult<()> {
+    let NdRule::Command { argv, .. } = &node.class else {
+      unreachable!()
+    };
+    if print_path {
+      let Some(name) = argv.first() else {
+        return with_status(2);
+      };
+      let name_str = name.as_str();
+      match state::util::which_util(name_str) {
+        Some(util) => match util.kind() {
+          UtilKind::Alias => {
+            let Some(alias) = Shed::logic(|l| l.get_alias(name_str)) else {
+              return with_status(127);
+            };
+            outln!("alias {name_str}={}", as_var_val_display(alias.body()));
+          }
+          UtilKind::Function | UtilKind::Builtin => outln!("{name_str}"),
+          UtilKind::Command(p) | UtilKind::File(p) => outln!("{}", p.display()),
+        },
+        None if KEYWORDS.contains(&name_str) => outln!("{name_str}"),
+        None => return with_status(127),
+      }
+
+      return with_status(0);
+    }
+    if print_type {
+      let Some(name) = argv.first() else {
+        return with_status(2);
+      };
+      let name_str = name.as_str();
+      match state::util::which_util(name_str) {
+        Some(util) => match util.kind() {
+          UtilKind::Alias => {
+            let Some(alias) = Shed::logic(|l| l.get_alias(name_str)) else {
+              return with_status(127);
+            };
+            outln!(
+              "{name_str} is an alias for {}",
+              as_var_val_display(alias.body())
+            );
+          }
+          UtilKind::Function => outln!("{name_str} is a function"),
+          UtilKind::Builtin => outln!("{name_str} is a shell builtin"),
+          UtilKind::Command(p) | UtilKind::File(p) => {
+            outln!("{name_str} is {}", p.display())
+          }
+        },
+        None if KEYWORDS.contains(&name_str) => outln!("{name_str} is a shell keyword"),
+        None => {
+          errln!("command: {name_str}: not found");
+          return with_status(127);
+        }
+      }
+
+      return with_status(0);
+    }
 
     // this one has to offload to the dispatcher
     dispatcher.exec_cmd(node)
@@ -539,7 +664,7 @@ pub mod tests {
     builtin::{source_builtin_completions, source_builtin_scripts},
     eval::execute::exec_nonint,
     state,
-    tests::testutil::{TestGuard, test_input},
+    tests::testutil::{TestGuard, has_cmd, test_input},
   };
 
   // You can never be too sure!!!!!!
@@ -591,6 +716,174 @@ pub mod tests {
     let _g = TestGuard::new();
     exec_nonint("echo --help".into(), Some("builtin help test".into())).unwrap();
     assert_status_eq!(0);
+  }
+
+  // ===================== command builtin =====================
+
+  #[test]
+  fn command_bare_dispatches() {
+    let g = TestGuard::new();
+    test_input("command echo hello_dispatch").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("hello_dispatch"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn command_v_builtin_prints_just_name() {
+    let g = TestGuard::new();
+    test_input("command -v echo").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("echo"), "got: {out:?}");
+    assert!(
+      !out.contains('/'),
+      "builtin should not print a path: {out:?}"
+    );
+    assert!(!out.contains("is"), "no -V-style prose for -v: {out:?}");
+  }
+
+  #[test]
+  fn command_v_keyword_prints_just_name() {
+    let g = TestGuard::new();
+    test_input("command -v if").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("if"), "got: {out:?}");
+    assert!(
+      !out.contains('/'),
+      "keyword should not print a path: {out:?}"
+    );
+  }
+
+  #[test]
+  fn command_v_function_prints_just_name() {
+    let g = TestGuard::new();
+    test_input("myfn_for_cmdv() { :; }").unwrap();
+    g.read_output();
+
+    test_input("command -v myfn_for_cmdv").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("myfn_for_cmdv"), "got: {out:?}");
+    assert!(
+      !out.contains('/'),
+      "function should not print a path: {out:?}"
+    );
+  }
+
+  #[test]
+  fn command_v_alias_prints_alias_line() {
+    let g = TestGuard::new();
+    test_input("alias myalias_for_cmdv='ls -la'").unwrap();
+    g.read_output();
+
+    test_input("command -v myalias_for_cmdv").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("alias myalias_for_cmdv="), "got: {out:?}");
+    assert!(out.contains("ls -la"), "got: {out:?}");
+  }
+
+  #[test]
+  fn command_v_external_prints_absolute_path() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let g = TestGuard::new();
+    test_input("command -v cat").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("cat"), "got: {out:?}");
+    assert!(out.contains('/'), "external should print a path: {out:?}");
+  }
+
+  #[test]
+  fn command_v_not_found_is_silent_and_127() {
+    let _g = TestGuard::new();
+    let res = test_input("command -v __hopefully__not__a__command__");
+    assert!(res.is_ok());
+    assert_eq!(state::Shed::get_status(), 127);
+  }
+
+  #[test]
+  #[allow(non_snake_case)]
+  fn command_V_builtin_says_shell_builtin() {
+    let g = TestGuard::new();
+    test_input("command -V echo").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("echo"), "got: {out:?}");
+    assert!(out.contains("shell builtin"), "got: {out:?}");
+  }
+
+  #[test]
+  #[allow(non_snake_case)]
+  fn command_V_keyword_says_shell_keyword() {
+    let g = TestGuard::new();
+    test_input("command -V if").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("if"), "got: {out:?}");
+    assert!(out.contains("shell keyword"), "got: {out:?}");
+  }
+
+  #[test]
+  #[allow(non_snake_case)]
+  fn command_V_not_found_writes_stderr_and_127() {
+    let g = TestGuard::new();
+    test_input("command -V __hopefully__not__a__command__").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("not found"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 127);
+  }
+
+  #[test]
+  #[allow(non_snake_case)]
+  fn command_v_and_V_together_errors() {
+    let _g = TestGuard::new();
+    let _ = test_input("command -v -V echo");
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  #[allow(non_snake_case)]
+  fn command_V_and_v_together_errors() {
+    let _g = TestGuard::new();
+    let _ = test_input("command -V -v echo");
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn command_double_dash_terminates_option_parsing() {
+    // If `--` works, `-V` here is the command_name (not a flag), so
+    // dispatching it should fail with 127 (no such command). If `--`
+    // is broken, `-V` would be parsed as a flag and the missing
+    // command_name path would set a different exit status.
+    let _g = TestGuard::new();
+    test_input("command -- -V").unwrap();
+    assert_eq!(state::Shed::get_status(), 127);
+  }
+
+  #[test]
+  fn command_invalid_flag_errors() {
+    let _g = TestGuard::new();
+    let _ = test_input("command -Z something");
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn command_p_restores_path_after_invocation() {
+    if !has_cmd("cat") {
+      return;
+    }
+    let g = TestGuard::new();
+    // Set a sentinel PATH that wouldn't normally contain `cat`,
+    // then run `command -p` which should temporarily switch to the
+    // system default PATH to find it, then restore /sentinel afterwards.
+    test_input("export PATH=/sentinel_path_xyz").unwrap();
+    g.read_output();
+    test_input("command -p cat /dev/null").unwrap();
+    g.read_output();
+    test_input("echo \"PATH_NOW=$PATH\"").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("PATH_NOW=/sentinel_path_xyz"),
+      "PATH was not restored after `command -p`: got {out:?}",
+    );
   }
 
   #[test]
