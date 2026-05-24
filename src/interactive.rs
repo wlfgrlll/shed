@@ -82,7 +82,9 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
 fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
   let mut exec_if_timeout = None;
 
-  let timeout = if !readline.pending_keymap().is_empty() {
+  let timeout = if Shed::term(|t| t.reader_has_pending()) {
+    PollTimeout::ZERO
+  } else if !readline.pending_keymap().is_empty() {
     // wait for more keymap keys
     PollTimeout::from(1000u16)
   } else if let Some(timeout) = Shed::meta_mut(|m| m.take_poll_timeout()) {

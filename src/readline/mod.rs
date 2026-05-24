@@ -622,7 +622,6 @@ impl ShedLine {
   }
 
   fn handle_hist_search_key(&mut self, key: KeyEvent) -> ShResult<()> {
-    self.print_line(false)?;
     let finder = self.history_fzf().unwrap();
     match finder.handle_key(key)? {
       SelectorResponse::Accept(cmd) => {
@@ -681,7 +680,6 @@ impl ShedLine {
   }
 
   fn handle_completion_key(&mut self, key: &KeyEvent) -> ShResult<bool> {
-    self.print_line(false)?;
     let comp = self.completer.as_mut().unwrap();
     match comp.handle_key(key.clone())? {
       CompResponse::Accept(candidate) => {
