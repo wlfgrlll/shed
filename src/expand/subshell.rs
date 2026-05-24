@@ -199,7 +199,7 @@ mod tests {
   fn proc_sub_input_returns_dev_fd_path() {
     // is_input=true: path points at the writer fd we hold open in the
     // parent (so we could write through it); the format is the
-    // /proc/self/fd/N path.
+    // /dev/fd/N path.
     let _g = TestGuard::new();
     let path = expand_proc_sub("echo hello", true).unwrap();
     assert!(
@@ -223,7 +223,7 @@ mod tests {
   fn proc_sub_input_path_is_readable_with_command_output() {
     // <(cmd) — reading from the returned path should yield the
     // command's stdout. This exercises the full plumbing: dup target
-    // fd 1 in the child, parent reads via /proc/self/fd.
+    // fd 1 in the child, parent reads via /dev/fd.
     let _g = TestGuard::new();
     let path = expand_proc_sub("echo proc_sub_marker_xyz", false).unwrap();
     // Open the path and read; the child writes 'proc_sub_marker_xyz\n'.
