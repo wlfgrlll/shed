@@ -313,6 +313,7 @@ pub(crate) struct ShedSocket {
 impl ShedSocket {
   pub fn dir() -> String {
     std::env::var("XDG_RUNTIME_DIR")
+      .or_else(|_| std::env::var("TMPDIR"))
       .unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
   }
   pub fn path() -> String {

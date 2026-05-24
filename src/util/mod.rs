@@ -3,9 +3,9 @@ pub mod flog;
 mod guards;
 mod macros;
 mod pos;
+pub mod posix_extension;
 mod strops;
 mod ui;
-pub mod posix_extension;
 
 use std::os::fd::BorrowedFd;
 

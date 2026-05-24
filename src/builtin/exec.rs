@@ -1,5 +1,5 @@
-use nix::{errno::Errno};
 use crate::util::posix_extension::execvpe;
+use nix::errno::Errno;
 
 use super::{
   eval::execute::ExecArgs,
