@@ -1525,6 +1525,10 @@ impl ShedLine {
         && !cmd.flags.contains(CmdFlags::IS_SUBMIT)
   }
 
+  pub fn needs_redraw(&self) -> bool {
+    self.needs_redraw
+  }
+
   pub fn print_line(&mut self, final_draw: bool) -> ShResult<()> {
     let _sync = SyncOutputGuard::begin();
     if self.statline.is_some() && !shopt!(statline.enable) {
