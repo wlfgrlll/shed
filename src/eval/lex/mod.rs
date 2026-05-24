@@ -928,7 +928,7 @@ impl LexStream {
           pos += ch.len_utf8()
         }
       }
-      '\\' => {
+      '\\' if !self.quote_state.in_single() => {
         pos += 1;
         if let Some(ch) = chars.next() {
           pos += ch.len_utf8();
@@ -941,6 +941,23 @@ impl LexStream {
                 break;
               }
             }
+          }
+        }
+      }
+      '$' if !self.quote_state.in_single() && chars.peek() == Some(&'\'') => {
+        pos += 1;        // '$'
+        chars.next();    // consume opening '
+        pos += 1;
+        // this needs its own branch
+        // because escaping a single quote in $'...' is valid
+        while let Some(c) = chars.next() {
+          pos += c.len_utf8();
+          if c == '\\' {
+            if let Some(esc) = chars.next() {
+              pos += esc.len_utf8();
+            }
+          } else if c == '\'' {
+            break;
           }
         }
       }

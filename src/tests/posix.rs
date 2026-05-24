@@ -390,6 +390,8 @@ mod quoting_2_2 {
       squote_idiom            : r#"echo 'foo'\''bar'"# => "foo'bar\n";
       squote_backslash        : r#"echo 'a\b'"#        => "a\\b\n";
       squote_double_backslash : r#"echo 'a\\b'"#       => "a\\\\b\n";
+      squote_backslash_does_not_escape_quote :
+                                 r#"echo 'foo\' bar"#  => "foo\\ bar\n";
       squote_amp              : r#"echo 'a&b'"#        => "a&b\n";
       squote_semi             : r#"echo 'a;b'"#        => "a;b\n";
       squote_lt               : r#"echo 'a<b'"#        => "a<b\n";
