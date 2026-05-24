@@ -311,7 +311,10 @@ impl super::LineBuf {
           self.equalize_rows(line_range.collect());
         }
       }
-      StashArgs::Swap(arg) => {}
+      StashArgs::Swap(_) => {
+        /* TODO: implement this */
+        status_msg!("stash: Swap not implemented yet");
+      }
       StashArgs::List(arg) => {
         let output = match arg {
           Some(StashListArg::Stack) => {

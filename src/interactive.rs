@@ -32,7 +32,7 @@ use super::{
     terminal::TermGuard,
     util::{rc_file_path, source_login, source_rc},
   },
-  try_var, util, write_term,
+  try_var, util,
 };
 
 fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
