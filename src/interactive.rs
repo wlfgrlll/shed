@@ -72,7 +72,9 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
     readline.prompt_mut().refresh();
   }
 
-  readline.print_line(false)?;
+  if readline.needs_redraw() {
+    readline.print_line(false)?;
+  }
 
   Ok(true)
 }
