@@ -735,15 +735,15 @@ FLOG                       *builtin-flog* *flog* *FLOG_FMT* *flog-fmt*
 
       Any strftime format code accepted by chrono is valid.
 
-  The `FERN_LOG` environment variable controls the minimum level that
-  produces output. A call whose level is below `FERN_LOG` is silently
+  The `FLOG_LEVEL` environment variable controls the minimum level that
+  produces output. A call whose level is below `FLOG_LEVEL` is silently
   suppressed. This allows scripts to emit `debug` or `trace` calls that
   are invisible by default and enabled on demand.
   The hierarchy is as follows:
 
         `none` > `error` > `warn` > `info` > `debug` > `trace`.
 
-  A `FERN_LOG` value of `none` suppresses all log messages.
+  A `FLOG_LEVEL` value of `none` suppresses all log messages.
 
   The `FLOG_FMT` environment variable sets the default prefix format
   used when `-p` is not specified. The `-p` flag takes precedence
@@ -756,7 +756,7 @@ FLOG                       *builtin-flog* *flog* *FLOG_FMT* *flog-fmt*
       `flog info "starting up"`
       `flog -p '[%H:%M:%S {level}]' warn "disk usage high"`
       `flog -p '[{level} {source}:{line}]' error "unexpected value"`
-      `FERN_LOG=debug flog debug "entering loop"`
+      `FLOG_LEVEL=debug flog debug "entering loop"`
       `FLOG_FMT='[%H:%M:%S {level}]' flog info "started"`
       `export FLOG_FMT='[{level} {source}:{line}]'  # in .shedrc`
 
