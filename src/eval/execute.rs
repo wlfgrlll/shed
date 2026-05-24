@@ -1015,8 +1015,6 @@ impl Dispatcher {
         if shopt!(statline.enable) {
           write!(t, "\n\n").ok();
           t.move_cursor_abs(bottom, 1);
-        } else {
-          writeln!(t).ok();
         }
       });
     }
