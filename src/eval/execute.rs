@@ -1,6 +1,9 @@
+use crate::autocmd;
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
+use crate::state::util::with_vars;
 use crate::util::posix_extension::execvpe;
+
 use nix::{
   errno::Errno,
   unistd::{ForkResult, Pid, execve, fork, isatty, setpgid},
@@ -1140,6 +1143,9 @@ impl Dispatcher {
           sherr!(NotFound @ span, "command not found")
             .with_context(context)
             .print_error();
+          with_vars([("CMD".into(), cmd.to_str().unwrap_or_default())], || {
+            autocmd!(OnCommandNotFound)
+          });
 
           unsafe { nix::libc::_exit(127) };
         }

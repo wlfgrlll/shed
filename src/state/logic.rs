@@ -79,6 +79,7 @@ pub(crate) enum AutoCmdKind {
   OnScreensaverReturn,
   OnTimeReport,
   OnExit,
+  OnCommandNotFound,
 }
 
 crate::two_way_display!(AutoCmdKind,
@@ -101,6 +102,7 @@ crate::two_way_display!(AutoCmdKind,
   OnScreensaverReturn <=> "on-screensaver-return";
   OnTimeReport        <=> "on-time-report";
   OnExit              <=> "on-exit";
+  OnCommandNotFound   <=> "on-command-not-found";
 );
 
 #[derive(Clone, Debug, Eq, PartialEq)]
