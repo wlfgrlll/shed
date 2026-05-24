@@ -12,7 +12,7 @@ use std::{
 };
 
 use super::{
-  WtStat, autocmd, builtin, eval, expand, keys, match_loop, procio, readline, sherr,
+  WtStat, autocmd, builtin, errln, eval, expand, keys, match_loop, procio, readline, sherr,
   shopt as shopt_macro, signal, socket,
   state::vars::{VarFlags, VarKind},
   system_msg, try_var, two_way_display, util as crate_util,
@@ -278,10 +278,14 @@ impl Shed {
     })
   }
   pub fn post_system_msg(msg: String) {
-    SHED.with(|shed| {
-      let msg = Message::new(msg);
-      shed.system_msg_queue.borrow_mut().push_back(msg);
-    });
+    if Self::term(|t| t.interactive()) {
+      SHED.with(|shed| {
+        let msg = Message::new(msg);
+        shed.system_msg_queue.borrow_mut().push_back(msg);
+      });
+    } else {
+      errln!("{msg}")
+    }
   }
   pub fn pop_system_msg() -> Option<String> {
     SHED.with(|shed| {
