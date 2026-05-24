@@ -13,6 +13,7 @@ pub fn execvpe<SA: AsRef<CStr>, SE: AsRef<CStr>>(
   // for nix::unistd::execve
   let args_c: Vec<&CStr> = args.iter().map(|a| a.as_ref()).collect();
   let env_c: Vec<&CStr> = env.iter().map(|e| e.as_ref()).collect();
+  let mut is_denied = false;
 
   if filename.to_bytes().contains(&b'/') {
     execve(filename, &args_c, &env_c)?;
@@ -24,11 +25,16 @@ pub fn execvpe<SA: AsRef<CStr>, SE: AsRef<CStr>>(
       match execve(c_path.as_c_str(), &args_c, &env_c) {
         Ok(_) => unreachable!(),
         Err(Errno::ENOENT) | Err(Errno::ENOTDIR) => continue, // Try next path
-        Err(e) => return Err(e),                              // Permission denied or other error
+        Err(Errno::EACCES) => is_denied = true,               // Permission denied
+        Err(e) => return Err(e),                              // Other error
       }
     }
   }
 
   // Not found
-  Err(Errno::ENOENT)
+  if is_denied {
+    Err(Errno::EACCES)
+  } else {
+    Err(Errno::ENOENT)
+  }
 }
