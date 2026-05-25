@@ -10,6 +10,6 @@ in
   lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    home.file.".shedrc".text = import ./render_rc.nix lib cfg;
+    xdg.configFile."shed/shedrc".text = import ./render_rc.nix lib cfg;
   };
 }
