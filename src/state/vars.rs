@@ -20,6 +20,9 @@ use super::{
   util::get_separator,
 };
 
+/// a `std::sync::Once` that makes sure we only call VarTab::init_env() once.
+static ENV_INIT: std::sync::Once = std::sync::Once::new();
+
 /// Display key/value pairs as '{key}={value}\n'
 ///
 /// The 'value' is escaped in such a way that the whole line can be reused as a shell assignment
@@ -598,80 +601,88 @@ impl VarTab {
     vars
   }
   fn init_env() -> Vec<(String, Var)> {
+    // The closure below runs exactly one time.
+    // if we spawn any new threads, this won't happen again.
+    ENV_INIT.call_once(|| {
+      let pathbuf_to_string =
+        |pb: Result<PathBuf, std::io::Error>| pb.unwrap_or_default().to_string_lossy().to_string();
+      // First, inherit any env vars from the parent process
+      let term = {
+        if isatty(stdin_fileno()).unwrap_or_default() {
+          if let Ok(term) = std::env::var("TERM") {
+            term
+          } else {
+            "linux".to_string()
+          }
+        } else {
+          "xterm-256color".to_string()
+        }
+      };
+      let home_fallback;
+      let username_fallback;
+      let uid;
+      if let Some(user) = User::from_uid(nix::unistd::Uid::current()).ok().flatten() {
+        home_fallback = user.dir;
+        username_fallback = user.name;
+        uid = user.uid;
+      } else {
+        home_fallback = PathBuf::new();
+        username_fallback = "unknown".into();
+        uid = 0.into();
+      }
+      let home_fallback = pathbuf_to_string(Ok(home_fallback));
+      let hostname = gethostname()
+        .map(|hname| hname.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+      let resolve = |var: &str, fallback: &str| -> String {
+        let val = std::env::var(var).unwrap_or_else(|_| fallback.to_string());
+
+        unsafe { std::env::set_var(var, &val) };
+        val
+      };
+
+      let resolved_home = resolve("HOME", &home_fallback);
+      let resolved_user = resolve("USER", &username_fallback);
+
+      let mut data_dir = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.local/share")));
+      data_dir.push("shed");
+
+      let shed_db = data_dir.join("shed_hist.db");
+      let shed_rc = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(|c| PathBuf::from(c).join("shed").join("shedrc"))
+        .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.config/shed/shedrc")));
+
+      resolve("TMPDIR", "/tmp");
+      resolve("TERM", &term);
+      resolve("LANG", "en_US.UTF-8");
+      resolve("LOGNAME", &resolved_user);
+      resolve("PWD", &pathbuf_to_string(std::env::current_dir()));
+      resolve("OLDPWD", &pathbuf_to_string(std::env::current_dir()));
+      resolve("SHELL", &pathbuf_to_string(std::env::current_exe()));
+      resolve("SHED_HISTDB", &shed_db.display().to_string());
+      resolve("SHED_RC", &shed_rc.display().to_string());
+
+      let set_var = |var: &str, val: &str| {
+        unsafe { std::env::set_var(var, val) };
+      };
+
+      set_var("IFS", " \t\n");
+      set_var("UID", &uid.to_string());
+      set_var("PPID", &getppid().to_string());
+      set_var("HOST", &hostname.clone());
+    });
+
     let mut vars = vec![];
     for (key, val) in std::env::vars() {
       if !vars.iter().any(|(k, _)| k == &key) {
         vars.push((key, Var::env_var(&val)));
       }
     }
-    let pathbuf_to_string =
-      |pb: Result<PathBuf, std::io::Error>| pb.unwrap_or_default().to_string_lossy().to_string();
-    // First, inherit any env vars from the parent process
-    let term = {
-      if isatty(stdin_fileno()).unwrap_or_default() {
-        if let Ok(term) = std::env::var("TERM") {
-          term
-        } else {
-          "linux".to_string()
-        }
-      } else {
-        "xterm-256color".to_string()
-      }
-    };
-    let home_fallback;
-    let username_fallback;
-    let uid;
-    if let Some(user) = User::from_uid(nix::unistd::Uid::current()).ok().flatten() {
-      home_fallback = user.dir;
-      username_fallback = user.name;
-      uid = user.uid;
-    } else {
-      home_fallback = PathBuf::new();
-      username_fallback = "unknown".into();
-      uid = 0.into();
-    }
-    let home_fallback = pathbuf_to_string(Ok(home_fallback));
-    let hostname = gethostname()
-      .map(|hname| hname.to_string_lossy().to_string())
-      .unwrap_or_default();
-
-    let mut resolve = |var: &str, fallback: &str| -> String {
-      let val = std::env::var(var).unwrap_or_else(|_| fallback.to_string());
-
-      unsafe { std::env::set_var(var, &val) };
-      vars.push((var.to_string(), Var::env_var(&val)));
-      val
-    };
-
-    let resolved_home = resolve("HOME", &home_fallback);
-    let resolved_user = resolve("USER", &username_fallback);
-
-    let mut data_dir =
-      dirs::data_dir().unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.local/share")));
-    data_dir.push("shed");
-
-    let shed_db = data_dir.join("shed_hist.db");
-
-    resolve("TMPDIR", "/tmp");
-    resolve("TERM", &term);
-    resolve("LANG", "en_US.UTF-8");
-    resolve("LOGNAME", &resolved_user);
-    resolve("PWD", &pathbuf_to_string(std::env::current_dir()));
-    resolve("OLDPWD", &pathbuf_to_string(std::env::current_dir()));
-    resolve("SHELL", &pathbuf_to_string(std::env::current_exe()));
-    resolve("SHED_HIST", &format!("{resolved_home}/.shed_history"));
-    resolve("SHED_HISTDB", &shed_db.display().to_string());
-    resolve("SHED_RC", &format!("{resolved_home}/.shedrc"));
-
-    let mut set_var = |var: &str, val: &str| {
-      unsafe { std::env::set_var(var, val) };
-      vars.push((var.to_string(), Var::env_var(val)))
-    };
-
-    set_var("IFS", " \t\n");
-    set_var("UID", &uid.to_string());
-    set_var("PPID", &getppid().to_string());
-    set_var("HOST", &hostname.clone());
 
     vars
   }

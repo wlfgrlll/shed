@@ -185,7 +185,6 @@ impl EventParser {
 
   pub fn parse_term_cap(&mut self) {
     let Some(buf) = self.dcs_buf.take() else {
-      log::trace!("parse_term_cap: no dcs_buf, skipping");
       return;
     };
     let supported = self.dcs_supported;
@@ -194,7 +193,6 @@ impl EventParser {
 
     // Only emit when the terminal reported the cap as supported.
     if !supported {
-      log::debug!("XTGETTCAP response: cap unsupported (raw={buf:?})");
       return;
     }
 
@@ -203,23 +201,19 @@ impl EventParser {
       None => (buf.as_str(), None),
     };
     let Some(name) = Self::decode_hex(name_hex) else {
-      log::debug!("XTGETTCAP response: failed to decode name hex {name_hex:?}");
       return;
     };
     let _value = value_hex.and_then(Self::decode_hex);
 
-    log::debug!("XTGETTCAP response: name={name:?} value={_value:?}");
     self.push(TermEvent::Capabilities { name, _value });
   }
 
   pub fn parse_xtversion(&mut self) {
     let Some(buf) = self.dcs_buf.take() else {
-      log::trace!("parse_xtversion: no dcs_buf, skipping");
       return;
     };
     self.dcs_kind = None;
     let xtver = XtVersion::parse(&buf);
-    log::debug!("XTVERSION response: raw={buf:?} parsed={xtver:?}");
     self.push(TermEvent::XtVersion(xtver));
   }
 
@@ -244,7 +238,6 @@ impl EventParser {
 impl vte::Perform for EventParser {
   #[allow(clippy::single_match)]
   fn hook(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
-    log::trace!("DCS hook: params={params:?}, intermediates={intermediates:?}, action={action:?}");
     let params: Vec<u16> = params
       .iter()
       .map(|p| p.first().copied().unwrap_or(0))
@@ -257,20 +250,13 @@ impl vte::Perform for EventParser {
         self.dcs_kind = Some(DcsKind::XtGetCap);
 
         self.dcs_buf = Some(String::new());
-        log::trace!(
-          "DCS hook: XTGETTCAP introducer (supported={})",
-          self.dcs_supported
-        );
       }
       ([b'>'], '|') => {
         self.dcs_kind = Some(DcsKind::XtVersion);
         self.dcs_buf = Some(String::new());
-        log::trace!("DCS hook: XTVERSION introducer");
       }
 
-      _ => {
-        log::trace!("DCS hook: unrecognized introducer ({intermediates:?}, {action:?})");
-      }
+      _ => {}
     }
   }
 
@@ -353,7 +339,6 @@ impl vte::Perform for EventParser {
   }
 
   fn execute(&mut self, byte: u8) {
-    log::trace!("execute: {byte:#04x}");
     if let Some(buf) = self.paste_buf.as_mut() {
       buf.push(byte as char);
       return;
@@ -382,9 +367,6 @@ impl vte::Perform for EventParser {
     _ignore: bool,
     action: char,
   ) {
-    log::trace!(
-      "CSI dispatch: params={params:?}, intermediates={intermediates:?}, action={action:?}"
-    );
     let params: Vec<u16> = params
       .iter()
       .map(|p| p.first().copied().unwrap_or(0))
@@ -526,8 +508,7 @@ impl vte::Perform for EventParser {
     self.push(event);
   }
 
-  fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
-    log::trace!("ESC dispatch: intermediates={intermediates:?}, byte={byte:#04x}");
+  fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
     // SS3 sequences
     if byte == b'O' {
       self.ss3_pending = true;

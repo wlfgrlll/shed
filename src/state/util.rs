@@ -268,9 +268,18 @@ pub fn try_hash() {
 }
 
 pub fn rc_file_path() -> Option<PathBuf> {
-  try_var!("SHED_RC")
-    .map(PathBuf::from)
-    .or_else(|| get_home().map(|home| home.join(".shedrc")))
+  if let Some(p) = try_var!("SHED_RC") {
+    return Some(PathBuf::from(p));
+  }
+  let xdg = xdg_config_home().map(|c| c.join("shed").join("shedrc"));
+  let home = get_home().map(|h| h.join(".shedrc"));
+
+  xdg
+    .as_ref()
+    .filter(|p| p.is_file())
+    .cloned()
+    .or_else(|| home.as_ref().filter(|p| p.is_file()).cloned())
+    .or(xdg)
 }
 
 pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
@@ -279,6 +288,10 @@ pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
   if rc_path.exists() {
     return Ok(None);
   }
+  if let Some(parent) = rc_path.parent() {
+    std::fs::create_dir_all(parent)?;
+  };
+
   log::info!("Generating default rc file at {}", rc_path.display());
   let mut rc_file = OpenOptions::new()
     .write(true)
@@ -337,19 +350,25 @@ pub fn source_runtime_file(name: &str, env_var_name: Option<&str>) -> ShResult<(
     e.print_error();
   }
 
-  let path = if let Some(name) = env_var_name
-    && let Some(path) = try_var!(name)
+  let user_path = if let Some(n) = env_var_name
+    && let Some(p) = try_var!(n)
   {
-    PathBuf::from(&path)
-  } else if let Some(home) = get_home() {
-    home.join(format!(".{name}"))
+    Some(PathBuf::from(p))
   } else {
-    return Err(sherr!(InternalErr, "could not determine home path",));
+    xdg_config_home()
+      .map(|c| c.join("shed").join(name))
+      .filter(|p| p.is_file())
+      .or_else(|| {
+        get_home()
+          .map(|h| h.join(format!(".{name}")))
+          .filter(|p| p.is_file())
+      })
   };
-  if !path.is_file() {
-    return Ok(());
+
+  match user_path {
+    Some(path) if path.is_file() => source_file(path),
+    _ => Ok(()),
   }
-  source_file(path)
 }
 
 pub fn source_rc() -> ShResult<()> {
@@ -504,6 +523,22 @@ pub fn get_default_path() -> Option<String> {
   }
 }
 
+pub fn xdg_runtime_dir() -> PathBuf {
+  if let Some(p) = try_var!("XDG_RUNTIME_DIR") {
+    return PathBuf::from(p);
+  }
+  if let Some(p) = try_var!("TMPDIR") {
+    return PathBuf::from(p);
+  }
+  PathBuf::from(format!("/tmp/shed-{}", getuid()))
+}
+
+pub fn xdg_config_home() -> Option<PathBuf> {
+  try_var!("XDG_CONFIG_HOME")
+    .map(PathBuf::from)
+    .or_else(|| get_home().map(|home| home.join(".config")))
+}
+
 pub fn get_home() -> Option<PathBuf> {
   try_var!("HOME")
     .map(PathBuf::from)
@@ -556,6 +591,135 @@ pub fn get_exec_wrappers() -> Vec<String> {
   wrappers.extend(user_wrappers);
 
   wrappers
+}
+
+#[cfg(test)]
+mod xdg_resolver_tests {
+  use super::*;
+  use crate::state::vars::{VarFlags, VarKind};
+  use crate::tests::testutil::TestGuard;
+
+  fn set_var(name: &str, val: &str) {
+    Shed::vars_mut(|v| {
+      v.set_var(name, VarKind::Str(val.into()), VarFlags::EXPORT)
+        .unwrap();
+    });
+  }
+  fn unset_var(name: &str) {
+    Shed::vars_mut(|v| {
+      v.unset_var(name).ok();
+    });
+  }
+
+  // ─── xdg_config_home ──────────────────────────────────────────────
+
+  #[test]
+  fn xdg_config_home_uses_env_var_when_set() {
+    let _g = TestGuard::new();
+    set_var("XDG_CONFIG_HOME", "/explicit/xdg/config");
+    assert_eq!(
+      xdg_config_home(),
+      Some(PathBuf::from("/explicit/xdg/config"))
+    );
+  }
+
+  #[test]
+  fn xdg_config_home_falls_back_to_home_dot_config() {
+    let _g = TestGuard::new();
+    unset_var("XDG_CONFIG_HOME");
+    set_var("HOME", "/some/home");
+    assert_eq!(xdg_config_home(), Some(PathBuf::from("/some/home/.config")));
+  }
+
+  // ─── xdg_runtime_dir ──────────────────────────────────────────────
+
+  #[test]
+  fn xdg_runtime_dir_prefers_env_var() {
+    let _g = TestGuard::new();
+    set_var("XDG_RUNTIME_DIR", "/run/user/1000");
+    assert_eq!(xdg_runtime_dir(), PathBuf::from("/run/user/1000"));
+  }
+
+  #[test]
+  fn xdg_runtime_dir_falls_back_to_tmpdir() {
+    let _g = TestGuard::new();
+    unset_var("XDG_RUNTIME_DIR");
+    set_var("TMPDIR", "/custom/tmp");
+    assert_eq!(xdg_runtime_dir(), PathBuf::from("/custom/tmp"));
+  }
+
+  #[test]
+  fn xdg_runtime_dir_falls_back_to_tmp_uid_when_none_set() {
+    let _g = TestGuard::new();
+    unset_var("XDG_RUNTIME_DIR");
+    unset_var("TMPDIR");
+    let expected = PathBuf::from(format!("/tmp/shed-{}", getuid()));
+    assert_eq!(xdg_runtime_dir(), expected);
+  }
+
+  // ─── rc_file_path ─────────────────────────────────────────────────
+
+  #[test]
+  fn rc_file_path_shed_rc_env_var_overrides_everything() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("explicit.rc");
+    std::fs::write(&path, "").unwrap();
+    set_var("SHED_RC", &path.to_string_lossy());
+
+    // Even with XDG file present, SHED_RC wins
+    let xdg_dir = tempfile::TempDir::new().unwrap();
+    set_var("XDG_CONFIG_HOME", &xdg_dir.path().to_string_lossy());
+    std::fs::create_dir_all(xdg_dir.path().join("shed")).unwrap();
+    std::fs::write(xdg_dir.path().join("shed").join("shedrc"), "").unwrap();
+
+    assert_eq!(rc_file_path(), Some(path));
+  }
+
+  #[test]
+  fn rc_file_path_prefers_xdg_over_legacy_when_both_exist() {
+    let _g = TestGuard::new();
+    unset_var("SHED_RC");
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+
+    std::fs::write(home.path().join(".shedrc"), "").unwrap();
+    std::fs::create_dir_all(xdg.path().join("shed")).unwrap();
+    let xdg_rc = xdg.path().join("shed").join("shedrc");
+    std::fs::write(&xdg_rc, "").unwrap();
+
+    assert_eq!(rc_file_path(), Some(xdg_rc));
+  }
+
+  #[test]
+  fn rc_file_path_falls_back_to_legacy_when_xdg_does_not_exist() {
+    let _g = TestGuard::new();
+    unset_var("SHED_RC");
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+
+    let legacy = home.path().join(".shedrc");
+    std::fs::write(&legacy, "").unwrap();
+
+    assert_eq!(rc_file_path(), Some(legacy));
+  }
+
+  #[test]
+  fn rc_file_path_returns_xdg_path_for_creation_when_neither_exists() {
+    let _g = TestGuard::new();
+    unset_var("SHED_RC");
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+
+    let expected = xdg.path().join("shed").join("shedrc");
+    assert_eq!(rc_file_path(), Some(expected));
+  }
 }
 
 #[cfg(test)]
@@ -640,6 +804,20 @@ mod generate_default_rc_tests {
     assert!(content.contains("keymap"), "got: {content:?}");
   }
 
+  #[test]
+  fn creates_parent_dir_when_missing() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    // Nested path whose parent directories don't exist yet
+    let rc = dir.path().join("nested").join("shed").join("shedrc");
+    assert!(!rc.parent().unwrap().exists());
+    set_rc_path(&rc);
+    let result = generate_default_rc().unwrap();
+    assert_eq!(result, Some(rc.clone()));
+    assert!(rc.exists());
+    assert!(rc.parent().unwrap().is_dir());
+  }
+
   // The "no rc path resolvable" error path is essentially unreachable
   // in practice: `get_home` falls back to passwd-uid lookup, so even
   // with HOME unset rc_file_path returns Some. Not tested here.
@@ -699,6 +877,78 @@ mod source_runtime_file_tests {
     Shed::vars_mut(|v| v.unset_var("ENV_NAME_NOT_SET").ok());
     source_runtime_file("my_test_rc", Some("ENV_NAME_NOT_SET")).unwrap();
     assert_eq!(var!("HOME_FALLBACK_MARKER"), "via_home");
+  }
+
+  #[test]
+  fn prefers_xdg_over_legacy_when_both_exist() {
+    let _g = TestGuard::new();
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+    Shed::vars_mut(|v| v.unset_var("XDG_OVER_LEGACY_ENV").ok());
+
+    // legacy ~/.over_legacy_rc
+    std::fs::write(
+      home.path().join(".over_legacy_rc"),
+      "OVER_LEGACY_SRC=legacy\n",
+    )
+    .unwrap();
+    // xdg ~/.config/shed/over_legacy_rc
+    std::fs::create_dir_all(xdg.path().join("shed")).unwrap();
+    std::fs::write(
+      xdg.path().join("shed").join("over_legacy_rc"),
+      "OVER_LEGACY_SRC=xdg\n",
+    )
+    .unwrap();
+
+    source_runtime_file("over_legacy_rc", Some("XDG_OVER_LEGACY_ENV")).unwrap();
+    assert_eq!(var!("OVER_LEGACY_SRC"), "xdg");
+  }
+
+  #[test]
+  fn uses_xdg_when_only_it_exists() {
+    let _g = TestGuard::new();
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+    Shed::vars_mut(|v| v.unset_var("XDG_ONLY_ENV").ok());
+
+    std::fs::create_dir_all(xdg.path().join("shed")).unwrap();
+    std::fs::write(
+      xdg.path().join("shed").join("xdg_only_rc"),
+      "XDG_ONLY_MARKER=from_xdg\n",
+    )
+    .unwrap();
+
+    source_runtime_file("xdg_only_rc", Some("XDG_ONLY_ENV")).unwrap();
+    assert_eq!(var!("XDG_ONLY_MARKER"), "from_xdg");
+  }
+
+  #[test]
+  fn env_var_overrides_both_xdg_and_legacy() {
+    let _g = TestGuard::new();
+    let home = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    let explicit_dir = tempfile::TempDir::new().unwrap();
+    set_var("HOME", &home.path().to_string_lossy());
+    set_var("XDG_CONFIG_HOME", &xdg.path().to_string_lossy());
+
+    // All three locations have a file; env-var wins
+    std::fs::write(home.path().join(".triple_rc"), "TRIPLE_SRC=legacy\n").unwrap();
+    std::fs::create_dir_all(xdg.path().join("shed")).unwrap();
+    std::fs::write(
+      xdg.path().join("shed").join("triple_rc"),
+      "TRIPLE_SRC=xdg\n",
+    )
+    .unwrap();
+    let explicit = explicit_dir.path().join("explicit_rc");
+    std::fs::write(&explicit, "TRIPLE_SRC=explicit\n").unwrap();
+    set_var("TRIPLE_RC_ENV", &explicit.to_string_lossy());
+
+    source_runtime_file("triple_rc", Some("TRIPLE_RC_ENV")).unwrap();
+    assert_eq!(var!("TRIPLE_SRC"), "explicit");
   }
 }
 

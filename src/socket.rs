@@ -22,7 +22,10 @@ use super::{
   keys::KeyEvent,
   procio::MIN_INTERNAL_FD,
   sherr,
-  state::vars::{VarFlags, VarKind},
+  state::{
+    self,
+    vars::{VarFlags, VarKind},
+  },
   status_msg, system_msg,
   util::{Pos, ShErr},
   var,
@@ -311,15 +314,13 @@ pub(crate) struct ShedSocket {
 }
 
 impl ShedSocket {
-  pub fn dir() -> String {
-    std::env::var("XDG_RUNTIME_DIR")
-      .or_else(|_| std::env::var("TMPDIR"))
-      .unwrap_or_else(|_| format!("/tmp/shed-{}", nix::unistd::getuid()))
-  }
   pub fn path() -> String {
     let pid = Pid::this();
-    let runtime_dir = Self::dir();
-    format!("{runtime_dir}/shed/{pid}.sock")
+    state::util::xdg_runtime_dir()
+      .join("shed")
+      .join(format!("{pid}.sock"))
+      .display()
+      .to_string()
   }
   pub fn mode() -> Mode {
     var!("SHED_SOCK_MODE")
@@ -329,10 +330,12 @@ impl ShedSocket {
       .unwrap_or(Mode::S_IRUSR | Mode::S_IWUSR)
   }
   pub fn new() -> ShResult<Self> {
-    let runtime_dir = Self::dir();
-    std::fs::create_dir_all(format!("{runtime_dir}/shed"))?;
+    let sock_dir = state::util::xdg_runtime_dir().join("shed");
 
-    let sock_path = Self::path();
+    std::fs::create_dir_all(&sock_dir)?;
+
+    let pid = Pid::this();
+    let sock_path = sock_dir.join(format!("{pid}.sock"));
     std::fs::remove_file(&sock_path).ok();
 
     let listener = UnixListener::bind(&sock_path)?;
@@ -361,7 +364,7 @@ impl ShedSocket {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_SOCK",
-        VarKind::Str(sock_path.clone()),
+        VarKind::Str(sock_path.display().to_string()),
         VarFlags::EXPORT,
       )
     })
@@ -369,7 +372,7 @@ impl ShedSocket {
     Ok(Self {
       listener,
       pid: Pid::this(),
-      path: PathBuf::from(sock_path),
+      path: sock_path,
     })
   }
   pub fn listener(&self) -> &UnixListener {
