@@ -657,12 +657,6 @@ impl VarTab {
         .map(|c| PathBuf::from(c).join("shed").join("shedrc"))
         .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.config/shed/shedrc")));
 
-      log::info!(
-        "init_env: shed_rc={}, SHED_RC={}",
-        shed_rc.display(),
-        std::env::var("SHED_RC").unwrap_or_default()
-      );
-
       resolve("TMPDIR", "/tmp");
       resolve("TERM", &term);
       resolve("LANG", "en_US.UTF-8");
@@ -686,9 +680,6 @@ impl VarTab {
     let mut vars = vec![];
     for (key, val) in std::env::vars() {
       if !vars.iter().any(|(k, _)| k == &key) {
-        if key == "SHED_RC" {
-          log::info!("init_env: found SHED_RC in environment: {}", val);
-        }
         vars.push((key, Var::env_var(&val)));
       }
     }

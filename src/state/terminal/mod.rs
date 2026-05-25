@@ -373,8 +373,7 @@ impl Terminal {
         TermEvent::PrimaryDevAttr => {
           break 'outer
         }
-        other => {
-        }
+        _ => {}
       });
     }
 
@@ -665,7 +664,7 @@ impl Terminal {
       Some(&mut new_mask),
     )?;
 
-    if let Err(e) = result {
+    if result.is_err() {
       tcsetpgrp(tty, getpgrp())?;
     }
 
