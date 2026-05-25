@@ -595,7 +595,7 @@ pub(crate) fn complete_vars(start: &str) -> Vec<Candidate> {
       .keys()
       .map(|s| {
         if let Some(val) = try_var!(s) {
-          Candidate::from(s).with_desc(val)
+          Candidate::from(s).with_desc(val.escape_debug().collect())
         } else {
           Candidate::from(s)
         }
