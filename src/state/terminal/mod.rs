@@ -333,29 +333,21 @@ impl Terminal {
 
   pub fn query_term_caps(&mut self) -> ShResult<()> {
     if self.test_mode {
-      log::debug!("query_term_caps: test_mode set, skipping probe");
       return Ok(());
     }
     let Some(tty) = self.tty() else {
-      log::debug!("query_term_caps: no tty, skipping probe");
       return Ok(());
     };
     let mut caps = TermCap::empty();
-    log::debug!(
-      "query_term_caps: sending capability burst ({} bytes)",
-      Self::CAP_BURST.len()
-    );
     self.write_direct(Self::CAP_BURST)?;
 
     let deadline = Instant::now() + Duration::from_secs(2);
     'outer: while Instant::now() < deadline {
       let remaining = deadline.saturating_duration_since(Instant::now());
       let Ok(timeout) = PollTimeout::try_from(remaining) else {
-        log::trace!("query_term_caps: timeout conversion failed, exiting loop");
         break;
       };
       if self.poll(timeout)? == 0 {
-        log::debug!("query_term_caps: poll timeout reached, exiting loop");
         break;
       }
 
@@ -363,32 +355,25 @@ impl Terminal {
 
       match_loop!(self.reader.read_event()? => event, {
         TermEvent::KittyKbdFlags => {
-          log::debug!("query_term_caps: kitty keyboard protocol supported");
           self.term_caps.insert(TermCap::KITTY_KBD_PROTO);
         }
         TermEvent::Capabilities { name, .. } => match name.as_str() {
           "RGB" => {
-            log::debug!("query_term_caps: TRUECOLOR supported");
             caps.insert(TermCap::TRUECOLOR);
           }
           "Su" => {
-            log::debug!("query_term_caps: SYNC_OUTPUT supported");
             caps.insert(TermCap::SYNC_OUTPUT);
           }
           _ => {
-            log::trace!("query_term_caps: unrecognized cap name {name:?}");
           }
         }
         TermEvent::XtVersion(ver) => {
-          log::debug!("query_term_caps: recording xt_version={ver:?}");
           self.xt_version = Some(ver);
         }
         TermEvent::PrimaryDevAttr => {
-          log::debug!("query_term_caps: found DA1");
           break 'outer
         }
         other => {
-          log::trace!("query_term_caps: ignoring event {other:?}");
         }
       });
     }
@@ -396,18 +381,11 @@ impl Terminal {
     if let Some(val) = try_var!("COLORTERM")
       && matches!(val.as_str(), "truecolor" | "24bit")
     {
-      log::debug!("query_term_caps: COLORTERM environment variable indicates truecolor support");
       caps.insert(TermCap::TRUECOLOR);
     }
 
     self.term_caps |= caps;
 
-    log::debug!(
-      "query_term_caps: complete (term_caps={:?}, local_caps={:?}, xt_version={:?})",
-      self.term_caps,
-      caps,
-      self.xt_version
-    );
     Ok(())
   }
 
@@ -688,7 +666,6 @@ impl Terminal {
     )?;
 
     if let Err(e) = result {
-      log::error!("Failed to set terminal process group: {e}");
       tcsetpgrp(tty, getpgrp())?;
     }
 
