@@ -661,8 +661,6 @@ impl VarTab {
       resolve("TERM", &term);
       resolve("LANG", "en_US.UTF-8");
       resolve("LOGNAME", &resolved_user);
-      resolve("PWD", &pathbuf_to_string(std::env::current_dir()));
-      resolve("OLDPWD", &pathbuf_to_string(std::env::current_dir()));
       resolve("SHELL", &pathbuf_to_string(std::env::current_exe()));
       resolve("SHED_HISTDB", &shed_db.display().to_string());
       resolve("SHED_RC", &shed_rc.display().to_string());
@@ -670,6 +668,15 @@ impl VarTab {
       let set_var = |var: &str, val: &str| {
         unsafe { std::env::set_var(var, val) };
       };
+
+      // PWD always set from getcwd()
+      let pwd = pathbuf_to_string(std::env::current_dir());
+      set_var("PWD", &pwd);
+
+      // OLDPWD inherited if set in parent env
+      if let Ok(old) = std::env::var("OLDPWD") {
+        set_var("OLDPWD", &old);
+      }
 
       set_var("IFS", " \t\n");
       set_var("UID", &uid.to_string());
