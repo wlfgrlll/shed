@@ -495,6 +495,10 @@ impl Terminal {
     }
   }
 
+  pub fn reader_has_pending(&self) -> bool {
+    self.reader.has_pending()
+  }
+
   pub fn poll(&mut self, timeout: PollTimeout) -> ShResult<i32> {
     let Some(tty) = self.tty() else { return Ok(0) };
     let poll_fd = PollFd::new(tty, PollFlags::POLLIN);
@@ -519,8 +523,9 @@ impl Terminal {
 
     self.reader.read(tty)?;
 
-    while let Some(event) = self.reader.read_event()? {
+    while let Some(event) = self.reader.read_event_from_bytes()? {
       let TermEvent::CursorPos(row, col) = event else {
+        self.reader.push_event(event);
         continue;
       };
       return Ok(Some((row, col)));

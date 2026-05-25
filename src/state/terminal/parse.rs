@@ -520,6 +520,7 @@ pub(crate) struct PollReader {
   parser: vte::Parser,
   collector: EventParser,
   byte_buf: VecDeque<u8>,
+  pending_events: VecDeque<TermEvent>,
   pub verbatim_single: bool,
 }
 
@@ -529,6 +530,7 @@ impl Clone for PollReader {
       parser: vte::Parser::new(),
       collector: self.collector.clone(),
       byte_buf: self.byte_buf.clone(),
+      pending_events: self.pending_events.clone(),
       verbatim_single: self.verbatim_single,
     }
   }
@@ -541,6 +543,7 @@ impl Debug for PollReader {
       .field("collector", &self.collector)
       .field("byte_buf", &self.byte_buf)
       .field("verbatim_single", &self.verbatim_single)
+      .field("pending_events", &self.pending_events)
       .finish()
   }
 }
@@ -551,6 +554,7 @@ impl PollReader {
       parser: vte::Parser::new(),
       collector: EventParser::new(),
       byte_buf: VecDeque::new(),
+      pending_events: VecDeque::new(),
       verbatim_single: false,
     }
   }
@@ -598,7 +602,21 @@ impl PollReader {
     }
   }
 
-  pub(super) fn read_event(&mut self) -> Result<Option<TermEvent>, ShErr> {
+  pub(super) fn push_event(&mut self, event: TermEvent) {
+    self.pending_events.push_back(event);
+  }
+
+  pub(super) fn has_pending(&self) -> bool {
+    !self.pending_events.is_empty() || !self.byte_buf.is_empty()
+  }
+
+  pub(super) fn read_event(&mut self) -> ShResult<Option<TermEvent>> {
+    if let Some(ev) = self.pending_events.pop_front() {
+      return Ok(Some(ev));
+    }
+    self.read_event_from_bytes()
+  }
+  pub(super) fn read_event_from_bytes(&mut self) -> ShResult<Option<TermEvent>> {
     if self.verbatim_single {
       if let Some(key) = self.read_one_verbatim() {
         self.verbatim_single = false;
