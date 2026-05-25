@@ -519,8 +519,17 @@ impl RedirSet {
 
     let guard = RedirGuard::new(&targets)?;
     for spec in self.0 {
-      let mut redir = spec.into_redir()?;
-      redir.apply()?;
+      let span = if let RedirSpec::File { ref path, .. } = spec {
+        Some(path.span.clone())
+      } else {
+        None
+      };
+
+      let mut redir = spec
+        .into_redir()
+        .map_err(|e| e.option_promote(span.clone()))?;
+
+      redir.apply().map_err(|e| e.option_promote(span))?;
     }
     Ok(Some(guard))
   }
