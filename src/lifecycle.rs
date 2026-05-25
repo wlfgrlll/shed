@@ -14,6 +14,7 @@ use super::{
     self,
     logic::TrapTarget,
     util::{self, generate_default_rc, source_env},
+    vars::{VarFlags, VarKind},
   },
   status_msg, try_var,
   util::flog,
@@ -57,6 +58,10 @@ pub(super) struct ShedArgs {
   /// Skip sourcing runtime command files
   #[arg(long)]
   pub(super) no_rc: bool,
+
+  /// Provide the path to the runtime commands file
+  #[arg(long)]
+  pub(super) rc_path: Option<String>,
 
   /// List of POSIX 'set' options to enable
   #[arg(short = 'o', value_name = "OPTION", value_parser = Self::SET_OPTS)]
@@ -111,10 +116,13 @@ pub(super) fn setup() -> Option<ShedArgs> {
     return None;
   }
 
-  if !args.no_rc
-    && let Err(e) = source_env()
-  {
-    e.print_error();
+  if !args.no_rc {
+    if let Some(ref path) = args.rc_path {
+      Shed::vars_mut(|v| v.set_var("SHED_RC", VarKind::Str(path.clone()), VarFlags::EXPORT)).ok();
+    }
+    if let Err(e) = source_env() {
+      e.print_error();
+    }
   }
 
   for set_opt in &args.set {
