@@ -41,9 +41,13 @@ fn main() -> ExitCode {
   };
 
   if let Err(e) = input::dispatch_input(args) {
-    e.print_error();
-    if QUIT_CODE.load(Ordering::SeqCst) == 0 {
-      QUIT_CODE.store(1, Ordering::SeqCst);
+    if let ShErrKind::CleanExit(code) = e.kind() {
+      QUIT_CODE.store(*code, Ordering::SeqCst);
+    } else {
+      e.print_error();
+      if QUIT_CODE.load(Ordering::SeqCst) == 0 {
+        QUIT_CODE.store(1, Ordering::SeqCst);
+      }
     }
   };
 
