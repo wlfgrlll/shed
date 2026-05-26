@@ -25,6 +25,7 @@ use bitflags::bitflags;
 use nix::{
   errno::Errno,
   fcntl::{FcntlArg, OFlag, fcntl, open},
+  libc,
   poll::{PollFd, PollFlags, PollTimeout, poll},
   sys::{
     signal::{SigSet, SigmaskHow, Signal, kill, killpg, pthread_sigmask},
@@ -41,10 +42,17 @@ use super::{
 };
 
 static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
-  let fd = open("/dev/tty", OFlag::O_RDWR, Mode::empty()).ok()?;
+  // try to call dup2() on stdin if it is a tty.
+  // on mac, calling open on /dev/tty directly will cause issues.
+  let stdin = unsafe { BorrowedFd::borrow_raw(libc::STDIN_FILENO) };
+  let owned = if isatty(stdin).unwrap_or(false) {
+    stdin.try_clone_to_owned().ok()? // dup2
+  } else {
+    open("/dev/tty", OFlag::O_RDWR, Mode::empty()).ok()?
+  };
   // Move the tty fd above the user-accessible range so that
   // `exec 3>&-` and friends don't collide with shell internals.
-  procio::move_high(fd).ok()
+  procio::move_high(owned).ok()
 });
 
 bitflags! {
