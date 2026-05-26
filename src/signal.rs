@@ -37,6 +37,7 @@ pub static GOT_SIGWINCH: AtomicBool = AtomicBool::new(false);
 pub static GOT_SIGUSR1: AtomicBool = AtomicBool::new(false);
 
 const MISC_SIGNALS: &[Signal] = &[
+  Signal::SIGINT,
   Signal::SIGILL,
   Signal::SIGTRAP,
   Signal::SIGABRT,
