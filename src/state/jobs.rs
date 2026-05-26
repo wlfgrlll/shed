@@ -56,9 +56,11 @@ impl fmt::Display for DisplayWaitStatus {
       WtStat::Stopped(_, signal) => {
         write!(f, "stopped: {:?}", signal)
       }
+      #[cfg(target_os = "linux")]
       WtStat::PtraceEvent(_, signal, _) => {
         write!(f, "ptrace event: {:?}", signal)
       }
+      #[cfg(target_os = "linux")]
       WtStat::PtraceSyscall(_) => {
         write!(f, "ptrace syscall")
       }
@@ -269,10 +271,16 @@ impl Job {
   }
   pub fn pipe_status(stats: &[WtStat]) -> Option<Vec<i32>> {
     if stats.iter().any(|stat| {
-      matches!(
-        stat,
-        WtStat::StillAlive | WtStat::Continued(_) | WtStat::PtraceSyscall(_)
-      )
+      if let WtStat::StillAlive | WtStat::Continued(_) = stat {
+        return true;
+      }
+
+      #[cfg(target_os = "linux")]
+      if let WtStat::PtraceSyscall(_) = stat {
+        return true;
+      }
+
+      false
     }) || stats.len() <= 1
     {
       return None;
@@ -284,8 +292,11 @@ impl Job {
           WtStat::Exited(_, code) => *code,
           WtStat::Signaled(_, signal, _) => SIG_EXIT_OFFSET + *signal as i32,
           WtStat::Stopped(_, signal) => SIG_EXIT_OFFSET + *signal as i32,
+          #[cfg(target_os = "linux")]
           WtStat::PtraceEvent(_, signal, _) => SIG_EXIT_OFFSET + *signal as i32,
-          WtStat::PtraceSyscall(_) | WtStat::Continued(_) | WtStat::StillAlive => unreachable!(),
+          #[cfg(target_os = "linux")]
+          WtStat::PtraceSyscall(_) => unreachable!(),
+          WtStat::Continued(_) | WtStat::StillAlive => unreachable!(),
         })
         .collect(),
     )
@@ -329,7 +340,7 @@ impl Job {
         continue;
       }
       loop {
-        let result = child.wait(Some(WtFlag::WSTOPPED));
+        let result = child.wait(Some(WtFlag::WUNTRACED));
         child.timer.stop()?;
         match result {
           Ok(stat) => {

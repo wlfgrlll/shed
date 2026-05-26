@@ -1,6 +1,9 @@
-use nix::sys::{
-  resource::{Resource, getrlimit, setrlimit},
-  stat::{Mode, umask},
+use nix::{
+  libc::rlim_t,
+  sys::{
+    resource::{Resource, getrlimit, setrlimit},
+    stat::{self, Mode, umask},
+  },
 };
 
 use super::{
@@ -90,18 +93,7 @@ impl super::Builtin for ULimit {
       })?;
     }
     if let Some(procs) = procs {
-      let (_, hard) = getrlimit(Resource::RLIMIT_NPROC).map_err(|e| {
-        sherr!(
-          ExecFail @ span.clone(),
-          "failed to get process limit: {}", e,
-        )
-      })?;
-      setrlimit(Resource::RLIMIT_NPROC, procs, hard).map_err(|e| {
-        sherr!(
-          ExecFail @ span.clone(),
-          "failed to set process limit: {}", e,
-        )
-      })?;
+      ulimit_nproc(&span, procs)?;
     }
     if let Some(stack) = stack {
       let (_, hard) = getrlimit(Resource::RLIMIT_STACK).map_err(|e| {
@@ -150,7 +142,7 @@ impl super::Builtin for ULimit {
   }
 }
 
-fn parse_rwx(bits: &str) -> u32 {
+fn parse_rwx(bits: &str) -> stat::mode_t {
   let mut n = 0;
   if bits.contains('r') {
     n |= 4;
@@ -164,7 +156,38 @@ fn parse_rwx(bits: &str) -> u32 {
   n
 }
 
-fn apply_op(old_bits: &mut u32, op: char, new_bits: u32, shift: u32, mask: u32) {
+#[cfg(target_os = "linux")]
+fn ulimit_nproc(span: &Span, procs: rlim_t) -> ShResult<()> {
+  let (_, hard) = getrlimit(Resource::RLIMIT_NPROC).map_err(|e| {
+    sherr!(
+      ExecFail @ span.clone(),
+      "failed to get process limit: {}", e,
+    )
+  })?;
+  setrlimit(Resource::RLIMIT_NPROC, procs, hard).map_err(|e| {
+    sherr!(
+      ExecFail @ span.clone(),
+      "failed to set process limit: {}", e,
+    )
+  })?;
+  Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ulimit_nproc(span: &Span, _procs: rlim_t) -> ShResult<()> {
+  Err(sherr!(
+    ExecFail @ span.clone(),
+    "ulimit -u (max user processes) is not supported on this platform",
+  ))
+}
+
+fn apply_op(
+  old_bits: &mut stat::mode_t,
+  op: char,
+  new_bits: stat::mode_t,
+  shift: stat::mode_t,
+  mask: stat::mode_t,
+) {
   match op {
     '=' => {
       *old_bits &= !mask;
@@ -181,10 +204,10 @@ fn apply_op(old_bits: &mut u32, op: char, new_bits: u32, shift: u32, mask: u32) 
 }
 
 fn apply_symbolic(
-  old_bits: &mut u32,
+  old_bits: &mut stat::mode_t,
   who: &str,
   op: char,
-  new_bits: u32,
+  new_bits: stat::mode_t,
   span: &Span,
 ) -> ShResult<()> {
   for ch in who.chars() {
@@ -208,8 +231,8 @@ fn apply_symbolic(
   Ok(())
 }
 
-fn format_symbolic(bits: u32) -> String {
-  let format_triple = |shift: u32, prefix: &str| -> String {
+fn format_symbolic(bits: stat::mode_t) -> String {
+  let format_triple = |shift: stat::mode_t, prefix: &str| -> String {
     let b = (bits >> shift) & 0o7;
     let mut s = String::from(prefix);
     if b & 4 == 0 {
@@ -253,9 +276,11 @@ impl super::Builtin for UMask {
 
       if raw.chars().any(|c| c.is_ascii_digit()) {
         // Numeric mode: umask 022
-        let mode_raw = u32::from_str_radix(raw, 8)
+        let mode_raw = stat::mode_t::from_str_radix(raw, 8)
           .map_err(|_| sherr!(ParseErr @ span.clone(), "invalid numeric umask: {raw}"))?;
-        let mode = Mode::from_bits(mode_raw)
+        // need to use the mode_t type alias
+        // since the int size varies between Linux/MacOS
+        let mode = Mode::from_bits(mode_raw as stat::mode_t)
           .ok_or_else(|| sherr!(ParseErr @ span.clone(), "invalid umask value: {raw}"))?;
         umask(mode);
       } else {
@@ -349,6 +374,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_os = "linux")]
   fn ulimit_set_procs_to_current() {
     let _g = TestGuard::new();
     let (current, _) = getrlimit(Resource::RLIMIT_NPROC).unwrap();
@@ -434,7 +460,7 @@ mod tests {
 
   // ===================== umask =====================
 
-  fn with_umask(mask: u32, f: impl FnOnce()) {
+  fn with_umask(mask: nix::sys::stat::mode_t, f: impl FnOnce()) {
     let saved = umask(Mode::from_bits_truncate(mask));
     f();
     umask(saved);

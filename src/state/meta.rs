@@ -29,6 +29,7 @@ use super::{
 use itertools::izip;
 use nix::{
   errno::Errno,
+  libc::time_t,
   poll::PollTimeout,
   sys::{
     resource::{Usage, UsageWho, getrusage},
@@ -177,8 +178,8 @@ impl CmdTimer {
   }
 
   pub fn tv_to_ms(tv: TimeVal) -> i64 {
-    let sec_millis = tv.tv_sec() * 1000;
-    let usec_millis = tv.tv_usec() / 1000;
+    let sec_millis = (tv.tv_sec() * 1000) as time_t;
+    let usec_millis = (tv.tv_usec() / 1000) as time_t;
     sec_millis + usec_millis
   }
 

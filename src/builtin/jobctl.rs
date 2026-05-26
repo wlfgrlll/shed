@@ -330,8 +330,7 @@ fn parse_kill_target(arg: &str, blame: Span) -> ShResult<KillTarget> {
 }
 
 fn list_all_signals() -> ShResult<()> {
-  let signals: String = crate::signal::ALL_SIGNALS
-    .iter()
+  let signals: String = Signal::iterator()
     .map(|sig| {
       let sig = sig.to_string();
       sig.strip_prefix("SIG").unwrap_or(&sig).to_string()

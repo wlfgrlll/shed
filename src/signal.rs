@@ -36,7 +36,7 @@ pub static GOT_SIGWINCH: AtomicBool = AtomicBool::new(false);
 /// Useful for dynamic prompt content and asynchronous refreshing
 pub static GOT_SIGUSR1: AtomicBool = AtomicBool::new(false);
 
-const MISC_SIGNALS: [Signal; 21] = [
+const MISC_SIGNALS: &[Signal] = &[
   Signal::SIGILL,
   Signal::SIGTRAP,
   Signal::SIGABRT,
@@ -47,49 +47,19 @@ const MISC_SIGNALS: [Signal; 21] = [
   Signal::SIGUSR2,
   Signal::SIGPIPE,
   Signal::SIGALRM,
+  Signal::SIGCONT,
+  Signal::SIGURG,
+  Signal::SIGXCPU,
+  Signal::SIGXFSZ,
+  Signal::SIGVTALRM,
+  Signal::SIGPROF,
+  Signal::SIGWINCH,
+  Signal::SIGIO,
+  Signal::SIGSYS,
+  #[cfg(target_os = "linux")]
   Signal::SIGSTKFLT,
-  Signal::SIGCONT,
-  Signal::SIGURG,
-  Signal::SIGXCPU,
-  Signal::SIGXFSZ,
-  Signal::SIGVTALRM,
-  Signal::SIGPROF,
-  Signal::SIGWINCH,
-  Signal::SIGIO,
+  #[cfg(target_os = "linux")]
   Signal::SIGPWR,
-  Signal::SIGSYS,
-];
-
-pub const ALL_SIGNALS: [Signal; 29] = [
-  Signal::SIGHUP,
-  Signal::SIGINT,
-  Signal::SIGQUIT,
-  Signal::SIGILL,
-  Signal::SIGTRAP,
-  Signal::SIGABRT,
-  Signal::SIGBUS,
-  Signal::SIGFPE,
-  Signal::SIGKILL,
-  Signal::SIGUSR1,
-  Signal::SIGSEGV,
-  Signal::SIGUSR2,
-  Signal::SIGPIPE,
-  Signal::SIGALRM,
-  Signal::SIGTERM,
-  Signal::SIGCHLD,
-  Signal::SIGCONT,
-  Signal::SIGSTOP,
-  Signal::SIGTSTP,
-  Signal::SIGTTIN,
-  Signal::SIGTTOU,
-  Signal::SIGURG,
-  Signal::SIGXCPU,
-  Signal::SIGXFSZ,
-  Signal::SIGVTALRM,
-  Signal::SIGPROF,
-  Signal::SIGWINCH,
-  Signal::SIGIO,
-  Signal::SIGSYS,
 ];
 
 pub fn parse_signal(s: &str) -> ShResult<Signal> {
@@ -168,8 +138,8 @@ pub fn check_signals() -> ShResult<()> {
   }
 
   for sig in MISC_SIGNALS {
-    if got_signal(sig) {
-      run_trap(sig)?;
+    if got_signal(*sig) {
+      run_trap(*sig)?;
     }
   }
 
@@ -197,34 +167,9 @@ pub fn sig_setup(is_login: bool) {
   unsafe {
     sigaction(Signal::SIGTTIN, &ignore).unwrap();
     sigaction(Signal::SIGTTOU, &ignore).unwrap();
-
-    sigaction(Signal::SIGCHLD, &action).unwrap();
-    sigaction(Signal::SIGHUP, &action).unwrap();
-    sigaction(Signal::SIGINT, &action).unwrap();
-    sigaction(Signal::SIGQUIT, &action).unwrap();
-    sigaction(Signal::SIGILL, &action).unwrap();
-    sigaction(Signal::SIGTRAP, &action).unwrap();
-    sigaction(Signal::SIGABRT, &action).unwrap();
-    sigaction(Signal::SIGBUS, &action).unwrap();
-    sigaction(Signal::SIGFPE, &action).unwrap();
-    sigaction(Signal::SIGUSR1, &action).unwrap();
-    sigaction(Signal::SIGSEGV, &action).unwrap();
-    sigaction(Signal::SIGUSR2, &action).unwrap();
-    sigaction(Signal::SIGPIPE, &action).unwrap();
-    sigaction(Signal::SIGALRM, &action).unwrap();
-    sigaction(Signal::SIGTERM, &action).unwrap();
-    sigaction(Signal::SIGSTKFLT, &action).unwrap();
-    sigaction(Signal::SIGCONT, &action).unwrap();
-    sigaction(Signal::SIGTSTP, &action).unwrap();
-    sigaction(Signal::SIGURG, &action).unwrap();
-    sigaction(Signal::SIGXCPU, &action).unwrap();
-    sigaction(Signal::SIGXFSZ, &action).unwrap();
-    sigaction(Signal::SIGVTALRM, &action).unwrap();
-    sigaction(Signal::SIGPROF, &action).unwrap();
-    sigaction(Signal::SIGWINCH, &action).unwrap();
-    sigaction(Signal::SIGIO, &action).unwrap();
-    sigaction(Signal::SIGPWR, &action).unwrap();
-    sigaction(Signal::SIGSYS, &action).unwrap();
+    for sig in MISC_SIGNALS {
+      sigaction(*sig, &action).unwrap();
+    }
   }
 
   if is_login {
@@ -286,7 +231,7 @@ pub fn interrupt() -> ShResult<()> {
 }
 
 pub fn wait_child() -> ShResult<()> {
-  let flags = WtFlag::WNOHANG | WtFlag::WSTOPPED;
+  let flags = WtFlag::WNOHANG | WtFlag::WUNTRACED;
   while let Ok(status) = waitpid(None, Some(flags)) {
     match status {
       WtStat::Exited(pid, _) => {
@@ -304,6 +249,7 @@ pub fn wait_child() -> ShResult<()> {
       WtStat::StillAlive => {
         break;
       }
+      #[cfg(target_os = "linux")]
       _ => unimplemented!(),
     }
   }

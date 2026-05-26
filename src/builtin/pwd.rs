@@ -16,7 +16,7 @@ impl super::Builtin for Pwd {
 #[cfg(test)]
 mod tests {
   use crate::state;
-  use crate::tests::testutil::{TestGuard, test_input};
+  use crate::tests::testutil::{TestGuard, canon, test_input};
   use std::env;
   use tempfile::TempDir;
 
@@ -40,7 +40,7 @@ mod tests {
 
     test_input("pwd").unwrap();
     let out = guard.read_output();
-    assert_eq!(out.trim(), tmp.path().display().to_string());
+    assert_eq!(out.trim(), canon(tmp.path()).display().to_string());
   }
 
   #[test]

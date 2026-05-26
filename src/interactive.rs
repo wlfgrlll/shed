@@ -722,6 +722,10 @@ mod tests {
   }
 
   #[test]
+  #[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS doesn't deliver POLLHUP on pty master close"
+  )]
   fn loop_iter_breaks_on_tty_pollhup() {
     let mut h = LoopHarness::new();
     // Closing the master end makes the slave (shed's tty) raise POLLHUP

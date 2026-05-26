@@ -471,11 +471,11 @@ impl RedirSpec {
       }
       RedirSpec::Close { fd } => Ok(Redir::close(fd)),
       RedirSpec::Buffer { fd, mut buf, flags } => {
-        use nix::sys::memfd::{MFdFlags, memfd_create};
         use std::io::{Seek, SeekFrom, Write};
 
-        let owned = memfd_create(c"shed_heredoc", MFdFlags::MFD_CLOEXEC)
-          .map_err(|e| sherr!(InternalErr, "memfd_create failed: {e}"))?;
+        let file = tempfile::tempfile()
+          .map_err(|e| sherr!(InternalErr, "heredoc tempfile creation failed: {e}"))?;
+        let owned: OwnedFd = file.into();
         let owned = move_high(owned)?;
 
         if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
@@ -736,7 +736,7 @@ pub(super) fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String
       let captured = read_fd_to_string(rpipe)?.trim_end().to_string();
 
       let status = loop {
-        match waitpid(child, Some(WtFlag::WSTOPPED)) {
+        match waitpid(child, Some(WtFlag::WUNTRACED)) {
           Ok(status) => break status,
           Err(Errno::EINTR) => continue,
           Err(e) => return Err(e.into()),

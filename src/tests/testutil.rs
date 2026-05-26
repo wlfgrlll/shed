@@ -75,6 +75,19 @@ use crate::{
   util::ShResult,
 };
 
+/// Returns the canonical (symlink-resolved) form of `p`. Useful in tests
+/// that assert `env::current_dir()` matches a `tempfile::TempDir` path:
+/// on macOS, `getcwd()` returns `/private/var/folders/...` while
+/// `TempDir::path()` returns `/var/folders/...` (because `/var` is a
+/// symlink to `/private/var`). On Linux this is a no-op. Falls back to
+/// the input path if the file doesn't exist (so tests that name
+/// not-yet-created paths still work).
+pub(crate) fn canon(p: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+  p.as_ref()
+    .canonicalize()
+    .unwrap_or_else(|_| p.as_ref().to_path_buf())
+}
+
 pub(crate) fn has_cmds(cmds: &[&str]) -> bool {
   let path_cmds = MetaTab::get_cmds_in_path();
   path_cmds
@@ -104,8 +117,14 @@ pub(crate) struct TestGuard {
   old_cwd: PathBuf,
   saved_env: HashMap<String, String>,
 
-  _pty_master: Option<OwnedFd>,
+  // Drop order matters: pty_slave MUST come before _pty_master in this
+  // struct. On macOS, `close(master)` blocks until any in-flight read on
+  // that fd completes. Our reader thread is doing a blocking read on the
+  // master. Closing the slave first sends EOF to that read, the thread
+  // exits, and then closing the master returns cleanly. Field declaration
+  // order is drop order, so this ordering is load-bearing.
   pty_slave: OwnedFd,
+  _pty_master: Option<OwnedFd>,
   stdin_write_pipe: Option<OwnedFd>,
   output: Arc<(Mutex<Vec<u8>>, Condvar)>,
   _read_handle: JoinHandle<()>,

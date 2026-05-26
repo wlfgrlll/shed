@@ -114,7 +114,7 @@ pub mod tests {
       self, Shed,
       vars::{VarFlags, VarKind},
     },
-    tests::testutil::{TestGuard, test_input},
+    tests::testutil::{TestGuard, canon, test_input},
   };
 
   // ===================== Basic Navigation =====================
@@ -132,7 +132,7 @@ pub mod tests {
 
     assert_eq!(
       new_dir.display().to_string(),
-      temp_dir.path().display().to_string()
+      canon(temp_dir.path()).display().to_string()
     );
   }
 
@@ -154,7 +154,7 @@ pub mod tests {
     let cwd = env::current_dir().unwrap();
     assert_eq!(
       cwd.display().to_string(),
-      temp_dir.path().display().to_string()
+      canon(temp_dir.path()).display().to_string()
     );
   }
 
@@ -169,7 +169,7 @@ pub mod tests {
     test_input("cd child").unwrap();
 
     let cwd = env::current_dir().unwrap();
-    assert_eq!(cwd.display().to_string(), sub.display().to_string());
+    assert_eq!(cwd.display().to_string(), canon(&sub).display().to_string());
   }
 
   // ===================== Environment =====================
@@ -215,13 +215,13 @@ pub mod tests {
     test_input(format!("cd {}", dir_a.path().display())).unwrap();
     assert_eq!(
       env::current_dir().unwrap().display().to_string(),
-      dir_a.path().display().to_string()
+      canon(dir_a.path()).display().to_string()
     );
 
     test_input(format!("cd {}", dir_b.path().display())).unwrap();
     assert_eq!(
       env::current_dir().unwrap().display().to_string(),
-      dir_b.path().display().to_string()
+      canon(dir_b.path()).display().to_string()
     );
   }
 
@@ -235,7 +235,7 @@ pub mod tests {
     test_input(format!("cd {}", deep.display())).unwrap();
     assert_eq!(
       env::current_dir().unwrap().display().to_string(),
-      deep.display().to_string()
+      canon(&deep).display().to_string()
     );
   }
 
@@ -279,7 +279,7 @@ pub mod tests {
     test_input(format!("cd {}", dir_b.path().display())).unwrap();
 
     let oldpwd = var!("OLDPWD");
-    assert_eq!(oldpwd, dir_a.path().display().to_string());
+    assert_eq!(oldpwd, canon(dir_a.path()).display().to_string());
   }
 
   #[test]
@@ -306,7 +306,7 @@ pub mod tests {
     let cwd = env::current_dir().unwrap();
     assert_eq!(
       cwd.display().to_string(),
-      dir_a.path().display().to_string()
+      canon(dir_a.path()).display().to_string()
     );
   }
 
@@ -324,7 +324,7 @@ pub mod tests {
     let cwd = env::current_dir().unwrap();
     assert_eq!(
       cwd.display().to_string(),
-      dir_b.path().display().to_string()
+      canon(dir_b.path()).display().to_string()
     );
   }
 
@@ -348,7 +348,10 @@ pub mod tests {
     test_input("cd mydir").unwrap();
 
     let cwd = env::current_dir().unwrap();
-    assert_eq!(cwd.display().to_string(), target.display().to_string());
+    assert_eq!(
+      cwd.display().to_string(),
+      canon(&target).display().to_string()
+    );
   }
 
   #[test]
@@ -369,7 +372,10 @@ pub mod tests {
     test_input("cd realdir").unwrap();
 
     let cwd = env::current_dir().unwrap();
-    assert_eq!(cwd.display().to_string(), target.display().to_string());
+    assert_eq!(
+      cwd.display().to_string(),
+      canon(&target).display().to_string()
+    );
   }
 
   #[test]
@@ -391,7 +397,7 @@ pub mod tests {
     let cwd = env::current_dir().unwrap();
     assert_eq!(
       cwd.display().to_string(),
-      target.path().display().to_string()
+      canon(target.path()).display().to_string()
     );
   }
 
@@ -416,7 +422,7 @@ pub mod tests {
     test_input("cd ./child").unwrap();
 
     let cwd = env::current_dir().unwrap();
-    assert_eq!(cwd.display().to_string(), sub.display().to_string());
+    assert_eq!(cwd.display().to_string(), canon(&sub).display().to_string());
   }
 
   // ===================== -P option =====================
