@@ -2,7 +2,10 @@ use std::{
   io::Write,
   os::{
     fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, RawFd},
-    unix::net::{UnixListener, UnixStream},
+    unix::{
+      fs::DirBuilderExt,
+      net::{UnixListener, UnixStream},
+    },
   },
   path::{Path, PathBuf},
   str::FromStr,
@@ -417,7 +420,10 @@ impl ShedSocket {
   pub fn new() -> ShResult<Self> {
     let sock_dir = state::util::xdg_runtime_dir().join("shed");
 
-    std::fs::create_dir_all(&sock_dir)?;
+    std::fs::DirBuilder::new()
+      .recursive(true)
+      .mode(0o700)
+      .create(&sock_dir)?;
 
     let pid = Pid::this();
     let sock_path = sock_dir.join(format!("{pid}.sock"));
