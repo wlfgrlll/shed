@@ -61,7 +61,7 @@ impl Builtin for Echo {
       .collect();
 
     let mut joined = prepared?.join(" ");
-    if !flags.contains(EchoFlags::NO_NEWLINE) && !joined.ends_with('\n') {
+    if !flags.contains(EchoFlags::NO_NEWLINE) {
       joined.push('\n');
     }
 
@@ -133,6 +133,14 @@ mod tests {
     test_input("echo -e 'hello\\nworld'").unwrap();
     let out = guard.read_output();
     assert_eq!(out, "hello\nworld\n");
+  }
+
+  #[test]
+  fn echo_escape_trailing_newline_not_swallowed() {
+    let guard = TestGuard::new();
+    test_input(r"echo -e '\n'").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out, "\n\n");
   }
 
   #[test]
