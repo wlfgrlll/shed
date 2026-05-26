@@ -12,7 +12,7 @@ use nix::{
   fcntl::{FcntlArg, fcntl},
   sys::{
     signal::{Signal, kill},
-    stat::{FchmodatFlags, Mode, fchmodat},
+    stat::{self, FchmodatFlags, Mode, fchmodat},
   },
   unistd::{Pid, write},
 };
@@ -324,7 +324,7 @@ impl ShedSocket {
   }
   pub fn mode() -> Mode {
     var!("SHED_SOCK_MODE")
-      .parse::<u32>()
+      .parse::<stat::mode_t>()
       .ok()
       .and_then(Mode::from_bits)
       .unwrap_or(Mode::S_IRUSR | Mode::S_IWUSR)

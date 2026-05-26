@@ -40,6 +40,11 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
 
   match unsafe { fork()? } {
     ForkResult::Child => {
+      // Drop our reference to the tty fd before exec; otherwise the
+      // orphaned procsub child (we don't wait on it) holds the pty
+      // slave open. On macOS that prevents the master from ever
+      // returning EOF, which deadlocks TestGuard teardown.
+      Shed::term_mut(|t| t.detach_tty());
       drop(register_fd);
 
       let redir: RedirSet =
@@ -92,7 +97,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
       // Wait for child with EINTR retry
       let status = loop {
-        match waitpid(child, Some(WtFlag::WSTOPPED)) {
+        match waitpid(child, Some(WtFlag::WUNTRACED)) {
           Ok(status) => break status,
           Err(Errno::EINTR) => continue,
           Err(e) => return Err(e.into()),
@@ -211,8 +216,12 @@ mod tests {
   #[test]
   fn proc_sub_output_returns_dev_fd_path() {
     // is_input=false: path points at the reader fd; same shape.
+    // Use a self-terminating command — an unread procsub keeps its
+    // child alive forever otherwise, and the orphan deadlocks
+    // TestGuard teardown on macOS (master close blocks waiting for
+    // the slave fds the orphan inherited).
     let _g = TestGuard::new();
-    let path = expand_proc_sub("cat > /dev/null", false).unwrap();
+    let path = expand_proc_sub("true", false).unwrap();
     assert!(
       path.starts_with("/dev/fd/"),
       "expected /dev/fd/... path, got: {path:?}"

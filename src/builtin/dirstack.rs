@@ -363,7 +363,7 @@ fn parse_stack_idx(arg: &str, blame: Span, cmd: &str) -> ShResult<StackIdx> {
 pub mod tests {
   use crate::{
     Shed, state,
-    tests::testutil::{TestGuard, test_input},
+    tests::testutil::{TestGuard, canon, test_input},
   };
   use pretty_assertions::{assert_eq, assert_ne};
   use std::{env, path::PathBuf};
@@ -379,7 +379,7 @@ pub mod tests {
     let new_dir = env::current_dir().unwrap();
 
     assert_ne!(new_dir, current_dir);
-    assert_eq!(new_dir, PathBuf::from("/tmp"));
+    assert_eq!(new_dir, canon(PathBuf::from("/tmp")));
 
     let dir_stack = Shed::meta(|m| m.dirs().clone());
     assert_eq!(dir_stack.len(), 1);
@@ -387,7 +387,8 @@ pub mod tests {
 
     let out = g.read_output();
     let path = super::truncate_home_path(current_dir.to_string_lossy().to_string());
-    assert_eq!(out, format!("/tmp {path}\n"));
+    let tmp_canon = canon(PathBuf::from("/tmp")).to_string_lossy().to_string();
+    assert_eq!(out, format!("{tmp_canon} {path}\n"));
   }
 
   #[test]
@@ -403,7 +404,7 @@ pub mod tests {
     assert_eq!(dir_stack.len(), 1);
     assert_eq!(dir_stack[0], current_dir);
 
-    assert_eq!(env::current_dir().unwrap(), tempdir.path());
+    assert_eq!(env::current_dir().unwrap(), canon(tempdir.path()));
     g.read_output(); // consume output of pushd
 
     test_input("popd").unwrap();
@@ -428,8 +429,8 @@ pub mod tests {
     let original = env::current_dir().unwrap();
     let tmp1 = TempDir::new().unwrap();
     let tmp2 = TempDir::new().unwrap();
-    let path1 = tmp1.path().to_path_buf();
-    let path2 = tmp2.path().to_path_buf();
+    let path1 = canon(tmp1.path());
+    let path2 = canon(tmp2.path());
 
     test_input(format!("pushd {}", path1.display())).unwrap();
     test_input(format!("pushd {}", path2.display())).unwrap();
@@ -457,8 +458,8 @@ pub mod tests {
     let original = env::current_dir().unwrap();
     let tmp1 = TempDir::new().unwrap();
     let tmp2 = TempDir::new().unwrap();
-    let path1 = tmp1.path().to_path_buf();
-    let path2 = tmp2.path().to_path_buf();
+    let path1 = canon(tmp1.path());
+    let path2 = canon(tmp2.path());
 
     // Build stack: cwd=original, then pushd path1, pushd path2
     // Stack after: cwd=path2, [path1, original]
@@ -507,7 +508,7 @@ pub mod tests {
     let g = TestGuard::new();
     let original = env::current_dir().unwrap();
     let tmp = TempDir::new().unwrap();
-    let path = tmp.path().to_path_buf();
+    let path = canon(tmp.path());
 
     test_input(format!("pushd {}", path.display())).unwrap();
     g.read_output();
@@ -532,8 +533,8 @@ pub mod tests {
     let original = env::current_dir().unwrap();
     let tmp1 = TempDir::new().unwrap();
     let tmp2 = TempDir::new().unwrap();
-    let path1 = tmp1.path().to_path_buf();
-    let path2 = tmp2.path().to_path_buf();
+    let path1 = canon(tmp1.path());
+    let path2 = canon(tmp2.path());
 
     // Stack: cwd=path2, [path1, original]
     test_input(format!("pushd {}", path1.display())).unwrap();
@@ -685,8 +686,8 @@ pub mod tests {
     clear_stack();
     let tmp1 = TempDir::new().unwrap();
     let tmp2 = TempDir::new().unwrap();
-    let path1 = tmp1.path().to_path_buf();
-    let path2 = tmp2.path().to_path_buf();
+    let path1 = canon(tmp1.path());
+    let path2 = canon(tmp2.path());
     // Stack: cwd=path2, dirs=[path1, original]
     test_input(format!("pushd {}", path1.display())).unwrap();
     test_input(format!("pushd {}", path2.display())).unwrap();
