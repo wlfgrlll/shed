@@ -14,7 +14,7 @@ use super::{
   eval::lex::Span,
   expand,
   getopt::{Opt, OptSpec},
-  keys, match_loop, outln, procio,
+  key, keys, match_loop, outln, procio,
   readline::{self, ScoredCandidate},
   sherr, state,
   util::{self, Direction, ShResult, with_status},

@@ -12,7 +12,7 @@ use super::{
     lex::{KEYWORDS, Span, Tk},
   },
   expand::{self, as_var_val_display},
-  keys, match_loop, out, outln, procio,
+  key, keys, match_loop, out, outln, procio,
   procio::RedirSet,
   readline, sherr, shopt, signal, state,
   state::{Shed, jobs::ChildProc, shopt as shopt_internal},

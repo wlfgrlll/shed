@@ -4,8 +4,8 @@ use nix::unistd::{isatty, write};
 use regex::Regex;
 
 use super::{
-  Direction, ShResult, Shed, StyledHelp,
-  keys::KeyEvent,
+  Direction, ShResult, Shed, StyledHelp, key,
+  keys::{KeyCode, KeyEvent},
   markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   procio::stdout_fileno,
   readline::SimpleEditor,
@@ -233,12 +233,8 @@ impl HelpPager {
   }
 
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<PagerEvent> {
-    use crate::keys::KeyCode as K;
-
-    let KeyEvent(code, _mods) = &key;
-
-    let cmd = match code {
-      K::Tab => {
+    let cmd = match key {
+      key!(Tab) => {
         if self.ref_keys.is_empty() {
           self.enter_hint_mode();
         } else {
@@ -247,7 +243,7 @@ impl HelpPager {
         return Ok(PagerEvent::Continue);
       }
 
-      K::Esc => {
+      key!(Esc) => {
         if !self.ref_keys.is_empty() {
           self.ref_keys.clear();
           return Ok(PagerEvent::Continue);
@@ -259,12 +255,12 @@ impl HelpPager {
         }
       }
 
-      K::Backspace if self.search.active && self.search.is_empty() => {
+      key!(Backspace) if self.search.active && self.search.is_empty() => {
         self.search.reset();
         return Ok(PagerEvent::Continue);
       }
 
-      K::Enter if self.search.active => {
+      key!(Enter) if self.search.active => {
         self.search(true);
         self.search.active = false; // keep results for highlighting
 
@@ -282,7 +278,7 @@ impl HelpPager {
         return Ok(PagerEvent::Continue);
       }
 
-      K::Char(ch @ ('/' | '?')) => {
+      KeyEvent(KeyCode::Char(ch @ ('/' | '?')), _) => {
         if !self.ref_keys.is_empty() {
           self.ref_keys.clear();
         }
@@ -300,11 +296,11 @@ impl HelpPager {
         return Ok(PagerEvent::Continue);
       }
 
-      K::Char(ch) if !self.ref_keys.is_empty() => {
+      KeyEvent(KeyCode::Char(ch), _) if !self.ref_keys.is_empty() => {
         if let Some(index) = self
           .ref_keys
           .iter()
-          .find(|(_, c)| *c == *ch)
+          .find(|(_, c)| *c == ch)
           .map(|(i, _)| *i)
         {
           self.ref_keys.clear();
@@ -317,7 +313,7 @@ impl HelpPager {
         }
       }
 
-      K::Char(dir @ ('n' | 'N')) => {
+      KeyEvent(KeyCode::Char(dir @ ('n' | 'N')), _) => {
         match dir {
           'n' => self.jump_to_match(Direction::Forward),
           'N' => self.jump_to_match(Direction::Backward),
@@ -326,24 +322,24 @@ impl HelpPager {
         return Ok(PagerEvent::Continue);
       }
 
-      K::Char('q') => return Ok(PagerEvent::Exit),
+      key!('q') => return Ok(PagerEvent::Exit),
 
-      K::Char('g') => PagerCmd::TopOfPage,
-      K::Char('G') => PagerCmd::BottomOfPage,
+      key!('g') => PagerCmd::TopOfPage,
+      key!('G') => PagerCmd::BottomOfPage,
 
-      K::Char('d') => PagerCmd::Scroll(self.jump_dist as isize),
-      K::Char('u') => PagerCmd::Scroll(-(self.jump_dist as isize)),
+      key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist as isize),
+      key!('u') | key!(PageUp) => PagerCmd::Scroll(-(self.jump_dist as isize)),
 
-      K::ScrollDown | K::Down | K::Char('j') => PagerCmd::Scroll(1),
-      K::ScrollUp | K::Up | K::Char('k') => PagerCmd::Scroll(-1),
-      K::Back | K::Left | K::Char('h') => return Ok(PagerEvent::Back),
-      K::Forward | K::Right | K::Char('l') => return Ok(PagerEvent::Forward),
+      key!(ScrollDown) | key!(Down) | key!('j') => PagerCmd::Scroll(1),
+      key!(ScrollUp) | key!(Up) | key!('k') => PagerCmd::Scroll(-1),
+      key!(Back) | key!(Left) | key!('h') => return Ok(PagerEvent::Back),
+      key!(Forward) | key!(Right) | key!('l') => return Ok(PagerEvent::Forward),
 
-      K::MousePos(row, col) => {
-        return self.handle_hover(*row, *col);
+      KeyEvent(KeyCode::MousePos(row, col), _) => {
+        return self.handle_hover(row, col);
       }
-      K::LeftClick(row, col) => {
-        return self.handle_click(*row, *col);
+      KeyEvent(KeyCode::LeftClick(row, col), _) => {
+        return self.handle_click(row, col);
       }
 
       _ => return Ok(PagerEvent::Continue),
