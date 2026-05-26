@@ -57,9 +57,9 @@ const MISC_SIGNALS: &[Signal] = &[
   Signal::SIGWINCH,
   Signal::SIGIO,
   Signal::SIGSYS,
-  #[cfg(target_os = "linux")]
+  #[cfg(linux_like)]
   Signal::SIGSTKFLT,
-  #[cfg(target_os = "linux")]
+  #[cfg(linux_like)]
   Signal::SIGPWR,
 ];
 
@@ -250,7 +250,7 @@ pub fn wait_child() -> ShResult<()> {
       WtStat::StillAlive => {
         break;
       }
-      #[cfg(target_os = "linux")]
+      #[cfg(linux_like)]
       _ => unimplemented!(),
     }
   }

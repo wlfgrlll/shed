@@ -499,6 +499,14 @@ pub fn open_db_conn() -> ShResult<Connection> {
   Ok(Connection::open(&db_path)?)
 }
 
+#[cfg(target_os = "android")]
+pub fn get_default_path() -> Option<String> {
+  // Android does not have conf_str or _CS_PATH
+  // So we return None here.
+  None
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn get_default_path() -> Option<String> {
   unsafe {
     let needed = libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0);

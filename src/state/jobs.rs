@@ -56,11 +56,11 @@ impl fmt::Display for DisplayWaitStatus {
       WtStat::Stopped(_, signal) => {
         write!(f, "stopped: {:?}", signal)
       }
-      #[cfg(target_os = "linux")]
+      #[cfg(linux_like)]
       WtStat::PtraceEvent(_, signal, _) => {
         write!(f, "ptrace event: {:?}", signal)
       }
-      #[cfg(target_os = "linux")]
+      #[cfg(linux_like)]
       WtStat::PtraceSyscall(_) => {
         write!(f, "ptrace syscall")
       }
@@ -275,7 +275,7 @@ impl Job {
         return true;
       }
 
-      #[cfg(target_os = "linux")]
+      #[cfg(linux_like)]
       if let WtStat::PtraceSyscall(_) = stat {
         return true;
       }
@@ -292,9 +292,9 @@ impl Job {
           WtStat::Exited(_, code) => *code,
           WtStat::Signaled(_, signal, _) => SIG_EXIT_OFFSET + *signal as i32,
           WtStat::Stopped(_, signal) => SIG_EXIT_OFFSET + *signal as i32,
-          #[cfg(target_os = "linux")]
+          #[cfg(linux_like)]
           WtStat::PtraceEvent(_, signal, _) => SIG_EXIT_OFFSET + *signal as i32,
-          #[cfg(target_os = "linux")]
+          #[cfg(linux_like)]
           WtStat::PtraceSyscall(_) => unreachable!(),
           WtStat::Continued(_) | WtStat::StillAlive => unreachable!(),
         })

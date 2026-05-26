@@ -156,7 +156,7 @@ fn parse_rwx(bits: &str) -> stat::mode_t {
   n
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(linux_like)]
 fn ulimit_nproc(span: &Span, procs: rlim_t) -> ShResult<()> {
   let (_, hard) = getrlimit(Resource::RLIMIT_NPROC).map_err(|e| {
     sherr!(
@@ -173,7 +173,7 @@ fn ulimit_nproc(span: &Span, procs: rlim_t) -> ShResult<()> {
   Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(linux_like))]
 fn ulimit_nproc(span: &Span, _procs: rlim_t) -> ShResult<()> {
   Err(sherr!(
     ExecFail @ span.clone(),
@@ -374,7 +374,7 @@ mod tests {
   }
 
   #[test]
-  #[cfg(target_os = "linux")]
+  #[cfg(linux_like)]
   fn ulimit_set_procs_to_current() {
     let _g = TestGuard::new();
     let (current, _) = getrlimit(Resource::RLIMIT_NPROC).unwrap();
