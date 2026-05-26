@@ -9,6 +9,7 @@ use std::{
 use super::{
   ShErr, Shed,
   eval::{Node, lex::Span},
+  expand::as_var_val_display,
   keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
   signal::parse_signal,
 };
@@ -82,6 +83,34 @@ pub(crate) enum AutoCmdKind {
   OnCommandNotFound,
 }
 
+impl AutoCmdKind {
+  pub fn iter() -> impl Iterator<Item = Self> {
+    [
+      Self::PreCmd,
+      Self::PostCmd,
+      Self::PreChangeDir,
+      Self::PostChangeDir,
+      Self::OnJobFinish,
+      Self::PrePrompt,
+      Self::PostPrompt,
+      Self::PreModeChange,
+      Self::PostModeChange,
+      Self::OnHistoryOpen,
+      Self::OnHistoryClose,
+      Self::OnHistorySelect,
+      Self::OnCompletionStart,
+      Self::OnCompletionCancel,
+      Self::OnCompletionSelect,
+      Self::OnScreensaverExec,
+      Self::OnScreensaverReturn,
+      Self::OnTimeReport,
+      Self::OnExit,
+      Self::OnCommandNotFound,
+    ]
+    .into_iter()
+  }
+}
+
 crate::two_way_display!(AutoCmdKind,
   PreCmd              <=> "pre-cmd";
   PostCmd             <=> "post-cmd";
@@ -117,6 +146,14 @@ impl AutoCmd {
   }
   pub fn command(&self) -> &str {
     &self.command
+  }
+}
+
+impl Display for AutoCmd {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let kind = self.kind.to_string();
+    let command = as_var_val_display(&self.command);
+    write!(f, "autocmd {kind} {command}")
   }
 }
 

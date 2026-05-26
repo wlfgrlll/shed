@@ -9,9 +9,15 @@ behavior without modifying the shell itself.
 ==============================================================================
 1. Registration                                *autocmd-register*
 
+  `autocmd`
+  `autocmd {kind}`
   `autocmd [OPTIONS] {kind} {command}`
 
   Register {command} to run whenever the event {kind} fires.
+
+  With no arguments, prints every registered autocmd across all
+  event kinds. With just a {kind} and no {command}, prints only the
+  autocmds registered for that event. See |autocmd-list|.
 
   Options:
 
@@ -25,6 +31,19 @@ behavior without modifying the shell itself.
       `autocmd post-cmd 'echo "exit: $?"'`
       `autocmd post-change-dir 'echo "moved to $NEW_DIR"'`
       `autocmd -c pre-cmd`
+      `autocmd`                  list every registered autocmd
+      `autocmd post-cmd`         list autocmds registered for post-cmd
+
+                                                 *autocmd-list*
+
+  Listing ~
+
+    `autocmd`           prints every registered autocmd, grouped
+                        across all event kinds.
+
+    `autocmd {kind}`    prints only the autocmds registered for that
+                        event {kind}. Useful for inspecting what
+                        will fire on a specific lifecycle event.
 
 ==============================================================================
 2. Event Kinds                                 *autocmd-kinds*

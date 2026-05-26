@@ -1,7 +1,7 @@
 use super::{
   ShResult, Shed,
   getopt::{Opt, OptSpec},
-  sherr,
+  outln, sherr,
   state::logic::{AutoCmd, AutoCmdKind},
   with_status,
 };
@@ -12,9 +12,7 @@ impl super::Builtin for AutoCmdBuiltin {
     vec![OptSpec::flag('c')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let span = args.span();
     let mut clear = false;
-    let mut argv = args.argv.into_iter();
     for opt in args.opts {
       match opt {
         Opt::Short('c') => clear = true,
@@ -22,11 +20,10 @@ impl super::Builtin for AutoCmdBuiltin {
       }
     }
 
+    let mut argv = args.argv.into_iter();
+
     let Some((kind, kind_span)) = argv.next() else {
-      return Err(sherr!(
-          ExecFail @ span,
-          "expected an autocmd kind",
-      ));
+      return display_autocmds(None);
     };
 
     let Ok(autocmd_kind) = kind.parse::<AutoCmdKind>() else {
@@ -42,10 +39,7 @@ impl super::Builtin for AutoCmdBuiltin {
     }
 
     let Some((autocmd_cmd, _)) = argv.next() else {
-      return Err(sherr!(
-          ExecFail @ span,
-          "expected an autocmd command",
-      ));
+      return display_autocmds(Some(autocmd_kind));
     };
 
     let autocmd = AutoCmd::new(autocmd_kind, autocmd_cmd.clone());
@@ -54,6 +48,32 @@ impl super::Builtin for AutoCmdBuiltin {
 
     with_status(0)
   }
+}
+
+fn display_autocmds(kind: Option<AutoCmdKind>) -> ShResult<()> {
+  let mut lines: Vec<String> = vec![];
+  match kind {
+    Some(kind) => {
+      lines.extend(
+        Shed::logic(|l| l.get_autocmds(kind))
+          .into_iter()
+          .map(|ac| ac.to_string()),
+      );
+    }
+    None => {
+      for kind in AutoCmdKind::iter() {
+        lines.extend(
+          Shed::logic(|l| l.get_autocmds(kind))
+            .into_iter()
+            .map(|ac| ac.to_string()),
+        );
+      }
+    }
+  }
+  let out = lines.join("\n");
+  outln!("{out}");
+
+  with_status(0)
 }
 
 #[cfg(test)]

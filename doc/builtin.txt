@@ -181,14 +181,25 @@ ARROPS                                           *builtin-arrops* *arrops*
 ==============================================================================
 AUTOCMD                                          *builtin-autocmd* *autocmd*
 
+  `autocmd`
+  `autocmd {event}`
   `autocmd [-c] {event} [{command}]`
 
-  Register {command} to run automatically when {event} fires. Multiple
-  commands can be registered for the same event; they run in
-  registration order. The exit status of autocmd handlers does not
-  affect `$?`.
+  Register, clear, or list {command}s to run when {event} fires.
+  Multiple commands can be registered for the same event; they run
+  in registration order. The exit status of autocmd handlers does
+  not affect `$?`.
 
   `-c`    clear all registered commands for {event} instead of adding one
+
+  Listing ~
+
+    With no arguments, prints every registered autocmd across all
+    events. With a single {event} and no {command}, prints only
+    the autocmds registered for that event:
+
+        `autocmd`              list every registered autocmd
+        `autocmd post-cmd`     list autocmds for the post-cmd event
 
   Available events:
 
@@ -218,6 +229,8 @@ AUTOCMD                                          *builtin-autocmd* *autocmd*
       `autocmd post-cmd 'echo done'`
       `autocmd post-change-dir 'ls'`
       `autocmd -c post-cmd`           clear all post-cmd handlers
+      `autocmd`                       list all registered autocmds
+      `autocmd post-cmd`              list autocmds for post-cmd
 
   For special variables available inside autocmd handlers, see |autocmd|.
 
