@@ -84,10 +84,9 @@ fn many(cands: &[&str]) -> CompResult {
 }
 
 fn collapsed_single(result: &CompResult) -> Option<&str> {
-  if let CompResult::CommonPrefix { result } = result {
-    Some(result.content())
-  } else {
-    None
+  match result {
+    CompResult::CommonPrefix { result } | CompResult::Exact { result } => Some(result.content()),
+    _ => None,
   }
 }
 
