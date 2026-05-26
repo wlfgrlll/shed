@@ -94,6 +94,7 @@ lib.concatLines [
         "shopt prompt.screensaver_idle_time=${toString cfg.shopts.prompt.screensaver_idle_time}"
         "shopt prompt.screensaver_cmd='${cfg.shopts.prompt.screensaver_cmd}'"
         "shopt prompt.completion_ignore_case=${boolToString cfg.shopts.prompt.completion_ignore_case}"
+        "shopt prompt.complete_style=${toString cfg.shopts.prompt.complete_style}"
         "shopt prompt.hist_cat=${boolToString cfg.shopts.prompt.hist_cat}"
         "shopt prompt.expand_aliases=${boolToString cfg.shopts.prompt.expand_aliases}"
 

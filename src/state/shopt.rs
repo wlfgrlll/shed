@@ -31,6 +31,17 @@ pub(crate) fn xtrace_print(argv: &[(String, Span)]) {
   }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CompleteStyle {
+  Grid,
+  Fuzzy,
+}
+
+two_way_display! {CompleteStyle,
+  Grid <=> "grid";
+  Fuzzy <=> "fuzzy";
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ShedBellStyle {
@@ -450,6 +461,10 @@ pub(crate) struct ShOptPrompt {
   /// Idle time in seconds before running screensaver_cmd (0 = disabled)
   #[default(IdleTime::default())]
   pub screensaver_idle_time: IdleTime,
+
+  /// Choose how completion candidates are presented ('fuzzy' or 'grid')
+  #[default(CompleteStyle::Grid)]
+  pub complete_style: CompleteStyle,
 
   /// Whether tab completion matching is case-insensitive
   #[default(false)]

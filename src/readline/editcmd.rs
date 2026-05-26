@@ -359,6 +359,9 @@ impl Verb {
         | Self::VisualMode
         | Self::VisualModeLine
         | Self::InsertModeLineBreak(_)
+        | Self::Rot13
+        | Self::IncrementNumber(_)
+        | Self::DecrementNumber(_)
         | Self::JoinLines
         | Self::InsertChar(_)
         | Self::Insert(_)

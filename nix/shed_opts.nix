@@ -369,6 +369,11 @@
                 default = false;
                 description = "Whether to ignore case when completing commands and file names";
               };
+              complete_style = lib.mkOption {
+                type = lib.types.enum [ "grid" "fuzzy" ];
+                default = "grid";
+                description = "Choose how completion candidates are presented";
+              };
               hist_cat = lib.mkOption {
                 type = lib.types.bool;
                 default = true;

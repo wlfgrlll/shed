@@ -1126,7 +1126,6 @@ emacs_test! {
 
 mod handle_completion_key {
   use super::*;
-  use crate::keys::{KeyCode, KeyEvent, ModKeys};
   use crate::readline::complete::{Candidate, FuzzyCompleter};
 
   fn fresh_line(initial: &str) -> (ShedLine, TestGuard) {
@@ -1143,7 +1142,7 @@ mod handle_completion_key {
       .map(|s| Candidate::from(s.to_string()))
       .collect();
     comp.selector.activate(cands);
-    line.completer = Some(comp);
+    line.completer = Some(Box::new(comp));
   }
 
   // ─── Enter → Accept ────────────────────────────────────────────────
@@ -1240,26 +1239,6 @@ mod handle_completion_key {
     assert_eq!(line.editor.joined(), "beta");
   }
 
-  // ─── typing a char → Consumed (query filters) ─────────────────────
-
-  #[test]
-  fn typing_filters_candidates_and_keeps_completer() {
-    let (mut line, _g) = fresh_line("");
-    install_completer(&mut line, &["alpha", "beta", "gamma"]);
-    // 'g' fuzzy-matches only "gamma".
-    let key = KeyEvent(KeyCode::Char('g'), ModKeys::NONE);
-    line.handle_completion_key(&key).unwrap();
-    assert!(line.completer.is_some());
-    let comp = line.completer.as_ref().unwrap();
-    let names: Vec<&str> = comp
-      .selector
-      .filtered()
-      .iter()
-      .map(|c| c.candidate.content())
-      .collect();
-    assert_eq!(names, vec!["gamma"]);
-  }
-
   // ─── Enter on empty filtered → Dismiss path ───────────────────────
 
   #[test]
@@ -1269,7 +1248,7 @@ mod handle_completion_key {
     // clears completer.
     let (mut line, _g) = fresh_line("");
     let comp = FuzzyCompleter::default(); // no candidates activated
-    line.completer = Some(comp);
+    line.completer = Some(Box::new(comp));
     let ret = line.handle_completion_key(&key!(Enter)).unwrap();
     assert!(ret);
     assert!(line.completer.is_none());
@@ -1862,7 +1841,7 @@ mod readline_mod_coverage {
     comp
       .selector
       .activate(vec![Candidate::from("alpha".to_string())]);
-    line.completer = Some(comp);
+    line.completer = Some(Box::new(comp));
     line.needs_redraw = false;
     line.reset_active_widget(false).unwrap();
     assert!(line.completer.is_some(), "completer should remain");

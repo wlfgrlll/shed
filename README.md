@@ -72,6 +72,7 @@ Additionally, the help pages can be reached using `ex mode` like `:h some-topic`
 	<img width="49%" alt="shed_comp" src="https://github.com/user-attachments/assets/489786e3-c925-433a-b905-a7b7ef1f9368" />
 	<img width="49%" alt="shed_hist" src="https://github.com/user-attachments/assets/5f07bcc7-0e3d-41ab-baae-59702a278969" />
 </p>
+Can be enabled using `shopt prompt.complete_style=fuzzy`.
 
 ---
 
