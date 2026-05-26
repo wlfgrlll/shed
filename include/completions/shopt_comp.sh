@@ -72,6 +72,7 @@ _shopt_comp() {
 			screensaver_cmd
 			screensaver_idle_time
 			completion_ignore_case
+			complete_style
 			hist_cat
 			expand_aliases
 		)
@@ -82,6 +83,7 @@ _shopt_comp() {
 			"A command to execute after a certain period of inactivity. Current value: '$(shopt prompt.screensaver_cmd)'"
 			"Amount of time in seconds before screensaver_cmd is executed. Current value: '$(shopt prompt.screensaver_idle_time)'"
 			"If enabled, tab completion ignores case when matching. Current value: '$(shopt prompt.completion_ignore_case)'"
+      "Choose how completion candidates are presented ('fuzzy' or 'grid')"
 			"Enables joining history entries together using Ctrl/Shift+Up/Down. Current value: '$(shopt prompt.hist_cat)'"
 			"If enabled, aliases are expanded on the prompt instead of during execution. Current value: '$(shopt prompt.expand_aliases)'"
 		)

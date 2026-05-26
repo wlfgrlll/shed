@@ -18,7 +18,9 @@ mod linebuf;
 mod register;
 pub(super) mod stash;
 
-use complete::{CompResponse, Completer, FuzzyCompleter, FuzzySelector, SelectorResponse};
+use complete::{
+  CompResponse, Completer, FuzzyCompleter, FuzzySelector, GridCompleter, SelectorResponse,
+};
 use editcmd::{Cmd, CmdFlags, EditCmd, Motion, Verb, invert_char_motion};
 use editmode::{
   CmdReplay, EditMode, Emacs, RemoteMode, ViEx, ViInsert, ViNormal, ViReplace, ViSearch,
@@ -36,6 +38,7 @@ use super::{
   match_loop, motion, procio, sherr, shopt,
   state::{
     self, Shed,
+    shopt::CompleteStyle,
     terminal::{SyncOutputGuard, calc_str_width, truncate_with_ellipsis},
     util::with_vars,
     vars::{Var, VarFlags, VarKind},
@@ -380,7 +383,7 @@ impl MacroRecord {
 pub(super) struct ShedLine {
   prompt: Prompt,
   statline: Option<StatusLine>,
-  completer: Option<FuzzyCompleter>,
+  completer: Option<Box<dyn Completer>>,
 
   mode: Box<dyn EditMode>,
   saved_mode: Option<Box<dyn EditMode>>,
@@ -680,6 +683,30 @@ impl ShedLine {
   }
 
   fn handle_completion_key(&mut self, key: &KeyEvent) -> ShResult<bool> {
+    let dismiss_completer = |this: &mut Self| -> ShResult<()> {
+      autocmd!(OnCompletionCancel);
+
+      this.update_editor_hint();
+      if let Some(comp) = this.completer.as_mut() {
+        comp.clear()?;
+      }
+      this.completer = None;
+      Shed::vars_mut(|v| {
+        v.set_var(
+          "SHED_EDIT_MODE",
+          VarKind::Str(this.mode.report_mode().to_string()),
+          VarFlags::empty(),
+        )
+      })
+      .ok();
+      this.prompt.refresh();
+      if let Some(line) = this.statline.as_mut() {
+        line.refresh();
+      }
+      this.needs_redraw = true;
+      Ok(())
+    };
+
     let comp = self.completer.as_mut().unwrap();
     match comp.handle_key(key.clone())? {
       CompResponse::Accept(candidate) => {
@@ -721,26 +748,17 @@ impl ShedLine {
 
         Ok(true)
       }
-      CompResponse::Dismiss => {
-        autocmd!(OnCompletionCancel);
-
+      CompResponse::Preview(candidate) => {
+        // Splice the candidate into the buffer the same way Accept does,
+        // but DON'T dismiss the completer. The user is still cycling.
+        let comp = self.completer.as_ref().unwrap();
+        let span_start = comp.token_span().0;
+        let new_cursor = span_start + candidate.len();
+        let line = comp.get_completed_line(&candidate);
+        self.focused_editor().set_buffer(line);
+        self.focused_editor().set_cursor_from_flat(new_cursor);
         self.update_editor_hint();
-        if let Some(comp) = self.completer.as_mut() {
-          comp.clear()?;
-        }
-        self.completer = None;
-        Shed::vars_mut(|v| {
-          v.set_var(
-            "SHED_EDIT_MODE",
-            VarKind::Str(self.mode.report_mode().to_string()),
-            VarFlags::empty(),
-          )
-        })
-        .ok();
-        self.prompt.refresh();
-        if let Some(line) = self.statline.as_mut() {
-          line.refresh();
-        }
+        self.needs_redraw = true;
         Ok(true)
       }
       CompResponse::Consumed => {
@@ -749,6 +767,14 @@ impl ShedLine {
         Ok(true)
       }
       CompResponse::Passthrough => Ok(false),
+      CompResponse::Dismiss => {
+        dismiss_completer(self)?;
+        Ok(true)
+      }
+      CompResponse::DismissPassthrough => {
+        dismiss_completer(self)?;
+        Ok(false)
+      }
     }
   }
 
@@ -907,7 +933,13 @@ impl ShedLine {
     let line = self.focused_editor().joined();
     let cursor_pos = self.focused_editor().cursor_byte_pos();
 
-    let mut comp = self.completer.take().unwrap_or_default();
+    let mut comp = self
+      .completer
+      .take()
+      .unwrap_or_else(|| match shopt!(prompt.complete_style) {
+        CompleteStyle::Grid => Box::new(GridCompleter::new()),
+        CompleteStyle::Fuzzy => Box::new(FuzzyCompleter::default()),
+      });
     match comp.complete(line, cursor_pos, direction) {
       Err(e) => {
         e.print_error();
@@ -1605,7 +1637,7 @@ impl ShedLine {
     let predicted_overlay_rows: u16 = self
       .completer
       .as_ref()
-      .map(|c| c.selector.predicted_rows())
+      .and_then(|c| c.predicted_rows())
       .unwrap_or(0)
       .saturating_add(
         self
