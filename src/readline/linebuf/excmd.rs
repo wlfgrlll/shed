@@ -311,9 +311,69 @@ impl super::LineBuf {
           self.equalize_rows(line_range.collect());
         }
       }
-      StashArgs::Swap(_) => {
-        /* TODO: implement this */
-        status_msg!("stash: Swap not implemented yet");
+      StashArgs::Swap(arg) => {
+        let stack_len = stash.stack_len();
+        let ident = arg
+          .clone()
+          .unwrap_or(stack_len.saturating_sub(1).to_string());
+
+        let Some(StashedCmd {
+          name: ent_name,
+          buffer: stashed_buf,
+          cursor_pos: stashed_cursor,
+        }) = stash.get(&ident)?
+        else {
+          if let Ok(idx) = ident.parse::<usize>() {
+            if stack_len == 0 {
+              status_msg!("stash: Stash is empty");
+            } else {
+              status_msg!("stash: No stash entry at index '{idx}'");
+            }
+          } else {
+            status_msg!("stash: No stash entry named '{ident}'");
+          }
+          return Ok(());
+        };
+
+        let curr_buf = self.joined();
+        let curr_cursor = (self.row(), self.col());
+
+        // Write the current buffer back into the stash slot.
+        //
+        // - Named entries: push(Some(name), ...) overwrites by name, so
+        // repeated `stash swap <name>` is its own inverse.
+        //
+        // - Indexed entries: pop the row and push the current buffer as
+        // a new unnamed entry at the top of the stack. Repeated
+        // `stash swap <idx>` rotates the buffer through every entry
+        // from `idx` up to the top, returning to the original state
+        // after (stack_len - idx + 1) invocations.
+        if let Some(name) = ent_name.clone() {
+          stash.push(Some(name), &curr_buf, curr_cursor)?;
+        } else {
+          let idx = ident
+            .parse::<usize>()
+            .unwrap_or(stack_len.saturating_sub(1));
+          stash.pop(idx)?;
+          stash.push(None, &curr_buf, curr_cursor)?;
+        }
+
+        self.set_buffer(stashed_buf);
+
+        let cursor_pos = match self.parse_pos(&stashed_cursor) {
+          Ok(pos) => pos,
+          Err(e) => {
+            status_msg!("Failed to parse cursor position from stash: {e}");
+            Pos { row: 0, col: 0 }
+          }
+        };
+        self.set_cursor(cursor_pos);
+
+        if let Some(name) = ent_name {
+          status_msg!("stash: Swapped with '{}'", name);
+        } else {
+          status_msg!("stash: Swapped with stack entry");
+        }
       }
       StashArgs::List(arg) => {
         let output = match arg {

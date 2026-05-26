@@ -273,6 +273,24 @@ command history navigable with `Up` and `Down`.
       saved cursor offset is applied relative to the insertion
       point.
 
+  `:stash swap [N | {name}]`                    *ex-stash-swap*
+
+      Exchange the current buffer with a stashed entry. The
+      buffer takes on the stashed content; the stash slot takes
+      on what the buffer used to hold.
+
+      For named entries, swap is its own inverse: running
+      `:stash swap wip` twice returns you to where you started.
+
+      For indexed (unnamed) entries, the swapped-out buffer is
+      pushed to the top of the stack and the targeted row is
+      removed. As a side effect, repeated `:stash swap {N}`
+      rotates the buffer through every entry from index `N` up
+      to the top, returning to the original state after
+      `(stack_len - N + 1)` invocations.
+
+      With no argument, defaults to the top of the stack.
+
   `:stash drop [N | {name}]`                    *ex-stash-drop*
 
       Remove a stash entry by index or name.
