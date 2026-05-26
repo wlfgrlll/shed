@@ -255,12 +255,9 @@ impl super::Builtin for Readonly {
 pub(super) struct Unset;
 impl super::Builtin for Unset {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    for (arg, span) in args.argv {
+    for (arg, _) in args.argv {
       if !Shed::vars(|v| v.var_exists(&arg)) {
-        return Err(sherr!(
-            ExecFail @ span,
-            "unset: No such variable '{arg}'",
-        ));
+        continue;
       }
       Shed::vars_mut(|v| v.unset_var(&arg))?;
     }
@@ -419,10 +416,10 @@ mod tests {
   }
 
   #[test]
-  fn unset_nonexistent_fails() {
+  fn unset_nonexistent_is_not_error() {
     let _g = TestGuard::new();
     test_input("unset __no_such_var__").ok();
-    assert_ne!(state::Shed::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
