@@ -628,9 +628,6 @@ impl ParseStream {
     if vars.is_empty() {
       bail!(self, node_tks, "Expected a variable name for this for loop");
     }
-    if arr.is_empty() {
-      bail!(self, node_tks, "Expected an array for this for loop");
-    }
     if !self.check_keyword("do") || !self.next_tk_is_some() {
       bail!(
         self,
@@ -1001,5 +998,11 @@ mod compound_parse_error_tests {
   fn until_without_do_after_condition_errors() {
     let _g = TestGuard::new();
     assert!(get_ast("until false; echo; done").is_err());
+  }
+
+  #[test]
+  fn for_empty_array_succeeds() {
+    let _g = TestGuard::new();
+    assert!(get_ast("for i in; do true; done").is_ok())
   }
 }
