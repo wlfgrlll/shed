@@ -202,12 +202,6 @@ pub(super) fn tear_down() -> ExitCode {
   autocmd!(OnExit);
 
   Shed::jobs_mut(|j| j.hang_up());
-
-  let code = QUIT_CODE.load(Ordering::SeqCst) as u8;
-  if code == 0 && Shed::meta(|m| m.interactive_shell()) {
-    errln!("\nexit");
-  }
-
   Shed::term_mut(|t| t.reset_for_exit());
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
