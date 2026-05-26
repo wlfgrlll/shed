@@ -164,7 +164,7 @@ impl super::Builtin for Wait {
   fn execute(&self, args: BuiltinArgs) -> ShResult<()> {
     let span = args.span();
     if Shed::jobs(|j| j.curr_job().is_none()) {
-      return Err(sherr!(ExecFail @ span, "wait: No jobs found"));
+      return with_status(0);
     }
     let argv = args
       .argv
@@ -938,12 +938,12 @@ mod jobs_builtin_tests {
   // ===================== Wait::execute =====================
 
   #[test]
-  fn wait_with_no_jobs_errors() {
+  fn wait_with_no_jobs_succeeds() {
     let _g = TestGuard::new();
     drain_jobs();
     test_input("wait").unwrap();
     // ExecFail from the builtin is converted to a nonzero status.
-    assert_ne!(state::Shed::get_status(), 0);
+    assert_eq!(state::Shed::get_status(), 0);
   }
 
   #[test]
