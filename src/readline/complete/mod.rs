@@ -36,7 +36,7 @@ use super::{
     vars::{VarFlags, VarKind},
   },
   try_var,
-  util::{self, ShResult, ends_with_unescaped, rfind_unescaped, var_ctx_guard},
+  util::{self, ShResult, ends_with_unescaped, has_unescaped, rfind_unescaped, var_ctx_guard},
   var, write_term,
 };
 
@@ -593,18 +593,16 @@ fn complete_builtins(start: &str) -> Vec<Candidate> {
 }
 
 fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
-  if let Some(stripped) = start.strip_prefix("./") {
-    return Shed::meta(|m| {
-      m.cached_utils()
-        .filter(|u| matches!(u.kind(), state::meta::UtilKind::File(_)))
-        .map(Candidate::from)
-        .filter(|c| c.is_match(stripped))
-        .map(|mut c| {
-          c.content = format!("./{}", c.content);
-          c
-        })
-        .collect()
-    });
+  if has_unescaped(start, "/") {
+    return complete_path(start, cursor_pos)
+      .into_iter()
+      .filter(|c| {
+        // lets just check the description
+        // so we can avoid making another metadata syscall
+        let desc = c.desc.as_deref().unwrap_or("");
+        desc.starts_with("dir") || desc.starts_with("exec")
+      })
+      .collect();
   }
 
   let mut candidates: Vec<Candidate> = Shed::meta(|m| {

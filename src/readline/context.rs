@@ -180,7 +180,7 @@ fn is_valid_cmd(command: Tk) -> bool {
     let Ok(meta) = cmd_path.metadata() else {
       return false;
     };
-    meta.permissions().mode() & 0o111 != 0
+    !meta.is_dir() && meta.permissions().mode() & 0o111 != 0
   } else {
     BUILTIN_NAMES.contains(&name.as_str()) || Shed::meta(|m| m.cache_contains(&name))
   }
