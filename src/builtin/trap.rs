@@ -8,6 +8,10 @@ use super::{
 
 pub(super) struct Trap;
 impl super::Builtin for Trap {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       Shed::logic(|l| -> ShResult<()> {

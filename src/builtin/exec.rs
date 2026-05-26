@@ -9,6 +9,10 @@ use super::{
 
 pub(super) struct Exec;
 impl super::Builtin for Exec {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       return with_status(0);

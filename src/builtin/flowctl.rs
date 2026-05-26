@@ -33,6 +33,10 @@ trait FlowCtl: super::Builtin {
 
 pub(super) struct Return;
 impl super::Builtin for Return {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     self.exec_flow_ctl(args)
   }
@@ -51,6 +55,10 @@ impl FlowCtl for Return {
 
 pub(super) struct Break;
 impl super::Builtin for Break {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     self.exec_flow_ctl(args)
   }
@@ -66,6 +74,10 @@ impl FlowCtl for Break {
 
 pub(super) struct Continue;
 impl super::Builtin for Continue {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     self.exec_flow_ctl(args)
   }
@@ -84,6 +96,10 @@ impl FlowCtl for Continue {
 
 pub(super) struct Exit;
 impl super::Builtin for Exit {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     self.exec_flow_ctl(args)
   }

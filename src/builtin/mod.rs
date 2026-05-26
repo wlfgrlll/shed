@@ -307,6 +307,14 @@ pub(super) trait Builtin: Sync {
   fn strict_opts(&self) -> bool {
     false
   }
+
+  /// If this is overridden to return `true`, variables
+  /// assigned via command prefix, i.e. `FOO=bar command`,
+  /// are persisted after the builtin returns. POSIX thing.
+  fn is_special(&self) -> bool {
+    false
+  }
+
   /// The way that the builtin parses its options. Some of them are weird, like `set`
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(ArgVector, Vec<Opt>)> {
     let opts = self.opts();
@@ -330,9 +338,13 @@ pub(super) trait Builtin: Sync {
     let NdRule::Command { assignments, argv } = &mut node.class else {
       unreachable!()
     };
-    let env_vars =
-      dispatcher.set_assignments(std::mem::take(assignments), AssignBehavior::Export)?;
-    let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
+    let assign_behavior = match self.is_special() {
+      true => AssignBehavior::Set,
+      false => AssignBehavior::Export,
+    };
+
+    let vars = dispatcher.set_assignments(std::mem::take(assignments), assign_behavior)?;
+    let _var_guard = var_ctx_guard(vars.into_iter().collect());
     let fork_builtins = node.flags.contains(NdFlags::FORK_BUILTINS);
 
     if argv.len() == 2 && argv[1].as_str() == "--help" {
@@ -462,6 +474,9 @@ pub fn join_raw_arg_iter(args: impl Iterator<Item = (String, Span)>) -> (String,
 
 struct Colon;
 impl Builtin for Colon {
+  fn is_special(&self) -> bool {
+    true
+  }
   fn execute(&self, _args: BuiltinArgs) -> ShResult<()> {
     with_status(0)
   }
@@ -664,10 +679,10 @@ impl CommandBuiltin {
 #[cfg(test)]
 pub mod tests {
   use crate::{
-    assert_status_eq,
+    Shed, assert_status_eq,
     builtin::{source_builtin_completions, source_builtin_scripts},
     eval::execute::exec_nonint,
-    state,
+    state::{self, vars::VarFlags},
     tests::testutil::{TestGuard, has_cmd, test_input},
   };
 
@@ -694,6 +709,39 @@ pub mod tests {
     test_input(":").unwrap();
 
     assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ===================== prefix-assignment scoping =====================
+
+  #[test]
+  fn prefix_assign_persists_for_special_builtin() {
+    let g = TestGuard::new();
+    test_input("FOO=bar export; echo $FOO").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("bar"),
+      "expected FOO to persist after export, got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn prefix_assign_does_not_persist_for_regular_builtin() {
+    let g = TestGuard::new();
+    test_input("FOO=bar echo first; echo \"after=[$FOO]\"").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("after=[]"),
+      "expected FOO to be cleared after echo, got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn prefix_assign_to_special_with_allexport_persists_and_exports() {
+    let _g = TestGuard::new();
+    test_input("set -a; FOO=bar export").unwrap();
+    let var = Shed::vars(|v| v.try_get_var_meta("FOO")).unwrap();
+    let flags = var.flags();
+    assert!(flags.contains(VarFlags::EXPORT));
   }
 
   #[test]

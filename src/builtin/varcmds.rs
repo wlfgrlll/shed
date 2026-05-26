@@ -224,6 +224,10 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
 
 pub(super) struct Readonly;
 impl super::Builtin for Readonly {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
     if !argv.is_empty() {
@@ -254,6 +258,10 @@ impl super::Builtin for Readonly {
 
 pub(super) struct Unset;
 impl super::Builtin for Unset {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     for (arg, _) in args.argv {
       if !Shed::vars(|v| v.var_exists(&arg)) {
@@ -268,6 +276,10 @@ impl super::Builtin for Unset {
 
 pub(super) struct Export;
 impl super::Builtin for Export {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
     if !argv.is_empty() {

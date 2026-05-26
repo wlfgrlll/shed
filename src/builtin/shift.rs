@@ -5,6 +5,10 @@ use super::{
 
 pub(super) struct Shift;
 impl super::Builtin for Shift {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let mut argv = args.argv.into_iter();
 

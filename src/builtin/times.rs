@@ -4,6 +4,10 @@ use super::{ShResult, outln, state::meta::CmdTimer, with_status};
 
 pub(super) struct Times;
 impl super::Builtin for Times {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, _args: super::BuiltinArgs) -> ShResult<()> {
     let self_usage = getrusage(UsageWho::RUSAGE_SELF)?;
     let child_usage = getrusage(UsageWho::RUSAGE_CHILDREN)?;

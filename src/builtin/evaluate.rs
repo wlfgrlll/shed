@@ -5,6 +5,10 @@ use super::{
 
 pub(super) struct Eval;
 impl super::Builtin for Eval {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     if args.argv.is_empty() {
       return with_status(0);

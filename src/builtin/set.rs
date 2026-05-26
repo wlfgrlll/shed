@@ -232,6 +232,10 @@ pub fn build_set_call(readable: bool) -> String {
 
 pub(super) struct Set;
 impl super::Builtin for Set {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let span = args.span();
 

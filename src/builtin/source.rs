@@ -4,6 +4,10 @@ use super::{ShResult, sherr, state::util::source_file, with_status};
 
 pub(super) struct Source;
 impl super::Builtin for Source {
+  fn is_special(&self) -> bool {
+    true
+  }
+
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     for (arg, span) in args.argv {
       let path = PathBuf::from(arg);
