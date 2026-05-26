@@ -1070,7 +1070,8 @@ impl CompContext {
 
 pub(crate) enum CompResult {
   NoMatch,
-  Single { result: Candidate },
+  Exact { result: Candidate },
+  CommonPrefix { result: Candidate },
   Many { candidates: Vec<Candidate> },
 }
 
@@ -1079,7 +1080,7 @@ impl CompResult {
     if candidates.is_empty() {
       Self::NoMatch
     } else if candidates.len() == 1 {
-      Self::Single {
+      Self::Exact {
         result: candidates.remove(0),
       }
     } else {
@@ -1116,11 +1117,43 @@ impl CompResult {
     }
 
     if end > min_end {
-      Self::Single {
+      Self::CommonPrefix {
         result: f_content[..end].into(),
       }
     } else {
       Self::Many { candidates }
+    }
+  }
+}
+
+/// The shape of a completion result as returned across the `Completer` trait
+/// boundary. Carries the spliced line plus the kind of match it represents.
+///
+/// `Exact` and `CommonPrefix` mirror their `CompResult` counterparts; `Cycled`
+/// covers the case where the user pressed Tab on an already-active completer
+/// to cycle through the candidate list.
+#[derive(Debug, Clone)]
+pub(crate) enum CompMatch {
+  Exact { line: String },
+  CommonPrefix { line: String },
+  Cycled { line: String },
+}
+
+impl CompMatch {
+  pub fn into_line(self) -> String {
+    match self {
+      Self::Exact { line } | Self::CommonPrefix { line } | Self::Cycled { line } => line,
+    }
+  }
+  /// Reuse the variant of `self` but swap in a different spliced line. Useful
+  /// for outer completers that wrap `SimpleCompleter`: they want to preserve
+  /// the match-kind their inner completer determined, but the line they emit
+  /// is built from their own splicing logic.
+  pub fn with_line(self, line: String) -> Self {
+    match self {
+      Self::Exact { .. } => Self::Exact { line },
+      Self::CommonPrefix { .. } => Self::CommonPrefix { line },
+      Self::Cycled { .. } => Self::Cycled { line },
     }
   }
 }
@@ -1140,7 +1173,7 @@ pub(crate) trait Completer {
     line: String,
     cursor_pos: usize,
     direction: i32,
-  ) -> ShResult<Option<String>>;
+  ) -> ShResult<Option<CompMatch>>;
   fn reset(&mut self);
   fn reset_stay_active(&mut self);
   fn is_active(&self) -> bool;
@@ -1196,9 +1229,11 @@ impl Completer for SimpleCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
-  ) -> ShResult<Option<String>> {
+  ) -> ShResult<Option<CompMatch>> {
     if self.active {
-      Ok(Some(self.cycle_completion(direction)))
+      Ok(Some(CompMatch::Cycled {
+        line: self.cycle_completion(direction),
+      }))
     } else {
       self.start_completion(line, cursor_pos)
     }
@@ -1264,27 +1299,46 @@ impl SimpleCompleter {
     }
   }
 
-  pub fn start_completion(&mut self, line: String, cursor_pos: usize) -> ShResult<Option<String>> {
+  pub fn start_completion(
+    &mut self,
+    line: String,
+    cursor_pos: usize,
+  ) -> ShResult<Option<CompMatch>> {
     let result = self.get_candidates(line.clone(), cursor_pos)?;
     self.cursor_pos = cursor_pos;
     match result {
       CompResult::Many { candidates } => {
-        self.candidates = candidates.clone();
+        self.candidates = candidates;
         self.add_spaces();
         self.selected_idx = 0;
         self.original_input = line;
         self.active = true;
 
-        Ok(Some(self.get_completed_line()))
+        Ok(Some(CompMatch::Cycled {
+          line: self.get_completed_line(),
+        }))
       }
-      CompResult::Single { result } => {
-        self.candidates = vec![result.clone()];
+      CompResult::Exact { result } => {
+        self.candidates = vec![result];
         self.add_spaces();
         self.selected_idx = 0;
         self.original_input = line;
         self.active = false;
 
-        Ok(Some(self.get_completed_line()))
+        Ok(Some(CompMatch::Exact {
+          line: self.get_completed_line(),
+        }))
+      }
+      CompResult::CommonPrefix { result } => {
+        self.candidates = vec![result];
+        self.add_spaces();
+        self.selected_idx = 0;
+        self.original_input = line;
+        self.active = false;
+
+        Ok(Some(CompMatch::CommonPrefix {
+          line: self.get_completed_line(),
+        }))
       }
       CompResult::NoMatch => Ok(None),
     }
@@ -1409,7 +1463,7 @@ impl SimpleCompleter {
           CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
         }
       }
-      CompStrat::Separator => CompResult::Single {
+      CompStrat::Separator => CompResult::Exact {
         result: Candidate::from(";"),
       },
       CompStrat::Null => CompResult::NoMatch,

@@ -30,14 +30,14 @@ mod util;
 mod verb;
 
 pub(crate) use super::util::{Pos, SignedPos};
-pub use char_class::CharClass;
-pub use edit::{Edit, IndentCtx};
-pub use hint::Hint;
-pub use killring::KillRing;
-pub use pos::{Cursor, MotionKind};
-pub use select::{SelectMode, SelectShape};
-pub use types::{Grapheme, Line, Lines};
-pub use util::{rot13_char, toggle_case_char};
+pub(crate) use char_class::CharClass;
+pub(crate) use edit::{Edit, IndentCtx};
+pub(crate) use hint::Hint;
+pub(crate) use killring::KillRing;
+pub(crate) use pos::{Cursor, MotionKind};
+pub(crate) use select::{SelectMode, SelectShape};
+pub(crate) use types::{Grapheme, Line, Lines};
+pub(crate) use util::{rot13_char, toggle_case_char};
 
 pub(crate) const DEFAULT_VIEWPORT_HEIGHT: usize = 40;
 

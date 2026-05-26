@@ -1,5 +1,5 @@
 use super::{
-  Candidate, CompResponse, Completer, ShResult, Shed, SimpleCompleter,
+  Candidate, CompMatch, CompResponse, Completer, ShResult, Shed, SimpleCompleter,
   editmode::{EditMode, Emacs},
   key,
   keys::{KeyCode as C, KeyEvent as K},
@@ -770,8 +770,8 @@ impl Completer for FuzzyCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
-  ) -> ShResult<Option<String>> {
-    self.completer.complete(line, cursor_pos, direction)?;
+  ) -> ShResult<Option<CompMatch>> {
+    let inner = self.completer.complete(line, cursor_pos, direction)?;
     let candidates: Vec<_> = self.completer.candidates.clone();
     if candidates.is_empty() {
       self.completer.reset();
@@ -780,7 +780,8 @@ impl Completer for FuzzyCompleter {
       self.selector.filtered = candidates.into_iter().map(ScoredCandidate::from).collect();
       let selected = self.selector.filtered[0].candidate.content().to_string();
       let completed = self.get_completed_line(&selected);
-      return Ok(Some(completed));
+      // Preserve the inner completer's match-kind; only the spliced line changes.
+      return Ok(inner.map(|m| m.with_line(completed)));
     }
     self.selector.activate(candidates);
     Ok(None)

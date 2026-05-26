@@ -3,15 +3,25 @@ use std::cmp::Ordering;
 use super::{Lines, Pos, shopt};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Hint {
+pub(crate) enum Hint {
   Override(Lines),
   History(Lines),
+  /// `token_start` is the byte offset (into the flat buffer) where the
+  /// completed token began. Used to detect when the user has backspaced
+  /// past the token boundary, at which point the hint is contextually
+  /// stale even if the buffer still happens to be a literal prefix of
+  /// the hint text.
+  Completion {
+    lines: Lines,
+    token_start: usize,
+  },
 }
 
 impl Hint {
   pub fn lines(&self) -> &Lines {
     match self {
       Self::Override(lines) | Self::History(lines) => lines,
+      Self::Completion { lines, .. } => lines,
     }
   }
   pub fn raw(&self) -> String {
@@ -20,6 +30,7 @@ impl Hint {
   pub fn take_lines(&mut self) -> Lines {
     match self {
       Self::Override(lines) | Self::History(lines) => std::mem::take(lines),
+      Self::Completion { lines, .. } => std::mem::take(lines),
     }
   }
   pub fn display(&self, prefix: Option<&str>) -> String {
@@ -61,7 +72,15 @@ impl Ord for Hint {
       Self::History(_) => match other {
         Self::Override(_) => Ordering::Less,
         Self::History(_) => Ordering::Equal,
+        Self::Completion { .. } => Ordering::Greater,
       },
+      Self::Completion { .. } => {
+        if matches!(other, Self::Completion { .. }) {
+          Ordering::Equal
+        } else {
+          Ordering::Less
+        }
+      }
     }
   }
 }
@@ -154,11 +173,22 @@ impl super::LineBuf {
     }
 
     let Some(hint) = hint else {
-      if !matches!(&self.hint, Some(Hint::Override(_))) {
+      let keep = self.hint.as_ref().is_some_and(|h| match h {
+        Hint::Override(_) => self.lines.is_prefix_lines(h.lines()),
+        Hint::Completion { lines, token_start } => {
+          self.lines.is_prefix_lines(lines) && self.joined().len() > *token_start
+        }
+        Hint::History(_) => false,
+      });
+      if !keep {
         self.hint = None;
       }
       return;
     };
+
+    if !is_override && !self.lines.is_prefix_lines(hint.lines()) {
+      return;
+    }
 
     if let Some(old_hint) = self.hint.as_ref()
       && *old_hint > hint

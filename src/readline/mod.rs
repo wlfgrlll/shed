@@ -1,8 +1,8 @@
 use nix::poll::PollTimeout;
 use scopeguard::defer;
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::time::Instant;
+use std::{cmp::Ordering, sync::mpsc};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -20,6 +20,7 @@ pub(super) mod stash;
 
 use complete::{
   CompResponse, Completer, FuzzyCompleter, FuzzySelector, GridCompleter, SelectorResponse,
+  SimpleCompleter,
 };
 use editcmd::{Cmd, CmdFlags, EditCmd, Motion, Verb, invert_char_motion};
 use editmode::{
@@ -35,7 +36,7 @@ use super::{
   expand::{self, expand_keymap, expand_prompt},
   flush_term, key, keys,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
-  match_loop, motion, procio, sherr, shopt,
+  match_loop, motion, procio, sherr, shopt, socket,
   state::{
     self, Shed,
     shopt::CompleteStyle,
@@ -49,7 +50,7 @@ use super::{
 };
 
 pub(super) use complete::{
-  BashCompSpec, Candidate, CompContext, CompFlags, CompOptFlags, CompOpts, CompSpec,
+  BashCompSpec, Candidate, CompContext, CompFlags, CompMatch, CompOptFlags, CompOpts, CompSpec,
   ScoredCandidate,
 };
 pub(super) use editcmd::Direction;
@@ -380,6 +381,63 @@ impl MacroRecord {
   }
 }
 
+struct CompHintRequest {
+  req_gen: u64,
+  buffer: String,
+  cursor_pos: usize,
+}
+
+struct HintWorker {
+  channel: Option<mpsc::Sender<CompHintRequest>>,
+  req_gen: u64,
+}
+
+impl HintWorker {
+  pub fn new() -> Self {
+    let (channel, receiver) = mpsc::channel::<CompHintRequest>();
+    std::thread::spawn(move || Self::main(receiver));
+    Self {
+      channel: Some(channel),
+      req_gen: 0,
+    }
+  }
+  pub fn dispatch_worker(&mut self, buffer: String, cursor_pos: usize) {
+    self.req_gen = self.req_gen.wrapping_add(1);
+    let req = CompHintRequest {
+      req_gen: self.req_gen,
+      buffer,
+      cursor_pos,
+    };
+    if let Some(channel) = &self.channel {
+      channel.send(req).ok();
+    }
+  }
+  fn main(receiver: mpsc::Receiver<CompHintRequest>) {
+    let mut completer = SimpleCompleter::default();
+    let token = &*socket::PRIVATE_TOKEN;
+    while let Ok(mut req) = receiver.recv() {
+      while let Ok(newer) = receiver.try_recv() {
+        // drain until newest
+        req = newer;
+      }
+      let CompHintRequest {
+        req_gen,
+        buffer,
+        cursor_pos,
+      } = req;
+      completer.reset();
+      let outcome = completer.complete(buffer, cursor_pos, 1).ok().flatten();
+
+      // If we got an exact match, use it as the hint
+      if let Some(CompMatch::Exact { line }) = outcome {
+        let token_start = completer.token_span().0;
+        let msg = format!("PRIVATE {token} set-comp-hint {req_gen} {token_start} {line}");
+        socket::send_to_socket(&msg).ok();
+      }
+    }
+  }
+}
+
 pub(super) struct ShedLine {
   prompt: Prompt,
   statline: Option<StatusLine>,
@@ -403,6 +461,8 @@ pub(super) struct ShedLine {
   needs_redraw: bool,
   ctrl_d_warning_counter: usize,
   status_msgs: VecDeque<(String, Instant)>,
+
+  worker: HintWorker,
 }
 
 impl ShedLine {
@@ -456,6 +516,7 @@ impl ShedLine {
       needs_redraw: true,
       ctrl_d_warning_counter: 0,
       status_msgs: VecDeque::new(),
+      worker: HintWorker::new(),
     };
     Shed::vars_mut(|v| {
       v.set_var(
@@ -852,7 +913,25 @@ impl ShedLine {
     let line_data = self.get_line_data();
     Shed::meta_mut(|m| m.notify_line_edit(line_data)).ok();
 
+    self.try_comp_hint();
+
     Ok(ReadlineEvent::Pending)
+  }
+
+  fn try_comp_hint(&mut self) {
+    if !self.editor.cursor_at_max() {
+      return;
+    }
+
+    let buf = self.editor.joined();
+    let cursor_pos = self.editor.cursor_to_flat();
+    if !buf.is_empty() {
+      self.worker.dispatch_worker(buf, cursor_pos);
+    }
+  }
+
+  pub fn worker_req_gen(&mut self) -> u64 {
+    self.worker.req_gen
   }
 
   fn dispatch_key(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
@@ -946,7 +1025,8 @@ impl ShedLine {
         // Printing the error invalidates the layout
         self.old_layout = None;
       }
-      Ok(Some(line)) => {
+      Ok(Some(comp_match)) => {
+        let line = comp_match.into_line();
         let cand = comp.selected_candidate().unwrap_or_default();
         with_vars(
           [("COMP_CANDIDATE".into(), cand.content().to_string())],
@@ -961,7 +1041,7 @@ impl ShedLine {
             .map(|c| c.len())
             .unwrap_or_default();
 
-        self.focused_editor().set_buffer(line.clone());
+        self.focused_editor().set_buffer(line);
         self.focused_editor().set_cursor_from_flat(new_cursor);
 
         if !self.focused_history().at_pending() {

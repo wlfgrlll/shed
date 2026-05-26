@@ -1,10 +1,12 @@
 use std::{
+  io::Write,
   os::{
     fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, RawFd},
     unix::net::{UnixListener, UnixStream},
   },
   path::{Path, PathBuf},
   str::FromStr,
+  sync::LazyLock,
 };
 
 use itertools::Itertools;
@@ -31,6 +33,31 @@ use super::{
   var,
 };
 
+/// Used to validate requests to the socket's private interface.
+///
+/// This shall never be written or printed anywhere. It should be a secret known
+/// only to the process and all of it's threads.
+///
+/// Used in operations that are somewhat heavy, such as tab-completion autosuggestions.
+/// A thread is dispatched, and then writes it's findings to the socket via the private interface.
+/// This allows us to have actual async in a mostly single-threaded program.
+pub(crate) static PRIVATE_TOKEN: LazyLock<String> =
+  LazyLock::new(|| uuid::Uuid::new_v4().to_string());
+
+/// Write something to the socket.
+pub(crate) fn send_to_socket(msg: &str) -> ShResult<()> {
+  let path = ShedSocket::path();
+  let mut stream = UnixStream::connect(path)?;
+
+  let mut payload = String::with_capacity(msg.len() + 1);
+  payload.push_str(msg);
+  payload.push('\n');
+
+  stream.write_all(payload.as_bytes())?;
+
+  Ok(())
+}
+
 #[derive(Debug)]
 pub(crate) enum StatusHeader {
   ExitCode,
@@ -46,6 +73,24 @@ pub(crate) enum QueryHeader {
   GetVar(String),
   SetVar(String, String, VarFlags),
   Status(Vec<StatusHeader>),
+}
+
+#[derive(Debug)]
+pub(crate) enum PrivateHeader {
+  /// `(req_gen, token_start, line)`. `token_start` is the byte offset
+  /// where the completed token began in the buffer at request time;
+  /// the receiver uses it to clear the hint when the user backspaces
+  /// past the token boundary.
+  SetCompletionHint(u64, usize, String),
+}
+
+#[derive(Debug)]
+pub(crate) enum LineHeader {
+  Buffer,
+  Cursor,
+  Hint,
+  Mode,
+  Anchor,
 }
 
 #[derive(Debug)]
@@ -69,20 +114,60 @@ pub(crate) enum SocketRequest {
   LineGet(LineHeader),
   LineSet(LineHeader, String),
   LineSendKeys(Vec<KeyEvent>),
+
+  /// Namespace used by internal async stuff.
+  /// Allows for multithreading expensive stuff like tab completion autosuggestions.
+  /// Background threads report results via the socket using the private namespace.
+  Private(PrivateHeader),
 }
 
-#[derive(Debug)]
-pub(crate) enum LineHeader {
-  Buffer,
-  Cursor,
-  Hint,
-  Mode,
-  Anchor,
+impl SocketRequest {
+  /// Parse a request for the socket's private interface.
+  ///
+  /// These take the form 'PRIVATE <token> request-kind <payload>'
+  /// Intentionally deviates from the public interface's format.
+  fn parse_private_request(s: &str) -> Result<Self, ShErr> {
+    // if this fails, we write the same error that the normal 'not found' path does
+    // basically we're playing dumb instead of telling the user that this interface exists
+    let err = Err(sherr!(ParseErr, "Unknown socket request kind: private"));
+
+    let Some((token, rest)) = s.split_once(' ') else {
+      return err;
+    };
+
+    if token != *PRIVATE_TOKEN {
+      log::warn!("Received socket request with invalid private token");
+      return err;
+    }
+
+    let (kind, payload) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
+
+    let header = match kind {
+      "set-comp-hint" => {
+        let (req_gen_str, rest) = payload.split_once(' ').unwrap_or((payload, ""));
+        let (token_start_str, line) = rest.split_once(' ').unwrap_or((rest, ""));
+        let Ok(req_gen) = req_gen_str.parse::<u64>() else {
+          return err;
+        };
+        let Ok(token_start) = token_start_str.parse::<usize>() else {
+          return err;
+        };
+        PrivateHeader::SetCompletionHint(req_gen, token_start, line.to_string())
+      }
+      _ => return err,
+    };
+
+    Ok(Self::Private(header))
+  }
 }
 
 impl FromStr for SocketRequest {
   type Err = ShErr;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
+    if let Some(stripped) = s.strip_prefix("PRIVATE ") {
+      return Self::parse_private_request(stripped);
+    }
+
     let request_kind = s
       .chars()
       .peeking_take_while(|c| c.is_ascii_alphabetic())
@@ -570,6 +655,19 @@ pub(super) fn handle_socket_request(
         let output = responses.join(" ");
         write(&conn, output.as_bytes()).ok();
         write(&conn, b"\n").ok();
+      }
+    },
+
+    SocketRequest::Private(req) => match req {
+      PrivateHeader::SetCompletionHint(req_gen, token_start, hint) => {
+        let cur_gen = readline.worker_req_gen();
+        if cur_gen == req_gen && !hint.is_empty() {
+          readline.editor_mut().set_hint(Some(Hint::Completion {
+            lines: Lines::to_lines(hint),
+            token_start,
+          }));
+          readline.set_needs_redraw(true);
+        }
       }
     },
   }

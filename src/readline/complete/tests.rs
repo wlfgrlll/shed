@@ -63,7 +63,7 @@ fn comp_result_no_match() {
 #[test]
 fn comp_result_single() {
   let result = CompResult::from_candidates(vec!["foo".into()]);
-  assert!(matches!(result, CompResult::Single { .. }));
+  assert!(matches!(result, CompResult::Exact { .. }));
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn comp_result_many() {
 //
 // The zsh-style "first Tab advances to common prefix, second Tab opens
 // the selector" behavior. Pre-tab collapse: Many; post-collapse: either
-// Single (when LCP extends the typed input) or unchanged Many (when
+// CommonPrefix (when LCP extends the typed input) or unchanged Many (when
 // LCP can't help). Tests cover both branches plus the edge cases.
 
 fn many(cands: &[&str]) -> CompResult {
@@ -84,7 +84,7 @@ fn many(cands: &[&str]) -> CompResult {
 }
 
 fn collapsed_single(result: &CompResult) -> Option<&str> {
-  if let CompResult::Single { result } = result {
+  if let CompResult::CommonPrefix { result } = result {
     Some(result.content())
   } else {
     None
@@ -137,11 +137,11 @@ fn collapse_noop_when_case_differs_at_position_0() {
 
 #[test]
 fn collapse_preserves_single_unchanged() {
-  let single = CompResult::Single {
+  let single = CompResult::Exact {
     result: Candidate::from("only"),
   };
   let result = single.try_collapse_by_prefix("o");
-  assert!(matches!(result, CompResult::Single { .. }));
+  assert!(matches!(result, CompResult::Exact { .. }));
   assert_eq!(collapsed_single(&result), Some("only"));
 }
 
@@ -283,7 +283,7 @@ fn wordbreak_rightmost_wins() {
 fn contents(result: &CompResult) -> Vec<&str> {
   match result {
     CompResult::NoMatch => vec![],
-    CompResult::Single { result } => vec![result.content()],
+    CompResult::CommonPrefix { result } | CompResult::Exact { result } => vec![result.content()],
     CompResult::Many { candidates } => candidates.iter().map(|c| c.content()).collect(),
   }
 }
@@ -296,9 +296,9 @@ fn get_candidates_empty_line_routes_to_command_strategy() {
   let mut comp = SimpleCompleter::default();
   let result = comp.get_candidates("".into(), 0).unwrap();
   // Almost certainly Many — even a minimal PATH has > 1 binary. But
-  // accept Single too in case some sandboxed env has exactly one.
+  // accept Exact too in case some sandboxed env has exactly one.
   match result {
-    CompResult::Many { .. } | CompResult::Single { .. } => {}
+    CompResult::Many { .. } | CompResult::Exact { .. } | CompResult::CommonPrefix { .. } => {}
     CompResult::NoMatch => panic!("expected command candidates, got NoMatch"),
   }
 }

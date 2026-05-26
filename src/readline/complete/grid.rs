@@ -1,5 +1,5 @@
 use super::{
-  Candidate, CompResponse, Completer, K as KeyEvent, ShResult, Shed, SimpleCompleter,
+  Candidate, CompMatch, CompResponse, Completer, K as KeyEvent, ShResult, Shed, SimpleCompleter,
   fuzzy::ClampedUsize, key, state::terminal::calc_str_width, write_term,
 };
 
@@ -430,8 +430,8 @@ impl Completer for GridCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
-  ) -> ShResult<Option<String>> {
-    self.completer.complete(line, cursor_pos, direction)?;
+  ) -> ShResult<Option<CompMatch>> {
+    let inner = self.completer.complete(line, cursor_pos, direction)?;
     let candidates = self.completer.candidates.clone();
     match candidates.len() {
       0 => {
@@ -449,7 +449,9 @@ impl Completer for GridCompleter {
         self.selector.activate(candidates);
         self.selector.has_selection = true;
         let completed = self.get_completed_line(&cand_str);
-        Ok(Some(completed))
+        // Preserve the inner completer's match-kind (Exact vs CommonPrefix);
+        // we only rewrite the spliced line.
+        Ok(inner.map(|m| m.with_line(completed)))
       }
       _ => {
         self.selector.activate(candidates);
