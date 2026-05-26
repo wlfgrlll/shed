@@ -198,14 +198,37 @@ mod tests {
     assert_eq!(state::Shed::get_status(), 0);
   }
 
-  // ===================== Error cases =====================
+  // ===================== Listing =====================
 
   #[test]
-  fn keymap_missing_keys() {
-    let _g = TestGuard::new();
-    test_input("keymap -n").ok();
-    assert_ne!(state::Shed::get_status(), 0);
+  fn keymap_no_args_lists_all_keymaps() {
+    let g = TestGuard::new();
+    test_input("keymap -n list_normal '<ESC>'").unwrap();
+    test_input("keymap -i list_insert '<ESC>'").unwrap();
+    g.read_output();
+
+    test_input("keymap").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("list_normal"), "got: {out:?}");
+    assert!(out.contains("list_insert"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
   }
+
+  #[test]
+  fn keymap_mode_only_lists_for_that_mode() {
+    let g = TestGuard::new();
+    test_input("keymap -n only_normal '<ESC>'").unwrap();
+    test_input("keymap -i only_insert '<ESC>'").unwrap();
+    g.read_output();
+
+    test_input("keymap -n").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("only_normal"), "got: {out:?}");
+    assert!(!out.contains("only_insert"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ===================== Error cases =====================
 
   #[test]
   fn keymap_missing_action() {

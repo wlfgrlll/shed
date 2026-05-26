@@ -177,26 +177,42 @@ mod tests {
     assert_eq!(state::Shed::get_status(), 0);
   }
 
-  // ===================== Error Cases =====================
+  // ===================== Listing =====================
 
   #[test]
-  fn missing_kind() {
-    let _guard = TestGuard::new();
-    test_input("autocmd").ok();
-    assert_ne!(state::Shed::get_status(), 0);
+  fn no_args_lists_all_autocmds() {
+    let g = TestGuard::new();
+    test_input("autocmd pre-cmd 'echo list_me_pre'").unwrap();
+    test_input("autocmd post-cmd 'echo list_me_post'").unwrap();
+    g.read_output();
+
+    test_input("autocmd").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("list_me_pre"), "got: {out:?}");
+    assert!(out.contains("list_me_post"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
   }
+
+  #[test]
+  fn kind_only_lists_autocmds_for_that_kind() {
+    let g = TestGuard::new();
+    test_input("autocmd pre-cmd 'echo pre_only'").unwrap();
+    test_input("autocmd post-cmd 'echo post_only'").unwrap();
+    g.read_output();
+
+    test_input("autocmd pre-cmd").unwrap();
+    let out = g.read_output();
+    assert!(out.contains("pre_only"), "got: {out:?}");
+    assert!(!out.contains("post_only"), "got: {out:?}");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ===================== Error Cases =====================
 
   #[test]
   fn invalid_kind() {
     let _guard = TestGuard::new();
     test_input("autocmd not-a-real-kind 'echo hi'").ok();
-    assert_ne!(state::Shed::get_status(), 0);
-  }
-
-  #[test]
-  fn missing_command() {
-    let _guard = TestGuard::new();
-    test_input("autocmd pre-cmd").ok();
     assert_ne!(state::Shed::get_status(), 0);
   }
 

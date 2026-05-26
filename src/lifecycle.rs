@@ -3,7 +3,7 @@ use std::{io::Write, path::PathBuf, process::ExitCode, sync::atomic::Ordering};
 use clap::Parser;
 
 use super::{
-  ShResult, Shed, autocmd, errln,
+  ShResult, Shed, autocmd,
   eval::execute::exec_nonint,
   outln,
   procio::{
