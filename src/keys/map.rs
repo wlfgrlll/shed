@@ -1,6 +1,11 @@
+use std::fmt::Display;
+
 use bitflags::bitflags;
 
-use super::{KeyEvent, expand::expand_keymap};
+use super::{
+  KeyEvent,
+  expand::{as_var_val_display, expand_keymap},
+};
 
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +19,27 @@ bitflags! {
     const VERBATIM 		= 1<<6;
     const EMACS   		= 1<<7;
     const REMOTE   		= 1<<8;
+  }
+}
+
+impl Display for KeyMapFlags {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "-")?;
+    for flag in self.iter() {
+      match flag {
+        KeyMapFlags::INSERT => write!(f, "i")?,
+        KeyMapFlags::NORMAL => write!(f, "n")?,
+        KeyMapFlags::VISUAL => write!(f, "v")?,
+        KeyMapFlags::EX => write!(f, "x")?,
+        KeyMapFlags::OP_PENDING => write!(f, "o")?,
+        KeyMapFlags::REPLACE => write!(f, "r")?,
+        KeyMapFlags::VERBATIM => write!(f, "V")?,
+        KeyMapFlags::EMACS => write!(f, "e")?,
+        KeyMapFlags::REMOTE => write!(f, "R")?,
+        _ => break,
+      }
+    }
+    Ok(())
   }
 }
 
@@ -47,5 +73,15 @@ impl KeyMap {
     } else {
       KeyMapMatch::NoMatch
     }
+  }
+}
+
+impl Display for KeyMap {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let flags = self.flags.to_string();
+    let keys = as_var_val_display(&self.keys);
+    let action = as_var_val_display(&self.action);
+
+    write!(f, "keymap {flags} {keys} {action}")
   }
 }

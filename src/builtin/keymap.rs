@@ -1,7 +1,7 @@
 use super::{
   ShResult, Shed,
   getopt::{Opt, OptSpec},
-  sherr, with_status,
+  outln, sherr, with_status,
 };
 
 use super::keys::{KeyMap, KeyMapFlags};
@@ -44,6 +44,12 @@ impl super::Builtin for KeyMapBuiltin {
         }
       }
     }
+
+    if args.argv.is_empty() && remove.is_none() {
+      display_keymaps(flags)?;
+      return with_status(0);
+    }
+
     if flags.is_empty() {
       return Err(sherr!(
         ExecFail,
@@ -82,6 +88,22 @@ impl super::Builtin for KeyMapBuiltin {
 
     with_status(0)
   }
+}
+
+fn display_keymaps(mut flags: KeyMapFlags) -> ShResult<()> {
+  if flags.is_empty() {
+    flags = KeyMapFlags::all();
+  }
+
+  let lines = Shed::logic(|l| l.keymaps_filtered(flags, &[]))
+    .into_iter()
+    .map(|km| km.to_string())
+    .collect::<Vec<String>>()
+    .join("\n");
+
+  outln!("{lines}");
+
+  Ok(())
 }
 
 #[cfg(test)]

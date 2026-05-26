@@ -989,11 +989,13 @@ JOBS                                             *builtin-jobs* *jobs*
 ==============================================================================
 KEYMAP                                           *builtin-keymap* *keymap*
 
+  `keymap`
+  `keymap {mode-flags}`
   `keymap {mode-flags} {keys} {action}`
   `keymap {mode-flags} --remove {keys}`
 
-  Define or remove a custom key binding. At least one mode flag is
-  required. {keys} and {action} are key sequences.
+  Define, remove, or list custom key bindings. {keys} and {action}
+  are key sequences.
 
   Mode Flags ~
 
@@ -1007,6 +1009,17 @@ KEYMAP                                           *builtin-keymap* *keymap*
 
   `--remove {keys}`   remove the binding for {keys} in the given modes
 
+  Listing ~
+
+    With no arguments, prints every registered keymap across all
+    modes. With one or more mode flags and no {keys}/{action}, prints
+    only the keymaps active in those modes. Useful for inspecting
+    what's currently bound:
+
+        `keymap`              list every registered keymap
+        `keymap -i`           list only insert-mode keymaps
+        `keymap -n -v`        list normal and visual keymaps
+
   Key sequences use the same notation as the line editor. Special keys
   can be written as `<cr>`, `<esc>`, `<tab>`, `<space>`, etc.
 
@@ -1015,6 +1028,8 @@ KEYMAP                                           *builtin-keymap* *keymap*
       `keymap -i 'jk' '<esc>'`        map jk -> escape in insert mode
       `keymap -n 'gs' ':source ~/.shed_profile<cr>'`
       `keymap -i --remove 'jk'`       remove the jk binding
+      `keymap`                        list all keymaps
+      `keymap -i`                     list insert-mode keymaps
 
 ==============================================================================
 KILL                                             *builtin-kill* *kill*

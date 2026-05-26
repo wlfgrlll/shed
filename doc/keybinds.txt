@@ -445,45 +445,8 @@ see |builtin-shopt| for more info.
 ==============================================================================
 9. User-Defined Keymaps                        *keymaps* *keymap*
 
-  Custom key bindings are created with the `keymap` command:
-
-    `keymap [flags] {keys} {action}`
-
-  Flags select the mode(s) the binding applies to:
-
-    `-n`      normal mode
-    `-i`      insert mode
-    `-v`      visual mode
-    `-x`      ex mode
-    `-o`      operator-pending mode
-    `-r`      replace mode
-    `-e`      emacs mode
-
-  Keys and actions use angle-bracket notation for special keys:
-
-    `<CR>`    Enter             `<Esc>`     Escape
-    `<Tab>`   Tab               `<BS>`      Backspace
-    `<Del>`   Delete            `<Space>`   Space
-    `<Up>` `<Down>` `<Left>` `<Right>`      Arrow keys
-    `<Home>` `<End>`            Home / End
-    `<F1>` - `<F12>`            Function keys
-    `<CMD>`   Enter ex mode
-    `<Leader>`                  Leader key (set via `shopt prompt.leader`)
-
-  Modifier prefixes:
-
-    `C-`      Control           `A-` `M-`   Alt / Meta
-    `S-`      Shift
-
-  Examples:
-
-    `keymap -n <Leader>w ':w<CR>'`     Leader+w writes to file
-    `keymap -i jk '<Esc>'`             jk exits insert mode
-    `keymap -n <C-n> ':!mycmd<CR>'`    Ctrl+n runs a shell command
-
-  To remove a binding:
-
-    `keymap --remove {keys}`
+  Custom key bindings can be created with the `keymap` builtin.
+  See |builtin-keymap| for more info.
 
 ==============================================================================
 10. Completion                                 *completion*
