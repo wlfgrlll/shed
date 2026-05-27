@@ -123,9 +123,9 @@ impl Expander {
     }
   }
   pub fn expand(&mut self) -> ShResult<Vec<String>> {
-    let res = self.expand_inner();
+    let res = self.expand_inner()?;
     let words = if self.flags.contains(TkFlags::IS_HEREDOC) || self.nosplit {
-      vec![res?]
+      vec![res]
     } else {
       self.split_words()
     };

@@ -1620,4 +1620,42 @@ mod tests {
     assert!("".parse::<ArithOp>().is_err());
     assert!("foo".parse::<ArithOp>().is_err());
   }
+
+  // Regressions: expansion errors used to be silently dropped in the
+  // regular-word arm of `Expander::expand`, so a malformed arith
+  // expansion would assign the raw token text (with markers stripped
+  // by split_words) instead of erroring.
+
+  #[test]
+  fn bad_arith_in_assignment_errors_not_leaks() {
+    use crate::tests::testutil::test_input;
+    let _g = TestGuard::new();
+    let result = test_input("foo=$((1 k 2))");
+    assert!(
+      result.is_err() || Shed::get_status() != 0,
+      "bad arith should error or set non-zero status; got Ok with status=0"
+    );
+    // The pre-fix bug: foo would end up as "(1 k 2)".
+    let foo = crate::var!("foo");
+    assert!(
+      foo.is_empty() || !foo.contains('k'),
+      "foo should not contain the raw arith body; got {foo:?}"
+    );
+  }
+
+  #[test]
+  fn bad_arith_in_command_errors_not_leaks() {
+    use crate::tests::testutil::test_input;
+    let _g = TestGuard::new();
+    // Capture output into a known sink (the `foo` variable) so we don't
+    // have to disentangle stdout from the rendered error block (which
+    // reproduces the source line and would false-positive any check
+    // against the raw arith text).
+    test_input("foo=$(echo $((1 k 2)))").ok();
+    let foo = crate::var!("foo");
+    assert!(
+      foo.is_empty() || !foo.contains("(1 k 2)"),
+      "raw arith body leaked into echo output: {foo:?}"
+    );
+  }
 }
