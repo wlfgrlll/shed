@@ -138,21 +138,42 @@ pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
     })
     .collect();
 
-  let rc_entries: Vec<TokenStream2> = idents
+  let rc_entries_default: Vec<TokenStream2> = idents
     .iter()
     .zip(docs.iter())
     .map(|(ident, doc)| {
       let s = ident.to_string();
       quote! {
-          {
-            let val = crate::expand::as_var_val_display(&defaults.#ident.to_string());
-            let entry = format!("shopt {}.{}={}", #group, #s, val);
-            if !#doc.is_empty() {
-              lines.push(format!("{:<50} # {}", entry, #doc.trim()));
-            } else {
-              lines.push(entry);
-            }
-          }
+        {
+          let val = crate::expand::as_var_val_display(&defaults.#ident.to_string());
+          let entry = format!("shopt {}.{}={}", #group, #s, val);
+          let doc: Option<String> = if #doc.is_empty() {
+            None
+          } else {
+            Some(#doc.trim().to_string())
+          };
+          entries.push((format!("{}.{}", #group, #s), entry, doc));
+        }
+      }
+    })
+    .collect();
+
+  let rc_entries_current: Vec<TokenStream2> = idents
+    .iter()
+    .zip(docs.iter())
+    .map(|(ident, doc)| {
+      let s = ident.to_string();
+      quote! {
+        {
+          let val = crate::expand::as_var_val_display(&self.#ident.to_string());
+          let entry = format!("shopt {}.{}={}", #group, #s, val);
+          let doc: Option<String> = if #doc.is_empty() {
+            None
+          } else {
+            Some(#doc.trim().to_string())
+          };
+          entries.push((format!("{}.{}", #group, #s), entry, doc));
+        }
       }
     })
     .collect();
@@ -186,13 +207,24 @@ pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
         }
       }
 
-      pub fn generate_rc_lines() -> Vec<String> {
+      /// Rc entries built from `Self::default()`. Each tuple is
+      /// `(fully-qualified key, "shopt key=val" line, optional doc string)`.
+      /// Consumers decide whether to render the doc as a trailing comment.
+      pub fn rc_entries_default() -> Vec<(String, String, Option<String>)> {
         let defaults = Self::default();
-        let mut lines = vec![];
-        #( #rc_entries )*
-        lines
+        let mut entries: Vec<(String, String, Option<String>)> = vec![];
+        #( #rc_entries_default )*
+        entries
       }
 
+      /// Rc entries built from the live values of `self`. Used when
+      /// regenerating the rc file to capture the user's current config
+      /// rather than factory defaults.
+      pub fn rc_entries_current(&self) -> Vec<(String, String, Option<String>)> {
+        let mut entries: Vec<(String, String, Option<String>)> = vec![];
+        #( #rc_entries_current )*
+        entries
+      }
     }
 
     impl ::std::fmt::Display for #name {

@@ -34,6 +34,7 @@ mod exec;
 mod fixcmd;
 mod flog;
 mod flowctl;
+mod genrc;
 mod getopt;
 mod getopts;
 mod hash;
@@ -188,6 +189,7 @@ register_builtins! {
   "flog"     => flog::Flog,
   "fpop"     => arrops::FrontPop,
   "fpush"    => arrops::FrontPush,
+  "genrc"    => genrc::GenRc,
   "getopts"  => getopts::GetOpts,
   "hash"     => hash::Hash,
   "help"     => help::Help,

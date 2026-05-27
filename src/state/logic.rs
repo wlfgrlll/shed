@@ -224,6 +224,19 @@ impl LogTab {
     Shed::meta_mut(|m| m.notify_autocmd(kind)).ok();
     self.autocmds.get(&kind).cloned().unwrap_or_default()
   }
+  /// Iterate every registered autocmd in `(kind, command)` order. Skips
+  /// the `notify_autocmd` side effect that `get_autocmds` performs, since
+  /// dumping for `genrc` shouldn't mark autocmds as fired.
+  pub fn iter_autocmds(&self) -> impl Iterator<Item = &AutoCmd> {
+    let mut kinds: Vec<&AutoCmdKind> = self.autocmds.keys().collect();
+    kinds.sort_by_key(|k| k.to_string());
+    kinds
+      .into_iter()
+      .flat_map(move |k| self.autocmds.get(k).map(|v| v.iter()).into_iter().flatten())
+  }
+  pub fn iter_keymaps(&self) -> &[KeyMap] {
+    &self.keymaps
+  }
   pub fn clear_autocmds(&mut self, kind: AutoCmdKind) {
     self.autocmds.remove(&kind);
   }

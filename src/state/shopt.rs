@@ -86,35 +86,55 @@ impl Default for ShOpts {
   }
 }
 
+/// Where shopt values come from when composing rc output.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ShoptSource {
+  /// Values from `Self::default()` — the factory rc.
+  Defaults,
+  /// Values from the live `ShOpts` instance — used to regenerate the
+  /// rc file from the user's current configuration.
+  Current,
+}
+
+/// One rc entry: `(fully-qualified key, group label, "shopt key=val"
+/// line, optional doc string)`. The composer in `state::util` joins these
+/// into final rc text and decides whether to render the doc as a trailing
+/// comment based on `GenRcConfig::include_comments`.
+pub(crate) type ShoptRcEntry = (String, &'static str, String, Option<String>);
+
+type RcEntries = Vec<(String, String, Option<String>)>;
 impl ShOpts {
-  pub fn generate_default_rc() -> Vec<String> {
-    let mut lines = vec![];
-    lines.push("# -- Shell Options --".into());
-    lines.push(String::new());
+  /// All rc entries for every shopt group, in stable group order. The
+  /// `group` field is the human-readable section header used when
+  /// rendering with comments.
+  pub fn rc_entries(&self, source: ShoptSource) -> Vec<ShoptRcEntry> {
+    let group_entries: [(&'static str, RcEntries); 6] = match source {
+      ShoptSource::Defaults => [
+        ("Core", ShOptCore::rc_entries_default()),
+        ("Line Editor", ShOptLine::rc_entries_default()),
+        ("Prompt", ShOptPrompt::rc_entries_default()),
+        ("POSIX Set Options", ShOptSet::rc_entries_default()),
+        ("Syntax Highlighting", ShOptHighlight::rc_entries_default()),
+        ("Status Line", ShOptStatLine::rc_entries_default()),
+      ],
+      ShoptSource::Current => [
+        ("Core", self.core.rc_entries_current()),
+        ("Line Editor", self.line.rc_entries_current()),
+        ("Prompt", self.prompt.rc_entries_current()),
+        ("POSIX Set Options", self.set.rc_entries_current()),
+        ("Syntax Highlighting", self.highlight.rc_entries_current()),
+        ("Status Line", self.statline.rc_entries_current()),
+      ],
+    };
 
-    lines.push("# - Core -".into());
-    lines.extend(ShOptCore::generate_rc_lines());
-    lines.push(String::new());
-
-    lines.push("# - Line Editor -".into());
-    lines.extend(ShOptLine::generate_rc_lines());
-    lines.push(String::new());
-
-    lines.push("# - Prompt -".into());
-    lines.extend(ShOptPrompt::generate_rc_lines());
-    lines.push(String::new());
-
-    lines.push("# - POSIX Set Options -".into());
-    lines.extend(ShOptSet::generate_rc_lines());
-    lines.push(String::new());
-
-    lines.push("# - Syntax Highlighting -".into());
-    lines.extend(ShOptHighlight::generate_rc_lines());
-    lines.push(String::new());
-
-    lines.push("# - Status Line -".into());
-    lines.extend(ShOptStatLine::generate_rc_lines());
-    lines
+    group_entries
+      .into_iter()
+      .flat_map(|(group, entries)| {
+        entries
+          .into_iter()
+          .map(move |(key, line, doc)| (key, group, line, doc))
+      })
+      .collect()
   }
 
   pub fn query(&mut self, query: &str) -> ShResult<Option<String>> {
