@@ -652,17 +652,18 @@ impl LexStream {
 
               Some(ch) => {
                 let mut ch = *ch;
+                // skip whitespace
                 while is_field_sep(ch) {
-                  let Some(next_ch) = chars.next() else {
-                    // Incomplete input - fall through to emit << as Redir
-                    break;
-                  };
-                  pos += next_ch.len_utf8();
-                  ch = next_ch;
+                  let consumed = chars.next().unwrap();
+                  pos += consumed.len_utf8();
+                  match chars.peek() {
+                    Some(next) => ch = *next,
+                    None => break, // ran out, handled below
+                  }
                 }
 
                 if is_field_sep(ch) {
-                  // Ran out of input while skipping whitespace - fall through
+                  // Ran out of input while skipping whitespace, fall through
                 } else {
                   let saved_cursor = self.cursor;
                   match self.read_heredoc(pos) {
@@ -752,7 +753,7 @@ impl LexStream {
   pub fn read_heredoc(&mut self, mut pos: usize) -> ShResult<Option<Tk>> {
     let slice = self.slice(pos..).unwrap_or_default().to_string();
     let span_start = pos;
-    let mut chars = slice.chars();
+    let mut chars = slice.chars().peekable();
     let mut delim = String::new();
     let mut flags = TkFlags::empty();
     let mut first_char = true;
@@ -762,6 +763,11 @@ impl LexStream {
         '-' if first_char => {
           pos += 1;
           flags |= TkFlags::TAB_HEREDOC;
+          // skip whitespace
+          while chars.peek().is_some_and(|c| is_field_sep(*c)) {
+            let c = chars.next().unwrap();
+            pos += c.len_utf8();
+          }
         }
         '\"' => {
           pos += 1;

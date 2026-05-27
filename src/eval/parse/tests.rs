@@ -948,6 +948,52 @@ fn heredoc_tab_stripping_uneven() {
   assert_eq!(out, "hello\nworld\n");
 }
 
+// Regressions: whitespace between `<<` and the delimiter word used to
+// be eaten by a consume-then-test loop that overran by one char,
+// producing errors like "Heredoc delimiter 'OF' not found".
+
+#[test]
+fn heredoc_space_before_unquoted_delim() {
+  let guard = TestGuard::new();
+  test_input("cat << EOF\nhello\nEOF".to_string()).unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "hello\n");
+}
+
+#[test]
+fn heredoc_space_before_single_quoted_delim() {
+  let guard = TestGuard::new();
+  Shed::vars_mut(|v| v.set_var("NAME", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
+  test_input("cat << 'EOF'\nhello $NAME\nEOF".to_string()).unwrap();
+  let out = guard.read_output();
+  // Single-quoted delim → literal heredoc, no expansion.
+  assert_eq!(out, "hello $NAME\n");
+}
+
+#[test]
+fn heredoc_tab_before_delim() {
+  let guard = TestGuard::new();
+  test_input("cat <<\tEOF\nhello\nEOF".to_string()).unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "hello\n");
+}
+
+#[test]
+fn heredoc_multiple_spaces_before_delim() {
+  let guard = TestGuard::new();
+  test_input("cat <<   EOF\nhello\nEOF".to_string()).unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "hello\n");
+}
+
+#[test]
+fn heredoc_dash_with_space_before_delim() {
+  let guard = TestGuard::new();
+  test_input("cat <<- EOF\n\thello\nEOF".to_string()).unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "hello\n");
+}
+
 #[test]
 fn heredoc_empty_body() {
   let guard = TestGuard::new();
