@@ -4,7 +4,7 @@ use yansi::Paint;
 
 use super::{
   Shed,
-  context::{CtxTk, CtxTkRule, get_context_tokens, get_ex_context_tokens},
+  context::{CmdKind, CtxTk, CtxTkRule, get_context_tokens, get_ex_context_tokens},
   state::shopt::ShOptHighlight,
   util::{PaletteEntry, style_from_description},
 };
@@ -12,7 +12,11 @@ use super::{
 pub struct Palette {
   string: PaletteEntry,
   keyword: PaletteEntry,
-  valid_command: PaletteEntry,
+  external_command: PaletteEntry,
+  builtin: PaletteEntry,
+  function: PaletteEntry,
+  alias: PaletteEntry,
+  directory: PaletteEntry,
   invalid_command: PaletteEntry,
   control_flow_keyword: PaletteEntry,
   argument: PaletteEntry,
@@ -32,7 +36,11 @@ impl Palette {
       let ShOptHighlight {
         string,
         keyword,
-        valid_command,
+        external_command,
+        builtin,
+        function,
+        alias,
+        directory,
         invalid_command,
         control_flow_keyword,
         argument,
@@ -46,7 +54,11 @@ impl Palette {
       Self {
         string: get_color(string),
         keyword: get_color(keyword),
-        valid_command: get_color(valid_command),
+        external_command: get_color(external_command),
+        builtin: get_color(builtin),
+        function: get_color(function),
+        alias: get_color(alias),
+        directory: get_color(directory),
         invalid_command: get_color(invalid_command),
         control_flow_keyword: get_color(control_flow_keyword),
         argument: get_color(argument),
@@ -65,7 +77,11 @@ impl Palette {
     Self {
       string: entry,
       keyword: entry,
-      valid_command: entry,
+      external_command: entry,
+      builtin: entry,
+      function: entry,
+      alias: entry,
+      directory: entry,
       invalid_command: entry,
       control_flow_keyword: entry,
       argument: entry,
@@ -80,11 +96,17 @@ impl Palette {
   pub fn style_for(&self, tk: &CtxTk, editor_cursor_pos: usize) -> PaletteEntry {
     let class = tk.class();
     match class {
-      CtxTkRule::ValidCommand => {
+      CtxTkRule::ValidCommand(kind) => {
         if ["break", "continue", "return"].contains(&tk.span().as_str()) {
           self.control_flow_keyword
         } else {
-          self.valid_command
+          match kind {
+            CmdKind::External => self.external_command,
+            CmdKind::Function => self.function,
+            CmdKind::Builtin => self.builtin,
+            CmdKind::Alias => self.alias,
+            CmdKind::Directory => self.directory,
+          }
         }
       }
       CtxTkRule::InvalidCommand => self.invalid_command,
@@ -347,7 +369,11 @@ mod tests {
     Palette {
       string: PaletteEntry::new().yellow(),
       keyword: PaletteEntry::new().magenta(),
-      valid_command: PaletteEntry::new().green(),
+      external_command: PaletteEntry::new().green(),
+      function: PaletteEntry::new().green(),
+      alias: PaletteEntry::new().green(),
+      builtin: PaletteEntry::new().green(),
+      directory: PaletteEntry::new().green(),
       invalid_command: PaletteEntry::new().red(),
       control_flow_keyword: PaletteEntry::new().magenta(),
       argument: PaletteEntry::new().white(),

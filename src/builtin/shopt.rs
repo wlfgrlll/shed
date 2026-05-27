@@ -1,9 +1,14 @@
 use super::{
   Shed,
   getopt::{Opt, OptSpec},
-  outln,
+  outln, sherr,
   util::{ShResult, ShResultExt, with_status},
 };
+
+/// List of deprecated shopt names, in case we need an entire list at some point.
+/// Can't hurt to have.
+const DEPRECATED_SHOPTS: &[(&str, &str)] =
+  &[("highlight.valid_command", "highlight.external_command")];
 
 pub(super) struct Shopt;
 impl super::Builtin for Shopt {
@@ -21,7 +26,25 @@ impl super::Builtin for Shopt {
       return with_status(0);
     }
 
-    for (arg, span) in args.argv {
+    for (mut arg, span) in args.argv {
+      // Split into key + optional value so the deprecation check works
+      // for both `shopt key` and `shopt key=value`.
+      let (key, value) = match arg.split_once('=') {
+        Some((k, v)) => (k.to_string(), Some(v.to_string())),
+        None => (arg.clone(), None),
+      };
+
+      if let Some((_, new_key)) = DEPRECATED_SHOPTS.iter().find(|(old, _)| *old == key) {
+        sherr!(DeprecationWarning @ span.clone(),
+          "shopt: '{key}' has been renamed to '{new_key}'"
+        )
+        .print_error();
+        arg = match value {
+          Some(v) => format!("{new_key}={v}"),
+          None => (*new_key).to_string(),
+        };
+      }
+
       let Some(output) = Shed::shopts_mut(|s| s.query(&arg)).promote_err(span)? else {
         continue;
       };

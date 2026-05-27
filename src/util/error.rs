@@ -248,8 +248,13 @@ impl ShErr {
   }
   pub fn build_report(&self) -> Option<Report<'_, Span>> {
     let span = self.src_span.as_ref()?;
-    let mut report = Report::build(ReportKind::Error, span.clone())
-      .with_config(ariadne::Config::default().with_color(true));
+    let kind = if self.kind().is_warning() {
+      ReportKind::Warning
+    } else {
+      ReportKind::Error
+    };
+    let mut report =
+      Report::build(kind, span.clone()).with_config(ariadne::Config::default().with_color(true));
     let msg = if self.notes.is_empty() {
       self.kind.to_string()
     } else {
@@ -368,6 +373,9 @@ pub enum ShErrKind {
   NotFound,
   InvalidAssignment,
 
+  // Warnings
+  DeprecationWarning,
+
   // Not really errors, more like internal signals
   CleanExit(i32),
   FuncReturn(i32),
@@ -388,6 +396,9 @@ impl ShErrKind {
         | Self::Interrupt
     )
   }
+  pub fn is_warning(&self) -> bool {
+    matches!(self, Self::DeprecationWarning)
+  }
 }
 
 impl Display for ShErrKind {
@@ -400,6 +411,7 @@ impl Display for ShErrKind {
       Self::InternalErr => "Internal Error",
       Self::HistoryReadErr => "History Parse Error",
       Self::ExecFail => "Execution Failed",
+      Self::DeprecationWarning => "Deprecation Warning",
       Self::BadPermission => "Bad Permissions",
       Self::Errno(e) => &format!("Errno: {}", e.desc()),
       Self::NotFound => "Not Found",

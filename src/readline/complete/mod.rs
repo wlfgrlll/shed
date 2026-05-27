@@ -166,7 +166,7 @@ impl CompStrat {
     let whole = leaf.span().as_str();
     let cursor_pos = leaf.relative_cursor_pos(cursor_pos);
     let strat = match leaf.class() {
-      CtxTkRule::ValidCommand | CtxTkRule::InvalidCommand | CtxTkRule::Keyword => {
+      CtxTkRule::ValidCommand(_) | CtxTkRule::InvalidCommand | CtxTkRule::Keyword => {
         Self::Command { prefix }
       }
 
@@ -229,7 +229,7 @@ impl CompStrat {
 
     match prev.class() {
       // After a finished command/argument-position token, we're typing args.
-      CtxTkRule::ValidCommand
+      CtxTkRule::ValidCommand(_)
       | CtxTkRule::InvalidCommand
       | CtxTkRule::Argument
       | CtxTkRule::ArgumentFile

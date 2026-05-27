@@ -548,10 +548,30 @@ pub(crate) struct ShOptHighlight {
   #[default("yellow".to_string())]
   pub keyword: String,
 
-  /// The color used for highlighting valid commands
+  /// The color used for highlighting external commands
   #[validate(validate_color)]
   #[default("green".to_string())]
-  pub valid_command: String,
+  pub external_command: String,
+
+  /// The color used for highlighting builtin commands
+  #[validate(validate_color)]
+  #[default("green".to_string())]
+  pub builtin: String,
+
+  /// The color used for highlighting shell functions
+  #[validate(validate_color)]
+  #[default("green".to_string())]
+  pub function: String,
+
+  /// The color used for highlighting shell aliases
+  #[validate(validate_color)]
+  #[default("green".to_string())]
+  pub alias: String,
+
+  /// The color used for highlighting directories when core.autocd is enabled
+  #[validate(validate_color)]
+  #[default("green".to_string())]
+  pub directory: String,
 
   /// The color used for highlighting invalid commands
   #[validate(validate_color)]

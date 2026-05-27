@@ -777,9 +777,6 @@ impl MetaTab {
   pub fn remove_comp_spec(&mut self, cmd: &str) -> bool {
     self.comp_specs.remove(cmd).is_some()
   }
-  pub fn cache_contains(&self, cmd: &str) -> bool {
-    self.util_cache.iter().any(|util| util.name() == cmd)
-  }
   pub fn get_cached_cmd(&self, cmd: &str) -> Option<Rc<Utility>> {
     // used when the hashall option is set
     // and we use cached command paths for the execve system call

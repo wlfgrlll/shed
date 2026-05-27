@@ -5,7 +5,6 @@ use std::{
 use bitflags::bitflags;
 
 use super::{
-  Shed,
   builtin::BUILTIN_NAMES,
   editmode::{ExCommand, ExLineAddr, ExTk, ExTkRule},
   eval::{
@@ -14,7 +13,7 @@ use super::{
   },
   expand::{expand_raw_inner, markers::strip_markers, unescape_str},
   match_loop, shopt,
-  state::{self, util::get_exec_wrappers, vars::ShellParam},
+  state::{self, meta::UtilKind, util::get_exec_wrappers, vars::ShellParam},
   util::{QuoteState, has_unescaped, split_at_unescaped},
 };
 
@@ -75,7 +74,7 @@ fn is_exec_wrapper(tk: &CtxTk) -> bool {
   get_exec_wrappers()
     .into_iter()
     .any(|wr| wr.as_str() == tk.span().as_str())
-    && is_valid_cmd(tk.as_tk())
+    && is_valid_cmd(tk.as_tk()).is_some()
 }
 
 fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
@@ -85,7 +84,7 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
     promote_exec_wrappers(&mut tk.sub_tokens);
 
     if skip_to_next {
-      if let CtxTkRule::ValidCommand = tk.class() {
+      if let CtxTkRule::ValidCommand(_) = tk.class() {
         skip_to_next = false;
       } else {
         continue;
@@ -115,8 +114,8 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
           }
           let target = tokens.next().unwrap();
           target.class = match is_valid_cmd(target.as_tk()) {
-            true => CtxTkRule::ValidCommand,
-            false => CtxTkRule::InvalidCommand,
+            Some(kind) => CtxTkRule::ValidCommand(kind),
+            None => CtxTkRule::InvalidCommand,
           };
           break;
         }
@@ -151,6 +150,16 @@ fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
   *tokens = out;
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum CmdKind {
+  External,
+  Function,
+  Builtin,
+  Alias,
+
+  Directory, // if auto-cd is enabled
+}
+
 /// Checks if a command name is valid
 ///
 /// Searches:
@@ -158,31 +167,34 @@ fn subdivide_arguments(tokens: &mut Vec<CtxTk>) {
 /// 2. Current directory if command is a path
 /// 3. All directories in PATH environment variable
 /// 4. Shell functions and aliases in the current shell state
-fn is_valid(command: Tk) -> bool {
+fn is_valid(command: Tk) -> Option<CmdKind> {
   if shopt!(core.autocd) && in_cd_path(command.clone()) && !is_in_path(command.clone()) {
     // this is a directory and autocd is enabled
-    return true;
+    return Some(CmdKind::Directory);
   }
 
   is_valid_cmd(command)
 }
 
-fn is_valid_cmd(command: Tk) -> bool {
-  let Ok(expanded) = command.expand_no_side_effects() else {
-    return false;
-  };
-  let Some(name) = expanded.get_first_word() else {
-    return false;
-  };
+fn is_valid_cmd(command: Tk) -> Option<CmdKind> {
+  let expanded = command.expand_no_side_effects().ok()?;
+  let name = expanded.get_first_word()?;
   let cmd_path = Path::new(&name);
 
   if cmd_path.is_absolute() || name.starts_with("./") || name.starts_with("../") {
-    let Ok(meta) = cmd_path.metadata() else {
-      return false;
-    };
-    !meta.is_dir() && meta.permissions().mode() & 0o111 != 0
+    let meta = cmd_path.metadata().ok()?;
+
+    (!meta.is_dir() && meta.permissions().mode() & 0o111 != 0).then_some(CmdKind::External)
+  } else if BUILTIN_NAMES.contains(&name.as_str()) {
+    Some(CmdKind::Builtin)
   } else {
-    BUILTIN_NAMES.contains(&name.as_str()) || Shed::meta(|m| m.cache_contains(&name))
+    let util = state::util::which_util(&name)?;
+    match util.kind() {
+      UtilKind::Alias => Some(CmdKind::Alias),
+      UtilKind::Function => Some(CmdKind::Function),
+      UtilKind::Builtin => Some(CmdKind::Builtin),
+      UtilKind::Command(_) | UtilKind::File(_) => Some(CmdKind::External),
+    }
   }
 }
 
@@ -252,7 +264,7 @@ impl TerminatorCtx {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CtxTkRule {
-  ValidCommand,
+  ValidCommand(CmdKind),
   InvalidCommand,
   Argument,
   ArgumentFile,
@@ -567,7 +579,7 @@ impl CtxTk {
         if let ExCommand::Unknown = cmd {
           vec![Self::leaf(span, CtxTkRule::InvalidCommand)]
         } else {
-          vec![Self::leaf(span, CtxTkRule::ValidCommand)]
+          vec![Self::leaf(span, CtxTkRule::ValidCommand(CmdKind::Builtin))]
         }
       }
       ExTkRule::ShellTk(tk) => Self::from_tk(tk),
@@ -607,8 +619,8 @@ impl CtxTk {
         span,
       )];
     } else if flags.intersects(TkFlags::BUILTIN | TkFlags::IS_CMD) {
-      if is_valid(value.clone()) {
-        CtxTkRule::ValidCommand
+      if let Some(kind) = is_valid(value.clone()) {
+        CtxTkRule::ValidCommand(kind)
       } else {
         CtxTkRule::InvalidCommand
       }
@@ -1958,7 +1970,12 @@ mod tests {
     let tks = get_context_tokens(src);
     let cmds = tks
       .iter()
-      .filter(|t| matches!(t.class, CtxTkRule::ValidCommand | CtxTkRule::InvalidCommand))
+      .filter(|t| {
+        matches!(
+          t.class,
+          CtxTkRule::ValidCommand(_) | CtxTkRule::InvalidCommand
+        )
+      })
       .count();
     assert!(
       cmds >= 1,
@@ -2380,7 +2397,7 @@ mod tests {
     let src = "sudo cat";
     let tokens = get_context_tokens(src);
     let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
-    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+    assert!(matches!(*cat_tk.class(), CtxTkRule::ValidCommand(_)));
   }
 
   #[test]
@@ -2404,7 +2421,7 @@ mod tests {
     let src = "sudo -E cat";
     let tokens = get_context_tokens(src);
     let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
-    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+    assert!(matches!(*cat_tk.class(), CtxTkRule::ValidCommand(_)));
   }
 
   #[test]
@@ -2416,7 +2433,7 @@ mod tests {
     let src = "sudo FOO=bar cat";
     let tokens = get_context_tokens(src);
     let cat_tk = find_by_text(&tokens, "cat", src).expect("cat token");
-    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+    assert!(matches!(*cat_tk.class(), CtxTkRule::ValidCommand(_)));
   }
 
   #[test]
@@ -2435,7 +2452,7 @@ mod tests {
     let cat_tk = find_by_text(&tokens, "cat", src).expect("cat");
     assert_eq!(*sudo_tk.class(), CtxTkRule::Keyword);
     assert_eq!(*strace_tk.class(), CtxTkRule::Keyword);
-    assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+    assert!(matches!(*cat_tk.class(), CtxTkRule::ValidCommand(_)));
   }
 
   #[test]
@@ -2455,7 +2472,7 @@ mod tests {
     if let Some(tk) = run0_tk
       && *tk.class() == CtxTkRule::Keyword
     {
-      assert_eq!(*cat_tk.class(), CtxTkRule::ValidCommand);
+      assert!(matches!(*cat_tk.class(), CtxTkRule::ValidCommand(_)));
     }
   }
 
