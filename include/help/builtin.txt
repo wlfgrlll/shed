@@ -1568,7 +1568,11 @@ SHOPT                                            *builtin-shopt* *shopt*
 
     `string`                  string literals (default: `yellow`)
     `keyword`                 shell keywords (default: `yellow`)
-    `valid_command`           valid commands (default: `green`)
+    `external_command`        external commands (default: `green`)
+    `builtin`                 builtin commands (default: `green`)
+    `function`                shell functions (default: `green`)
+    `alias`                   shell aliases (default: `green`)
+    `directory`               directories, when `core.autocd` is enabled (default: `green`)
     `invalid_command`         unknown commands (default: `bold red`)
     `control_flow_keyword`    break/continue/return (default: `magenta`)
     `argument`                command arguments (default: `white`)
