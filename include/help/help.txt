@@ -50,6 +50,8 @@ Cross-reference links can also be `clicked` directly with the mouse.
                         `help prompt-escapes`   jumps to |prompt-escapes|
                         `help heredoc`          jumps to |heredoc|
 
+  Tab completion for the `help` command will complete valid search tags.
+
   Help pages are displayed in an interactive pager.      *help-pager*
 
   2.1 Scrolling                                  *help-scroll*
@@ -89,5 +91,71 @@ Cross-reference links can also be `clicked` directly with the mouse.
       and open the referenced help page. Press {Esc} to cancel.
 
       Cross-references can also be clicked directly with the mouse.
+
+==============================================================================
+3. Custom Help Pages                             *help-hpath* *SHED_HPATH*
+
+  `SHED_HPATH` is a variable containing a `:`-separated list of
+  directories searched for user-supplied help pages, in addition
+  to the ones bundled with the shell. Treat it like `PATH` but
+  for documentation.
+
+  When you run `help {topic}`:
+
+    1. If {topic} is an absolute or relative path to an existing
+       file, that file is opened directly.
+    2. Otherwise, each directory in `SHED_HPATH` is scanned for a
+       file whose stem (filename without extension) starts with
+       {topic}. The first match wins.
+    3. If no filename matches, the help pages included with shed are scanned
+       the same way. (those start with `help/`)
+    4. If still no match, every page (both `SHED_HPATH` and bundled)
+       is searched for `*tag*` markers matching {topic}. The
+       highest-scoring tag determines which page opens and where
+       the pager lands.
+
+  Examples:
+
+      `export SHED_HPATH=$HOME/wiki:$HOME/notes`
+      `help mytopic`          opens $HOME/.shed/help/mytopic.txt
+      `help ./local.txt`      opens that file directly
+      `help my-tag`           tag search across all known pages
+
+  Files added to a `SHED_HPATH` directory are discovered the next
+  time `help` runs.
+
+==============================================================================
+4. Markup Language                             *help-markup*
+
+  Help pages use a small markup language inspired by vim's helpfile
+  format. All markers are paired: an opening character introduces
+  a styled run, and a matching character closes it. Markers only
+  activate when the surrounding text makes them unambiguous (e.g.
+  a `*` followed by whitespace stays a literal asterisk).
+
+  `*tag*`             Searchable tag. Becomes the target of
+                      `help {tag}` lookups. Rendered bold yellow.
+                      Convention: place tags in the top-right of
+                      each section.
+
+  `|reference|`       Cross-reference link to another page or tag.
+                      Rendered underlined cyan. Tab into hint mode
+                      to follow; mouse click also works.
+
+  `` `code` ``            Inline code or literal command. Rendered
+                      green. Use for commands, filenames, flag
+                      names, anything the reader would type.
+
+  `#header#`          Section header. Rendered bold magenta.
+                      Use sparingly -- typically at the top of a
+                      page or to introduce a major subsection.
+
+  `{keyword}`         Word highlighting. Rendered italic.
+  `[optional]`        Useful for putting emphasis on specific words.
+
+  `~~~`...`~~~`       Raw block. Everything between the triple
+                      tildes is emitted unstyled -- useful when the
+                      content itself contains markup characters
+                      that would otherwise be interpreted.
 
 ==============================================================================
