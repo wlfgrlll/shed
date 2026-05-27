@@ -39,8 +39,6 @@ impl Display for ShAlias {
 }
 
 /// A shell function
-///
-/// Wraps the BraceGrp Node that forms the body of the function, and provides some helper methods to extract it from the parse tree
 #[derive(Clone, Debug)]
 pub struct ShFunc {
   pub body: Node,

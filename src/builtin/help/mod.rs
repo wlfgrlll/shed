@@ -50,7 +50,7 @@ macro_rules! include_help_pages {
   ($($name:literal),* $(,)?) => {
     const HELP_PAGES: &[(&str, &str)] = &[
       $({
-        const S: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $name));
+        const S: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $name));
         validate_help_page(S);
         ($name, S)
       },)*
@@ -59,21 +59,21 @@ macro_rules! include_help_pages {
 }
 
 include_help_pages! {
-  "doc/arith.txt",
-  "doc/autocmd.txt",
-  "doc/builtin.txt",
-  "doc/commands.txt",
-  "doc/ex.txt",
-  "doc/glob.txt",
-  "doc/help.txt",
-  "doc/jobs.txt",
-  "doc/keybinds.txt",
-  "doc/param.txt",
-  "doc/prompt.txt",
-  "doc/redirect.txt",
-  "doc/scripting.txt",
-  "doc/socket.txt",
-  "doc/variables.txt",
+  "help/arith.txt",
+  "help/autocmd.txt",
+  "help/builtin.txt",
+  "help/commands.txt",
+  "help/ex.txt",
+  "help/glob.txt",
+  "help/help.txt",
+  "help/jobs.txt",
+  "help/keybinds.txt",
+  "help/param.txt",
+  "help/prompt.txt",
+  "help/redirect.txt",
+  "help/scripting.txt",
+  "help/socket.txt",
+  "help/variables.txt",
 }
 
 pub(super) struct Help;
@@ -488,7 +488,7 @@ mod open_help_tests {
     let _g = TestGuard::new();
     let (line, content, filename) = get_help_content("builtin-alias").unwrap();
     assert!(content.contains("builtin-alias"));
-    assert_eq!(filename, Some("doc/builtin.txt".to_string()));
+    assert_eq!(filename, Some("help/builtin.txt".to_string()));
     assert_eq!(line, 64);
   }
 
@@ -577,20 +577,20 @@ mod open_help_tests {
   fn get_help_content_builtin_page_prefix_match() {
     let _g = TestGuard::new();
     Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
-    // "doc/help" is a prefix of the bundled "doc/help.txt" page name.
-    let (line, _content, filename) = get_help_content("doc/help").unwrap();
+    // "help/help" is a prefix of the bundled "help/help.txt" page name.
+    let (line, _content, filename) = get_help_content("help/help").unwrap();
     assert_eq!(line, 0);
-    assert_eq!(filename, Some("doc/help.txt".to_string()));
+    assert_eq!(filename, Some("help/help.txt".to_string()));
   }
 
   #[test]
   fn get_help_content_builtin_page_first_match_wins() {
-    // The prefix "doc/" matches every bundled page, but we return the
-    // first one — "doc/arith.txt" is the first entry in HELP_PAGES.
+    // The prefix "help/" matches every bundled page, but we return the
+    // first one — "help/arith.txt" is the first entry in HELP_PAGES.
     let _g = TestGuard::new();
     Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
-    let (_, _, filename) = get_help_content("doc/").unwrap();
-    assert_eq!(filename, Some("doc/arith.txt".to_string()));
+    let (_, _, filename) = get_help_content("help/").unwrap();
+    assert_eq!(filename, Some("help/arith.txt".to_string()));
   }
 
   // ─── get_help_content: no-match path ───────────────────────────────
@@ -619,9 +619,9 @@ mod open_help_tests {
     })
     .unwrap();
     // The bogus HPATH read_dir errors → continue. Falls through to
-    // HELP_PAGES, which matches "doc/help.txt" by prefix.
-    let (_, _, filename) = get_help_content("doc/help").unwrap();
-    assert_eq!(filename, Some("doc/help.txt".to_string()));
+    // HELP_PAGES, which matches "help/help.txt" by prefix.
+    let (_, _, filename) = get_help_content("help/help").unwrap();
+    assert_eq!(filename, Some("help/help.txt".to_string()));
   }
 
   #[test]
@@ -711,7 +711,7 @@ mod help_execute_tests {
   // ─── help (no args) → opens help page ──────────────────────────
   //
   // No args defaults to topic="help" which resolves to the bundled
-  // doc/help.txt. open_help enters the pager loop; we feed 'q' before
+  // help/help.txt. open_help enters the pager loop; we feed 'q' before
   // calling so the loop exits immediately.
 
   #[test]
@@ -726,12 +726,12 @@ mod help_execute_tests {
 
   #[test]
   fn help_with_topic_argument_opens_pager() {
-    // 'help builtin' resolves to doc/builtin.txt via prefix match.
+    // 'help builtin' resolves to help/builtin.txt via prefix match.
     let g = TestGuard::new();
     ensure_meta_table();
     arm_raw_tty();
     g.feed_tty(b"q");
-    test_input("help doc/builtin").unwrap();
+    test_input("help help/builtin").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
   }
 }

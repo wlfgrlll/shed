@@ -43,7 +43,7 @@ A secondary command prompt that has many tools for both controlling the line edi
 | `:w file` / `:w !cmd` | Write the current buffer to a file, or pipe to a shell command. e.g. `:w !wl-copy` to pipe it to your clipboard.  |
 | `:r file` / `:r !cmd` | Read a file into the buffer, or read shell output, e.g. `:r !wl-paste` to read clipboard contents into the buffer.|
 
-For a comprehensive list, as well as more in-depth stuff like line-addressing, check out the [ex mode docs](./doc/ex.txt)
+For a comprehensive list, as well as more in-depth stuff like line-addressing, check out the [ex mode docs](./include/help/ex.txt)
 
 ---
 
@@ -196,7 +196,7 @@ An example implementation of a `shed` status line can be found [here](./examples
 
 Among other things, it's possible to read from and write to the line editor directly via the socket. This enables total extensibility of the editor by anything that can interact with a Unix socket. The `remote` editing mode causes input keys to be broadcast over the socket, to be consumed by subscribers that can use those inputs to control the editor remotely.
 
-More info can be found in [the socket help page](./doc/socket.txt).
+More info can be found in [the socket help page](./include/help/socket.txt).
 
 ---
 
