@@ -30,8 +30,7 @@ pub(super) use error::{ShErr, ShErrKind, ShResult, ShResultExt, get_context};
 
 pub(super) use strops::{
   QuoteState, ends_with_unescaped, expand_ansi_c, format_mode, format_size, format_time,
-  has_unescaped, rfind_unescaped, scan_braces, scan_parens, split_at_unescaped, split_case_pat,
-  split_tk,
+  has_unescaped, rfind_unescaped, scan_braces, scan_parens, split_at_unescaped, split_tk,
 };
 
 pub(super) struct FdWriter<'a>(pub BorrowedFd<'a>);

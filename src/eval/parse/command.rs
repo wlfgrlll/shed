@@ -160,13 +160,6 @@ impl ParseStream {
         let Some(prefix_tk) = tk_iter.next() else {
           break;
         };
-        if let TkRule::CasePattern = prefix_tk.class {
-          break 'out Err(parse_err!(
-            self,
-            vec![prefix_tk.clone()],
-            "Found case pattern in command"
-          ));
-        }
         let is_cmd = prefix_tk.flags.contains(TkFlags::IS_CMD);
         let is_assignment = prefix_tk.flags.contains(TkFlags::ASSIGN);
         let is_keyword = prefix_tk.flags.contains(TkFlags::KEYWORD);

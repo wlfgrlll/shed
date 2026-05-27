@@ -300,11 +300,40 @@ impl ParseStream {
     self.catch_separator(&mut node_tks);
 
     loop {
-      if !self.check_case_pattern() || !self.next_tk_is_some() {
-        bail!(self, node_tks, "Expected a case pattern here");
+      let leading_paren = matches!(self.next_tk_class(), TkRule::SubshStart);
+      if leading_paren {
+        // optional leading paren, push and continue
+        node_tks.push(self.next_tk().unwrap());
       }
-      let case_pat_tk = self.next_tk().unwrap();
-      node_tks.push(case_pat_tk.clone());
+
+      let mut patterns: Vec<Tk> = vec![];
+      loop {
+        let Some(word) = self.next_tk() else {
+          bail!(self, node_tks, "Expected a case pattern here");
+        };
+        if matches!(word.class, TkRule::SubshEnd | TkRule::Sep | TkRule::Eoi)
+          || word.flags.contains(TkFlags::KEYWORD)
+        {
+          self.panic_mode(&mut node_tks);
+          return Err(parse_err!(self, vec![word], "Expected a case pattern here"));
+        }
+        node_tks.push(word.clone());
+        patterns.push(word);
+
+        match self.next_tk_class() {
+          TkRule::Pipe => {
+            node_tks.push(self.next_tk().unwrap()); // consume '|'
+            // loop back for next alternative
+          }
+          TkRule::SubshEnd => break,
+          _ => {
+            bail!(self, node_tks, "Expected '|' or ')' after case pattern");
+          }
+        }
+      }
+
+      // Consume the closing ')'.
+      node_tks.push(self.next_tk().unwrap());
       self.block_depth += 1;
 
       let mut found_end = false;
@@ -352,7 +381,7 @@ impl ParseStream {
       );
 
       let case_node = CaseNode {
-        pattern: case_pat_tk,
+        patterns,
         body: Box::new(arm_body),
       };
       case_blocks.push(case_node);

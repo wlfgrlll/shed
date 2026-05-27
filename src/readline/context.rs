@@ -355,8 +355,7 @@ impl CtxTk {
       | TkRule::Eoi
       | TkRule::Soi
       | TkRule::Null
-      | TkRule::Str
-      | TkRule::CasePattern => None,
+      | TkRule::Str => None,
     }
   }
 

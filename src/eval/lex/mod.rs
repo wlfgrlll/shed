@@ -1,9 +1,7 @@
 use std::{
   fmt::Display,
-  iter::Peekable,
   ops::{Bound, Range, RangeBounds},
   rc::Rc,
-  str::Chars,
 };
 
 use bitflags::bitflags;
@@ -187,7 +185,6 @@ pub(crate) enum TkRule {
   Bg,
   Sep,
   Redir,
-  CasePattern,
   BraceGrpStart,
   BraceGrpEnd,
   SubshStart,
@@ -322,6 +319,10 @@ bitflags! {
     const EXPECTING_IN   = 1 << 7;
     const NEXT_IS_REDIR  = 1 << 8;
     const NEXT_IS_FUNC   = 1 << 9;
+    /// Set alongside EXPECTING_IN when a `case` keyword is lexed; consumed
+    const EXPECTING_CASE_IN = 1 << 10;
+    /// Expecting a closing ')' in a case statement pattern
+    const CASE_PAT_EXPECTED = 1 << 11;
 
     const LEX_UNFINISHED = Self::LEX_UNFINISHED_STRUCTURES.bits() | Self::LEX_UNFINISHED_QUOTES.bits();
   }
@@ -910,16 +911,6 @@ impl LexStream {
     let mut chars = slice.chars().peekable();
     let can_be_subshell = chars.peek() == Some(&'(');
 
-    if self.case_depth > 0
-      && let Some(count) = case_pat_lookahead(chars.clone())
-    {
-      pos += count;
-      let casepat_tk = self.get_token(self.cursor..pos, TkRule::CasePattern);
-      self.update_cursor(pos);
-      self.set_next_is_cmd(true);
-      return Ok(casepat_tk);
-    }
-
     match_loop!(chars.next() => ch, {
       _ if self.flags.contains(LexFlags::RAW) => {
         if ch.is_whitespace() {
@@ -1043,6 +1034,12 @@ impl LexStream {
         // this will be handled below by self.func_paren_lookahead()
         break;
       }
+      '(' if self.flags.contains(LexFlags::CASE_PAT_EXPECTED) && can_be_subshell => {
+        pos += 1;
+        let tk = self.get_token(self.cursor..pos, TkRule::SubshStart);
+        self.update_cursor(pos);
+        return Ok(tk);
+      }
       '(' if (self.next_is_cmd() || chars.peek() == Some(&'(')) && can_be_subshell => {
         pos += 1;
         let mut paren_count = 1;
@@ -1095,10 +1092,17 @@ impl LexStream {
         self.update_cursor(pos);
         return Ok(tk);
       }
-      ')' if pos == self.cursor && self.in_subsh() => {
+      ')' if pos == self.cursor
+        && (self.in_subsh() || self.flags.contains(LexFlags::CASE_PAT_EXPECTED)) =>
+      {
         pos += 1;
         let tk = self.get_token(self.cursor..pos, TkRule::SubshEnd);
-        self.leave_subsh();
+        if self.flags.contains(LexFlags::CASE_PAT_EXPECTED) {
+          // this paren closes a case pattern. consume it and continue
+          self.flags &= !LexFlags::CASE_PAT_EXPECTED;
+        } else {
+          self.leave_subsh();
+        }
         self.set_next_is_cmd(true);
         self.update_cursor(pos);
         return Ok(tk);
@@ -1146,7 +1150,7 @@ impl LexStream {
         }
       }
       ')' => {
-        if !self.in_subsh() {
+        if !self.in_subsh() && !self.flags.contains(LexFlags::CASE_PAT_EXPECTED) {
           pos += 1;
           let bad_pos = pos;
           self.update_cursor(pos);
@@ -1159,6 +1163,7 @@ impl LexStream {
         }
         break
       }
+      '|' => break, // pipe operator outside of quotes
       _ if is_hard_sep(ch) => break,
       _ => pos += ch.len_utf8(),
     });
@@ -1172,8 +1177,9 @@ impl LexStream {
     }
 
     let text = new_tk.span.as_str();
-    let is_cmd =
-      self.flags.contains(LexFlags::NEXT_IS_CMD) && !self.flags.contains(LexFlags::NEXT_IS_REDIR);
+    let is_cmd = self.flags.contains(LexFlags::NEXT_IS_CMD)
+      && !self.flags.contains(LexFlags::NEXT_IS_REDIR)
+      && !self.flags.contains(LexFlags::CASE_PAT_EXPECTED);
     if is_cmd {
       match text {
         "function" => {
@@ -1186,7 +1192,7 @@ impl LexStream {
         }
         "case" => {
           new_tk.mark(TkFlags::KEYWORD);
-          self.flags |= LexFlags::EXPECTING_IN;
+          self.flags |= LexFlags::EXPECTING_IN | LexFlags::EXPECTING_CASE_IN;
           self.case_depth += 1;
           self.set_next_is_cmd(false);
         }
@@ -1198,10 +1204,15 @@ impl LexStream {
         "in" if self.flags.contains(LexFlags::EXPECTING_IN) => {
           new_tk.mark(TkFlags::KEYWORD);
           self.flags &= !LexFlags::EXPECTING_IN;
+          if self.flags.contains(LexFlags::EXPECTING_CASE_IN) {
+            self.flags &= !LexFlags::EXPECTING_CASE_IN;
+            self.flags |= LexFlags::CASE_PAT_EXPECTED;
+          }
         }
         _ if is_keyword(text) => {
           if text == "esac" && self.case_depth > 0 {
             self.case_depth -= 1;
+            self.flags &= !LexFlags::CASE_PAT_EXPECTED;
           }
           if text == "[[" {
             self.dbracket_depth += 1;
@@ -1234,6 +1245,17 @@ impl LexStream {
     } else if self.flags.contains(LexFlags::EXPECTING_IN) && text == "in" {
       new_tk.mark(TkFlags::KEYWORD);
       self.flags &= !LexFlags::EXPECTING_IN;
+      if self.flags.contains(LexFlags::EXPECTING_CASE_IN) {
+        self.flags &= !LexFlags::EXPECTING_CASE_IN;
+        self.flags |= LexFlags::CASE_PAT_EXPECTED;
+      }
+    } else if text == "esac" && self.case_depth > 0 {
+      // `esac` reached in pattern position (empty case body or right after `;;`).
+      // The is_cmd block above is short-circuited by CASE_PAT_EXPECTED,
+      // so do the keyword recognition and depth bookkeeping here.
+      new_tk.mark(TkFlags::KEYWORD);
+      self.case_depth -= 1;
+      self.flags &= !LexFlags::CASE_PAT_EXPECTED;
     } else if self.dbracket_depth > 0 && text == "]]" {
       new_tk.mark(TkFlags::KEYWORD);
       self.dbracket_depth -= 1;
@@ -1395,7 +1417,17 @@ impl Iterator for LexStream {
         } else {
           self.cursor
         };
-        self.get_token(ch_idx..sep_end, TkRule::Sep)
+        let sep_tk = self.get_token(ch_idx..sep_end, TkRule::Sep);
+        // `;;` inside a case body starts a new pattern; mark it so the
+        // next `)` is recognized as the pattern terminator.
+        if self.case_depth > 0 && sep_tk.has_double_semi() {
+          self.flags |= LexFlags::CASE_PAT_EXPECTED;
+        }
+        if self.flags.contains(LexFlags::CASE_PAT_EXPECTED) {
+          // next is a case pattern, not a command.
+          self.set_next_is_cmd(false);
+        }
+        sep_tk
       }
       '#'
         if !self.flags.contains(LexFlags::INTERACTIVE)
@@ -1551,81 +1583,6 @@ pub fn is_cmd_sub(slice: &str) -> bool {
   slice.starts_with("$(") && ends_with_unescaped(slice, ")")
 }
 
-pub fn case_pat_lookahead(mut chars: Peekable<Chars>) -> Option<usize> {
-  let mut pos = 0;
-  let mut qt_state = QuoteState::default();
-  while let Some(ch) = chars.next() {
-    pos += ch.len_utf8();
-    match ch {
-      _ if qt_state.outside() && is_hard_sep(ch) => return None,
-      '\\' => {
-        if let Some(esc) = chars.next() {
-          pos += esc.len_utf8();
-          if esc == '\n' || esc == '\r' {
-            while let Some(&c) = chars.peek() {
-              if matches!(c, ' ' | '\t') {
-                chars.next();
-                pos += 1;
-              } else {
-                break;
-              }
-            }
-          }
-        }
-      }
-      '$' if qt_state.outside() && chars.peek() == Some(&'\'') => {
-        // $'...' ANSI-C quoting - skip through to closing quote
-        chars.next(); // consume opening '
-        pos += 1;
-        while let Some(c) = chars.next() {
-          pos += c.len_utf8();
-          if c == '\\' {
-            if let Some(esc) = chars.next() {
-              pos += esc.len_utf8();
-            }
-          } else if c == '\'' {
-            break;
-          }
-        }
-      }
-      '$' if qt_state.outside() && chars.peek() == Some(&'(') => {
-        // $(...) or $((...)) - skip through balanced parens
-        chars.next(); // consume opening '('
-        pos += 1;
-        let mut depth = 1usize;
-        while let Some(c) = chars.next() {
-          pos += c.len_utf8();
-          match c {
-            '(' => depth += 1,
-            ')' => {
-              depth -= 1;
-              if depth == 0 {
-                break;
-              }
-            }
-            '\\' => {
-              if let Some(esc) = chars.next() {
-                pos += esc.len_utf8();
-              }
-            }
-            _ => {}
-          }
-        }
-      }
-      '\'' => {
-        qt_state.toggle_single();
-      }
-      '"' => {
-        qt_state.toggle_double();
-      }
-      ')' if qt_state.outside() => return Some(pos),
-      '(' if qt_state.outside() => return None,
-      _ => { /* continue */ }
-    }
-  }
-  None
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1724,89 +1681,5 @@ mod tests {
       !classes.contains(&TkRule::Bang),
       "'!$' should NOT produce a Bang; got {classes:?}"
     );
-  }
-
-  // ===================== case_pat_lookahead =====================
-
-  fn lookahead(s: &str) -> Option<usize> {
-    case_pat_lookahead(s.chars().peekable())
-  }
-
-  #[test]
-  fn finds_simple_close_paren() {
-    // pos counts bytes consumed including the ')'.
-    assert_eq!(lookahead("abc)"), Some(4));
-  }
-
-  #[test]
-  fn returns_none_on_hard_sep_outside_quotes() {
-    assert_eq!(lookahead("abc def"), None);
-    assert_eq!(lookahead("abc;def"), None);
-    assert_eq!(lookahead("abc\ndef"), None);
-  }
-
-  #[test]
-  fn returns_none_on_open_paren_outside_quotes() {
-    // Unbalanced `(` aborts the lookahead.
-    assert_eq!(lookahead("abc(def"), None);
-  }
-
-  #[test]
-  fn returns_none_at_eof_with_no_close_paren() {
-    assert_eq!(lookahead("just_text"), None);
-    assert_eq!(lookahead(""), None);
-  }
-
-  #[test]
-  fn escape_consumes_following_char() {
-    // `\)` is escaped, doesn't terminate. Then we hit real `)`.
-    assert_eq!(lookahead("ab\\)cd)"), Some(7));
-  }
-
-  #[test]
-  fn escape_of_space_doesnt_trip_hard_sep() {
-    // `\ ` (escaped space) is consumed, doesn't terminate.
-    assert_eq!(lookahead("ab\\ cd)"), Some(7));
-  }
-
-  #[test]
-  fn single_quotes_hide_special_chars() {
-    // Inside single quotes, `;` `)` `(` are all literal.
-    assert_eq!(lookahead("'foo;bar')"), Some(10));
-  }
-
-  #[test]
-  fn double_quotes_hide_special_chars() {
-    assert_eq!(lookahead("\"foo bar\")"), Some(10));
-  }
-
-  #[test]
-  fn ansi_c_quoting_dollar_squote_skipped() {
-    // $'...' should be skipped through; the `)` inside doesn't count.
-    assert_eq!(lookahead("$')(')"), Some(6));
-  }
-
-  #[test]
-  fn cmd_sub_dollar_paren_is_balanced() {
-    // $(...) — internal `)` matches its `(`. Outer `)` is what we find.
-    assert_eq!(lookahead("$(echo;hi))"), Some(11));
-  }
-
-  #[test]
-  fn nested_cmd_subs_balanced() {
-    // $(echo;$(true)) is two levels deep; balanced.
-    assert_eq!(lookahead("$(echo;$(true)))"), Some(16));
-  }
-
-  #[test]
-  fn escape_of_newline_with_followup_whitespace() {
-    // `\<newline>` + spaces → all consumed as line-continuation.
-    assert_eq!(lookahead("a\\\n   b)"), Some(8));
-  }
-
-  #[test]
-  fn close_paren_inside_quotes_doesnt_terminate() {
-    // The `)` between quotes is literal; outer `)` is the real close.
-    assert_eq!(lookahead("\"a)b\")"), Some(6));
   }
 }

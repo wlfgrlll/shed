@@ -115,7 +115,7 @@ impl Node {
         ref mut case_blocks,
       } => {
         for block in case_blocks {
-          let CaseNode { pattern: _, body } = block;
+          let CaseNode { patterns: _, body } = block;
           body.walk_tree(f);
         }
       }
@@ -194,7 +194,7 @@ pub(crate) struct CondNode {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CaseNode {
-  pub pattern: Tk,
+  pub patterns: Vec<Tk>,
   pub body: Box<Node>,
 }
 

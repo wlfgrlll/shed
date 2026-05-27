@@ -30,8 +30,8 @@ use super::{
   },
   try_var,
   util::{
-    self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, split_case_pat,
-    var_ctx_guard, with_status,
+    self, ShErr, ShErrKind, ShResult, ShResultExt, scope_guard, shared_scope_guard, var_ctx_guard,
+    with_status,
   },
   var,
 };
@@ -669,18 +669,10 @@ impl Dispatcher {
         .unwrap_or_default();
 
       'outer: for block in case_blocks {
-        let CaseNode { pattern, body } = block;
-        let block_pattern_raw = pattern
-          .span
-          .as_str()
-          .strip_suffix(')')
-          .unwrap_or(pattern.span.as_str())
-          .trim();
+        let CaseNode { patterns, body } = block;
 
-        let block_patterns = split_case_pat(block_pattern_raw);
-
-        for pattern in block_patterns {
-          let pattern_exp = expand_case_pattern(&pattern)?;
+        for pattern in patterns {
+          let pattern_exp = expand_case_pattern(pattern.span.as_str())?;
           if pattern_exp.is_empty() {
             if pattern_raw.is_empty() {
               let _guard = shared_scope_guard();
@@ -1556,6 +1548,73 @@ mod tests {
     let _g = TestGuard::new();
     test_input("case foo in bar) true;; esac").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  // ===================== case pattern whitespace / paren / alternative =====================
+  // Regressions for issue #52: POSIX permits whitespace before `)`, an
+  // optional leading `(`, and `|` alternatives with arbitrary whitespace.
+
+  #[test]
+  fn case_space_before_close_paren() {
+    let g = TestGuard::new();
+    test_input("case x in * ) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_leading_open_paren() {
+    let g = TestGuard::new();
+    test_input("case x in (*) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_leading_paren_with_inner_whitespace() {
+    let g = TestGuard::new();
+    test_input("case x in ( * ) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_pipe_alternatives_no_spaces() {
+    let g = TestGuard::new();
+    test_input("case b in a|b|c) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_pipe_alternatives_with_spaces() {
+    let g = TestGuard::new();
+    test_input("case b in a | b | c ) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_paren_wrapped_alternatives() {
+    let g = TestGuard::new();
+    test_input("case b in (a | b | c) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_quoted_pattern_with_space_is_literal() {
+    let g = TestGuard::new();
+    test_input("case 'foo bar' in \"foo bar\") echo hit ;; *) echo miss ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_glob_pattern_still_works() {
+    let g = TestGuard::new();
+    test_input("case hello.txt in *.txt ) echo hit ;; esac").unwrap();
+    assert_eq!(g.read_output(), "hit\n");
+  }
+
+  #[test]
+  fn case_multiple_paren_wrapped_arms() {
+    let g = TestGuard::new();
+    test_input("case mid in (first) echo a ;; (mid) echo b ;; (*) echo c ;; esac").unwrap();
+    assert_eq!(g.read_output(), "b\n");
   }
 
   // ===================== other stuff =====================

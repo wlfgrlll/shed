@@ -74,11 +74,6 @@ impl ParseStream {
       .peek_tk()
       .is_some_and(|tk| !matches!(tk.class, TkRule::Comment | TkRule::Eoi))
   }
-  pub(super) fn check_case_pattern(&self) -> bool {
-    self
-      .peek_tk()
-      .is_some_and(|tk| tk.class == TkRule::CasePattern)
-  }
   pub(super) fn check_flags(&self, flags: TkFlags) -> bool {
     self.peek_tk().is_some_and(|tk| tk.flags.contains(flags))
   }

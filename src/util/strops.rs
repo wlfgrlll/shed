@@ -47,37 +47,10 @@ impl QuoteState {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct DelimState {
-  quote: QuoteState,
-  bracket_depth: usize,
-  paren_depth: usize,
-  brace_depth: usize,
-}
-
-impl DelimState {
-  pub fn is_literal(&self) -> bool {
-    self.quote.in_quote() || self.bracket_depth > 0 || self.paren_depth > 0 || self.brace_depth > 0
-  }
-}
-
 /* - splitting functions
  * the splitting functions in std are fine, but don't cut it when quoting rules and escaping are involved
  * so we have to roll our own stuff. we can take a functional approach to to this that generalizes quite well
  */
-
-pub fn split_all<F>(slice: &str, segment_fn: F) -> Vec<String>
-where
-  F: Fn(&str) -> Option<(usize, usize)>,
-{
-  split_all_with(slice, segment_fn, |start, end| {
-    slice[start..end].to_string()
-  })
-}
-
-pub fn split_case_pat(slice: &str) -> Vec<String> {
-  split_all(slice, split_case_pattern_segment)
-}
 
 pub fn split_tk(tk: &Tk, pat: &str) -> Vec<Tk> {
   let slice = tk.as_str();
@@ -109,32 +82,6 @@ where
     splits.push(build(cursor, cursor + remaining.len()));
   }
   splits
-}
-
-pub fn split_case_pattern_segment(slice: &str) -> Option<(usize, usize)> {
-  let pat = '|';
-  let mut chars = slice.char_indices().peekable();
-  let mut delim_state = DelimState::default();
-  while let Some((i, ch)) = chars.next() {
-    match ch {
-      '\\' => {
-        chars.next();
-        continue;
-      }
-      '[' => delim_state.bracket_depth += 1,
-      ']' if delim_state.bracket_depth > 0 => delim_state.bracket_depth -= 1,
-      '\'' => delim_state.quote.toggle_single(),
-      '"' => delim_state.quote.toggle_double(),
-      _ if delim_state.is_literal() => continue,
-      _ => {}
-    }
-
-    if slice[i..].starts_with(pat) {
-      return Some((i, 1));
-    }
-  }
-
-  None
 }
 
 /// Splits a string at the first occurrence of a pattern, but only if the pattern is not escaped by a backslash
