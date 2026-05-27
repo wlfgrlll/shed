@@ -95,7 +95,7 @@ impl super::Builtin for Help {
     // Join all of the word-split arguments into a single string
     // Preserve the span too
     let (topic, span) = if argv.peek().is_none() {
-      ("help".to_string(), Span::default())
+      ("help/help.txt".to_string(), Span::default())
     } else {
       super::join_raw_arg_iter(argv)
     };
