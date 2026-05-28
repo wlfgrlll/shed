@@ -10,7 +10,6 @@ use super::{
   state::{vars::VarFlags, vars::VarKind},
   util::{ShErr, ShResult, with_status},
 };
-use ariadne::Span as ASpan;
 use nix::{
   sys::stat::{self, SFlag},
   unistd::{AccessFlags, isatty},

@@ -278,7 +278,7 @@ impl Shed {
     })
   }
   pub fn post_system_msg(msg: String) {
-    if Self::term(|t| t.interactive()) {
+    if Self::meta(|t| t.interactive_shell()) {
       SHED.with(|shed| {
         let msg = Message::new(msg);
         shed.system_msg_queue.borrow_mut().push_back(msg);
@@ -377,7 +377,7 @@ impl Default for Shed {
 impl Shed {
   pub fn save(&self) {
     let saved = Self {
-      jobs: RefCell::new(self.jobs.borrow().clone()),
+      jobs: RefCell::new(std::mem::take(&mut self.jobs.borrow_mut())),
       var_scopes: RefCell::new(self.var_scopes.borrow().clone()),
       meta: RefCell::new(self.meta.borrow().clone()),
       logic: RefCell::new(self.logic.borrow().clone()),

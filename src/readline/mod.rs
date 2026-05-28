@@ -1780,7 +1780,7 @@ impl ShedLine {
 
     if !system_msg.is_empty() {
       Shed::term_mut(|t| t.clear_under_cursor()).ok();
-      write_term!("\n{system_msg}")?;
+      write_term!("{system_msg}")?;
     }
 
     redraw(

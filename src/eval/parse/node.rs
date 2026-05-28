@@ -142,7 +142,7 @@ impl Node {
       } => {
         body.walk_tree(f);
       }
-      NdRule::Negate { ref mut cmd } => {
+      NdRule::Timed { ref mut cmd } | NdRule::Negate { ref mut cmd } => {
         cmd.walk_tree(f);
       }
       NdRule::Arithmetic { .. } | NdRule::Assignment { .. } => (), // No nodes to check
@@ -177,8 +177,7 @@ bitflags! {
     const PIPE_ERR      = 1 << 4; // whether to include stderr in a pipe
     const NOT_ERR       = 1 << 5; // whether an error triggers ERR traps and set -e
     const PIPE_CMD      = 1 << 6; // is not the last command in a pipeline
-    const REPORT_TIME   = 1 << 7; // whether this node should be reported by the time keyword
-    const NO_SPLIT      = 1 << 8; // don't split words, used in double bracket tests ('[[')
+    const NO_SPLIT      = 1 << 7; // don't split words, used in double bracket tests ('[[')
   }
 }
 
@@ -244,6 +243,7 @@ pub(crate) enum NdKind {
   BraceGrp,
   Subsh,
   Negate,
+  Timed,
   FuncDef,
 }
 
@@ -262,6 +262,7 @@ impl NdRule {
       Self::Pipeline { .. } => NdKind::Pipeline,
       Self::Conjunction { .. } => NdKind::Conjunction,
       Self::Assignment { .. } => NdKind::Assignment,
+      Self::Timed { .. } => NdKind::Timed,
       Self::BraceGrp { .. } => NdKind::BraceGrp,
       Self::FuncDef { .. } => NdKind::FuncDef,
       Self::Subshell { .. } => NdKind::Subsh,
@@ -297,6 +298,9 @@ pub(crate) enum NdRule {
     body: Tk,
   },
   Negate {
+    cmd: Box<Node>,
+  },
+  Timed {
     cmd: Box<Node>,
   },
   CaseNode {

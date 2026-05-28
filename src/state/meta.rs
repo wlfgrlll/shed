@@ -13,7 +13,7 @@ use std::{
 };
 
 use super::{
-  ShResult, Shed,
+  ShResult, Shed, autocmd,
   builtin::BUILTIN_NAMES,
   crate_util as util,
   expand::{expand_keymap, glob_to_regex},
@@ -22,7 +22,7 @@ use super::{
   logic::AutoCmdKind,
   match_loop,
   readline::{Candidate, CompSpec, LineData},
-  sherr, socket,
+  sherr, socket, system_msg,
   util::query_db,
   var, writefd,
 };
@@ -40,55 +40,42 @@ use nix::{
 };
 use regex::Regex;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct CmdTimer {
-  command: String,
   wall_start: Instant,
   self_usage_start: Option<Usage>,
   child_usage_start: Option<Usage>,
   wall_end: Option<Duration>,
   self_usage_end: Option<Usage>,
   child_usage_end: Option<Usage>,
-  report_time: bool,
 }
 
 impl CmdTimer {
-  pub fn new(command: String, report_time: bool) -> ShResult<Self> {
-    let (self_usage_start, child_usage_start) = if report_time {
-      (
-        Some(getrusage(UsageWho::RUSAGE_SELF)?),
-        Some(getrusage(UsageWho::RUSAGE_CHILDREN)?),
-      )
-    } else {
-      (None, None)
-    };
+  pub fn new() -> ShResult<Self> {
+    let (self_usage_start, child_usage_start) = (
+      Some(getrusage(UsageWho::RUSAGE_SELF)?),
+      Some(getrusage(UsageWho::RUSAGE_CHILDREN)?),
+    );
     Ok(Self {
-      command,
       wall_start: Instant::now(),
       self_usage_start,
       child_usage_start,
       wall_end: None,
       self_usage_end: None,
       child_usage_end: None,
-      report_time,
     })
   }
 
   pub fn stop(&mut self) -> ShResult<()> {
     self.wall_end = Some(self.wall_start.elapsed());
-    if self.report_time {
-      self.self_usage_end = Some(getrusage(UsageWho::RUSAGE_SELF)?);
-      self.child_usage_end = Some(getrusage(UsageWho::RUSAGE_CHILDREN)?);
-    }
+    self.self_usage_end = Some(getrusage(UsageWho::RUSAGE_SELF)?);
+    self.child_usage_end = Some(getrusage(UsageWho::RUSAGE_CHILDREN)?);
+    self.report()?;
     Ok(())
   }
 
   pub fn still_running(&self) -> bool {
     self.wall_end.is_none() && self.self_usage_end.is_none() && self.child_usage_end.is_none()
-  }
-
-  pub fn should_report(&self) -> bool {
-    self.report_time
   }
 
   pub fn cpu_pct(&self) -> ShResult<f64> {
@@ -119,10 +106,6 @@ impl CmdTimer {
     let self_r_maxrss = self.self_usage_end.unwrap().max_rss();
     let child_r_maxrss = self.child_usage_end.unwrap().max_rss();
     Ok(self_r_maxrss.max(child_r_maxrss))
-  }
-
-  pub fn command(&self) -> &str {
-    &self.command
   }
 
   pub fn total_wall_ms(&self) -> ShResult<i64> {
@@ -337,10 +320,6 @@ impl CmdTimer {
 
             write!(output, "{maxrss}").unwrap();
           }
-          'J' => {
-            // command name
-            output.push_str(&self.command);
-          }
           _ => {
             output.push('%');
             output.push(param);
@@ -352,6 +331,46 @@ impl CmdTimer {
     });
 
     Ok(output)
+  }
+  fn report(&self) -> ShResult<()> {
+    let has_autocmds = Shed::logic(|l| !l.get_autocmds(AutoCmdKind::OnTimeReport).is_empty());
+
+    if !has_autocmds {
+      let fmt_str = super::util::get_time_fmt();
+      let report = self.format_report(&fmt_str)?;
+      system_msg!("{report}");
+    } else {
+      let vars = [
+        ("TIME_REAL_MS".into(), self.total_wall_ms()?.to_string()),
+        ("TIME_USER_MS".into(), self.total_user_ms()?.to_string()),
+        ("TIME_SYS_MS".into(), self.total_sys_ms()?.to_string()),
+        (
+          "TIME_REAL_FMT".into(),
+          self.total_wall_formatted()?.to_string(),
+        ),
+        (
+          "TIME_USER_FMT".into(),
+          self.total_user_formatted()?.to_string(),
+        ),
+        (
+          "TIME_SYS_FMT".into(),
+          self.total_sys_formatted()?.to_string(),
+        ),
+        ("TIME_CPU_PCT".into(), self.cpu_pct()?.to_string()),
+        ("TIME_RSS".into(), self.max_rss()?.to_string()),
+      ];
+      super::util::with_vars(vars, || autocmd!(OnTimeReport));
+    }
+    Ok(())
+  }
+}
+
+impl Drop for CmdTimer {
+  /// Calls `CmdTimer::stop()` internally
+  ///
+  /// This allows CmdTimer to also be used as an RAII guard
+  fn drop(&mut self) {
+    self.stop().ok();
   }
 }
 
@@ -489,7 +508,6 @@ impl Clone for MetaTab {
       runtime_stop: self.runtime_stop,
       socket: self.socket.clone(),
       subscribers: self.subscribers.clone(),
-      last_job: self.last_job.clone(),
       dir_stack: self.dir_stack.clone(),
       getopts_offset: self.getopts_offset,
       old_path: self.old_path.clone(),
@@ -505,7 +523,8 @@ impl Clone for MetaTab {
       main_loop_timeout: self.main_loop_timeout,
       ignore_hist: self.ignore_hist,
 
-      procsub_stack: vec![], // does not implement clone
+      last_job: None,
+      procsub_stack: vec![],
     }
   }
 }
@@ -1233,11 +1252,11 @@ mod cmd_timer_tests {
   use crate::tests::testutil::TestGuard;
 
   fn running_timer() -> CmdTimer {
-    CmdTimer::new("test_cmd".into(), true).unwrap()
+    CmdTimer::new().unwrap()
   }
 
   fn stopped_timer() -> CmdTimer {
-    let mut t = CmdTimer::new("test_cmd".into(), true).unwrap();
+    let mut t = CmdTimer::new().unwrap();
     t.stop().unwrap();
     t
   }
@@ -1347,13 +1366,6 @@ mod cmd_timer_tests {
     let t = stopped_timer();
     assert_eq!(t.format_report("\\n").unwrap(), "n");
     assert_eq!(t.format_report("a\\\\b").unwrap(), "a\\b");
-  }
-
-  #[test]
-  fn format_report_j_emits_command_name() {
-    let _g = TestGuard::new();
-    let t = stopped_timer();
-    assert_eq!(t.format_report("%J").unwrap(), "test_cmd");
   }
 
   #[test]

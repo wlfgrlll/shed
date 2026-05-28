@@ -1289,7 +1289,7 @@ mod complete_jobs_tests {
 
   fn insert_named_job(pid: i32, cmd: &str) {
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), false).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);

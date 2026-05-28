@@ -353,14 +353,16 @@ impl ParseStream {
     let Some(mut cmd) = self.parse_block(true)? else {
       bail!(self, node_tks, "Expected a command after 'time'");
     };
-    // the 'time' keyword does not have it's own NdRule. This is because it does not alter execution in any meaningful way.
-    // All it does here is set the REPORT_TIME flag on the node it wraps. Then we just return the node itself.
-    // Also, this is an unchecked context for the purpose of 'set -e' errors.
-    cmd.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR | NdFlags::REPORT_TIME);
+
+    cmd.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR);
 
     node_tks.extend(cmd.tokens.clone());
     self.catch_separator(&mut node_tks);
-    Ok(Some(cmd))
+    Ok(Some(node!(
+      self,
+      node_tks,
+      NdRule::Timed { cmd: Box::new(cmd) }
+    )))
   }
   pub(super) fn parse_func_keyword(&mut self) -> ShResult<Option<Node>> {
     if !self.check_keyword("function") || !self.next_tk_is_some() {
@@ -401,6 +403,7 @@ impl ParseStream {
     if !self.check_keyword("!") || !self.next_tk_is_some() {
       return Ok(None);
     }
+
     node_tks.push(self.next_tk().unwrap());
 
     let Some(mut cmd) = self.parse_block(true)? else {

@@ -621,13 +621,14 @@ pub(super) fn handle_socket_request(
           match header {
             StatusHeader::ExitCode => responses.push(Shed::get_status().to_string()),
             StatusHeader::CommandName => {
-              if let Some(job) = Shed::meta(|m| m.last_job().cloned())
-                && let Some(cmd) = job.name()
-              {
-                responses.push(cmd.to_string());
-              } else {
+              let Some(name) =
+                Shed::meta(|m| m.last_job().and_then(|j| j.name()).map(|n| n.to_string()))
+              else {
                 responses.push("".to_string());
-              }
+                continue;
+              };
+
+              responses.push(name.to_string());
             }
             StatusHeader::Runtime => {
               let Some(dur) = Shed::meta_mut(|m| m.get_time()) else {
@@ -637,24 +638,26 @@ pub(super) fn handle_socket_request(
               responses.push(format!("{}", dur.as_millis()));
             }
             StatusHeader::Pid => {
-              let Some(job) = Shed::meta_mut(|m| m.last_job().cloned()) else {
+              let job = Shed::meta_mut(|m| {
+                m.last_job().map(|j| {
+                  j.get_pids()
+                    .first()
+                    .map(|p| p.to_string())
+                    .unwrap_or_default()
+                })
+              });
+              let Some(job) = job else {
                 responses.push("".to_string());
                 continue;
               };
-              responses.push(
-                job
-                  .get_pids()
-                  .first()
-                  .map(|p| p.to_string())
-                  .unwrap_or_default(),
-              );
+              responses.push(job);
             }
             StatusHeader::Pgid => {
-              let Some(job) = Shed::meta_mut(|m| m.last_job().cloned()) else {
+              let Some(job) = Shed::meta_mut(|m| m.last_job().map(|j| j.pgid().to_string())) else {
                 responses.push("".to_string());
                 continue;
               };
-              responses.push(job.pgid().to_string());
+              responses.push(job);
             }
           }
         }
@@ -1448,7 +1451,7 @@ mod tests {
     use nix::unistd::Pid;
     let mut bldr = JobBldr::new();
     bldr.set_pgid(Pid::this());
-    let child = ChildProc::new(Pid::this(), Some(cmd), Some(Pid::this()), false).unwrap();
+    let child = ChildProc::new(Pid::this(), Some(cmd), Some(Pid::this()), None).unwrap();
     bldr.push_child(child);
     bldr.build()
   }

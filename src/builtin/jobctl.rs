@@ -697,7 +697,7 @@ mod disown_tests {
   fn insert_fake_job(pid: i32, cmd: &str) -> usize {
     use nix::sys::wait::WaitStatus;
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), false).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);
@@ -825,7 +825,7 @@ mod jobs_builtin_tests {
 
   fn insert_job(pid: i32, cmd: &str) -> usize {
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), false).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);

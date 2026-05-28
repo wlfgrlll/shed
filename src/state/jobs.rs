@@ -16,13 +16,11 @@ use yansi::Color;
 
 use super::{
   ShResult, Shed,
-  logic::AutoCmdKind,
   meta::CmdTimer,
-  procio::{stderr_fileno, stdout_fileno},
+  procio::stdout_fileno,
   sherr,
   signal::{disable_reaping, enable_reaping},
   system_msg,
-  util::{get_time_fmt, with_vars},
   vars::ShellParam,
 };
 
@@ -91,13 +89,13 @@ pub enum JobID {
   Command(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChildProc {
   pgid: Pid,
   pid: Pid,
   command: Option<String>,
   stat: WtStat,
-  timer: CmdTimer,
+  timer: Option<CmdTimer>,
 }
 
 impl ChildProc {
@@ -105,10 +103,9 @@ impl ChildProc {
     pid: Pid,
     command: Option<&str>,
     pgid: Option<Pid>,
-    report_time: bool,
+    timer: Option<CmdTimer>,
   ) -> ShResult<Self> {
     let command = command.map(|str| str.to_string());
-    let timer = CmdTimer::new(command.clone().unwrap_or_default(), report_time)?;
     let stat = if kill(pid, None).is_ok() {
       WtStat::StillAlive
     } else {
@@ -128,6 +125,9 @@ impl ChildProc {
   }
   pub fn pid(&self) -> Pid {
     self.pid
+  }
+  pub fn take_timer(&mut self) -> Option<CmdTimer> {
+    self.timer.take()
   }
   pub fn cmd(&self) -> Option<&str> {
     self.command.as_deref()
@@ -152,6 +152,18 @@ impl ChildProc {
   }
   pub fn exited(&self) -> bool {
     matches!(self.stat, WtStat::Exited(..))
+  }
+}
+
+impl Clone for ChildProc {
+  fn clone(&self) -> Self {
+    Self {
+      pgid: self.pgid,
+      pid: self.pid,
+      command: self.command.clone(),
+      stat: self.stat,
+      timer: None, // Timers are not cloned
+    }
   }
 }
 
@@ -217,7 +229,7 @@ impl JobStack {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Job {
   table_id: Option<usize>,
   pgid: Pid,
@@ -328,24 +340,21 @@ impl Job {
     self.set_stats(stat);
     Ok(killpg(self.pgid, sig)?)
   }
-  pub fn wait_pgrp(&mut self) -> ShResult<(Vec<WtStat>, Vec<CmdTimer>)> {
+  pub fn wait_pgrp(&mut self) -> ShResult<Vec<WtStat>> {
     let mut stats = vec![];
-    let mut timers = vec![];
     for child in self.children.iter_mut() {
       if child.pid == Pid::this() {
         let code = Shed::get_status();
         stats.push(WtStat::Exited(child.pid, code));
-        child.timer.stop()?;
-        timers.push(child.timer.clone());
+        child.take_timer();
         continue;
       }
       loop {
         let result = child.wait(Some(WtFlag::WUNTRACED));
-        child.timer.stop()?;
+        child.take_timer();
         match result {
           Ok(stat) => {
             stats.push(stat);
-            timers.push(child.timer.clone());
             break;
           }
           Err(Errno::ECHILD) => break,
@@ -354,7 +363,7 @@ impl Job {
         }
       }
     }
-    Ok((stats, timers))
+    Ok(stats)
   }
   pub fn update_by_id(&mut self, id: JobID, stat: WtStat) -> ShResult<()> {
     match id {
@@ -487,13 +496,7 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
       let Some(mut job) = Shed::jobs_mut(|j| j.remove_job(id.clone())) else {
         return Err(sherr!(ExecFail, "wait: No such job with id {:?}", id,));
       };
-      let (statuses, timers) = job.wait_pgrp()?;
-
-      for timer in &timers {
-        if timer.should_report() {
-          report_timer(timer)?;
-        }
-      }
+      let statuses = job.wait_pgrp()?;
 
       let mut was_stopped = false;
       let mut code = 0;
@@ -521,39 +524,6 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
   Ok(())
 }
 
-fn report_timer(timer: &CmdTimer) -> ShResult<()> {
-  let has_autocmds = Shed::logic(|l| !l.get_autocmds(AutoCmdKind::OnTimeReport).is_empty());
-
-  if !has_autocmds {
-    let fmt_str = get_time_fmt();
-    let report = timer.format_report(&fmt_str)?;
-    write(stderr_fileno(), format!("{report}\n").as_bytes()).ok();
-  } else {
-    let vars = [
-      ("TIME_REAL_MS".into(), timer.total_wall_ms()?.to_string()),
-      ("TIME_USER_MS".into(), timer.total_user_ms()?.to_string()),
-      ("TIME_SYS_MS".into(), timer.total_sys_ms()?.to_string()),
-      (
-        "TIME_REAL_FMT".into(),
-        timer.total_wall_formatted()?.to_string(),
-      ),
-      (
-        "TIME_USER_FMT".into(),
-        timer.total_user_formatted()?.to_string(),
-      ),
-      (
-        "TIME_SYS_FMT".into(),
-        timer.total_sys_formatted()?.to_string(),
-      ),
-      ("TIME_CPU_PCT".into(), timer.cpu_pct()?.to_string()),
-      ("TIME_RSS".into(), timer.max_rss()?.to_string()),
-      ("TIME_CMD".into(), timer.command().to_string()),
-    ];
-    with_vars(vars, || crate::autocmd!(OnTimeReport));
-  }
-  Ok(())
-}
-
 pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
   if job.children().is_empty() {
     return Ok(());
@@ -567,13 +537,7 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
   defer! {
     enable_reaping();
   }
-  let (statuses, timers) = Shed::jobs_mut(|j| j.new_fg(job))?;
-
-  for timer in &timers {
-    if timer.should_report() {
-      report_timer(timer)?;
-    }
-  }
+  let statuses = Shed::jobs_mut(|j| j.new_fg(job))?;
 
   for status in &statuses {
     code = code_from_status(status).unwrap_or(0);
@@ -620,7 +584,7 @@ pub fn dispatch_job(mut job: Job, is_bg: bool, interactive: bool) -> ShResult<()
   Ok(())
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default, Debug)]
 pub struct JobTab {
   fg: Option<Job>,
   order: Vec<usize>,
@@ -759,10 +723,10 @@ impl JobTab {
   pub fn get_fg_mut(&mut self) -> Option<&mut Job> {
     self.fg.as_mut()
   }
-  pub fn new_fg(&mut self, job: Job) -> ShResult<(Vec<WtStat>, Vec<CmdTimer>)> {
+  pub fn new_fg(&mut self, job: Job) -> ShResult<Vec<WtStat>> {
     self.fg = Some(job);
-    let (statuses, timers) = self.fg.as_mut().unwrap().wait_pgrp()?;
-    Ok((statuses, timers))
+    let statuses = self.fg.as_mut().unwrap().wait_pgrp()?;
+    Ok(statuses)
   }
   pub fn fg_to_bg(&mut self, stat: WtStat) -> ShResult<()> {
     if self.fg.is_none() {
@@ -784,7 +748,7 @@ impl JobTab {
     let mut code = 0;
     for job in self.jobs.iter_mut() {
       let Some(job) = job else { continue };
-      let (statuses, _) = job.wait_pgrp()?;
+      let statuses = job.wait_pgrp()?;
       code = statuses.last().and_then(code_from_status).unwrap_or(0);
     }
     Shed::set_status(code);
@@ -1000,7 +964,7 @@ mod tests {
       pid: Pid::from_raw(pid),
       command: Some(cmd.to_string()),
       stat,
-      timer: CmdTimer::new(cmd.into(), false).unwrap(),
+      timer: None,
     }
   }
 
@@ -1395,10 +1359,9 @@ mod tests {
   use crate::state::logic::{AutoCmd, AutoCmdKind};
 
   /// Build a CmdTimer that's already stopped, ready for reporting.
-  fn complete_timer(cmd: &str) -> CmdTimer {
-    let mut t = CmdTimer::new(cmd.into(), true).unwrap();
-    t.stop().unwrap();
-    t
+  fn complete_timer() {
+    // drops instantly
+    CmdTimer::new().ok();
   }
 
   #[test]
@@ -1406,8 +1369,7 @@ mod tests {
     let g = TestGuard::new();
     // Make sure no OnTimeReport autocmds are registered.
     Shed::logic_mut(|l| l.clear_autocmds(AutoCmdKind::OnTimeReport));
-    let timer = complete_timer("sleep 0");
-    report_timer(&timer).unwrap();
+    complete_timer();
     let out = g.read_output();
     // Default fmt is "\nreal\t%*E\nuser\t%*U\nsys\t%*S" — three labels.
     assert!(out.contains("real"), "got: {out:?}");
@@ -1429,31 +1391,25 @@ mod tests {
       )
       .unwrap();
     });
-    let timer = complete_timer("dummy");
-    report_timer(&timer).unwrap();
+    complete_timer();
     let out = g.read_output();
     assert!(out.contains("CUSTOM_TIMEFMT_MARKER"), "got: {out:?}");
   }
 
   #[test]
   fn report_timer_with_autocmd_fires_with_time_vars_set() {
-    // Register an OnTimeReport autocmd that echoes the command and
-    // wall-time vars. Verify both surface in the captured output.
+    // Register an OnTimeReport autocmd that echoes the wall-time var.
+    // Verify it surfaces in the captured output.
     let g = TestGuard::new();
     Shed::logic_mut(|l| {
       l.clear_autocmds(AutoCmdKind::OnTimeReport);
       l.insert_autocmd(AutoCmd::new(
         AutoCmdKind::OnTimeReport,
-        "echo CMD=$TIME_CMD RFM=$TIME_REAL_FMT".into(),
+        "echo RFM=$TIME_REAL_FMT".into(),
       ));
     });
-    let timer = complete_timer("my-traced-cmd");
-    report_timer(&timer).unwrap();
+    complete_timer();
     let out = g.read_output();
-    assert!(
-      out.contains("CMD=my-traced-cmd"),
-      "expected TIME_CMD to be set; got: {out:?}"
-    );
     assert!(
       out.contains("RFM="),
       "expected TIME_REAL_FMT to be set; got: {out:?}"

@@ -63,6 +63,7 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
 
   if JOB_DONE.swap(false, Ordering::SeqCst) {
     // update the prompt so any job count escape sequences update dynamically
+    readline.mark_dirty();
     readline.prompt_mut().refresh();
   }
 
@@ -110,7 +111,6 @@ fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
 
 fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
   let raw_mode = Shed::term_mut(|t| t.setup_terminal())?;
-  let _interactive_mode = Shed::term_mut(|t| t.interactive_guard(true));
 
   sig_setup(args.login_shell);
 

@@ -18,7 +18,9 @@ use super::{
   sherr,
   state::jobs::{Job, JobCmdFlags, JobID, SIG_EXIT_OFFSET, take_term},
   state::logic::TrapTarget,
+  state::meta::CmdTimer,
   state::{Shed, util::with_vars, vars::Var, vars::VarFlags, vars::VarKind},
+  system_msg,
   util::ShResult,
 };
 
@@ -47,6 +49,7 @@ const MISC_SIGNALS: &[Signal] = &[
   Signal::SIGSEGV,
   Signal::SIGUSR2,
   Signal::SIGPIPE,
+  Signal::SIGCHLD,
   Signal::SIGALRM,
   Signal::SIGCONT,
   Signal::SIGURG,
@@ -314,6 +317,13 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
    * if it is not a foreground job, then it exists in the job table
    * If this assumption is incorrect, the code has gone wrong somewhere.
    */
+
+  // Held until end of fn. For bg jobs, taking the timer out of the ChildProc
+  // here ensures it lives as a single owner; its Drop fires when this binding
+  // goes out of scope at the end of the function, posting the timing
+  // system_msg *after* the "done" message below.
+  let _taken_timer: Option<CmdTimer>;
+
   if let Some((pgid, is_fg, is_finished)) = Shed::jobs_mut(|j| {
     let fg_pgid = j.get_fg().map(|job| job.pgid());
     if let Some(job) = j.query_mut(JobID::Pid(pid)) {
@@ -333,13 +343,36 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
   }) && is_finished
   {
     if is_fg {
+      _taken_timer = None;
       take_term()?;
     } else {
       JOB_DONE.store(true, Ordering::SeqCst);
       let job_order = Shed::jobs(|j| j.order().to_vec());
-      let result = Shed::jobs(|j| j.query(JobID::Pgid(pgid)).cloned());
-      if let Some(job) = result {
-        let statuses = job.get_stats();
+
+      let job_data = Shed::jobs_mut(|j| {
+        j.query_mut(JobID::Pgid(pgid)).map(|job| {
+          let timer = job
+            .children_mut()
+            .iter_mut()
+            .find(|chld| chld.pid() == pid)
+            .and_then(|c| c.take_timer());
+          (
+            job.tabid().unwrap_or_default().to_string(),
+            job.notify(),
+            job.get_stats(),
+            job
+              .get_cmds()
+              .into_iter()
+              .map(String::from)
+              .collect::<Vec<String>>(),
+            job.display(&job_order, JobCmdFlags::PIDS).to_string(),
+            timer,
+          )
+        })
+      });
+
+      if let Some((id, notify, statuses, cmds, job_complete_msg, timer)) = job_data {
+        _taken_timer = timer;
 
         for status in &statuses {
           if let WtStat::Signaled(_, sig, _) = status
@@ -361,16 +394,14 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
           })?;
         }
 
-        let cmds = job.get_cmds().into_iter().map(|s| s.to_string());
-        let id = job.tabid().unwrap_or_default().to_string();
-        let statuses = statuses.into_iter().map(|s| match s {
+        let status_strs = statuses.iter().map(|s| match s {
           WtStat::Exited(_, code) => code.to_string(),
-          WtStat::Signaled(_, sig, _) => (128 + sig as i32).to_string(),
+          WtStat::Signaled(_, sig, _) => (128 + *sig as i32).to_string(),
           _ => "1".into(),
         });
 
-        let children: Vec<(String, String)> = cmds.zip(statuses).collect();
-        let status = children.last().map(|c| c.1.clone()).unwrap_or_default();
+        let children: Vec<(String, String)> = cmds.into_iter().zip(status_strs).collect();
+        let last_status = children.last().map(|c| c.1.clone()).unwrap_or_default();
 
         let cmd_count = children.len();
         // TODO: Add child statuses to exposed variables
@@ -389,21 +420,28 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
           ),
           (
             "JOB_STATUS".to_string(),
-            Var::new(VarKind::Str(status), VarFlags::empty()),
+            Var::new(VarKind::Str(last_status), VarFlags::empty()),
           ),
         ]
         .into();
 
         with_vars(post_job_vars, || autocmd!(OnJobFinish));
 
-        if job.notify() {
-          let job_complete_msg = job.display(&job_order, JobCmdFlags::PIDS).to_string();
-          Shed::post_system_msg(job_complete_msg);
+        if notify {
+          system_msg!("{job_complete_msg}");
         }
 
-        Shed::meta_mut(|m| m.notify_job_complete(&job)).ok();
+        Shed::jobs(|j| {
+          if let Some(job) = j.query(JobID::Pgid(pgid)) {
+            Shed::meta_mut(|m| m.notify_job_complete(job)).ok();
+          }
+        });
+      } else {
+        _taken_timer = None;
       }
     }
+  } else {
+    _taken_timer = None;
   }
   Ok(())
 }

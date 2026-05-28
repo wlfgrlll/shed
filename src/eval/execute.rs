@@ -25,6 +25,7 @@ use super::{
   state::{
     self, Shed,
     logic::{ShFunc, TrapTarget},
+    meta::CmdTimer,
     shopt::xtrace_print,
     vars::{ShellParam, Var, VarFlags, VarKind},
   },
@@ -279,6 +280,7 @@ pub struct Dispatcher {
   nodes: VecDeque<Node>,
   source_name: Rc<str>,
   pub job_stack: JobStack,
+  timer_stack: Vec<Option<CmdTimer>>,
   fg_job: bool,
 }
 
@@ -289,6 +291,7 @@ impl Dispatcher {
       nodes,
       source_name,
       job_stack: JobStack::new(),
+      timer_stack: vec![],
       fg_job: true,
     }
   }
@@ -322,6 +325,7 @@ impl Dispatcher {
       NdRule::FuncDef { .. } => self.exec_func_def(node),
       NdRule::Arithmetic { .. } => self.exec_arith(node),
       NdRule::Negate { .. } => self.exec_negated(node),
+      NdRule::Timed { .. } => self.exec_timed(node),
       NdRule::Command { .. } => self.dispatch_cmd(node),
       _ => unreachable!(),
     };
@@ -404,6 +408,18 @@ impl Dispatcher {
     state::Shed::set_status_from_bool(status != 0);
 
     Ok(())
+  }
+  pub fn exec_timed(&mut self, node: Node) -> ShResult<()> {
+    let NdRule::Timed { cmd } = node.class else {
+      unreachable!();
+    };
+
+    log::debug!("self.timer_stack before push: {:?}", self.timer_stack);
+    self.timer_stack.push(Some(CmdTimer::new()?));
+    let res = self.dispatch_node(*cmd);
+    self.timer_stack.pop();
+    log::debug!("self.timer_stack after pop: {:?}", self.timer_stack);
+    res
   }
   pub fn exec_conjunction(&mut self, conjunction: Node) -> ShResult<()> {
     let span = conjunction.get_span().clone();
@@ -538,6 +554,7 @@ impl Dispatcher {
       func_body.body_mut().propagate_context(func_ctx);
       func_body.body_mut().flags = func.flags;
 
+      let _timer = self.take_timer();
       match self.dispatch_node(func_body.body().clone()) {
         Ok(()) => Ok(()),
         Err(e) => match e.kind() {
@@ -574,14 +591,13 @@ impl Dispatcher {
     F: FnOnce(&mut Self) -> ShResult<()>,
   {
     let fork_builtins = flags.contains(NdFlags::FORK_BUILTINS);
-    let report_time = flags.contains(NdFlags::REPORT_TIME);
 
     let redirs = RedirSet::from(redirs);
     let guard = redirs.apply()?;
 
     if fork_builtins {
       log::trace!("Forking compound command: {name}");
-      self.run_fork(name, report_time, |s| {
+      self.run_fork(name, |s| {
         if let Err(e) = logic(s) {
           e.print_error();
         }
@@ -599,6 +615,7 @@ impl Dispatcher {
       unreachable!()
     };
 
+    let _timer = self.take_timer();
     let brc_grp_logic = |s: &mut Self| -> ShResult<()> {
       let _guard = shared_scope_guard();
       s.dispatch_node(*body)?;
@@ -620,8 +637,6 @@ impl Dispatcher {
     };
     let span = body.get_span();
 
-    let report_time = subsh.flags.contains(NdFlags::REPORT_TIME);
-
     let redirs = RedirSet::from(subsh.redirs);
     let _guard = redirs.apply()?;
 
@@ -629,7 +644,7 @@ impl Dispatcher {
     let body_display = body_raw.graphemes(true).take(70).collect::<String>();
     let name = format!("( {body_display} )");
 
-    self.run_fork(&name, report_time, |s| {
+    self.run_fork(&name, |s| {
       if let Err(e) = s.dispatch_node(*body.clone()) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
@@ -912,17 +927,30 @@ impl Dispatcher {
     };
 
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
-    let report_time = pipeline_flags.contains(NdFlags::REPORT_TIME);
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
+
+    // closure that tells us if a pipeline segment should fork
+    let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && !will_fork(cmd) };
 
     if cmds.len() == 1 && !is_bg && runs_inline(&cmds[0]) {
       // it's a single command
       // just thread it through dispatch_node directly.
       // this avoids the stdio setup that follows this
       self.job_stack.new_job();
-      let res = self.dispatch_node(cmds.remove(0));
+      let cmd = cmds.remove(0);
+      let res = if should_fork_segment(&cmd) {
+        let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
+
+        self.run_fork(&name, |s| {
+          if let Err(e) = s.dispatch_node(cmd) {
+            e.print_error();
+          }
+        })
+      } else {
+        self.dispatch_node(cmd)
+      };
 
       if let Some(job) = self.job_stack.finalize_job() {
         // just in case this somehow forked a child
@@ -933,8 +961,6 @@ impl Dispatcher {
       return res;
     }
 
-    // closure that tells us if a pipeline segment should fork
-    let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && runs_inline(cmd) };
     // closure that gets the pgid we need if the child wants the tty
     let tty_controller = |s: &mut Self| -> Option<Pid> {
       (!is_bg && Shed::term(|t| t.interactive()))
@@ -981,7 +1007,7 @@ impl Dispatcher {
       result = if should_fork_segment(&cmd) {
         let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
 
-        self.run_fork(&name, report_time, |s| {
+        self.run_fork(&name, |s| {
           if let Err(e) = s.dispatch_node(cmd) {
             e.print_error();
           }
@@ -1010,7 +1036,6 @@ impl Dispatcher {
       && Shed::term(|t| t.interactive())
       && let Some((_, bottom)) = saved_region
     {
-      // We've gotta
       Shed::term_mut(|t| {
         use std::io::Write;
         if shopt!(statline.enable) {
@@ -1026,7 +1051,6 @@ impl Dispatcher {
 
   fn exec_builtin(&mut self, cmd: Node) -> ShResult<()> {
     let fork_builtins = cmd.flags.contains(NdFlags::FORK_BUILTINS);
-    let report_time = cmd.flags.contains(NdFlags::REPORT_TIME);
     let cmd_raw = cmd
       .get_command()
       .unwrap_or_else(|| panic!("expected command NdRule, got {:?}", &cmd.class))
@@ -1039,7 +1063,7 @@ impl Dispatcher {
 
     if fork_builtins {
       log::trace!("Forking builtin: {}", cmd_raw);
-      self.run_fork(&cmd_raw, report_time, |s| {
+      self.run_fork(&cmd_raw, |s| {
         if let Err(e) = builtin.setup_builtin(cmd, s) {
           e.print_error();
         }
@@ -1059,7 +1083,6 @@ impl Dispatcher {
   }
   pub fn exec_cmd(&mut self, cmd: Node) -> ShResult<()> {
     let blame = cmd.get_span().clone();
-    let report_time = cmd.flags.contains(NdFlags::REPORT_TIME);
     let context = cmd.context.clone();
     let NdRule::Command { assignments, argv } = cmd.class else {
       unreachable!(
@@ -1182,6 +1205,7 @@ impl Dispatcher {
     match unsafe { fork()? } {
       ForkResult::Child => child_logic(existing_pgid),
       ForkResult::Parent { child } => {
+        let timer = self.take_timer();
         let job = self.job_stack.curr_job_mut().unwrap();
 
         let child_pgid = if let Some(pgid) = existing_pgid {
@@ -1190,14 +1214,14 @@ impl Dispatcher {
           job.set_pgid(child);
           child
         };
-        let child_proc = ChildProc::new(child, Some(cmd_name), Some(child_pgid), report_time)?;
+        let child_proc = ChildProc::new(child, Some(cmd_name), Some(child_pgid), timer)?;
         job.push_child(child_proc);
       }
     }
 
     Ok(())
   }
-  fn run_fork(&mut self, name: &str, report_time: bool, f: impl FnOnce(&mut Self)) -> ShResult<()> {
+  fn run_fork(&mut self, name: &str, f: impl FnOnce(&mut Self)) -> ShResult<()> {
     let existing_pgid = self.job_stack.curr_job_mut().unwrap().pgid();
     match unsafe { fork()? } {
       ForkResult::Child => {
@@ -1208,6 +1232,7 @@ impl Dispatcher {
         unsafe { nix::libc::_exit(state::Shed::get_status()) }
       }
       ForkResult::Parent { child } => {
+        let timer = self.take_timer();
         let job = self.job_stack.curr_job_mut().unwrap();
         let child_pgid = if let Some(pgid) = existing_pgid {
           pgid
@@ -1215,11 +1240,14 @@ impl Dispatcher {
           job.set_pgid(child);
           child
         };
-        let child_proc = ChildProc::new(child, Some(name), Some(child_pgid), report_time)?;
+        let child_proc = ChildProc::new(child, Some(name), Some(child_pgid), timer)?;
         job.push_child(child_proc);
         Ok(())
       }
     }
+  }
+  pub fn take_timer(&mut self) -> Option<CmdTimer> {
+    self.timer_stack.last_mut().and_then(|t| t.take())
   }
   pub fn set_assignments(
     &self,
@@ -1441,12 +1469,19 @@ pub fn runs_inline(cmd: &Node) -> bool {
     return true;
   }
 
-  let cmd_word = cmd
-    .get_command()
-    .and_then(|c| c.clone().expand().ok())
-    .and_then(|t| t.get_first_word())
-    .unwrap_or_default();
-  is_func(&cmd_word) || BUILTIN_NAMES.contains(&cmd_word.as_str())
+  let cmd_word = cmd.get_command().unwrap();
+  is_func(cmd_word.as_str()) || cmd_word.flags.contains(TkFlags::BUILTIN)
+}
+
+pub fn will_fork(cmd: &Node) -> bool {
+  match &cmd.class {
+    NdRule::Subshell { .. } => true,
+    NdRule::Command { argv, .. } if !argv.is_empty() => {
+      let cmd_word = cmd.get_command().unwrap();
+      !(is_func(cmd_word.as_str()) || cmd_word.flags.contains(TkFlags::BUILTIN))
+    }
+    _ => false,
+  }
 }
 
 pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShResult<()> {

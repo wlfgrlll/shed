@@ -337,7 +337,6 @@ pub(super) trait Builtin: Sync {
   /// The main entry point for running a builtin. This is responsible for setting up the environment, handling redirections, and catching control flow errors.
   fn setup_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
     let cmd_raw = node.get_command().unwrap().to_string();
-    let report_time = node.flags.contains(NdFlags::REPORT_TIME);
     let context = node.context.clone();
     let NdRule::Command { assignments, argv } = &mut node.class else {
       unreachable!()
@@ -366,6 +365,7 @@ pub(super) trait Builtin: Sync {
 
     if fork_builtins {
       // Register ChildProc in current job
+      let timer = dispatcher.take_timer();
       let job = dispatcher.job_stack.curr_job_mut().unwrap();
       let child_pgid = if let Some(pgid) = job.pgid() {
         pgid
@@ -378,7 +378,7 @@ pub(super) trait Builtin: Sync {
         Pid::this(),
         Some(&cmd_raw),
         fork_builtins.then_some(child_pgid),
-        report_time,
+        timer,
       )?;
       job.push_child(child);
     }
