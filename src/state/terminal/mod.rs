@@ -24,7 +24,7 @@ use bitflags::bitflags;
 
 use nix::{
   errno::Errno,
-  fcntl::{FcntlArg, OFlag, fcntl, open},
+  fcntl::{OFlag, open},
   libc,
   poll::{PollFd, PollFlags, PollTimeout, poll},
   sys::{
@@ -276,9 +276,7 @@ impl Terminal {
   pub fn tty(&self) -> Option<BorrowedFd<'static>> {
     let raw = self.tty?;
     let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
-    let isatty = isatty(borrowed).unwrap_or(false);
-    let get_fd = fcntl(borrowed, FcntlArg::F_GETFD).is_ok();
-    (isatty && get_fd).then_some(borrowed)
+    Some(borrowed)
   }
 
   /// Helper for mapping the tty fd to a raw fd
