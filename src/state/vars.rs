@@ -11,7 +11,7 @@ use bitflags::bitflags;
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use super::{
-  ShErr, ShResult,
+  ShResult,
   eval::lex::{LexFlags, LexStream, Tk},
   expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
   procio::stdin_fileno,
@@ -119,7 +119,7 @@ impl Display for ShellParam {
 }
 
 impl FromStr for ShellParam {
-  type Err = ShErr;
+  type Err = ();
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
       "?" => Ok(Self::Status),
@@ -129,11 +129,8 @@ impl FromStr for ShellParam {
       "@" => Ok(Self::AllArgs),
       "*" => Ok(Self::AllArgsStr),
       "#" => Ok(Self::ArgCount),
-      n if n.parse::<usize>().is_ok() => {
-        let idx = n.parse::<usize>().unwrap();
-        Ok(Self::Pos(idx))
-      }
-      _ => Err(sherr!(InternalErr, "Invalid shell parameter: {}", s,)),
+      n if let Ok(idx) = n.parse::<usize>() => Ok(Self::Pos(idx)),
+      _ => Err(()),
     }
   }
 }
