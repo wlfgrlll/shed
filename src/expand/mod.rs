@@ -141,6 +141,11 @@ impl Expander {
     let mut glob_words = Vec::with_capacity(words.len());
 
     for word in words {
+      if !word.contains(['*', '?', '[']) {
+        glob_words.push(escape::strip_escape_markers(word));
+        continue;
+      }
+
       let expansions = expand_glob(&word).unwrap_or_else(|_| vec![word.clone()]);
 
       if expansions.is_empty() {
@@ -268,7 +273,9 @@ impl Expander {
     let null_exp = markers::NULL_EXPAND.to_string();
     words.retain(|w| w != &null_exp);
     for w in words.iter_mut() {
-      *w = w.replace(markers::NULL_EXPAND, "");
+      if w.contains(markers::NULL_EXPAND) {
+        *w = w.replace(markers::NULL_EXPAND, "");
+      }
     }
     words
   }
