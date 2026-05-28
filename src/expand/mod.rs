@@ -50,16 +50,6 @@ impl Tk {
     let class = TkRule::Expanded { exp: vec![exp] };
     Ok(Self { class, span, flags })
   }
-  pub fn expand_no_glob(self) -> ShResult<Self> {
-    let flags = self.flags;
-    let span = self.span.clone();
-    let exp = Expander::new(self)?
-      .no_glob()
-      .expand()
-      .promote_err(span.clone())?;
-    let class = TkRule::Expanded { exp };
-    Ok(Self { class, span, flags })
-  }
   pub fn expand_no_split(self) -> ShResult<String> {
     let span = self.span.clone();
     let exp = Expander::new(self)?

@@ -1794,10 +1794,13 @@ mod tests {
   fn dbracket_classification() {
     let toks = get_context_tokens("[[ -f foo ]]");
     let find_class = |s: &str| toks.iter().find(|t| t.span.as_str() == s).map(|t| t.class);
-    assert_eq!(find_class("[["), Some(CtxTkRule::Keyword));
+    assert_eq!(
+      find_class("[["),
+      Some(CtxTkRule::ValidCommand(CmdKind::Builtin))
+    );
     assert_eq!(find_class("-f"), Some(CtxTkRule::Argument));
     assert_eq!(find_class("foo"), Some(CtxTkRule::Argument));
-    assert_eq!(find_class("]]"), Some(CtxTkRule::Keyword));
+    assert_eq!(find_class("]]"), Some(CtxTkRule::Argument));
   }
 
   #[test]

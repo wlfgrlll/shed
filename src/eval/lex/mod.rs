@@ -1,4 +1,5 @@
 use std::{
+  cmp::Ordering,
   fmt::Display,
   ops::{Bound, Range, RangeBounds},
   rc::Rc,
@@ -13,9 +14,9 @@ use super::{
   util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
 };
 
-pub const KEYWORDS: [&str; 19] = [
+pub const KEYWORDS: [&str; 18] = [
   "if", "then", "elif", "else", "fi", "while", "until", "select", "for", "in", "do", "done",
-  "case", "esac", "[[", "]]", "!", "time", "function",
+  "case", "esac", "!", "not", "time", "function",
 ];
 
 pub const MIDDLES: [&str; 2] = ["elif", "else"];
@@ -110,6 +111,19 @@ impl Span {
       source,
     }
   }
+  pub fn merge_with(mut self, other: Span) -> Option<Self> {
+    // make sure these two spans originate from the same input
+    if !Rc::ptr_eq(&self.source.content, &other.source.content) {
+      return None;
+    }
+
+    if other.range.start < self.range.start {
+      self.pos = other.pos;
+    }
+    self.range.start = self.range.start.min(other.range.start);
+    self.range.end = self.range.end.max(other.range.end);
+    Some(self)
+  }
   pub fn at(mut self, pos: Pos) -> Self {
     self.pos = pos;
     self
@@ -145,6 +159,16 @@ impl Span {
 
   pub(crate) fn pos(&self) -> Pos {
     self.pos
+  }
+}
+
+impl PartialOrd for Span {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    use ariadne::Span as ASpan;
+    if self.get_source() != other.get_source() {
+      return None;
+    }
+    Some((self.start(), self.end()).cmp(&(other.start(), other.end())))
   }
 }
 
@@ -445,7 +469,6 @@ pub(crate) struct LexStream {
   subsh_depth: usize,
   subsh_start: Option<usize>,
   case_depth: usize,
-  dbracket_depth: usize,
   heredoc_skip: Option<usize>,
   flags: LexFlags,
 }
@@ -468,7 +491,6 @@ impl LexStream {
       subsh_start: None,
       heredoc_skip: None,
       case_depth: 0,
-      dbracket_depth: 0,
     }
   }
   /// Returns a slice of the source input using the given range
@@ -1220,10 +1242,6 @@ impl LexStream {
             self.case_depth -= 1;
             self.flags &= !LexFlags::CASE_PAT_EXPECTED;
           }
-          if text == "[[" {
-            self.dbracket_depth += 1;
-            self.set_next_is_cmd(false);
-          }
           new_tk.mark(TkFlags::KEYWORD);
         }
         _ if is_assignment(text) => {
@@ -1262,10 +1280,6 @@ impl LexStream {
       new_tk.mark(TkFlags::KEYWORD);
       self.case_depth -= 1;
       self.flags &= !LexFlags::CASE_PAT_EXPECTED;
-    } else if self.dbracket_depth > 0 && text == "]]" {
-      new_tk.mark(TkFlags::KEYWORD);
-      self.dbracket_depth -= 1;
-      self.set_next_is_cmd(true);
     } else if is_cmd_sub(text) {
       new_tk.mark(TkFlags::IS_CMDSUB)
     }

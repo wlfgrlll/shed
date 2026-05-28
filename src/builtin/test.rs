@@ -2,11 +2,15 @@ use std::{collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf
 
 use super::{
   Shed,
-  eval::{ConjunctOp, NdRule, Node, TEST_UNARY_OPS, TestCase},
+  eval::{
+    execute::prepare_argv_with,
+    lex::{Span, TkVecUtils},
+  },
   expand, sherr,
   state::{vars::VarFlags, vars::VarKind},
-  util::{ShErr, ShResult},
+  util::{ShErr, ShResult, with_status},
 };
+use ariadne::Span as ASpan;
 use nix::{
   sys::stat::{self, SFlag},
   unistd::{AccessFlags, isatty},
@@ -44,7 +48,7 @@ impl FromStr for UnaryOp {
       "-e" => Ok(Self::Exists),
       "-d" => Ok(Self::Directory),
       "-f" => Ok(Self::File),
-      "-h" | "-L" => Ok(Self::Symlink), // -h or -L
+      "-h" | "-L" => Ok(Self::Symlink),
       "-r" => Ok(Self::Readable),
       "-w" => Ok(Self::Writable),
       "-x" => Ok(Self::Executable),
@@ -62,15 +66,14 @@ impl FromStr for UnaryOp {
       "-t" => Ok(Self::Terminal),
       "-n" => Ok(Self::NonNull),
       "-z" => Ok(Self::Null),
-      _ => Err(sherr!(SyntaxErr, "Invalid test operator")),
+      _ => Err(sherr!(SyntaxErr, "Invalid unary test operator '{s}'")),
     }
   }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum TestOp {
-  Unary(UnaryOp),
-  StringEq,   // ==
+pub(crate) enum BinaryOp {
+  StringEq,   // = ==
   StringNeq,  // !=
   IntEq,      // -eq
   IntNeq,     // -ne
@@ -81,11 +84,11 @@ pub(crate) enum TestOp {
   RegexMatch, // =~
 }
 
-impl FromStr for TestOp {
+impl FromStr for BinaryOp {
   type Err = ShErr;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "==" => Ok(Self::StringEq),
+      "==" | "=" => Ok(Self::StringEq),
       "!=" => Ok(Self::StringNeq),
       "=~" => Ok(Self::RegexMatch),
       "-eq" => Ok(Self::IntEq),
@@ -94,8 +97,7 @@ impl FromStr for TestOp {
       "-lt" => Ok(Self::IntLt),
       "-ge" => Ok(Self::IntGe),
       "-le" => Ok(Self::IntLe),
-      _ if TEST_UNARY_OPS.contains(&s) => Ok(Self::Unary(s.parse::<UnaryOp>()?)),
-      _ => Err(sherr!(SyntaxErr, "Invalid test operator '{s}'")),
+      _ => Err(sherr!(SyntaxErr, "Invalid binary test operator '{s}'")),
     }
   }
 }
@@ -110,213 +112,286 @@ fn replace_posix_classes(pat: &str) -> String {
     .replace("[[:graph:]]", r"[!-~]")
     .replace("[[:lower:]]", r"[a-z]")
     .replace("[[:print:]]", r"[\x20-\x7E]")
-    .replace("[[:space:]]", r"[ \t\r\n\x0B\x0C]") // vertical tab (\x0B), form feed (\x0C)
+    .replace("[[:space:]]", r"[ \t\r\n\x0B\x0C]")
     .replace("[[:upper:]]", r"[A-Z]")
     .replace("[[:xdigit:]]", r"[0-9A-Fa-f]")
 }
 
-pub fn double_bracket_test(node: Node) -> ShResult<bool> {
-  let err_span = node.get_span();
-  let NdRule::Test { cases } = node.class else {
-    unreachable!()
-  };
-  let mut last_result = false;
-  let mut conjunct_op: Option<ConjunctOp>;
-  log::trace!("test cases: {:#?}", cases);
+/// Evaluate a single unary test (`-OP OPERAND`).
+fn eval_unary(op: &UnaryOp, operand: &str) -> bool {
+  match op {
+    UnaryOp::Exists => PathBuf::from(operand).exists(),
+    UnaryOp::Directory => PathBuf::from(operand)
+      .metadata()
+      .map(|m| m.is_dir())
+      .unwrap_or(false),
+    UnaryOp::File => PathBuf::from(operand)
+      .metadata()
+      .map(|m| m.is_file())
+      .unwrap_or(false),
+    UnaryOp::Symlink => std::fs::symlink_metadata(operand)
+      .map(|m| m.file_type().is_symlink())
+      .unwrap_or(false),
+    UnaryOp::Readable => nix::unistd::access(operand, AccessFlags::R_OK).is_ok(),
+    UnaryOp::Writable => nix::unistd::access(operand, AccessFlags::W_OK).is_ok(),
+    UnaryOp::Executable => nix::unistd::access(operand, AccessFlags::X_OK).is_ok(),
+    UnaryOp::NonEmpty => metadata(operand).map(|m| m.len() > 0).unwrap_or(false),
+    UnaryOp::NamedPipe => stat::stat(operand)
+      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFIFO))
+      .unwrap_or(false),
+    UnaryOp::Socket => stat::stat(operand)
+      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFSOCK))
+      .unwrap_or(false),
+    UnaryOp::BlockSpecial => stat::stat(operand)
+      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFBLK))
+      .unwrap_or(false),
+    UnaryOp::CharSpecial => stat::stat(operand)
+      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFCHR))
+      .unwrap_or(false),
+    UnaryOp::Sticky => stat::stat(operand)
+      .map(|s| s.st_mode & nix::libc::S_ISVTX != 0)
+      .unwrap_or(false),
+    UnaryOp::UIDOwner => stat::stat(operand)
+      .map(|s| s.st_uid == nix::unistd::geteuid().as_raw())
+      .unwrap_or(false),
+    UnaryOp::GIDOwner => stat::stat(operand)
+      .map(|s| s.st_gid == nix::unistd::getegid().as_raw())
+      .unwrap_or(false),
+    UnaryOp::ModifiedSinceStatusChange => stat::stat(operand)
+      .map(|s| s.st_mtime > s.st_ctime)
+      .unwrap_or(false),
+    UnaryOp::SetUID => stat::stat(operand)
+      .map(|s| s.st_mode & nix::libc::S_ISUID != 0)
+      .unwrap_or(false),
+    UnaryOp::SetGID => stat::stat(operand)
+      .map(|s| s.st_mode & nix::libc::S_ISGID != 0)
+      .unwrap_or(false),
+    UnaryOp::Terminal => match operand.parse::<i32>() {
+      Ok(fd) => isatty(unsafe { BorrowedFd::borrow_raw(fd) }).unwrap_or(false),
+      Err(_) => false,
+    },
+    UnaryOp::NonNull => !operand.is_empty(),
+    UnaryOp::Null => operand.is_empty(),
+  }
+}
 
-  for case in cases {
-    let result = match case {
-      TestCase::Unary {
-        operator,
-        operand,
-        conjunct,
-      } => {
-        let operand = operand.expand_no_glob()?.get_words().join(" ");
-        conjunct_op = conjunct;
-        let TestOp::Unary(op) = TestOp::from_str(operator.as_str())? else {
-          return Err(sherr!(
-            SyntaxErr @ err_span,
-            "Invalid unary operator",
-          ));
-        };
-        match op {
-          UnaryOp::Exists => {
-            let path = PathBuf::from(operand.as_str());
-            path.exists()
-          }
-          UnaryOp::Directory => {
-            let path = PathBuf::from(operand.as_str());
-            if path.exists() {
-              path.metadata().unwrap().is_dir()
-            } else {
-              false
-            }
-          }
-          UnaryOp::File => {
-            let path = PathBuf::from(operand.as_str());
-            if path.exists() {
-              path.metadata().unwrap().is_file()
-            } else {
-              false
-            }
-          }
-          UnaryOp::Symlink => {
-            // symlink_metadata = lstat: returns the symlink's own metadata
-            // rather than following to the target. `metadata()` here would
-            // always report the *target's* file type and never see the
-            // symlink itself.
-            std::fs::symlink_metadata(operand.as_str())
-              .map(|m| m.file_type().is_symlink())
-              .unwrap_or(false)
-          }
-          UnaryOp::Readable => nix::unistd::access(operand.as_str(), AccessFlags::R_OK).is_ok(),
-          UnaryOp::Writable => nix::unistd::access(operand.as_str(), AccessFlags::W_OK).is_ok(),
-          UnaryOp::Executable => nix::unistd::access(operand.as_str(), AccessFlags::X_OK).is_ok(),
-          UnaryOp::NonEmpty => match metadata(operand.as_str()) {
-            Ok(meta) => meta.len() > 0,
-            Err(_) => false,
-          },
-          UnaryOp::NamedPipe => match stat::stat(operand.as_str()) {
-            Ok(stat) => SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFIFO),
-            Err(_) => false,
-          },
-          UnaryOp::Socket => match stat::stat(operand.as_str()) {
-            Ok(stat) => SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFSOCK),
-            Err(_) => false,
-          },
-          UnaryOp::BlockSpecial => match stat::stat(operand.as_str()) {
-            Ok(stat) => SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFBLK),
-            Err(_) => false,
-          },
-          UnaryOp::CharSpecial => match stat::stat(operand.as_str()) {
-            Ok(stat) => SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFCHR),
-            Err(_) => false,
-          },
-          UnaryOp::Sticky => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_mode & nix::libc::S_ISVTX != 0,
-            Err(_) => false,
-          },
-          UnaryOp::UIDOwner => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_uid == nix::unistd::geteuid().as_raw(),
-            Err(_) => false,
-          },
-
-          UnaryOp::GIDOwner => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_gid == nix::unistd::getegid().as_raw(),
-            Err(_) => false,
-          },
-
-          UnaryOp::ModifiedSinceStatusChange => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_mtime > stat.st_ctime,
-            Err(_) => false,
-          },
-
-          UnaryOp::SetUID => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_mode & nix::libc::S_ISUID != 0,
-            Err(_) => false,
-          },
-
-          UnaryOp::SetGID => match stat::stat(operand.as_str()) {
-            Ok(stat) => stat.st_mode & nix::libc::S_ISGID != 0,
-            Err(_) => false,
-          },
-
-          UnaryOp::Terminal => match operand.as_str().parse::<i32>() {
-            Ok(fd) => match isatty(unsafe { BorrowedFd::borrow_raw(fd) }) {
-              Ok(b) => b,
-              Err(e) => return Err(ShErr::from(e).promote(err_span)),
-            },
-            Err(_) => false,
-          },
-          UnaryOp::NonNull => !operand.is_empty(),
-          UnaryOp::Null => operand.is_empty(),
-        }
-      }
-      TestCase::Binary {
-        lhs,
-        operator,
-        rhs,
-        conjunct,
-      } => {
-        let lhs = lhs.expand_no_glob()?.get_words().join(" ");
-        let rhs = rhs.expand_no_glob()?.get_words().join(" ");
-        conjunct_op = conjunct;
-        let test_op = operator.as_str().parse::<TestOp>()?;
-        match test_op {
-          TestOp::Unary(_) => {
-            return Err(sherr!(
-                SyntaxErr @ err_span,
-                "Expected a binary operator in this test call; found a unary operator",
-            ));
-          }
-          TestOp::StringEq => {
-            let pattern = expand::glob_to_regex(rhs.trim(), true);
-            pattern.is_match(lhs.trim())
-          }
-          TestOp::StringNeq => {
-            let pattern = expand::glob_to_regex(rhs.trim(), true);
-            !pattern.is_match(lhs.trim())
-          }
-          TestOp::IntNeq
-          | TestOp::IntGt
-          | TestOp::IntLt
-          | TestOp::IntGe
-          | TestOp::IntLe
-          | TestOp::IntEq => {
-            let err = sherr!(
-              SyntaxErr @ err_span.clone(),
-              "Expected an integer with '{operator}' operator"
-            );
-            let Ok(lhs) = lhs.trim().parse::<i32>() else {
-              return Err(err);
-            };
-            let Ok(rhs) = rhs.trim().parse::<i32>() else {
-              return Err(err);
-            };
-            match test_op {
-              TestOp::IntNeq => lhs != rhs,
-              TestOp::IntGt => lhs > rhs,
-              TestOp::IntLt => lhs < rhs,
-              TestOp::IntGe => lhs >= rhs,
-              TestOp::IntLe => lhs <= rhs,
-              TestOp::IntEq => lhs == rhs,
-              _ => unreachable!(),
-            }
-          }
-          TestOp::RegexMatch => {
-            let cleaned = replace_posix_classes(&rhs);
-            let re = Shed::meta_mut(|m| m.get_regex(cleaned))
-              .map_err(|e| sherr!(SyntaxErr @ err_span.clone(), "Invalid regex: {e}"))?;
-
-            if let Some(caps) = re.captures(&lhs) {
-              let groups: VecDeque<String> = caps
-                .iter()
-                .map(|m| m.map(|mat| mat.as_str().to_string()).unwrap_or_default())
-                .collect();
-
-              Shed::vars_mut(|v| v.set_var("SHED_REMATCH", VarKind::Arr(groups), VarFlags::LOCAL))?;
-
-              true
-            } else {
-              Shed::vars_mut(|v| v.unset_var("SHED_REMATCH")).ok();
-
-              false
-            }
-          }
-        }
-      }
-    };
-
-    last_result = result;
-    if let Some(op) = conjunct_op {
-      match op {
-        ConjunctOp::And if !last_result => break,
-        ConjunctOp::Or if last_result => break,
-        _ => {}
+/// Evaluate a single binary test (`LHS OP RHS`).
+fn eval_binary(op: &BinaryOp, lhs: &(String, Span), rhs: &(String, Span)) -> ShResult<bool> {
+  match op {
+    BinaryOp::StringEq => {
+      let pattern = expand::glob_to_regex(rhs.0.trim(), true);
+      Ok(pattern.is_match(lhs.0.trim()))
+    }
+    BinaryOp::StringNeq => {
+      let pattern = expand::glob_to_regex(rhs.0.trim(), true);
+      Ok(!pattern.is_match(lhs.0.trim()))
+    }
+    BinaryOp::IntEq
+    | BinaryOp::IntNeq
+    | BinaryOp::IntGt
+    | BinaryOp::IntLt
+    | BinaryOp::IntGe
+    | BinaryOp::IntLe => {
+      let lhs_i = lhs.0.trim().parse::<i64>().map_err(
+        |_| sherr!(SyntaxErr @ lhs.1.clone(), "test: integer expected, got '{}'", &lhs.0),
+      )?;
+      let rhs_i = rhs.0.trim().parse::<i64>().map_err(
+        |_| sherr!(SyntaxErr @ rhs.1.clone(), "test: integer expected, got '{}'", &rhs.0),
+      )?;
+      Ok(match op {
+        BinaryOp::IntEq => lhs_i == rhs_i,
+        BinaryOp::IntNeq => lhs_i != rhs_i,
+        BinaryOp::IntGt => lhs_i > rhs_i,
+        BinaryOp::IntLt => lhs_i < rhs_i,
+        BinaryOp::IntGe => lhs_i >= rhs_i,
+        BinaryOp::IntLe => lhs_i <= rhs_i,
+        _ => unreachable!(),
+      })
+    }
+    BinaryOp::RegexMatch => {
+      let cleaned = replace_posix_classes(&rhs.0);
+      let re = Shed::meta_mut(|m| m.get_regex(cleaned))
+        .map_err(|e| sherr!(SyntaxErr @ rhs.1.clone(), "Invalid regex: {e}"))?;
+      if let Some(caps) = re.captures(&lhs.0) {
+        let groups: VecDeque<String> = caps
+          .iter()
+          .map(|m| m.map(|mat| mat.as_str().to_string()).unwrap_or_default())
+          .collect();
+        Shed::vars_mut(|v| v.set_var("SHED_REMATCH", VarKind::Arr(groups), VarFlags::LOCAL))?;
+        Ok(true)
+      } else {
+        Shed::vars_mut(|v| v.unset_var("SHED_REMATCH")).ok();
+        Ok(false)
       }
     }
   }
-  Ok(last_result)
+}
+
+/// Recursive Descent Parser for test arguments.
+/// The grammar looks like:
+///
+///   parse_or   ::= parse_and (('-o' | '||') parse_and)*
+///   parse_and  ::= parse_not (('-a' | '&&') parse_not)*
+///   parse_not  ::= '!' parse_not | parse_primary
+///   parse_primary ::= '(' parse_or ')' | leaf_dispatch
+///
+/// Leaf dispatch is arity-based per POSIX:
+///   1 arg  → implicit -n on the argument
+///   2 args → unary op + operand   (e.g. `-f foo`)
+///   3 args → lhs op rhs           (e.g. `a -eq b`)
+struct ArgvParser<'a> {
+  argv: &'a [(String, Span)],
+  pos: usize,
+}
+
+const STOP_TOKENS: &[&str] = &["-a", "-o", "&&", "||", ")", "!"];
+
+impl<'a> ArgvParser<'a> {
+  fn new(argv: &'a [(String, Span)]) -> Self {
+    Self { argv, pos: 0 }
+  }
+
+  fn peek(&self) -> Option<&str> {
+    self.argv.get(self.pos).map(|s| s.0.as_str())
+  }
+
+  fn advance(&mut self) {
+    self.pos += 1;
+  }
+
+  fn parse_or(&mut self, eval: bool) -> ShResult<bool> {
+    let mut left = self.parse_and(eval)?;
+    while matches!(self.peek(), Some("-o") | Some("||")) {
+      self.advance();
+      let right = self.parse_and(eval && !left)?;
+      left = left || right;
+    }
+    Ok(left)
+  }
+
+  fn parse_and(&mut self, eval: bool) -> ShResult<bool> {
+    let mut left = self.parse_not(eval)?;
+    while matches!(self.peek(), Some("-a") | Some("&&")) {
+      self.advance();
+      let right = self.parse_not(eval && left)?;
+      left = left && right;
+    }
+    Ok(left)
+  }
+
+  fn parse_not(&mut self, eval: bool) -> ShResult<bool> {
+    if self.peek() == Some("!") {
+      self.advance();
+      Ok(!self.parse_not(eval)?)
+    } else {
+      self.parse_primary(eval)
+    }
+  }
+
+  fn parse_primary(&mut self, eval: bool) -> ShResult<bool> {
+    if self.peek() == Some("(") {
+      self.advance();
+      let inner = self.parse_or(eval)?;
+      if self.peek() != Some(")") {
+        return Err(sherr!(SyntaxErr, "test: expected ')' to close group"));
+      }
+      self.advance();
+      return Ok(inner);
+    }
+
+    let start = self.pos;
+    while let Some(tok) = self.peek() {
+      if STOP_TOKENS.contains(&tok) {
+        break;
+      }
+      self.advance();
+    }
+    let leaf = &self.argv[start..self.pos];
+    if eval { eval_leaf(leaf) } else { Ok(false) }
+  }
+}
+
+/// POSIX arity dispatch on a leaf (no `!`, `(`, `)`, or conjuncts).
+fn eval_leaf(leaf: &[(String, Span)]) -> ShResult<bool> {
+  if leaf.is_empty() {
+    return Ok(false);
+  };
+  let start_span = leaf.first().unwrap().1.clone();
+  let end_span = leaf.last().unwrap().1.clone();
+  let major_span = start_span.merge_with(end_span.clone()).unwrap_or(end_span);
+
+  match leaf.len() {
+    1 => {
+      // Arity-1: implicit `-n`, true if the lone argument is non-empty.
+      Ok(!leaf[0].0.is_empty())
+    }
+    2 => {
+      // Arity-2: `-OP OPERAND`.
+      let op: UnaryOp = leaf[0].0.parse()?;
+      Ok(eval_unary(&op, &leaf[1].0))
+    }
+    3 => {
+      // Arity-3: `LHS OP RHS`.
+      let op: BinaryOp = leaf[1].0.parse()?;
+      eval_binary(&op, &leaf[0], &leaf[2])
+    }
+    _ => Err(sherr!(
+      SyntaxErr @ major_span,
+      "test: too many arguments for a single expression ({})",
+      leaf.len()
+    )),
+  }
+}
+
+pub(super) struct Test;
+impl super::Builtin for Test {
+  /// Custom override so we can pair the opener (`[`/`[[`/`test`) against its
+  /// required closer (`]`/`]]`/none) while argv[0] is still present, then
+  /// hand the operands-only argv to `execute`.
+  fn get_argv_and_opts(
+    &self,
+    argv: Vec<super::Tk>,
+    no_split: bool,
+  ) -> ShResult<(super::ArgVector, Vec<super::Opt>)> {
+    let span = argv.get_span().unwrap();
+    let mut argv = prepare_argv_with(argv, no_split)?;
+    let opener = argv
+      .first()
+      .map(|(s, _)| s.as_str())
+      .unwrap_or_default()
+      .to_string();
+    let want_close: Option<&str> = match opener.as_str() {
+      "[" => Some("]"),
+      "[[" => Some("]]"),
+      _ => None,
+    };
+    if let Some(close) = want_close {
+      match argv.last() {
+        Some((last, _)) if last == close => {
+          argv.pop();
+        }
+        _ => {
+          return Err(sherr!(
+            SyntaxErr @ span,
+            "{opener}: missing matching `{close}` to close the expression"
+          ));
+        }
+      }
+    }
+    if !argv.is_empty() {
+      argv.remove(0);
+    }
+    Ok((argv, vec![]))
+  }
+
+  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+    let span = args.span();
+    let result = ArgvParser::new(&args.argv)
+      .parse_or(true)
+      .map_err(|e| e.try_blame(span))?;
+
+    with_status(if result { 0 } else { 1 })
+  }
 }
 
 #[cfg(test)]
@@ -550,8 +625,11 @@ mod tests {
   #[test]
   fn test_int_non_integer_errors() {
     let _g = TestGuard::new();
-    let result = test_input("[[ abc -eq 1 ]]");
-    assert!(result.is_err());
+    test_input("[[ abc -eq 1 ]]").unwrap();
+    // Bash convention: a syntax error inside `[[ ]]` prints the diagnostic and
+    // surfaces as a non-zero exit status rather than aborting the shell. We
+    // match that — no propagation, just a failed status.
+    assert_ne!(state::Shed::get_status(), 0);
   }
 
   // ===================== Binary: regex match =====================
@@ -630,18 +708,18 @@ mod tests {
 
   #[test]
   fn parse_binary_ops() {
-    use super::TestOp;
+    use super::BinaryOp;
     use std::str::FromStr;
     for op in ["==", "!=", "=~", "-eq", "-ne", "-gt", "-lt", "-ge", "-le"] {
-      assert!(TestOp::from_str(op).is_ok(), "failed to parse {op}");
+      assert!(BinaryOp::from_str(op).is_ok(), "failed to parse {op}");
     }
   }
 
   #[test]
   fn parse_invalid_binary_op() {
-    use super::TestOp;
+    use super::BinaryOp;
     use std::str::FromStr;
-    assert!(TestOp::from_str("~=").is_err());
+    assert!(BinaryOp::from_str("~=").is_err());
   }
 
   // ─── Symlink (-h / -L) ──────────────────────────────────────────────
@@ -757,7 +835,6 @@ mod tests {
   #[test]
   fn test_char_special_true_dev_null() {
     let _g = TestGuard::new();
-    // /dev/null is a character special device on every reasonable unix.
     test_input("[[ -c /dev/null ]]").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
   }
@@ -775,7 +852,6 @@ mod tests {
   #[test]
   fn test_sticky_true_tmpdir() {
     let _g = TestGuard::new();
-    // /tmp has the sticky bit set on every standard Linux setup.
     test_input("[[ -k /tmp ]]").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
   }
@@ -837,7 +913,6 @@ mod tests {
   fn test_modified_since_ctime_false_on_fresh_file() {
     let _g = TestGuard::new();
     let file = NamedTempFile::new().unwrap();
-    // A brand-new file has mtime == ctime, so mtime > ctime is false.
     test_input(format!("[[ -N {} ]]", file.path().display())).unwrap();
     assert_ne!(state::Shed::get_status(), 0);
   }
@@ -847,7 +922,6 @@ mod tests {
   #[test]
   fn test_terminal_false_on_pipe_stdin() {
     let _g = TestGuard::new();
-    // TestGuard redirects stdin to a pipe, not a tty.
     test_input("[[ -t 0 ]]").unwrap();
     assert_ne!(state::Shed::get_status(), 0);
   }
@@ -855,7 +929,6 @@ mod tests {
   #[test]
   fn test_terminal_true_on_pty_stdout() {
     let _g = TestGuard::new();
-    // TestGuard redirects stdout to the pty slave, which is a real tty.
     test_input("[[ -t 1 ]]").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
   }
@@ -871,12 +944,8 @@ mod tests {
 
   #[test]
   fn test_and_short_circuits_on_first_false() {
-    // The second operand here would error if evaluated (bad integer),
-    // but `&&` short-circuits.
     let _g = TestGuard::new();
     test_input("[[ -z nonempty && abc -eq 5 ]]").unwrap();
-    // First clause is false (nonempty isn't empty), and short-circuit
-    // means the bad-int clause is never reached → no error, status nonzero.
     assert_ne!(state::Shed::get_status(), 0);
   }
 
@@ -892,12 +961,9 @@ mod tests {
   #[test]
   fn test_regex_invalid_pattern_errors() {
     let _g = TestGuard::new();
-    // Unclosed character class — invalid regex. The handler returns
-    // Err(SyntaxErr) which test_input surfaces as an Err.
-    let result = test_input(r#"[[ abc =~ "[" ]]"#);
-    assert!(
-      result.is_err(),
-      "invalid regex pattern should propagate an error"
-    );
+    test_input(r#"[[ abc =~ "[" ]]"#).unwrap();
+    // Same as test_int_non_integer_errors: an invalid regex inside `[[ ]]`
+    // is reported as a failed status, not as an error that escapes the shell.
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }

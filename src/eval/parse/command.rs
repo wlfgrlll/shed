@@ -153,7 +153,7 @@ impl ParseStream {
       let mut tk_iter = tk_slice.iter().peekable();
       let mut redirs = vec![];
       let mut argv = vec![];
-      let flags = NdFlags::empty();
+      let mut flags = NdFlags::empty();
       let mut assignments = vec![];
 
       loop {
@@ -195,6 +195,11 @@ impl ParseStream {
           break;
         }
       }
+      let in_dbracket = argv.first().map(|t: &Tk| t.as_str()) == Some("[[");
+      if in_dbracket {
+        // add this flag so we don't split words on test members
+        flags |= NdFlags::NO_SPLIT;
+      }
       if argv.is_empty() {
         if assignments.is_empty() {
           break 'out Ok(None);
@@ -225,6 +230,10 @@ impl ParseStream {
         match tk.class {
           TkRule::Comment => break,
 
+          TkRule::And | TkRule::Or if in_dbracket => {
+            argv.push(tk.clone());
+            node_tks.push(tk.clone());
+          }
           TkRule::Eoi
           | TkRule::Pipe
           | TkRule::ErrPipe
@@ -238,8 +247,12 @@ impl ParseStream {
             break;
           }
           TkRule::Str => {
+            let is_dbracket_close = in_dbracket && tk.as_str() == "]]";
             argv.push(tk.clone());
             node_tks.push(tk.clone());
+            if is_dbracket_close {
+              break;
+            }
           }
           TkRule::HereDoc { .. } | TkRule::Redir => {
             node_tks.push(tk.clone());

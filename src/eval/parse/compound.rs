@@ -2,8 +2,8 @@ use ariadne::Label;
 use std::rc::Rc;
 
 use super::{
-  CaseNode, CondNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node, ParseStream, ShResult,
-  TEST_UNARY_OPS, TestCase, Tk, TkFlags, TkRule, node::TestCaseBuilder, util::split_for_arith_tk,
+  CaseNode, CondNode, LoopKind, NdFlags, NdRule, Node, ParseStream, ShResult, Tk, TkFlags, TkRule,
+  util::split_for_arith_tk,
 };
 
 impl ParseStream {
@@ -58,77 +58,6 @@ impl ParseStream {
     self.context.pop_back();
 
     Ok(Some(node!(self, node_tks, NdRule::FuncDef { name, body })))
-  }
-  pub(super) fn parse_test(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-    let mut cases: Vec<TestCase> = vec![];
-    if !self.check_keyword("[[") || !self.next_tk_is_some() {
-      return Ok(None);
-    }
-    node_tks.push(self.next_tk().unwrap());
-    let mut case_builder = TestCaseBuilder::new();
-    while let Some(tk) = self.next_tk() {
-      node_tks.push(tk.clone());
-      if tk.as_str() == "]]" {
-        if case_builder.can_build() {
-          let case = case_builder.build_and_take();
-          cases.push(case);
-          break;
-        } else if cases.is_empty() {
-          return Err(parse_err!(self, node_tks, "Malformed test call"));
-        } else {
-          break;
-        }
-      }
-      if case_builder.is_empty() {
-        match tk.as_str() {
-          _ if TEST_UNARY_OPS.contains(&tk.as_str()) => {
-            case_builder = case_builder.with_operator(tk.clone())
-          }
-          _ => case_builder = case_builder.with_lhs(tk.clone()),
-        }
-        continue;
-      } else if case_builder.wants_rhs() {
-        case_builder = case_builder.with_rhs(tk.clone());
-        continue;
-      } else if case_builder.wants_operator() {
-        // we got lhs, then rhs -> treat it as operator maybe?
-        case_builder = case_builder.with_operator(tk.clone());
-        continue;
-      } else if let TkRule::And | TkRule::Or = tk.class {
-        if case_builder.can_build() {
-          if case_builder.conjunct().is_some() {
-            return Err(parse_err!(
-              self,
-              node_tks,
-              "Invalid placement for logical operator in test"
-            ));
-          }
-          let op = match tk.class {
-            TkRule::And => ConjunctOp::And,
-            TkRule::Or => ConjunctOp::Or,
-            _ => unreachable!(),
-          };
-          case_builder = case_builder.with_conjunction(op);
-          let case = case_builder.build_and_take();
-          cases.push(case);
-          continue;
-        } else {
-          return Err(parse_err!(
-            self,
-            node_tks,
-            "Invalid placement for logical operator in test"
-          ));
-        }
-      }
-      if case_builder.can_build() {
-        let case = case_builder.build_and_take();
-        cases.push(case);
-      }
-    }
-    self.catch_separator(&mut node_tks);
-
-    Ok(Some(node!(self, node_tks, NdRule::Test { cases })))
   }
   pub(super) fn parse_subsh(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks = vec![];

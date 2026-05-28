@@ -9,7 +9,7 @@ pub(super) mod lex;
 pub(super) mod parse;
 pub(super) use parse::{
   AssignKind, CaseNode, CondNode, ConjunctNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node,
-  ParseFlags, ParsedSrc, TEST_UNARY_OPS, TestCase,
+  ParseFlags, ParsedSrc,
 };
 
 #[cfg(test)]

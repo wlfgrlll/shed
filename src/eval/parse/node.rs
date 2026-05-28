@@ -7,11 +7,6 @@ use super::{
 use ariadne::{Label, Span as AriadneSpan};
 use bitflags::bitflags;
 
-pub(crate) const TEST_UNARY_OPS: [&str; 23] = [
-  "-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-L", "-k", "-n", "-p", "-r", "-s", "-S", "-t",
-  "-u", "-w", "-x", "-z", "-O", "-G", "-N",
-];
-
 pub(crate) trait NodeVecUtils<Node> {
   fn get_span(&self) -> Option<Span>;
 }
@@ -150,7 +145,7 @@ impl Node {
       NdRule::Negate { ref mut cmd } => {
         cmd.walk_tree(f);
       }
-      NdRule::Arithmetic { .. } | NdRule::Test { .. } | NdRule::Assignment { .. } => (), // No nodes to check
+      NdRule::Arithmetic { .. } | NdRule::Assignment { .. } => (), // No nodes to check
     }
   }
   pub fn propagate_context(&mut self, ctx: (SpanSource, Label<Span>)) {
@@ -183,6 +178,7 @@ bitflags! {
     const NOT_ERR       = 1 << 5; // whether an error triggers ERR traps and set -e
     const PIPE_CMD      = 1 << 6; // is not the last command in a pipeline
     const REPORT_TIME   = 1 << 7; // whether this node should be reported by the time keyword
+    const NO_SPLIT      = 1 << 8; // don't split words, used in double bracket tests ('[[')
   }
 }
 
@@ -223,123 +219,6 @@ two_way_display!(LoopKind,
 );
 
 #[derive(Clone, Debug)]
-pub(crate) enum TestCase {
-  Unary {
-    operator: Tk,
-    operand: Tk,
-    conjunct: Option<ConjunctOp>,
-  },
-  Binary {
-    lhs: Tk,
-    operator: Tk,
-    rhs: Tk,
-    conjunct: Option<ConjunctOp>,
-  },
-}
-
-#[derive(Default, Clone, Debug)]
-pub(crate) struct TestCaseBuilder {
-  lhs: Option<Tk>,
-  operator: Option<Tk>,
-  rhs: Option<Tk>,
-  conjunct: Option<ConjunctOp>,
-}
-
-impl TestCaseBuilder {
-  pub fn new() -> Self {
-    Self::default()
-  }
-  pub fn is_empty(&self) -> bool {
-    self.lhs.is_none() && self.operator.is_none() && self.rhs.is_none() && self.conjunct.is_none()
-  }
-  pub fn wants_operator(&self) -> bool {
-    self.operator.is_none() && (self.lhs.is_some())
-  }
-  pub fn wants_rhs(&self) -> bool {
-    self.rhs.is_none() && self.operator.is_some()
-  }
-  pub fn with_lhs(self, lhs: Tk) -> Self {
-    let Self {
-      lhs: _,
-      operator,
-      rhs,
-      conjunct,
-    } = self;
-    Self {
-      lhs: Some(lhs),
-      operator,
-      rhs,
-      conjunct,
-    }
-  }
-  pub fn with_rhs(self, rhs: Tk) -> Self {
-    let Self {
-      lhs,
-      operator,
-      rhs: _,
-      conjunct,
-    } = self;
-    Self {
-      lhs,
-      operator,
-      rhs: Some(rhs),
-      conjunct,
-    }
-  }
-  pub fn with_operator(self, operator: Tk) -> Self {
-    let Self {
-      lhs,
-      operator: _,
-      rhs,
-      conjunct,
-    } = self;
-    Self {
-      lhs,
-      operator: Some(operator),
-      rhs,
-      conjunct,
-    }
-  }
-  pub fn with_conjunction(self, conjunction: ConjunctOp) -> Self {
-    let Self {
-      lhs,
-      operator,
-      rhs,
-      conjunct: _,
-    } = self;
-    Self {
-      lhs,
-      operator,
-      rhs,
-      conjunct: Some(conjunction),
-    }
-  }
-  pub fn can_build(&self) -> bool {
-    self.operator.is_some() && self.rhs.is_some()
-  }
-  pub fn build_and_take(&mut self) -> TestCase {
-    if self.lhs.is_some() {
-      TestCase::Binary {
-        lhs: self.lhs.take().unwrap(),
-        operator: self.operator.take().unwrap(),
-        rhs: self.rhs.take().unwrap(),
-        conjunct: self.conjunct.take(),
-      }
-    } else {
-      TestCase::Unary {
-        operator: self.operator.take().unwrap(),
-        operand: self.rhs.take().unwrap(),
-        conjunct: self.conjunct.take(),
-      }
-    }
-  }
-
-  pub(crate) fn conjunct(&self) -> Option<ConjunctOp> {
-    self.conjunct
-  }
-}
-
-#[derive(Clone, Debug)]
 pub(crate) enum AssignKind {
   Eq,
   PlusEq,
@@ -365,7 +244,6 @@ pub(crate) enum NdKind {
   BraceGrp,
   Subsh,
   Negate,
-  Test,
   FuncDef,
 }
 
@@ -385,7 +263,6 @@ impl NdRule {
       Self::Conjunction { .. } => NdKind::Conjunction,
       Self::Assignment { .. } => NdKind::Assignment,
       Self::BraceGrp { .. } => NdKind::BraceGrp,
-      Self::Test { .. } => NdKind::Test,
       Self::FuncDef { .. } => NdKind::FuncDef,
       Self::Subshell { .. } => NdKind::Subsh,
     }
@@ -446,9 +323,6 @@ pub(crate) enum NdRule {
   },
   BraceGrp {
     body: Box<Node>,
-  },
-  Test {
-    cases: Vec<TestCase>,
   },
   FuncDef {
     name: Tk,

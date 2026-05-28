@@ -9,7 +9,6 @@ use std::{
 pub(crate) mod node;
 pub(crate) use node::{
   AssignKind, CaseNode, CondNode, ConjunctNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node,
-  TEST_UNARY_OPS, TestCase,
 };
 
 #[cfg(test)]
@@ -285,7 +284,6 @@ impl ParseStream {
         try_match!(self.parse_case()?);
         try_match!(self.parse_loop()?);
         try_match!(self.parse_for()?);
-        try_match!(self.parse_test()?);
 
         // these aren't nested contexts
         // so we decrement the depth and descend into
@@ -328,7 +326,6 @@ impl ParseStream {
       try_match!(self.parse_case()?);
       try_match!(self.parse_loop()?);
       try_match!(self.parse_for()?);
-      try_match!(self.parse_test()?);
       try_match!(self.parse_if()?);
 
       Ok(None)

@@ -323,7 +323,6 @@ impl Dispatcher {
       NdRule::Arithmetic { .. } => self.exec_arith(node),
       NdRule::Negate { .. } => self.exec_negated(node),
       NdRule::Command { .. } => self.dispatch_cmd(node),
-      NdRule::Test { .. } => self.exec_test(node),
       _ => unreachable!(),
     };
 
@@ -431,14 +430,6 @@ impl Dispatcher {
         ConjunctOp::Or => status == 0,
         ConjunctOp::Null => break,
       };
-    }
-    Ok(())
-  }
-  pub fn exec_test(&mut self, node: Node) -> ShResult<()> {
-    let test_result = super::builtin::double_bracket_test(node)?;
-    match test_result {
-      true => state::Shed::set_status(0),
-      false => state::Shed::set_status(1),
     }
     Ok(())
   }
@@ -1396,13 +1387,35 @@ impl Dispatcher {
 }
 
 pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
+  prepare_argv_with(argv, false)
+}
+
+/// Same as `prepare_argv`, but with control over word-splitting per token.
+/// `no_split` is set by `parse_cmd` for `[[`/`]]` commands so operands like
+/// `$unset` survive expansion as the empty string instead of vanishing
+/// from argv (bash `[[ ]]` semantics).
+pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String, Span)>> {
   let mut args = vec![];
 
   for arg in argv {
     let span = arg.span.clone();
-    let expanded = arg.expand()?;
-    for exp in expanded.get_words() {
-      args.push((exp, span.clone()))
+    if no_split {
+      // `=~` is the bash regex-match operator inside `[[ ]]`. The general
+      // expander treats `~` immediately after a word-break `=` as a tilde
+      // prefix (which is correct for things like `--arg=~` outside `[[ ]]`),
+      // but here it would turn the operator into `=/home/$USER`. Skip
+      // expansion for the bare operator token.
+      if arg.span.as_str() == "=~" {
+        args.push(("=~".to_string(), span));
+        continue;
+      }
+      let word = arg.expand_no_split()?;
+      args.push((word, span));
+    } else {
+      let expanded = arg.expand()?;
+      for exp in expanded.get_words() {
+        args.push((exp, span.clone()))
+      }
     }
   }
 
@@ -1420,9 +1433,6 @@ pub fn is_arith(tk: Option<&Tk>) -> bool {
 
 /// Checks if a command will fork on its own or not
 pub fn runs_inline(cmd: &Node) -> bool {
-  if let NdRule::Test { .. } = cmd.class {
-    return true;
-  }
   let NdRule::Command { argv, .. } = &cmd.class else {
     return false;
   };
@@ -1723,10 +1733,12 @@ mod tests {
   #[test]
   fn empty_var_in_test() {
     let _g = TestGuard::new();
-    // POSIX specifies that a quoted unset variable expands to an empty string, so the shell actually sees `[ -n "" ]`, which returns false
+    // Quoted unset variable expands to an empty string — `[ -n "" ]` is false.
     test_input("[ -n \"$EMPTYVAR_PROBABLY_NOT_SET_TO_ANYTHING\" ]").unwrap();
     assert_eq!(state::Shed::get_status(), 1);
-    // Without quotes, word splitting causes an empty var to be removed entirely, so the shell actually sees `[ -n ]`, testing the value of ']', which returns true
+    // POSIX `[`: the unset/unquoted operand vanishes via word-splitting, so
+    // argv reaching the builtin is just `[ -n ]`. The arity-1 rule treats the
+    // lone `-n` as a literal string to test for non-emptiness (true, status 0).
     test_input("[ -n $EMPTYVAR_PROBABLY_NOT_SET_TO_ANYTHING ]").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
   }

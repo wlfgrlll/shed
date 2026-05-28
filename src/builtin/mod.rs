@@ -8,7 +8,7 @@ use super::{
   errln,
   eval::{
     self, NdFlags, NdRule, Node,
-    execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv},
+    execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv_with},
     lex::{KEYWORDS, Span, Tk},
   },
   expand::{self, as_var_val_display},
@@ -59,7 +59,6 @@ mod trap;
 mod varcmds;
 
 use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
-pub(super) use test::double_bracket_test;
 
 /// Embed a completion script directly in the binary.
 ///
@@ -163,6 +162,8 @@ macro_rules! register_builtins {
 register_builtins! {
   "."        => source::Source,
   ":"        => Colon,
+  "["        => test::Test,
+  "[["       => test::Test,
   "alias"    => alias::Alias,
   "autocmd"  => autocmd::AutoCmdBuiltin,
   "bg"       => jobctl::Bg,
@@ -215,6 +216,7 @@ register_builtins! {
   "shopt"    => shopt::Shopt,
   "source"   => source::Source,
   "stash"    => stash::StashBuiltin,
+  "test"     => test::Test,
   "times"    => times::Times,
   "trap"     => trap::Trap,
   "true"     => True,
@@ -318,10 +320,10 @@ pub(super) trait Builtin: Sync {
   }
 
   /// The way that the builtin parses its options. Some of them are weird, like `set`
-  fn get_argv_and_opts(&self, argv: Vec<Tk>) -> ShResult<(ArgVector, Vec<Opt>)> {
+  fn get_argv_and_opts(&self, argv: Vec<Tk>, no_split: bool) -> ShResult<(ArgVector, Vec<Opt>)> {
     let opts = self.opts();
     let (mut argv, opts) = if opts.is_empty() {
-      (prepare_argv(argv)?, vec![])
+      (prepare_argv_with(argv, no_split)?, vec![])
     } else if self.strict_opts() {
       get_opts_from_tokens_strict(argv, &opts)?
     } else {
@@ -416,6 +418,7 @@ pub(super) trait Builtin: Sync {
   /// Parse arguments and options, pack BuiltinArgs, run self.execute()
   fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
     let span = node.get_span().clone();
+    let no_split = node.flags.contains(NdFlags::NO_SPLIT);
     let NdRule::Command {
       assignments: _,
       argv,
@@ -424,7 +427,7 @@ pub(super) trait Builtin: Sync {
       unreachable!()
     };
 
-    let (argv, opts) = self.get_argv_and_opts(argv)?;
+    let (argv, opts) = self.get_argv_and_opts(argv, no_split)?;
     let builtin_args = BuiltinArgs { argv, opts, span };
 
     self.execute(builtin_args)

@@ -313,7 +313,7 @@ fn parse_test_bracket() {
     NdKind::List,
     NdKind::Conjunction,
     NdKind::Pipeline,
-    NdKind::Test,
+    NdKind::Command,
   ]
   .into_iter();
   let ast = get_ast(input).unwrap();
@@ -349,7 +349,7 @@ fn parse_nested_func_with_if_and_loop() {
     NdKind::List,
     NdKind::Conjunction,
     NdKind::Pipeline,
-    NdKind::Test,
+    NdKind::Command,
     NdKind::List,
     NdKind::Conjunction,
     NdKind::Pipeline,
