@@ -755,18 +755,8 @@ impl VarTab {
       unsafe { std::env::set_var(var_name, var.to_string()) };
     }
   }
-  pub fn get_var(&self, var: &str) -> String {
-    if let Ok(param) = var.parse::<ShellParam>() {
-      let param = self.get_param(param);
-      if !param.is_empty() {
-        return param;
-      }
-    }
-    if let Some(var) = self.vars.get(var).map(|s| s.to_string()) {
-      var
-    } else {
-      std::env::var(var).unwrap_or_default()
-    }
+  pub fn try_get_local(&self, var_name: &str) -> Option<String> {
+    self.vars.get(var_name).map(|v| v.to_string())
   }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {
     self.vars.get(var).cloned()

@@ -486,19 +486,18 @@ impl ScopeStack {
 
   pub fn try_get_var(&self, var_name: &str) -> Option<String> {
     if let Some(magic) = self.get_magic_var(var_name) {
-      Some(magic)
-    } else if let Ok(param) = var_name.parse::<ShellParam>() {
-      let val = self.get_param(param);
-      (!val.is_empty()).then_some(val)
-    } else {
-      for scope in self.scopes.iter().rev() {
-        if scope.var_exists(var_name) {
-          return Some(scope.get_var(var_name));
-        }
-      }
-
-      None
+      return Some(magic);
     }
+    if let Ok(param) = var_name.parse::<ShellParam>() {
+      let val = self.get_param(param);
+      return (!val.is_empty()).then_some(val);
+    }
+    for scope in self.scopes.iter().rev() {
+      if let Some(val) = scope.try_get_local(var_name) {
+        return Some(val);
+      }
+    }
+    None
   }
   /// Resolve a pre-parsed VarName, handling array indexes and slicing if present.
   pub fn resolve_var(&self, var: &VarName) -> Option<String> {
