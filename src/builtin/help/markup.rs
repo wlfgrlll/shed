@@ -60,16 +60,21 @@ impl MarkedSpan {
 #[derive(Debug)]
 pub struct StyledHelp {
   content: String,
+  ref_targets: Vec<Option<String>>,
 }
 
 impl StyledHelp {
   pub fn new(content: &str) -> Self {
     Self {
       content: style_help_content(content),
+      ref_targets: extract_ref_targets(content),
     }
   }
   pub fn content(&self) -> &str {
     &self.content
+  }
+  pub fn take_ref_targets(&mut self) -> Vec<Option<String>> {
+    std::mem::take(&mut self.ref_targets)
   }
 
   pub fn find_markers(&self, marker: &str) -> Vec<MarkedSpan> {
@@ -102,6 +107,61 @@ impl StyledHelp {
 
 pub fn style_help_content(raw: &str) -> String {
   expand_help(&unescape_help(raw))
+}
+
+/// Consume a cross-reference target
+///
+/// Cross-references can define a target like `|some text|(some-target)`
+fn consume_ref_alias(chars: &mut Peekable<Chars>) -> Option<String> {
+  if chars.peek() != Some(&'(') {
+    return None;
+  }
+  chars.next(); // '('
+  let mut target = String::new();
+  let mut closed = false;
+  match_loop!(chars.next() => ch, {
+    ')' => { closed = true; break; }
+    '\\' if chars.peek() == Some(&')') => {
+      target.push(')');
+      chars.next();
+    }
+    _ => target.push(ch),
+  });
+  if closed && !target.is_empty() {
+    Some(target)
+  } else {
+    None
+  }
+}
+
+fn extract_ref_targets(source: &str) -> Vec<Option<String>> {
+  let mut targets = vec![];
+  let mut chars = source.chars().peekable();
+  let mut qt_state = QuoteState::default();
+
+  match_loop!(chars.next() => ch, {
+    '\\' => {
+      chars.next(); // consume escaped char
+    }
+    '\n' => {
+      qt_state = QuoteState::default();
+    }
+    '"' => qt_state.toggle_double(),
+    '\'' => qt_state.toggle_single(),
+    _ if qt_state.in_quote() => {}
+    '|' if chars.peek().is_some_and(|c| !c.is_whitespace()) => {
+      // find the closer
+      match_loop!(chars.next() => inner, {
+        '|' => break,
+        '\\' => { chars.next(); }
+        _ => {}
+      });
+      // parse any reference targets
+      targets.push(consume_ref_alias(&mut chars));
+    }
+    _ => {}
+  });
+  targets
 }
 
 fn expand_help(raw: &str) -> String {
@@ -179,6 +239,11 @@ fn unescape_help(raw: &str) -> String {
     '|' => {
       result.push(markers::REFERENCE);
       find_closer('|', &mut result, &mut chars);
+
+      // run this here just to skip any (targets)
+      // the return of this function is handled in
+      // extract_ref_targets, we just drop it here
+      consume_ref_alias(&mut chars);
     }
     '#' => {
       result.push(markers::HEADER);
@@ -226,4 +291,101 @@ fn unescape_help(raw: &str) -> String {
     _ => result.push(ch),
   });
   result
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // `extract_ref_targets` probed directly — no need for full StyledHelp.
+
+  #[test]
+  fn extract_plain_ref_yields_none() {
+    assert_eq!(extract_ref_targets("see |foo|"), vec![None]);
+  }
+
+  #[test]
+  fn extract_aliased_ref_yields_some() {
+    assert_eq!(
+      extract_ref_targets("see |this text|(real-tag)"),
+      vec![Some("real-tag".into())]
+    );
+  }
+
+  #[test]
+  fn extract_mixed_keeps_order() {
+    assert_eq!(
+      extract_ref_targets("|a| then |b text|(b-tag) then |c|"),
+      vec![None, Some("b-tag".into()), None]
+    );
+  }
+
+  #[test]
+  fn extract_empty_paren_is_not_an_alias() {
+    // `|t|()` still counts as a ref but with no target override.
+    assert_eq!(extract_ref_targets("|t|()"), vec![None]);
+  }
+
+  #[test]
+  fn extract_unterminated_paren_is_not_an_alias() {
+    // No closing `)`, so the alias parse fails. Still one ref.
+    assert_eq!(extract_ref_targets("|t|(abc"), vec![None]);
+  }
+
+  #[test]
+  fn extract_escaped_close_paren_in_target() {
+    assert_eq!(extract_ref_targets("|t|(a\\)b)"), vec![Some("a)b".into())]);
+  }
+
+  #[test]
+  fn extract_pipe_followed_by_whitespace_is_literal() {
+    // `| ` is not a reference opener (matches unescape_help's predicate).
+    assert_eq!(extract_ref_targets("a | b"), vec![]);
+  }
+
+  #[test]
+  fn extract_pipe_inside_quotes_is_literal() {
+    assert_eq!(extract_ref_targets("\"a|b|c\""), vec![]);
+  }
+
+  #[test]
+  fn extract_newline_resets_quote_state() {
+    // Open double-quote without close, then newline -- quote state
+    // resets, so the `|x|` on line 2 IS a reference.
+    assert_eq!(extract_ref_targets("\"unclosed\n|x|"), vec![None]);
+  }
+
+  // Cross-pass invariant: count from extract_ref_targets must equal
+  // count from find_markers(REF_SEQ). Catches drift if anyone touches
+  // the opener predicate in either function.
+
+  fn ref_count_invariant(src: &str) {
+    let mut styled = StyledHelp::new(src);
+    let from_render = styled.find_markers(REF_SEQ).len();
+    let from_source = styled.take_ref_targets().len();
+    assert_eq!(
+      from_render, from_source,
+      "ref count desync on input {src:?}: render={from_render} source={from_source}"
+    );
+  }
+
+  #[test]
+  fn invariant_plain_refs() {
+    ref_count_invariant("|a| |b| |c|");
+  }
+
+  #[test]
+  fn invariant_aliased_refs() {
+    ref_count_invariant("|a|(x) |b|(y) |c|(z)");
+  }
+
+  #[test]
+  fn invariant_mixed() {
+    ref_count_invariant("|a| |b|(y) |c| |d|(z) |e|");
+  }
+
+  #[test]
+  fn invariant_literal_pipes_dont_count() {
+    ref_count_invariant("a | b, then |real| and \"|quoted|\"");
+  }
 }

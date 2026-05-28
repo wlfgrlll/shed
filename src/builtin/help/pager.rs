@@ -18,7 +18,8 @@ pub(super) enum PagerEvent {
   Back,
   Forward,
   OpenRef(String), // Open a new pager from this cross-reference
-  Exit,
+  ClosePage,
+  ExitPager,
 }
 
 pub(super) enum PagerCmd {
@@ -31,8 +32,8 @@ pub(super) enum PagerCmd {
 struct SearchQuery {
   editor: SimpleEditor,
   dir: Direction,
-  results: Vec<(usize, usize)>, // spans
-  anchor: usize,                // line we started on
+  results: Vec<(usize, usize)>,
+  anchor: usize, // line we started on
   active: bool,
 }
 
@@ -48,6 +49,30 @@ impl SearchQuery {
   }
 }
 
+struct CrossRef {
+  span: MarkedSpan,
+  target: Option<String>,
+}
+
+impl CrossRef {
+  pub fn span(&self) -> &MarkedSpan {
+    &self.span
+  }
+  pub fn resolve_target(&self, content: &str) -> String {
+    self
+      .target
+      .as_ref()
+      .cloned()
+      .unwrap_or_else(|| self.span.content(content).to_string())
+  }
+}
+
+impl From<(MarkedSpan, Option<String>)> for CrossRef {
+  fn from((span, target): (MarkedSpan, Option<String>)) -> Self {
+    Self { span, target }
+  }
+}
+
 struct ClickableRef {
   row: usize,
   col_start: usize,
@@ -58,7 +83,7 @@ struct ClickableRef {
 pub(super) struct HelpPager {
   search: SearchQuery,
   ref_keys: Vec<(usize, char)>,
-  cross_refs: Vec<MarkedSpan>, // spans
+  cross_refs: Vec<CrossRef>,
   click_refs: Vec<ClickableRef>,
   hovered: Option<usize>, // index into cross_refs
 
@@ -78,8 +103,13 @@ impl HelpPager {
       write(stdout_fileno(), b"\n").ok();
       return None;
     }
-    let content = StyledHelp::new(&content);
-    let cross_refs = content.find_markers(REF_SEQ);
+    let mut content = StyledHelp::new(&content);
+    let cross_refs = content
+      .find_markers(REF_SEQ)
+      .into_iter()
+      .zip(content.take_ref_targets())
+      .map(CrossRef::from)
+      .collect();
 
     Some(Self {
       jump_dist: 15,
@@ -105,12 +135,12 @@ impl HelpPager {
     let first = self
       .cross_refs
       .iter()
-      .position(|c_ref| c_ref.line_no(self.content()) >= top);
+      .position(|c_ref| c_ref.span().line_no(self.content()) >= top);
 
     let last = self
       .cross_refs
       .iter()
-      .rposition(|c_ref| c_ref.line_no(self.content()) < bottom);
+      .rposition(|c_ref| c_ref.span().line_no(self.content()) < bottom);
 
     match (first, last) {
       (Some(f), Some(l)) if f <= l => (f..=l).collect(),
@@ -127,14 +157,14 @@ impl HelpPager {
     let scroll = self.scroll_offset;
     let content_str = self.content.content();
     for (idx, c_ref) in self.cross_refs.iter().enumerate() {
-      let line_no = c_ref.line_no(content_str);
+      let line_no = c_ref.span().line_no(content_str);
       if line_no < scroll || line_no >= scroll + height {
         continue;
       }
       let screen_row = line_no - scroll; // 1-based terminal rows
-      let line_start = c_ref.line_start(content_str);
+      let line_start = c_ref.span().line_start(content_str);
 
-      let (prefix_range, _, postfix_range) = c_ref.rel_to_line(content_str);
+      let (prefix_range, _, postfix_range) = c_ref.span().rel_to_line(content_str);
       let line_text = &content_str[line_start..];
 
       let col_start = calc_str_width(&line_text[..prefix_range.start]);
@@ -154,7 +184,7 @@ impl HelpPager {
       && let Some(c_ref) = self.cross_refs.get(idx)
     {
       const HOVER_SEQ: &str = "\x1b[7;36m"; // inverse cyan (same length as REF_SEQ to maintain spans)
-      let prefix = c_ref.prefix_range();
+      let prefix = c_ref.span().prefix_range();
       content.replace_range(prefix, HOVER_SEQ);
     }
 
@@ -178,11 +208,11 @@ impl HelpPager {
       let mut line = line.to_string();
       let indexes = self.cross_refs.iter().enumerate().filter(|(ci, c_ref)| {
         self.ref_keys.iter().any(|(j, _)| *j == *ci)
-          && c_ref.line_no(self.content()) == self.scroll_offset + i
+          && c_ref.span().line_no(self.content()) == self.scroll_offset + i
       });
 
       for index in indexes.rev() {
-        let (_, _, postfix) = self.cross_refs[index.0].rel_to_line(self.content());
+        let (_, _, postfix) = self.cross_refs[index.0].span().rel_to_line(self.content());
         let Some((_, ch)) = self.ref_keys.iter().find(|(j, _)| *j == index.0) else {
           continue;
         };
@@ -251,7 +281,7 @@ impl HelpPager {
           self.search.reset();
           return Ok(PagerEvent::Continue);
         } else {
-          return Ok(PagerEvent::Exit);
+          return Ok(PagerEvent::ClosePage);
         }
       }
 
@@ -305,8 +335,9 @@ impl HelpPager {
         {
           self.ref_keys.clear();
           let c_ref = &self.cross_refs[index];
-          let target = c_ref.content(self.content());
-          return Ok(PagerEvent::OpenRef(target.to_string()));
+          let target = c_ref.resolve_target(self.content());
+
+          return Ok(PagerEvent::OpenRef(target));
         } else {
           self.ref_keys.clear();
           return self.handle_key(key); // re-process the key without hint mode
@@ -322,7 +353,7 @@ impl HelpPager {
         return Ok(PagerEvent::Continue);
       }
 
-      key!('q') => return Ok(PagerEvent::Exit),
+      key!('q') => return Ok(PagerEvent::ExitPager),
 
       key!('g') => PagerCmd::TopOfPage,
       key!('G') => PagerCmd::BottomOfPage,
@@ -466,9 +497,9 @@ impl HelpPager {
       .iter()
       .find(|cr| cr.row == row && col >= cr.col_start && col < cr.col_end)
     {
-      let target = self.cross_refs[cr.ref_idx]
-        .content(self.content())
-        .to_string();
+      let c_ref = &self.cross_refs[cr.ref_idx];
+      let target = c_ref.resolve_target(self.content());
+
       return Ok(PagerEvent::OpenRef(target));
     }
     Ok(PagerEvent::Continue)
@@ -544,14 +575,14 @@ mod tests {
   fn handle_key_q_exits() {
     let (_g, mut p) = pager_with(SAMPLE);
     let ev = p.handle_key(key(K::Char('q'))).unwrap();
-    assert!(matches!(ev, PagerEvent::Exit));
+    assert!(matches!(ev, PagerEvent::ExitPager));
   }
 
   #[test]
   fn handle_key_esc_with_no_state_exits() {
     let (_g, mut p) = pager_with(SAMPLE);
     let ev = p.handle_key(key(K::Esc)).unwrap();
-    assert!(matches!(ev, PagerEvent::Exit));
+    assert!(matches!(ev, PagerEvent::ClosePage));
   }
 
   // ─── Scroll motions ──────────────────────────────────────────────────
@@ -766,7 +797,7 @@ mod tests {
     let (_g, mut p) = pager_with(SAMPLE);
     p.ref_keys = vec![(0, 'a')];
     let ev = p.handle_key(key(K::Char('q'))).unwrap();
-    assert!(matches!(ev, PagerEvent::Exit));
+    assert!(matches!(ev, PagerEvent::ExitPager));
     assert!(p.ref_keys.is_empty());
   }
 

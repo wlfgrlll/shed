@@ -309,8 +309,16 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
       PagerEvent::Back => {
         pager = pager.saturating_sub(1);
       }
+      PagerEvent::ClosePage => {
+        if pager == 0 {
+          break; // if we close the last page, just exit
+        } else {
+          page_stack.pop();
+          pager -= 1;
+        }
+      }
       PagerEvent::Continue => continue,
-      PagerEvent::Exit => break,
+      PagerEvent::ExitPager => break,
     }
   }
 
