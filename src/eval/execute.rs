@@ -916,7 +916,7 @@ impl Dispatcher {
   fn exec_pipeline(&mut self, pipeline: Node) -> ShResult<()> {
     let pipeline_span = pipeline.get_span().clone();
     let pipeline_flags = pipeline.flags;
-    let NdRule::Pipeline { cmds } = pipeline.class else {
+    let NdRule::Pipeline { mut cmds } = pipeline.class else {
       unreachable!()
     };
 
@@ -925,6 +925,22 @@ impl Dispatcher {
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
+
+    if cmds.len() == 1 && !is_bg && runs_inline(&cmds[0]) {
+      // it's a single command
+      // just thread it through dispatch_node directly.
+      // this avoids the stdio setup that follows this
+      self.job_stack.new_job();
+      let res = self.dispatch_node(cmds.remove(0));
+
+      if let Some(job) = self.job_stack.finalize_job() {
+        // just in case this somehow forked a child
+        // let's handle it here. Shouldn't happen in practice
+        // but you never know
+        dispatch_job(job, false, Shed::term(|t| t.interactive()))?;
+      }
+      return res;
+    }
 
     // closure that tells us if a pipeline segment should fork
     let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && runs_inline(cmd) };
@@ -1404,9 +1420,17 @@ pub fn is_arith(tk: Option<&Tk>) -> bool {
 
 /// Checks if a command will fork on its own or not
 pub fn runs_inline(cmd: &Node) -> bool {
-  let NdRule::Command { .. } = cmd.class else {
+  if let NdRule::Test { .. } = cmd.class {
+    return true;
+  }
+  let NdRule::Command { argv, .. } = &cmd.class else {
     return false;
   };
+  if argv.is_empty() {
+    // assignment-only command, will never fork
+    return true;
+  }
+
   let cmd_word = cmd
     .get_command()
     .and_then(|c| c.clone().expand().ok())

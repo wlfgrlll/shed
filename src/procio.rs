@@ -587,8 +587,6 @@ impl Drop for RedirGuard {
   }
 }
 
-/// A struct wrapping three fildescs representing `stdin`, `stdout`, and
-/// `stderr` respectively
 #[derive(Debug)]
 pub(super) struct IoGroup(BTreeMap<RawFd, Option<OwnedFd>>);
 
@@ -611,6 +609,9 @@ impl IoGroup {
     for (&fd, saved) in &self.0 {
       match saved {
         Some(owned) => {
+          // we use libc::dup2() here instead of unistd::dup2()
+          // because unistd::dup2() requires an ownedfd for the right side
+          // libc::dup2() takes a raw fd instead
           let ret = unsafe { nix::libc::dup2(owned.as_raw_fd(), fd) };
           if ret < 0 {
             return Err(nix::Error::last().into());
