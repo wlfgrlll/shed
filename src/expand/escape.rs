@@ -5,7 +5,14 @@ use std::str::Chars;
 use super::{QuoteState, ShResult, markers, match_loop, sherr, try_var, util::is_var_name_ch};
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.
-pub(super) fn strip_escape_markers(s: &str) -> String {
+///
+/// Takes the string by value: when the input has no markers we hand the
+/// original `String` back without allocating, since `str::replace` always
+/// builds a fresh `String` even on a no-op pass.
+pub(super) fn strip_escape_markers(s: String) -> String {
+  if !s.contains(markers::ESCAPE) {
+    return s;
+  }
   s.replace(markers::ESCAPE, "")
 }
 
@@ -85,6 +92,14 @@ const SPECIAL_CHARS: &str = "#$^*()=|{}[]`<>?~;& '\"";
 /// characters like '$' with a non-character unicode representation that is
 /// unmistakable by the rest of the code
 pub fn unescape_str(raw: &str) -> String {
+  if !raw.bytes().any(|b| {
+    matches!(
+      b,
+      b'~' | b'\\' | b'(' | b'"' | b'\'' | b'`' | b'<' | b'>' | b'$'
+    )
+  }) {
+    return raw.to_string();
+  }
   let mut chars = raw.chars().peekable();
   let mut result = String::new();
   let mut last_was_word_break = false;

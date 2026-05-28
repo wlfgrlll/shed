@@ -132,7 +132,7 @@ impl Expander {
       return Ok(
         words
           .into_iter()
-          .map(|w| escape::strip_escape_markers(&w))
+          .map(escape::strip_escape_markers)
           .collect(),
       );
     }
@@ -145,14 +145,14 @@ impl Expander {
 
       if expansions.is_empty() {
         if !nullglob {
-          glob_words.push(escape::strip_escape_markers(&word));
+          glob_words.push(escape::strip_escape_markers(word));
         }
         continue;
       }
 
       for exp in expansions {
         let exp = var::restore_glob_prefix(&word, exp);
-        glob_words.push(escape::strip_escape_markers(&exp));
+        glob_words.push(escape::strip_escape_markers(exp));
       }
     }
 
