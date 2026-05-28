@@ -165,7 +165,13 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
   let dir = dir.as_ref();
   let dir_raw = &dir.display().to_string();
   defer!(super::autocmd!(PostChangeDir));
-  let current_dir = std::env::current_dir()?.display().to_string();
+
+  let current_dir = std::env::current_dir()
+    .ok()
+    .map(|p| p.display().to_string())
+    .or_else(|| try_var!("PWD"))
+    .unwrap_or_default();
+
   with_vars(
     [
       ("NEW_DIR".into(), dir_raw.as_str()),
@@ -176,15 +182,19 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
 
   std::env::set_current_dir(dir)?;
 
-  let new_dir_resolved = std::env::current_dir()?.display().to_string();
+  let new_dir_resolved = std::env::current_dir()
+    .ok()
+    .map(|p| p.display().to_string())
+    .unwrap_or_else(|| dir_raw.clone());
+
   Shed::vars_mut(|v| {
     v.set_var(
       "OLDPWD",
       VarKind::Str(current_dir.clone()),
       VarFlags::EXPORT,
-    )
+    )?;
+    v.set_var("PWD", VarKind::Str(new_dir_resolved), VarFlags::EXPORT)
   })?;
-  Shed::vars_mut(|v| v.set_var("PWD", VarKind::Str(new_dir_resolved), VarFlags::EXPORT))?;
 
   Ok(())
 }

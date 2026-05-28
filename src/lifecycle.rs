@@ -201,6 +201,7 @@ pub(super) fn tear_down() -> ExitCode {
 
   autocmd!(OnExit);
 
+  crate::write_term!("\n").ok();
   Shed::jobs_mut(|j| j.hang_up());
   Shed::term_mut(|t| t.reset_for_exit());
 
