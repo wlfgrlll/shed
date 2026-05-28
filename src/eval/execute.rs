@@ -165,7 +165,6 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
     }
   });
 
-  Shed::meta_mut(|m| m.rehash());
   let expanded = expand_aliases(input);
   let source_name: Rc<str> = name.into();
   let mut parser = ParsedSrc::new(expanded.into())
