@@ -279,11 +279,13 @@ impl Terminal {
     Some(borrowed)
   }
 
-  /// Helper for mapping the tty fd to a raw fd
-  ///
-  /// Not part of the public interface for a reason.
-  fn tty_raw(&self) -> Option<RawFd> {
-    self.tty().map(|tty| tty.as_raw_fd())
+  pub fn tty_checked(&self) -> Option<BorrowedFd<'static>> {
+    let tty = self.tty()?;
+    isatty(tty).ok()?.then_some(tty)
+  }
+
+  fn tty_raw_checked(&self) -> Option<RawFd> {
+    self.tty_checked().map(|tty| tty.as_raw_fd())
   }
 
   pub fn isatty(&self) -> bool {
@@ -742,7 +744,9 @@ impl Terminal {
   }
 
   fn push_termios(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty() else { return Ok(()) };
+    let Some(tty) = self.tty_checked() else {
+      return Ok(());
+    };
     let current =
       tcgetattr(tty).map_err(|e| sherr!(InternalErr, "Failed to get terminal attributes: {e}"))?;
 
@@ -751,7 +755,7 @@ impl Terminal {
   }
 
   fn pop_termios(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty_raw() else {
+    let Some(tty) = self.tty_raw_checked() else {
       return Ok(());
     };
     if let Some(termios) = self.termios_stack.pop() {
@@ -774,7 +778,7 @@ impl Terminal {
   /// raw mode at the start of every readline iteration. Cheap (one ioctl)
   /// and resilient to any late tcsetattr from orphaned descendants.
   pub fn enforce_raw_mode(&mut self) -> ShResult<()> {
-    let Some(tty) = self.tty_raw() else {
+    let Some(tty) = self.tty_raw_checked() else {
       return Ok(());
     };
     let tty = unsafe { BorrowedFd::borrow_raw(tty) };
@@ -787,7 +791,7 @@ impl Terminal {
   }
 
   pub fn edit_termios<F: FnOnce(&mut Termios)>(&mut self, f: F) -> ShResult<()> {
-    let Some(tty) = self.tty_raw() else {
+    let Some(tty) = self.tty_raw_checked() else {
       return Ok(());
     };
     let tty = unsafe { BorrowedFd::borrow_raw(tty) };
