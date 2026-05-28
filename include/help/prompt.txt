@@ -258,7 +258,7 @@ right-aligned prompt).
 
   The following options under `shopt highlight.*` control syntax
   highlighting colors. Values are style descriptions using the same
-  format as the `\c{...}` prompt escape (see |prompt-color|):
+  format as the `\c{...}` prompt escape (see |prompt color|(prompt-color)):
 
   `highlight.string`                           *opt-hl-string*
 
@@ -332,7 +332,7 @@ right-aligned prompt).
 
       `kill -USR1 $$`
 
-  Combined with prompt functions (see |prompt-func|), this allows the
+  Combined with prompt functions (see |prompt functions|(prompt-func)), this allows the
   prompt to reflect changes that happen outside the shell's normal
   command cycle.
 

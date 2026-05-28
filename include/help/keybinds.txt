@@ -5,7 +5,7 @@
 The line editor uses a vi-style modal editing system with seven modes:
 Normal, Insert, Visual, Replace, Ex (command), Verbatim, and Emacs. The
 default mode on startup is dependent on the value of the shell option `set.vi`,
-see |builtin-shopt| for more info.
+see |the shopt builtin|(builtin-shopt) for more info.
 
 ==============================================================================
 1. Normal Mode                                 *normal-mode*
@@ -262,9 +262,9 @@ see |builtin-shopt| for more info.
   `Ctrl+H`        same as Backspace
   `Ctrl+W`        delete word before cursor
   `Delete`        delete character under cursor
-  `Tab`           trigger completion (see |completion|)
+  `Tab`           trigger completion (see |tab completion|(completion))
   `Shift+Tab`     trigger completion (reverse direction)
-  `Ctrl+R`        open history search (see |history-search|)
+  `Ctrl+R`        open history search (see |history search|(history-search))
   `Ctrl+V`        enter verbatim mode (insert literal key sequence)
   `Enter`         submit line or insert newline if input is incomplete
 
@@ -353,7 +353,7 @@ see |builtin-shopt| for more info.
 6. Ex Mode                                     *ex-mode-keys*
 
   Ex mode accepts colon commands. Enter with `:` from normal mode.
-  See |ex| for available commands.
+  See the |ex mode docs|(ex) for more info.
 
   `Enter`         execute the command
   `Esc`           cancel and return to normal mode
@@ -446,7 +446,7 @@ see |builtin-shopt| for more info.
 9. User-Defined Keymaps                        *keymaps* *keymap*
 
   Custom key bindings can be created with the `keymap` builtin.
-  See |builtin-keymap| for more info.
+  See |the keymap builtin|(builtin-keymap) for more info.
 
 ==============================================================================
 10. Completion                                 *completion*

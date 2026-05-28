@@ -301,7 +301,7 @@ command history navigable with `Up` and `Down`.
       only named entries.
 
   Named stashes can be predefined in your `shedrc` using the
-  |builtin-stash| command:
+  |stash|(builtin-stash) builtin:
 
       `stash --save commit 'git commit -m ""' 16`
 

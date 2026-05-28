@@ -47,8 +47,8 @@ Cross-reference links can also be `clicked` directly with the mouse.
 
                       Examples:
                         `help help-nav`         jumps to this section
-                        `help prompt-escapes`   jumps to |prompt-escapes|
-                        `help heredoc`          jumps to |heredoc|
+                        `help prompt-escapes`   jumps to |prompt escape docs|(prompt-escape)
+                        `help heredoc`          jumps to |heredoc docs|(heredoc)
 
   Tab completion for the `help` command will complete valid search tags.
 
@@ -139,8 +139,11 @@ Cross-reference links can also be `clicked` directly with the mouse.
                       each section.
 
   `|reference|`       Cross-reference link to another page or tag.
-                      Rendered underlined cyan. Tab into hint mode
-                      to follow; mouse click also works.
+  `|ref|(target)`     Rendered underlined cyan. Tab into hint mode
+                      to follow; mouse click also works. A target
+                      can be put in parentheses after the reference
+                      to specify a target regardless of whats between
+                      the pipes.
 
   `` `code` ``            Inline code or literal command. Rendered
                       green. Use for commands, filenames, flag

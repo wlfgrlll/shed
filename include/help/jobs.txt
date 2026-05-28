@@ -137,7 +137,7 @@ the foreground and background.
 5. Socket Events                                 *jobs-events*
 
   Job completions are broadcast over the shell's Unix socket
-  (see |socket|) to any connected subscribers:
+  (see the |IPC socket docs|(socket)) to any connected subscribers:
 
       `job>>begin>> {id} {n}`
       `job>>child>> {pid} {status} {cmd}`

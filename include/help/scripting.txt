@@ -165,7 +165,7 @@ executable with a shebang line:
   2.6 Precedence
 
       `&&` and `||` have equal precedence and associate left to right.
-      Use grouping (see |script-grouping|) to override:
+      Use grouping (see |script grouping|(script-grouping)) to override:
 
           `# Without grouping: (a && b) || c`
           `a && b || c`
@@ -333,7 +333,7 @@ executable with a shebang line:
           `  echo "stderr line" >&2`
           `} > out.log 2> err.log`
 
-      And for grouping in command lists (see |script-lists|):
+      And for grouping in command lists (see |scripts lists|(script-lists)):
 
           `test -f config || { echo "missing config" >&2; exit 1; }`
 
@@ -850,6 +850,6 @@ executable with a shebang line:
           `exec 3<> file.txt`
 
       See |redirect| for full details on redirection syntax.
-      See |builtin-seek| for arbitrary cursor movement in read-write FDs.
+      See |seek|(builtin-seek) for arbitrary cursor movement in read-write FDs.
 
 ==============================================================================

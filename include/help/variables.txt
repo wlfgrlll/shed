@@ -3,8 +3,8 @@
 #VARIABLES#
 
 Variables store values that can be referenced later using parameter
-expansion (see |param|). Shed supports string variables, integer
-variables, and arrays.
+expansion (see |parameter expansion|(param)). Shed supports string variables,
+integer variables, and arrays.
 
 ==============================================================================
 1. Assignment                                    *var-assign*

@@ -17,7 +17,7 @@ behavior without modifying the shell itself.
 
   With no arguments, prints every registered autocmd across all
   event kinds. With just a {kind} and no {command}, prints only the
-  autocmds registered for that event. See |autocmd-list|.
+  autocmds registered for that event. See the full list |here|(autocmd-list).
 
   Options:
 
@@ -69,7 +69,7 @@ behavior without modifying the shell itself.
 
   `pre-change-dir`                             *autocmd-pre-change-dir*
 
-      Fires before |cd| changes the working directory.
+      Fires before |cd|(builtin-cd) changes the working directory.
 
       Special variables:
         `$NEW_DIR`    the directory being changed to

@@ -13,7 +13,7 @@ names. If no files match, the pattern is left unchanged.
   `*`                                          *glob-star*
 
       Matches any string of zero or more characters, except that it does
-      not match a leading `.` (see |glob-dotglob|) or a `/`.
+      not match a leading `.` (see |dotglob|(glob-dotglob)) or a `/`.
 
       Example:
         `echo *.txt`             # all .txt files

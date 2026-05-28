@@ -8,16 +8,16 @@ common cases without reaching for a man page.
 
 Categories:
 
-   1. |commands-archives|      tar, gzip, zip, 7z, xz, bzip2, zstd
-   2. |commands-networking|    ssh, scp, rsync, curl, wget, ss, ip, dig, ping
-   3. |commands-text|          grep, sed, awk, cut, sort, uniq, tr, wc, head/tail, column
-   4. |commands-data|          jq, base64, xxd, od, hexdump, bc, envsubst
-   5. |commands-files|         find, du, df, ln, stat, file, chmod, chown, xattr, lsblk, mount
-   6. |commands-processes|     ps, top, kill, lsof, strace, nice, nohup, timeout, watch
-   7. |commands-system|        systemctl, journalctl, uname, dmesg, sysctl, lscpu
-   8. |commands-git|           branch, stash, rebase, cherry-pick, reflog, reset, bisect, worktree
-   9. |commands-multimedia|    ffmpeg, imagemagick, mpv, yt-dlp
-  10. |commands-crypto|        ssh-keygen, gpg, openssl, sha256sum, age
+   1. |archives|(commands-archives)      tar, gzip, zip, 7z, xz, bzip2, zstd
+   2. |networking|(commands-networking)    ssh, scp, rsync, curl, wget, ss, ip, dig, ping
+   3. |text|(commands-text)          grep, sed, awk, cut, sort, uniq, tr, wc, head/tail, column
+   4. |data|(commands-data)          jq, base64, xxd, od, hexdump, bc, envsubst
+   5. |files|(commands-files)         find, du, df, ln, stat, file, chmod, chown, xattr, lsblk, mount
+   6. |processes|(commands-processes)     ps, top, kill, lsof, strace, nice, nohup, timeout, watch
+   7. |system|(commands-system)        systemctl, journalctl, uname, dmesg, sysctl, lscpu
+   8. |git|(commands-git)           branch, stash, rebase, cherry-pick, reflog, reset, bisect, worktree
+   9. |multimedia|(commands-multimedia)    ffmpeg, imagemagick, mpv, yt-dlp
+  10. |cryptography|(commands-crypto)  ssh-keygen, gpg, openssl, sha256sum, age
 
 ==============================================================================
 1. Archives                                      *commands-archives*
