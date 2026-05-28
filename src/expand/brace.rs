@@ -7,6 +7,9 @@ use crate::util::ShResult;
 /// Returns true if there's a valid {a,b} or {1..5} pattern at the outermost
 /// level.
 fn has_braces(s: &str) -> bool {
+  if !s.contains('{') {
+    return false;
+  }
   let s = expand_raw(&mut s.chars().peekable()).unwrap_or(s.to_string());
   let mut chars = s.chars().peekable();
   let mut depth = 0;
@@ -54,6 +57,9 @@ fn has_braces(s: &str) -> bool {
 /// Expand braces in a string, zsh-style: one level per call, loop until  done.
 /// Returns a Vec of expanded strings.
 pub(super) fn expand_braces_full(input: &str) -> ShResult<Vec<String>> {
+  if !input.contains('{') {
+    return Ok(vec![input.to_string()]);
+  }
   let mut results = vec![input.to_string()];
 
   // Keep expanding until no results contain braces
