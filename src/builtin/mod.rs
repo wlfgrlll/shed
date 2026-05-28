@@ -364,22 +364,24 @@ pub(super) trait Builtin: Sync {
     let redirs: RedirSet = RedirSet::from(std::mem::take(&mut node.redirs));
     let guard = redirs.apply()?;
 
-    // Register ChildProc in current job
-    let job = dispatcher.job_stack.curr_job_mut().unwrap();
-    let child_pgid = if let Some(pgid) = job.pgid() {
-      pgid
-    } else {
-      let pid = Pid::this();
-      job.set_pgid(pid);
-      pid
-    };
-    let child = ChildProc::new(
-      Pid::this(),
-      Some(&cmd_raw),
-      fork_builtins.then_some(child_pgid),
-      report_time,
-    )?;
-    job.push_child(child);
+    if fork_builtins {
+      // Register ChildProc in current job
+      let job = dispatcher.job_stack.curr_job_mut().unwrap();
+      let child_pgid = if let Some(pgid) = job.pgid() {
+        pgid
+      } else {
+        let pid = Pid::this();
+        job.set_pgid(pid);
+        pid
+      };
+      let child = ChildProc::new(
+        Pid::this(),
+        Some(&cmd_raw),
+        fork_builtins.then_some(child_pgid),
+        report_time,
+      )?;
+      job.push_child(child);
+    }
 
     // Handle exec specially - persist redirections before dispatch
     if cmd_raw.as_str() == "exec"
