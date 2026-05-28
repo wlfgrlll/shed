@@ -370,7 +370,7 @@ impl Dispatcher {
     // We need to expand this token
     // so that a command smuggled inside of a variable is routed correctly,
     // instead of only hitting the exec_cmd path
-    let Some(cmd_word) = cmd.clone().expand()?.get_words().into_iter().next() else {
+    let Some(cmd_word) = cmd.clone().expand_to_words()?.into_iter().next() else {
       if let NdRule::Command {
         ref assignments,
         argv: _,
@@ -817,7 +817,7 @@ impl Dispatcher {
         Ok(
           tks
             .into_iter()
-            .map(|tk| tk.expand().map(|tk| tk.get_words()))
+            .map(|tk| tk.expand_to_words())
             .collect::<ShResult<Vec<Vec<String>>>>()?
             .into_iter()
             .flatten()
@@ -1274,7 +1274,7 @@ impl Dispatcher {
       let val = if is_arr {
         VarKind::arr_from_tk(val)?
       } else {
-        VarKind::Str(val.expand()?.get_words().join(" "))
+        VarKind::Str(val.expand_to_words()?.join(" "))
       };
       let param_expansion_failed = state::Shed::get_status() != 0;
 
@@ -1423,7 +1423,7 @@ pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
 /// `$unset` survive expansion as the empty string instead of vanishing
 /// from argv (bash `[[ ]]` semantics).
 pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String, Span)>> {
-  let mut args = vec![];
+  let mut args = Vec::with_capacity(argv.len());
 
   for arg in argv {
     let span = arg.span.clone();
@@ -1440,8 +1440,7 @@ pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String,
       let word = arg.expand_no_split()?;
       args.push((word, span));
     } else {
-      let expanded = arg.expand()?;
-      for exp in expanded.get_words() {
+      for exp in arg.expand_to_words()? {
         args.push((exp, span.clone()))
       }
     }

@@ -41,6 +41,10 @@ impl Tk {
     let class = TkRule::Expanded { exp };
     Ok(Self { class, span, flags })
   }
+  pub fn expand_to_words(self) -> ShResult<Vec<String>> {
+    let span = self.span.clone();
+    Expander::new(self)?.expand().promote_err(span)
+  }
   pub fn expand_no_side_effects(self) -> ShResult<Self> {
     let flags = self.flags;
     let span = self.span.clone();
