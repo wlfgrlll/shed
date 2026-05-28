@@ -230,6 +230,16 @@ impl JobStack {
 }
 
 #[derive(Debug)]
+pub struct JobData {
+  pub table_id: String,
+  pub notify: bool,
+  pub stats: Vec<WtStat>,
+  pub cmds: Vec<String>,
+  pub display: String,
+  pub timer: Option<CmdTimer>,
+}
+
+#[derive(Debug)]
 pub struct Job {
   table_id: Option<usize>,
   pgid: Pid,
@@ -269,6 +279,26 @@ impl Job {
       .iter()
       .map(|c| c.cmd().unwrap_or_default())
       .collect()
+  }
+  pub fn take_job_data(&mut self, job_order: &[usize], pid: Option<Pid>) -> JobData {
+    JobData {
+      table_id: self.tabid().unwrap_or_default().to_string(),
+      notify: self.notify(),
+      stats: self.get_stats(),
+      cmds: self
+        .get_cmds()
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>(),
+      display: self.display(job_order, JobCmdFlags::PIDS).to_string(),
+      timer: pid.and_then(|pid| {
+        self
+          .children_mut()
+          .iter_mut()
+          .find(|chld| chld.pid() == pid)
+          .and_then(|c| c.take_timer())
+      }),
+    }
   }
   pub fn get_cmd_line(&self) -> String {
     self.get_cmds().join(" | ")
