@@ -435,10 +435,30 @@
                 default = "yellow";
                 description = "Style for shell keywords like 'if', 'while', 'for'";
               };
-              valid_command = lib.mkOption {
+              external_command = lib.mkOption {
                 type = lib.types.str;
                 default = "green";
                 description = "Style for commands that exist in PATH, as functions, or as aliases";
+              };
+              function = lib.mkOption {
+                type = lib.types.str;
+                default = "green";
+                description = "Style for function";
+              };
+              alias = lib.mkOption {
+                type = lib.types.str;
+                default = "green";
+                description = "Style for shell commands";
+              };
+              directory = lib.mkOption {
+                type = lib.types.str;
+                default = "green";
+                description = "Style for directories, if autocd is enabled";
+              };
+              builtin = lib.mkOption {
+                type = lib.types.str;
+                default = "green";
+                description = "Style for builtin shell commands";
               };
               invalid_command = lib.mkOption {
                 type = lib.types.str;
