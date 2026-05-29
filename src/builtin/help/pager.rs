@@ -6,7 +6,7 @@ use regex::Regex;
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
   keys::{KeyCode, KeyEvent},
-  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ,SEARCH_FOCUS_SEQ,},
+  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_FOCUS_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   procio::stdout_fileno,
   readline::SimpleEditor,
   state::terminal::calc_str_width,
@@ -194,7 +194,7 @@ impl HelpPager {
     for (s, e) in self.search.results.iter().rev() {
       content.insert_str(*e, RESET_SEQ);
       let seq = if cur == self.search.active_result_idx1 {
-          SEARCH_FOCUS_SEQ
+        SEARCH_FOCUS_SEQ
       } else {
         SEARCH_RES_SEQ
       };
@@ -370,7 +370,9 @@ impl HelpPager {
       key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist as isize),
       key!('u') | key!(PageUp) => PagerCmd::Scroll(-(self.jump_dist as isize)),
 
-      key!(ScrollDown) | key!(Down) | key!('j') | key!(Enter) if !self.search.active => PagerCmd::Scroll(1),
+      key!(ScrollDown) | key!(Down) | key!('j') | key!(Enter) if !self.search.active => {
+        PagerCmd::Scroll(1)
+      }
       key!(ScrollUp) | key!(Up) | key!('k') => PagerCmd::Scroll(-1),
       key!(Back) | key!(Left) | key!('h') => return Ok(PagerEvent::Back),
       key!(Forward) | key!(Right) | key!('l') => return Ok(PagerEvent::Forward),
@@ -440,13 +442,13 @@ impl HelpPager {
     // Try to find a match past the anchor in the given direction
     let after_anchor = self.search.results.iter().filter(|(start, _)| {
       if self.search.active_result_idx1 > 0 {
-          let current_range = self.search.results[self.search.active_result_idx1 - 1];
-          match dir {
-            Direction::Forward => *start > current_range.1,
-            Direction::Backward => *start < current_range.0,
-          }
+        let current_range = self.search.results[self.search.active_result_idx1 - 1];
+        match dir {
+          Direction::Forward => *start > current_range.1,
+          Direction::Backward => *start < current_range.0,
+        }
       } else {
-          true
+        true
       }
     });
 
@@ -464,10 +466,10 @@ impl HelpPager {
     let height = Shed::term(|t| t.t_rows()).saturating_sub(1); // Get current terminal height
     if let Some((start, _)) = found {
       let line_no = line_for(start);
-      
+
       // Check if the target line is already in the viewport
       let is_visible = line_no >= self.scroll_offset && line_no < (self.scroll_offset + height);
-      
+
       if !is_visible {
         // Only jump if not visible
         self.scroll_offset = line_no.saturating_sub(2);
@@ -477,18 +479,18 @@ impl HelpPager {
 
     // update the focus index
     match dir {
-        Direction::Forward => {
-            self.search.active_result_idx1 += 1;
-            if self.search.active_result_idx1 > self.search.results.len() {
-                self.search.active_result_idx1 = 1;
-            }
-        },
-        Direction::Backward => {
-            self.search.active_result_idx1 -= 1;
-            if self.search.active_result_idx1 == 0 {
-                self.search.active_result_idx1 = self.search.results.len();
-            }
-        },
+      Direction::Forward => {
+        self.search.active_result_idx1 += 1;
+        if self.search.active_result_idx1 > self.search.results.len() {
+          self.search.active_result_idx1 = 1;
+        }
+      }
+      Direction::Backward => {
+        self.search.active_result_idx1 -= 1;
+        if self.search.active_result_idx1 == 0 {
+          self.search.active_result_idx1 = self.search.results.len();
+        }
+      }
     }
   }
 
