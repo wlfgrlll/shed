@@ -94,7 +94,10 @@ mod tests {
 
     test_input("pwd").unwrap();
     let out = guard.read_output();
-    assert_eq!(out.trim(), canon(tmp.path()).display().to_string());
+    // Default pwd (-L) prints $PWD as-typed. On macOS the tempdir path goes
+    // through `/var → /private/var`, so canonicalizing here would mismatch
+    // the (correct) -L output.
+    assert_eq!(out.trim(), tmp.path().display().to_string());
   }
 
   #[test]

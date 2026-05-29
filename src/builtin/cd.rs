@@ -296,8 +296,12 @@ pub mod tests {
     test_input(format!("cd {}", dir_a.path().display())).unwrap();
     test_input(format!("cd {}", dir_b.path().display())).unwrap();
 
+    // -L semantics: OLDPWD preserves the path the user typed, not the
+    // canonical form. On macOS `/var/folders/...` is a symlink to
+    // `/private/var/folders/...` so comparing against `canon(...)` would
+    // wrongly canonicalize it.
     let oldpwd = var!("OLDPWD");
-    assert_eq!(oldpwd, canon(dir_a.path()).display().to_string());
+    assert_eq!(oldpwd, dir_a.path().display().to_string());
   }
 
   #[test]
@@ -307,8 +311,11 @@ pub mod tests {
 
     test_input(format!("cd {}", temp_dir.path().display())).unwrap();
 
+    // -L semantics: $PWD reflects what the user typed, not the canonical
+    // kernel cwd. The kernel cwd can differ if any component of the input
+    // path is a symlink (e.g. macOS's `/var` → `/private/var`).
     let pwd = var!("PWD");
-    assert_eq!(pwd, env::current_dir().unwrap().display().to_string());
+    assert_eq!(pwd, temp_dir.path().display().to_string());
   }
 
   #[test]
