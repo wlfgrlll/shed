@@ -719,6 +719,7 @@ impl Terminal {
     self.edit_termios(enable_raw_mode)?;
     self.toggle_bracketed_paste(false)?;
     self.toggle_alt_buffer(true)?;
+    self.reset_scroll_region()?;
     self.toggle_mouse_support(true)?;
     self.set_cursor_style(CursorStyle::Default)?;
     self.toggle_cursor_visibility(false)?;
