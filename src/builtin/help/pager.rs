@@ -404,13 +404,15 @@ impl HelpPager {
     }
     let pat = self.search.editor.buf.joined();
     let re = Regex::new(&regex::escape(&pat)).unwrap();
-    let content = self.content();
 
-    // collect entries into self.search.results
-    // results contains absolute byte spans
+    let visible = self.content.visible();
+    let map = self.content.visible_to_baked();
+
+    // search the visible string, and map the visible bytes
+    // back to the styled content byte positions
     self.search.results = re
-      .find_iter(content)
-      .map(|m| (m.start(), m.end()))
+      .find_iter(visible)
+      .map(|m| (map[m.start()], map[m.end()]))
       .collect();
 
     if jump {
@@ -569,7 +571,6 @@ impl HelpPager {
     Ok(())
   }
 }
-
 
 fn hover_style() -> Style {
   Style::new().invert().cyan()

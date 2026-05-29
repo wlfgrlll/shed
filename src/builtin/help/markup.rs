@@ -2,6 +2,26 @@ use std::{iter::Peekable, ops::Range, str::Chars};
 
 use super::{expand::markers, match_loop, util::QuoteState};
 
+/// If `bytes[pos..]` starts with an SGR sequence `ESC [ ... m`, return the
+/// byte index one past its trailing `m`. Otherwise None.
+pub(super) fn scan_sgr(bytes: &[u8], pos: usize) -> Option<usize> {
+  if bytes.get(pos)? != &0x1b {
+    return None;
+  }
+  if bytes.get(pos + 1)? != &b'[' {
+    return None;
+  }
+  let mut i = pos + 2;
+  while let Some(&b) = bytes.get(i) {
+    match b {
+      b'm' => return Some(i + 1),
+      b'0'..=b'9' | b';' => i += 1,
+      _ => return None,
+    }
+  }
+  None
+}
+
 pub const TAG_SEQ: &str = "\x1b[1;33m"; // bold yellow - searchable tags
 pub const REF_SEQ: &str = "\x1b[4;36m"; // underline cyan - cross-references
 pub const RESET_SEQ: &str = "\x1b[0m";
@@ -58,19 +78,34 @@ impl MarkedSpan {
 
 #[derive(Debug)]
 pub struct StyledHelp {
+  /// styled help content
   content: String,
+  /// visible help content (no ANSI sequences)
+  visible: String,
+  /// mapping of visible bytes to styled bytes
+  visible_to_baked: Vec<usize>,
   ref_targets: Vec<Option<String>>,
 }
 
 impl StyledHelp {
   pub fn new(content: &str) -> Self {
+    let baked = style_help_content(content);
+    let (visible, visible_to_baked) = strip_sgr(&baked);
     Self {
-      content: style_help_content(content),
+      content: baked,
+      visible,
+      visible_to_baked,
       ref_targets: extract_ref_targets(content),
     }
   }
   pub fn content(&self) -> &str {
     &self.content
+  }
+  pub fn visible(&self) -> &str {
+    &self.visible
+  }
+  pub fn visible_to_baked(&self) -> &[usize] {
+    &self.visible_to_baked
   }
   pub fn take_ref_targets(&mut self) -> Vec<Option<String>> {
     std::mem::take(&mut self.ref_targets)
@@ -106,6 +141,28 @@ impl StyledHelp {
 
 pub fn style_help_content(raw: &str) -> String {
   expand_help(&unescape_help(raw))
+}
+
+/// Strips all ansi sequences from the provided string
+fn strip_sgr(baked: &str) -> (String, Vec<usize>) {
+  let bytes = baked.as_bytes();
+  let mut visible = Vec::with_capacity(bytes.len());
+  let mut map: Vec<usize> = Vec::with_capacity(bytes.len() + 1);
+  let mut i = 0;
+  while i < bytes.len() {
+    if let Some(end) = scan_sgr(bytes, i) {
+      i = end;
+      continue;
+    }
+    map.push(i);
+    visible.push(bytes[i]);
+    i += 1;
+  }
+  map.push(i);
+
+  // ansi codes will only ever be ascii
+  // so we can unwrap this
+  (String::from_utf8(visible).unwrap(), map)
 }
 
 /// Consume a cross-reference target
@@ -386,5 +443,83 @@ mod tests {
   #[test]
   fn invariant_literal_pipes_dont_count() {
     ref_count_invariant("a | b, then |real| and \"|quoted|\"");
+  }
+
+  // ─── strip_sgr / visible-to-baked map ────────────────────────────
+
+  #[test]
+  fn strip_sgr_removes_all_sgr_sequences() {
+    let baked = format!("{REF_SEQ}hello{RESET_SEQ} {TAG_SEQ}world{RESET_SEQ}");
+    let (visible, _) = strip_sgr(&baked);
+    assert_eq!(visible, "hello world");
+  }
+
+  #[test]
+  fn strip_sgr_map_indexes_each_visible_byte_to_baked() {
+    // "abc<REF>def<RST>ghi" — visible = "abcdefghi"
+    let baked = format!("abc{REF_SEQ}def{RESET_SEQ}ghi");
+    let (visible, map) = strip_sgr(&baked);
+    assert_eq!(visible, "abcdefghi");
+    // Every visible byte should map back to a baked byte that contains
+    // the same character.
+    for (i, vb) in visible.bytes().enumerate() {
+      assert_eq!(
+        baked.as_bytes()[map[i]],
+        vb,
+        "visible[{i}] = {:?} but baked[map[{i}]={}] = {:?}",
+        vb as char,
+        map[i],
+        baked.as_bytes()[map[i]] as char,
+      );
+    }
+    // Sentinel: one past the last byte of baked.
+    assert_eq!(map.len(), visible.len() + 1);
+    assert_eq!(map[visible.len()], baked.len());
+  }
+
+  #[test]
+  fn strip_sgr_preserves_utf8() {
+    // Two-byte UTF-8 characters around an SGR sequence.
+    let baked = format!("café{REF_SEQ}naïve{RESET_SEQ}");
+    let (visible, map) = strip_sgr(&baked);
+    assert_eq!(visible, "cafénaïve");
+    // The 'é' in "café" lives at byte indices 3..5 (UTF-8 0xC3 0xA9).
+    // Both bytes should map to themselves in baked.
+    assert_eq!(map[3], 3);
+    assert_eq!(map[4], 4);
+    // The 'n' in "naïve" is the first byte after REF_SEQ in baked.
+    assert_eq!(map[5], 5 + REF_SEQ.len());
+  }
+
+  #[test]
+  fn strip_sgr_handles_empty_input() {
+    let (visible, map) = strip_sgr("");
+    assert_eq!(visible, "");
+    assert_eq!(map, vec![0]);
+  }
+
+  #[test]
+  fn strip_sgr_handles_only_sgr_sequences() {
+    let baked = format!("{REF_SEQ}{RESET_SEQ}");
+    let (visible, map) = strip_sgr(&baked);
+    assert_eq!(visible, "");
+    assert_eq!(map, vec![baked.len()]);
+  }
+
+  // Integration: search shouldn't be able to target bytes inside an SGR
+  // sequence. The visible view is what the regex sees.
+
+  #[test]
+  fn visible_view_excludes_sgr_bytes() {
+    // Baked content contains "[1;33m" inside TAG_SEQ. The visible view
+    // must NOT contain those bytes.
+    let raw = "see *taghere* there";
+    let styled = StyledHelp::new(raw);
+    assert!(
+      !styled.visible().contains("[1;33m"),
+      "visible view leaked SGR bytes: {:?}",
+      styled.visible()
+    );
+    assert!(styled.visible().contains("taghere"));
   }
 }

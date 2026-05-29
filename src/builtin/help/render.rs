@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use yansi::Style;
 
-use super::markup::RESET_SEQ;
+use super::markup::{RESET_SEQ, scan_sgr};
 
 #[derive(Debug, Clone)]
 pub(super) enum Overlay {
@@ -166,26 +166,6 @@ fn reemit_overlays(out: &mut String, overlay_stack: &[Style]) {
 /// Emit just the SGR opening sequence for `style`, no trailing reset.
 fn emit_style_prefix(out: &mut String, style: &Style) {
   let _ = style.fmt_prefix(out);
-}
-
-/// If `bytes[pos..]` starts with an SGR sequence `ESC [ ... m`, return the
-/// byte index one past its trailing `m`. Otherwise None.
-fn scan_sgr(bytes: &[u8], pos: usize) -> Option<usize> {
-  if bytes.get(pos)? != &b'\x1b' {
-    return None;
-  }
-  if bytes.get(pos + 1)? != &b'[' {
-    return None;
-  }
-  let mut i = pos + 2;
-  while let Some(&b) = bytes.get(i) {
-    match b {
-      b'm' => return Some(i + 1),
-      b'0'..=b'9' | b';' => i += 1,
-      _ => return None,
-    }
-  }
-  None
 }
 
 /// Find the next instance of `\x1b[`
