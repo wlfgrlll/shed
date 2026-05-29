@@ -419,6 +419,7 @@ fn handle_readline_event(
       Shed::meta_mut(|m| m.start_timer());
 
       Shed::term_mut(|t| t.emit_osc_exec_start()).ok();
+      Shed::term_mut(|t| t.flush()).ok();
 
       let res = exec_int(input.clone(), Some("<stdin>".into()));
 
