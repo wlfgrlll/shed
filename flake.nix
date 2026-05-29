@@ -24,6 +24,14 @@
         "x86_64-apple-darwin"
       ];
     };
+
+    # buildRustPackage defaults to nixpkgs's rustc, which lags behind. Build
+    # an explicit rustPlatform from the same overlay toolchain the devShell
+    # uses so `nix build` sees the same language features as `cargo build`.
+    rustPlatform = pkgs.makeRustPlatform {
+      cargo = rustToolchain;
+      rustc = rustToolchain;
+    };
   in
   {
     devShells.default = pkgs.mkShell {
@@ -47,7 +55,7 @@
         "${pkgs.pkgsCross.musl64.stdenv.cc}/bin/${pkgs.pkgsCross.musl64.stdenv.cc.targetPrefix}ar";
     };
 
-    packages.default = pkgs.rustPlatform.buildRustPackage {
+    packages.default = rustPlatform.buildRustPackage {
       pname = "shed";
       version = "0.22.1";
 
