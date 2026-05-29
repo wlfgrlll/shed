@@ -235,7 +235,7 @@ More info can be found in [the socket help page](./include/help/socket.txt).
 ### Shell Language
 
 `shed`'s scripting language follows the specification laid out by [IEEE Std 1003.1-2024 Shell & Utilities](https://pubs.opengroup.org/onlinepubs/9799919799/).
-It is capable of sourcing any POSIX-portable shell script, or I'll eat my hat.
+It is capable of sourcing any POSIX-portable shell script, or I'll eat my hat. (hats eaten so far: 1)
 
 ---
 
