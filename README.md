@@ -11,6 +11,38 @@
 </h6>
 <img width="1925" height="1026" alt="shed" src="https://github.com/user-attachments/assets/c7d7d410-6cf5-4a04-a2be-ef3b6146e155" />
 
+<!-- TOC markers (for autoscript) -->
+<!--tocbeg-->
+## Table of Contents
+- [Why shed?](#why-shed)
+- [Features](#features)
+  - [Line Editor](#line-editor)
+    - [Emacs mode](#emacs-mode)
+    - [Vi mode](#vi-mode)
+    - [Ex mode](#ex-mode)
+  - [Interactive Documentation](#interactive-documentation)
+  - [Fuzzy Tab Completion/History Search](#fuzzy-tab-completionhistory-search)
+  - [Keymaps](#keymaps)
+  - [Autocmds](#autocmds)
+  - [Command History](#command-history)
+  - [Alias Expansion](#alias-expansion)
+  - [Syntax Highlighting](#syntax-highlighting)
+  - [Status Line](#status-line)
+  - [IPC Socket](#ipc-socket)
+  - [Shell Language](#shell-language)
+  - [Job Control](#job-control)
+  - [Configuration](#configuration)
+  - [Prompt](#prompt)
+- [Building](#building)
+  - [Arch Linux (AUR)](#arch-linux-aur)
+  - [Cargo](#cargo)
+  - [Nix](#nix)
+- [Known issues](#known-issues)
+- [AI Usage](#ai-usage)
+- [Notes](#notes)
+<!--tocend-->
+
+
 ## Why shed?
 
 I started working on `shed` because I have yet to find an unopinionated shell with genuinely smooth out-of-the-box line editing features. `bash` and `zsh` are both POSIX compliant in their syntax, but bash's readline and zsh's zle are both really clunky to work with (in my opinion). `fish` has pretty decent line editing, but wants me to learn their scripting language instead of the one that everyone else uses. There just wasn't a perfect solution. `shed` is the answer I came up with for this problem.
