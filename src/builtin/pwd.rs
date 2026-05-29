@@ -1,21 +1,75 @@
-use std::env;
+use std::{env, fs};
 
-use super::{ShResult, outln, with_status};
+use super::{
+  ShResult,
+  getopt::{Opt, OptSpec},
+  outln, sherr, try_var, with_status,
+};
 
 pub(super) struct Pwd;
 impl super::Builtin for Pwd {
-  fn execute(&self, _args: super::BuiltinArgs) -> ShResult<()> {
-    let curr_dir = env::current_dir().unwrap().display().to_string();
+  fn opts(&self) -> Vec<OptSpec> {
+    vec![OptSpec::flag('L'), OptSpec::flag('P')]
+  }
 
-    outln!("{curr_dir}");
+  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+    let mut logical = true;
 
+    for opt in &args.opts {
+      match opt {
+        Opt::Short('L') => logical = true,
+        Opt::Short('P') => logical = false,
+        _ => return Err(sherr!(ParseErr @ args.span, "Invalid option: {opt}")),
+      }
+    }
+
+    if !args.argv.is_empty() {
+      return Err(sherr!(ParseErr @ args.span, "pwd: too many arguments"));
+    }
+
+    let dir = if logical {
+      try_var!("PWD")
+        .filter(|p| is_same_dir_as_cwd(p))
+        .or_else(|| physical_cwd().map(|p| p.display().to_string()))
+    } else {
+      physical_cwd().map(|p| p.display().to_string())
+    };
+
+    let Some(dir) = dir else {
+      return Err(sherr!(
+        ExecFail @ args.span,
+        "pwd: cannot determine current directory",
+      ));
+    };
+
+    outln!("{dir}");
     with_status(0)
   }
 }
 
+fn is_same_dir_as_cwd(path: &str) -> bool {
+  let Ok(p_meta) = fs::metadata(path) else {
+    return false;
+  };
+  let Ok(dot_meta) = fs::metadata(".") else {
+    return false;
+  };
+  use std::os::unix::fs::MetadataExt;
+  p_meta.dev() == dot_meta.dev() && p_meta.ino() == dot_meta.ino()
+}
+
+fn physical_cwd() -> Option<std::path::PathBuf> {
+  env::current_dir()
+    .ok()
+    .and_then(|p| fs::canonicalize(&p).ok().or(Some(p)))
+}
+
 #[cfg(test)]
 mod tests {
-  use crate::state;
+  use crate::state::{
+    self, Shed,
+    vars::{VarFlags, VarKind},
+  };
   use crate::tests::testutil::{TestGuard, canon, test_input};
   use std::env;
   use tempfile::TempDir;
@@ -48,5 +102,83 @@ mod tests {
     let _g = TestGuard::new();
     test_input("pwd").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn pwd_p_canonicalizes_through_symlink() {
+    let guard = TestGuard::new();
+    let tmp = TempDir::new().unwrap();
+    let real = tmp.path().join("real");
+    let link = tmp.path().join("link");
+    std::fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    test_input(format!("cd -P {}", link.display())).unwrap();
+    guard.read_output();
+    test_input("pwd -P").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out.trim(), canon(&real).display().to_string());
+  }
+
+  #[test]
+  fn pwd_l_uses_pwd_var_when_valid() {
+    let guard = TestGuard::new();
+    let tmp = TempDir::new().unwrap();
+    let real = tmp.path().join("real");
+    let link = tmp.path().join("link");
+    std::fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // Set $PWD to the symlink path; cwd is the real path. They name the
+    // same inode, so -L should print the symlink form.
+    env::set_current_dir(&real).unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "PWD",
+        VarKind::Str(link.display().to_string()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
+
+    test_input("pwd -L").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out.trim(), link.display().to_string());
+  }
+
+  #[test]
+  fn pwd_l_falls_back_when_pwd_stale() {
+    let guard = TestGuard::new();
+    let tmp = TempDir::new().unwrap();
+
+    test_input(format!("cd {}", tmp.path().display())).unwrap();
+    guard.read_output();
+    // Corrupt $PWD so it doesn't name the current directory.
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "PWD",
+        VarKind::Str("/definitely/not/the/cwd".into()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
+
+    test_input("pwd -L").unwrap();
+    let out = guard.read_output();
+    assert_eq!(out.trim(), canon(tmp.path()).display().to_string());
+  }
+
+  #[test]
+  fn pwd_rejects_extra_args() {
+    let _g = TestGuard::new();
+    test_input("pwd extra-arg").ok();
+    assert_ne!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn pwd_rejects_unknown_flag() {
+    let _g = TestGuard::new();
+    test_input("pwd -X").ok();
+    assert_ne!(state::Shed::get_status(), 0);
   }
 }
