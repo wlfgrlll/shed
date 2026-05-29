@@ -361,7 +361,7 @@ impl HelpPager {
       key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist as isize),
       key!('u') | key!(PageUp) => PagerCmd::Scroll(-(self.jump_dist as isize)),
 
-      key!(ScrollDown) | key!(Down) | key!('j') => PagerCmd::Scroll(1),
+      key!(ScrollDown) | key!(Down) | key!('j') | key!(Enter) if !self.search.active => PagerCmd::Scroll(1),
       key!(ScrollUp) | key!(Up) | key!('k') => PagerCmd::Scroll(-1),
       key!(Back) | key!(Left) | key!('h') => return Ok(PagerEvent::Back),
       key!(Forward) | key!(Right) | key!('l') => return Ok(PagerEvent::Forward),
