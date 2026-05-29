@@ -18,7 +18,6 @@ use super::{
   sherr,
   state::jobs::{Job, JobData, JobID, SIG_EXIT_OFFSET, take_term},
   state::logic::TrapTarget,
-  state::meta::CmdTimer,
   state::{Shed, util::with_vars, vars::Var, vars::VarFlags, vars::VarKind},
   system_msg,
   util::ShResult,
