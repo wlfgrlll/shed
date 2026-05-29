@@ -6,7 +6,7 @@ use regex::Regex;
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
   keys::{KeyCode, KeyEvent},
-  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
+  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_FOCUS_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
   procio::stdout_fileno,
   readline::SimpleEditor,
   state::terminal::calc_str_width,
@@ -33,6 +33,7 @@ struct SearchQuery {
   editor: SimpleEditor,
   dir: Direction,
   results: Vec<(usize, usize)>,
+  active_result_idx1: usize,
   anchor: usize, // line we started on
   active: bool,
 }
@@ -42,6 +43,7 @@ impl SearchQuery {
     self.active = false;
     self.editor.buf.clear_buffer();
     self.results.clear();
+    self.active_result_idx1 = 0;
   }
 
   pub fn is_empty(&self) -> bool {
@@ -188,9 +190,16 @@ impl HelpPager {
       content.replace_range(prefix, HOVER_SEQ);
     }
 
+    let mut cur: usize = self.search.results.len();
     for (s, e) in self.search.results.iter().rev() {
       content.insert_str(*e, RESET_SEQ);
-      content.insert_str(*s, SEARCH_RES_SEQ);
+      let seq = if cur == self.search.active_result_idx1 {
+        SEARCH_FOCUS_SEQ
+      } else {
+        SEARCH_RES_SEQ
+      };
+      content.insert_str(*s, seq);
+      cur -= 1;
     }
 
     let content_lines: Vec<_> = content
@@ -361,7 +370,9 @@ impl HelpPager {
       key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist as isize),
       key!('u') | key!(PageUp) => PagerCmd::Scroll(-(self.jump_dist as isize)),
 
-      key!(ScrollDown) | key!(Down) | key!('j') => PagerCmd::Scroll(1),
+      key!(ScrollDown) | key!(Down) | key!('j') | key!(Enter) if !self.search.active => {
+        PagerCmd::Scroll(1)
+      }
       key!(ScrollUp) | key!(Up) | key!('k') => PagerCmd::Scroll(-1),
       key!(Back) | key!(Left) | key!('h') => return Ok(PagerEvent::Back),
       key!(Forward) | key!(Right) | key!('l') => return Ok(PagerEvent::Forward),
@@ -412,7 +423,6 @@ impl HelpPager {
     }
 
     let content = self.content();
-    let anchor = self.search.anchor;
 
     // I'd like to personally thank the borrow checker for forcing this thing into existence
     let lf_positions: Vec<_> = content
@@ -431,10 +441,14 @@ impl HelpPager {
 
     // Try to find a match past the anchor in the given direction
     let after_anchor = self.search.results.iter().filter(|(start, _)| {
-      let line_no = line_for(start);
-      match dir {
-        Direction::Forward => line_no > anchor,
-        Direction::Backward => line_no < anchor,
+      if self.search.active_result_idx1 > 0 {
+        let current_range = self.search.results[self.search.active_result_idx1 - 1];
+        match dir {
+          Direction::Forward => *start > current_range.1,
+          Direction::Backward => *start < current_range.0,
+        }
+      } else {
+        true
       }
     });
 
@@ -449,10 +463,34 @@ impl HelpPager {
       Direction::Backward => self.search.results.iter().max_by_key(|(start, _)| *start),
     });
 
+    let height = Shed::term(|t| t.t_rows()).saturating_sub(1); // Get current terminal height
     if let Some((start, _)) = found {
       let line_no = line_for(start);
-      self.scroll_offset = line_no.saturating_sub(1);
+
+      // Check if the target line is already in the viewport
+      let is_visible = line_no >= self.scroll_offset && line_no < (self.scroll_offset + height);
+
+      if !is_visible {
+        // Only jump if not visible
+        self.scroll_offset = line_no.saturating_sub(2);
+      }
       self.search.anchor = line_no;
+    }
+
+    // update the focus index
+    match dir {
+      Direction::Forward => {
+        self.search.active_result_idx1 += 1;
+        if self.search.active_result_idx1 > self.search.results.len() {
+          self.search.active_result_idx1 = 1;
+        }
+      }
+      Direction::Backward => {
+        self.search.active_result_idx1 -= 1;
+        if self.search.active_result_idx1 == 0 {
+          self.search.active_result_idx1 = self.search.results.len();
+        }
+      }
     }
   }
 
