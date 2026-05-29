@@ -1187,7 +1187,7 @@ impl ShedLine {
     if shopt!(line.trim_on_submit) {
       self.editor.trim();
     }
-    write_term!("\n").ok();
+    write_term!("\r\n").ok();
     // Command output fills the region from below the prompt; tracked
     // blank rows above will scroll into scrollback as it does, and any
     // overlay displacement is moot once the prompt is gone.

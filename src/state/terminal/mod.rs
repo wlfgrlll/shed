@@ -521,6 +521,10 @@ impl Terminal {
       return Ok(None);
     };
 
+    // flush the buffer to execute any cursor movements
+    use std::io::Write;
+    self.flush().ok();
+
     // ask the terminal where our cursor is
     self.write_direct(Self::CURSOR_QUERY)?;
 
