@@ -63,6 +63,7 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
 
   if JOB_DONE.swap(false, Ordering::SeqCst) {
     // update the prompt so any job count escape sequences update dynamically
+    log::info!("Job done, redrawing prompt");
     readline.mark_dirty();
     readline.prompt_mut().refresh();
   }

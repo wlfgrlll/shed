@@ -390,6 +390,7 @@ struct CompHintRequest {
 struct HintWorker {
   channel: Option<mpsc::Sender<CompHintRequest>>,
   req_gen: u64,
+  last_sent: Option<(String, usize)>,
 }
 
 impl HintWorker {
@@ -399,9 +400,18 @@ impl HintWorker {
     Self {
       channel: Some(channel),
       req_gen: 0,
+      last_sent: None,
     }
   }
   pub fn dispatch_worker(&mut self, buffer: String, cursor_pos: usize) {
+    if self
+      .last_sent
+      .as_ref()
+      .is_some_and(|(b, c)| b == &buffer && *c == cursor_pos)
+    {
+      return;
+    }
+    self.last_sent = Some((buffer.clone(), cursor_pos));
     self.req_gen = self.req_gen.wrapping_add(1);
     let req = CompHintRequest {
       req_gen: self.req_gen,
