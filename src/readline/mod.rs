@@ -1206,7 +1206,10 @@ impl ShedLine {
     {
       return Ok(Some(LineCmd::TriggerCompletion));
     } else if let key!(Ctrl + 'r') = key
-      && matches!(self.mode.report_mode(), ModeReport::Insert | ModeReport::Ex)
+      && matches!(
+        self.mode.report_mode(),
+        ModeReport::Emacs | ModeReport::Insert | ModeReport::Ex
+      )
     {
       return Ok(Some(LineCmd::TriggerHistSearch));
     }
