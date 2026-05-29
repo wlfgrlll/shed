@@ -162,6 +162,10 @@ where
 }
 
 pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
+  change_dir_with_pwd(dir, None)
+}
+
+pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) -> ShResult<()> {
   let dir = dir.as_ref();
   let dir_raw = &dir.display().to_string();
   defer!(super::autocmd!(PostChangeDir));
@@ -182,10 +186,12 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
 
   std::env::set_current_dir(dir)?;
 
-  let new_dir_resolved = std::env::current_dir()
-    .ok()
-    .map(|p| p.display().to_string())
-    .unwrap_or_else(|| dir_raw.clone());
+  let new_pwd = logical_pwd.unwrap_or_else(|| {
+    std::env::current_dir()
+      .ok()
+      .map(|p| p.display().to_string())
+      .unwrap_or_else(|| dir_raw.clone())
+  });
 
   Shed::vars_mut(|v| {
     v.set_var(
@@ -193,10 +199,35 @@ pub fn change_dir<P: AsRef<Path>>(dir: P) -> ShResult<()> {
       VarKind::Str(current_dir.clone()),
       VarFlags::EXPORT,
     )?;
-    v.set_var("PWD", VarKind::Str(new_dir_resolved), VarFlags::EXPORT)
+    v.set_var("PWD", VarKind::Str(new_pwd), VarFlags::EXPORT)
   })?;
 
   Ok(())
+}
+
+/// Lexically normalize a path: drop `.` components and resolve `..` against
+pub fn lex_normalize_path(path: &Path) -> PathBuf {
+  use std::path::Component;
+  let mut out: Vec<Component> = Vec::new();
+  for comp in path.components() {
+    match comp {
+      Component::CurDir => {}
+      Component::ParentDir => match out.last() {
+        Some(Component::Normal(_)) => {
+          out.pop();
+        }
+        Some(Component::RootDir | Component::Prefix(_)) => {}
+        Some(Component::ParentDir) | None => out.push(comp),
+        Some(Component::CurDir) => unreachable!(),
+      },
+      _ => out.push(comp),
+    }
+  }
+  if out.is_empty() {
+    PathBuf::from(".")
+  } else {
+    out.iter().collect()
+  }
 }
 
 pub fn get_comp_wordbreaks() -> String {

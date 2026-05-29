@@ -55,6 +55,24 @@ impl super::Builtin for Cd {
       new_dir = found;
     }
 
+    let logical_pwd = if !resolve_syms {
+      let base = if new_dir.is_absolute() {
+        PathBuf::new()
+      } else {
+        try_var!("PWD")
+          .map(PathBuf::from)
+          .or_else(|| std::env::current_dir().ok())
+          .unwrap_or_else(|| PathBuf::from("/"))
+      };
+      Some(
+        util::lex_normalize_path(&base.join(&new_dir))
+          .display()
+          .to_string(),
+      )
+    } else {
+      None
+    };
+
     if resolve_syms && let Ok(canon) = std::fs::canonicalize(&new_dir) {
       new_dir = canon;
     }
@@ -65,7 +83,7 @@ impl super::Builtin for Cd {
     if !new_dir.is_dir() {
       return Err(sherr!(ExecFail @ span.clone(), "Not a directory"));
     }
-    if let Err(e) = util::change_dir(new_dir) {
+    if let Err(e) = util::change_dir_with_pwd(new_dir, logical_pwd) {
       return Err(sherr!(ExecFail @ span.clone(), "Failed to change directory: {e}"));
     }
 
@@ -444,5 +462,73 @@ pub mod tests {
       cwd.display().to_string(),
       canonical_real.display().to_string()
     );
+  }
+
+  // ===================== -L (default) symlink preservation =====================
+
+  #[test]
+  fn cd_l_preserves_symlink_in_pwd() {
+    // The bug from #73: by default `cd` should NOT resolve symlinks when
+    // setting $PWD. The kernel cwd is canonical (no avoiding that), but
+    // $PWD should reflect what the user typed.
+    let _g = TestGuard::new();
+    let temp_dir = TempDir::new().unwrap();
+    let real_dir = temp_dir.path().join("real");
+    let link_dir = temp_dir.path().join("link");
+    fs::create_dir(&real_dir).unwrap();
+    std::os::unix::fs::symlink(&real_dir, &link_dir).unwrap();
+
+    test_input(format!("cd {}", link_dir.display())).unwrap();
+
+    let pwd = var!("PWD");
+    assert_eq!(pwd, link_dir.display().to_string());
+  }
+
+  #[test]
+  fn cd_l_dotdot_pops_lexically() {
+    // After `cd /a/symlink-to-b`, `cd ..` with -L should land in /a (the
+    // parent of the symlink path), not in the parent of the real dir.
+    let _g = TestGuard::new();
+    let temp_dir = TempDir::new().unwrap();
+    let real = temp_dir.path().join("real");
+    let link = temp_dir.path().join("link");
+    fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    test_input(format!("cd {}", link.display())).unwrap();
+    test_input("cd ..").unwrap();
+
+    let pwd = var!("PWD");
+    assert_eq!(pwd, temp_dir.path().display().to_string());
+  }
+
+  #[test]
+  fn cd_l_normalizes_dotdot_in_input() {
+    let _g = TestGuard::new();
+    let temp_dir = TempDir::new().unwrap();
+    let sub = temp_dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+
+    let weird = format!("{}/sub/../sub", temp_dir.path().display());
+    test_input(format!("cd {weird}")).unwrap();
+
+    let pwd = var!("PWD");
+    assert_eq!(pwd, sub.display().to_string());
+  }
+
+  #[test]
+  fn cd_p_pwd_is_canonical() {
+    // Sanity: with -P, $PWD matches the kernel cwd (symlinks resolved).
+    let _g = TestGuard::new();
+    let temp_dir = TempDir::new().unwrap();
+    let real = temp_dir.path().join("real");
+    let link = temp_dir.path().join("link");
+    fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    test_input(format!("cd -P {}", link.display())).unwrap();
+
+    let pwd = var!("PWD");
+    assert_eq!(pwd, fs::canonicalize(&real).unwrap().display().to_string());
   }
 }
