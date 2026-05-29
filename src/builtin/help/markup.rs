@@ -4,8 +4,6 @@ use super::{expand::markers, match_loop, util::QuoteState};
 
 pub const TAG_SEQ: &str = "\x1b[1;33m"; // bold yellow - searchable tags
 pub const REF_SEQ: &str = "\x1b[4;36m"; // underline cyan - cross-references
-pub const SEARCH_RES_SEQ: &str = "\x1b[1;7m"; // bold inverse - search result highlight
-pub const SEARCH_FOCUS_SEQ: &str = "\x1b[1;36;7m"; // bold inverse cyan - search result focus
 pub const RESET_SEQ: &str = "\x1b[0m";
 pub const HEADER_SEQ: &str = "\x1b[1;35m"; // bold magenta - section headers
 pub const CODE_SEQ: &str = "\x1b[32m"; // green - inline code
@@ -28,8 +26,8 @@ impl MarkedSpan {
     }
   }
 
-  pub fn prefix_range(&self) -> Range<usize> {
-    self.prefix_seq.clone()
+  pub fn content_range(&self) -> Range<usize> {
+    self.content.clone()
   }
   pub fn content<'a>(&self, source: &'a str) -> &'a str {
     &source[self.content.clone()]

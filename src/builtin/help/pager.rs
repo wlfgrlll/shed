@@ -3,12 +3,15 @@ use std::io::Write;
 use nix::unistd::{isatty, write};
 use regex::Regex;
 
+use yansi::Style;
+
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
   keys::{KeyCode, KeyEvent},
-  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_FOCUS_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
+  markup::{MarkedSpan, REF_SEQ},
   procio::stdout_fileno,
   readline::SimpleEditor,
+  render::{self, Overlay},
   state::terminal::calc_str_width,
   write_term,
 };
@@ -180,59 +183,55 @@ impl HelpPager {
       });
     }
 
-    let mut content = self.content().to_string();
+    // Build the overlay list for this frame. Order doesn't matter, the
+    // renderer sorts events by position internally.
+    let mut overlays: Vec<Overlay> = Vec::new();
 
     if let Some(idx) = self.hovered
       && let Some(c_ref) = self.cross_refs.get(idx)
     {
-      const HOVER_SEQ: &str = "\x1b[7;36m"; // inverse cyan (same length as REF_SEQ to maintain spans)
-      let prefix = c_ref.span().prefix_range();
-      content.replace_range(prefix, HOVER_SEQ);
+      // insert overlay for hovered cross references
+      overlays.push(Overlay::Span {
+        range: c_ref.span().content_range(),
+        style: hover_style(),
+      });
     }
 
-    let mut cur: usize = self.search.results.len();
-    for (s, e) in self.search.results.iter().rev() {
-      content.insert_str(*e, RESET_SEQ);
-      let seq = if cur == self.search.active_result_idx1 {
-        SEARCH_FOCUS_SEQ
-      } else {
-        SEARCH_RES_SEQ
-      };
-      content.insert_str(*s, seq);
-      cur -= 1;
+    for (i, (s, e)) in self.search.results.iter().enumerate() {
+      let is_focused = i + 1 == self.search.active_result_idx1;
+      // insert search result overlay
+      overlays.push(Overlay::Span {
+        range: *s..*e,
+        style: if is_focused {
+          search_focus_style()
+        } else {
+          search_hit_style()
+        },
+      });
     }
 
-    let content_lines: Vec<_> = content
+    for (ref_idx, ch) in &self.ref_keys {
+      if let Some(c_ref) = self.cross_refs.get(*ref_idx) {
+        // insert hint key text
+        overlays.push(Overlay::Insert {
+          pos: c_ref.span().content_range().end,
+          text: format!("[{ch}]"),
+          style: hint_key_style(),
+        });
+      }
+    }
+
+    // apply overlays (search, hover, hint keys)
+    let rendered = render::render(self.content(), overlays);
+
+    // final rendered content
+    let content_lines: Vec<_> = rendered
       .lines()
       .skip(self.scroll_offset)
       .take(height)
       .collect();
 
-    for (i, line) in content_lines.iter().enumerate() {
-      if self.ref_keys.is_empty() {
-        write_term!("{line}\x1b[K\n").ok();
-        continue;
-      }
-
-      let mut line = line.to_string();
-      let indexes = self.cross_refs.iter().enumerate().filter(|(ci, c_ref)| {
-        self.ref_keys.iter().any(|(j, _)| *j == *ci)
-          && c_ref.span().line_no(self.content()) == self.scroll_offset + i
-      });
-
-      for index in indexes.rev() {
-        let (_, _, postfix) = self.cross_refs[index.0].span().rel_to_line(self.content());
-        let Some((_, ch)) = self.ref_keys.iter().find(|(j, _)| *j == index.0) else {
-          continue;
-        };
-
-        line = format!(
-          "{}{TAG_SEQ}[{ch}]{RESET_SEQ}{}",
-          &line[..postfix.end],
-          &line[postfix.end..],
-        );
-      }
-
+    for line in &content_lines {
       write_term!("{line}\x1b[K\n").ok();
     }
 
@@ -331,6 +330,8 @@ impl HelpPager {
         self.search.active = true;
         self.search.dir = dir;
         self.search.anchor = self.scroll_offset;
+        self.search.active_result_idx1 = 0;
+        self.search.results.clear();
 
         return Ok(PagerEvent::Continue);
       }
@@ -486,7 +487,11 @@ impl HelpPager {
         }
       }
       Direction::Backward => {
-        self.search.active_result_idx1 -= 1;
+        if self.search.active_result_idx1 <= 1 {
+          self.search.active_result_idx1 = self.search.results.len();
+        } else {
+          self.search.active_result_idx1 -= 1;
+        }
         if self.search.active_result_idx1 == 0 {
           self.search.active_result_idx1 = self.search.results.len();
         }
@@ -563,6 +568,23 @@ impl HelpPager {
 
     Ok(())
   }
+}
+
+
+fn hover_style() -> Style {
+  Style::new().invert().cyan()
+}
+
+fn search_hit_style() -> Style {
+  Style::new().bold().invert()
+}
+
+fn search_focus_style() -> Style {
+  Style::new().bold().invert().cyan()
+}
+
+fn hint_key_style() -> Style {
+  Style::new().bold().yellow()
 }
 
 struct HintChars {

@@ -1,5 +1,6 @@
 mod markup;
 mod pager;
+mod render;
 
 use markup::StyledHelp;
 use pager::{HelpPager, PagerEvent};
