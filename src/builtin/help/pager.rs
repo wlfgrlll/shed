@@ -134,7 +134,7 @@ impl HelpPager {
 
   pub fn cross_refs_in_viewport(&self) -> Vec<usize> {
     let top = self.scroll_offset;
-    let t_rows = Shed::term(|t| t.t_rows());
+    let t_rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
     let bottom = top + t_rows;
 
     let first = self
@@ -155,7 +155,7 @@ impl HelpPager {
 
   pub fn display(&mut self) -> ShResult<()> {
     write_term!("\x1b[H")?;
-    let height = Shed::term(|t| t.t_rows());
+    let height = Shed::term(|t| t.t_rows()).saturating_sub(1);
 
     // Build click map for cross-references in viewport
     self.click_refs.clear();
@@ -394,7 +394,7 @@ impl HelpPager {
   }
 
   pub fn max_scroll(&self) -> usize {
-    let t_rows = Shed::term(|t| t.t_rows());
+    let t_rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
     self.content().lines().count().saturating_sub(t_rows)
   }
 
@@ -562,7 +562,7 @@ impl HelpPager {
         self.scroll_offset = 0;
       }
       PagerCmd::BottomOfPage => {
-        let rows = Shed::term(|t| t.t_rows());
+        let rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
         let n_lines = self.content().lines().count();
         self.scroll_offset = n_lines.saturating_sub(rows);
       }
