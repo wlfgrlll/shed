@@ -170,10 +170,12 @@ pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) 
   let dir_raw = &dir.display().to_string();
   defer!(super::autocmd!(PostChangeDir));
 
-  let current_dir = std::env::current_dir()
-    .ok()
-    .map(|p| p.display().to_string())
-    .or_else(|| try_var!("PWD"))
+  let current_dir = try_var!("PWD")
+    .or_else(|| {
+      std::env::current_dir()
+        .ok()
+        .map(|p| p.display().to_string())
+    })
     .unwrap_or_default();
 
   with_vars(
