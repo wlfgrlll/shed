@@ -6,7 +6,7 @@ use regex::Regex;
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
   keys::{KeyCode, KeyEvent},
-  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ},
+  markup::{MarkedSpan, REF_SEQ, RESET_SEQ, SEARCH_RES_SEQ, TAG_SEQ,SEARCH_FOCUS_SEQ,},
   procio::stdout_fileno,
   readline::SimpleEditor,
   state::terminal::calc_str_width,
@@ -33,6 +33,7 @@ struct SearchQuery {
   editor: SimpleEditor,
   dir: Direction,
   results: Vec<(usize, usize)>,
+  active_result_idx: usize,
   anchor: usize, // line we started on
   active: bool,
 }
@@ -42,6 +43,7 @@ impl SearchQuery {
     self.active = false;
     self.editor.buf.clear_buffer();
     self.results.clear();
+    self.active_result_idx = 0;
   }
 
   pub fn is_empty(&self) -> bool {
@@ -188,9 +190,16 @@ impl HelpPager {
       content.replace_range(prefix, HOVER_SEQ);
     }
 
+    let mut cur: usize = self.search.results.len();
     for (s, e) in self.search.results.iter().rev() {
       content.insert_str(*e, RESET_SEQ);
-      content.insert_str(*s, SEARCH_RES_SEQ);
+      let seq = if cur - 1 == self.search.active_result_idx {
+          SEARCH_FOCUS_SEQ
+      } else {
+        SEARCH_RES_SEQ
+      };
+      content.insert_str(*s, seq);
+      cur -= 1;
     }
 
     let content_lines: Vec<_> = content
@@ -453,6 +462,22 @@ impl HelpPager {
       let line_no = line_for(start);
       self.scroll_offset = line_no.saturating_sub(1);
       self.search.anchor = line_no;
+    }
+    // update the focus index
+    match dir {
+        Direction::Forward => {
+            self.search.active_result_idx += 1;
+            if self.search.active_result_idx >= self.search.results.len() {
+                self.search.active_result_idx = 0;
+            }
+        },
+        Direction::Backward => {
+            if self.search.active_result_idx == 0 {
+                self.search.active_result_idx = self.search.results.len() - 1;
+            } else {
+                self.search.active_result_idx -= 1;
+            }
+        },
     }
   }
 
