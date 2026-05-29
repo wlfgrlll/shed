@@ -49,7 +49,6 @@ prompt_ssh_line() {
 }
 prompt_topline() {
 	local user_and_host="\e[0m\e[1m$USER\e[1;36m@\e[1;31m$HOST\e[0m"
-	local mode_text="$(prompt_mode)"
-	echo -n "\e[1;34m┏━ $user_and_host $mode_text\n"
+	echo -n "\e[1;34m┏━ $user_and_host\n"
 
 }
