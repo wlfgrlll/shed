@@ -419,11 +419,7 @@ fn handle_readline_event(
 
       Shed::term_mut(|t| t.emit_osc_exec_start()).ok();
 
-      let res = {
-        // _guard restores terminal state on drop
-        let _guard = Shed::term_mut(|t| t.prepare_for_exec())?;
-        exec_int(input.clone(), Some("<stdin>".into()))
-      };
+      let res = exec_int(input.clone(), Some("<stdin>".into()));
 
       Shed::term_mut(|t| t.emit_osc_exec_end(Shed::get_status())).ok();
 

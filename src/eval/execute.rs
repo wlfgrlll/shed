@@ -927,6 +927,7 @@ impl Dispatcher {
     };
 
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
+    let interactive = Shed::term(|t| t.interactive());
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
@@ -956,7 +957,7 @@ impl Dispatcher {
         // just in case this somehow forked a child
         // let's handle it here. Shouldn't happen in practice
         // but you never know
-        dispatch_job(job, false, Shed::term(|t| t.interactive()))?;
+        dispatch_job(job, false, interactive)?;
       }
       return res;
     }
@@ -979,6 +980,7 @@ impl Dispatcher {
 
     let saved_region = Shed::term_mut(|t| t.scroll_region());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(|t| t.yield_terminal()));
+    let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(|t| t.prepare_for_exec()));
 
     for (i, mut cmd) in cmds.into_iter().enumerate() {
       if num_cmds > 1 {
