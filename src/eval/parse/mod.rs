@@ -284,6 +284,7 @@ impl ParseStream {
         try_match!(self.parse_case()?);
         try_match!(self.parse_loop()?);
         try_match!(self.parse_for()?);
+        try_match!(self.parse_try()?);
 
         // these aren't nested contexts
         // so we decrement the depth and descend into
@@ -326,6 +327,7 @@ impl ParseStream {
       try_match!(self.parse_case()?);
       try_match!(self.parse_loop()?);
       try_match!(self.parse_for()?);
+      try_match!(self.parse_try()?);
       try_match!(self.parse_if()?);
 
       Ok(None)

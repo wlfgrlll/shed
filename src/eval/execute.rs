@@ -1,4 +1,4 @@
-use crate::autocmd;
+use crate::{autocmd, shopt_mut};
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use crate::state::util::with_vars;
@@ -327,6 +327,7 @@ impl Dispatcher {
       NdRule::Negate { .. } => self.exec_negated(node),
       NdRule::Timed { .. } => self.exec_timed(node),
       NdRule::Command { .. } => self.dispatch_cmd(node),
+      NdRule::TryNode { .. } => self.exec_try(node),
       _ => unreachable!(),
     };
 
@@ -397,6 +398,42 @@ impl Dispatcher {
       exec_input(format!("cd {dir}"), Some(self.source_name.clone()))
     } else {
       self.exec_cmd(node)
+    }
+  }
+  pub fn exec_try(&mut self, node: Node) -> ShResult<()> {
+    let try_blame = node.get_span();
+    let NdRule::TryNode { body, err } = node.class else {
+      unreachable!()
+    };
+    let context = body.context.clone();
+
+    // enable set -e temporarily
+    let errexit = shopt!(set.errexit);
+    shopt_mut!(set.errexit = true);
+    defer!(shopt_mut!(set.errexit = errexit));
+
+    match self.dispatch_node(*body) {
+      Ok(()) => Ok(()),
+      Err(e) => {
+        if e.is_flow_control() {
+          return Err(e);
+        }
+
+        let blame = e.src_span().cloned().unwrap_or(try_blame);
+
+        let mut msg_parts = Vec::with_capacity(err.len());
+        for tk in err {
+          msg_parts.push(tk.expand_no_split()?);
+        }
+        let msg = msg_parts.join(" ");
+
+        ShErr::at(ShErrKind::TryFailed, blame, msg)
+          .with_context(context)
+          .print_error();
+
+        state::Shed::set_status(1);
+        Ok(())
+      }
     }
   }
   pub fn exec_negated(&mut self, node: Node) -> ShResult<()> {
@@ -961,6 +998,7 @@ impl Dispatcher {
         // but you never know
         dispatch_job(job, false, interactive)?;
       }
+      check_err(pipeline_flags, None, Some(pipeline_span))?;
       return res;
     }
 

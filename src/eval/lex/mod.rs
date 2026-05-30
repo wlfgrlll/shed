@@ -14,9 +14,9 @@ use super::{
   util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
 };
 
-pub const KEYWORDS: [&str; 18] = [
+pub const KEYWORDS: [&str; 20] = [
   "if", "then", "elif", "else", "fi", "while", "until", "select", "for", "in", "do", "done",
-  "case", "esac", "!", "not", "time", "function",
+  "case", "esac", "!", "not", "time", "function", "try", "catch",
 ];
 
 pub const MIDDLES: [&str; 2] = ["elif", "else"];

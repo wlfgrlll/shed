@@ -11,7 +11,7 @@ use crate::shopt;
 
 use super::{
   FdWriter,
-  eval::lex::{Span, SpanSource},
+  eval::lex::{Span, SpanSource, get_char},
   procio::{RedirGuard, stderr_fileno},
   sherr,
 };
@@ -299,6 +299,9 @@ impl ShErr {
     self.notes.push(note.into());
     self
   }
+  pub fn src_span(&self) -> Option<&Span> {
+    self.src_span.as_ref()
+  }
   pub fn build_report(&self) -> Option<Report<'_, Span>> {
     let span = self.src_span.as_ref()?;
     let kind = if self.kind().is_warning() {
@@ -430,6 +433,7 @@ pub enum ShErrKind {
   Errno(Errno),
   NotFound,
   InvalidAssignment,
+  TryFailed,
 
   // Warnings
   DeprecationWarning,
@@ -473,6 +477,7 @@ impl Display for ShErrKind {
       Self::BadPermission => "Bad Permissions",
       Self::Errno(e) => &format!("Errno: {}", e.desc()),
       Self::NotFound => "Not Found",
+      Self::TryFailed => "Try Failed",
       Self::CleanExit(_) => "",
       Self::FuncReturn(_) => "Syntax Error",
       Self::LoopContinue(_) => "Syntax Error",
