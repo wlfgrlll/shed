@@ -80,6 +80,7 @@ pub(crate) struct Terminal {
 
   bracketed_paste: bool,
   kitty_kbd_proto: bool,
+  report_focus: bool,
   raw_mode: bool,
   alt_buffer: bool,
   cursor_style: CursorStyle,
@@ -107,25 +108,11 @@ pub(crate) struct Terminal {
 impl Clone for Terminal {
   fn clone(&self) -> Self {
     Self {
-      tty: self.tty,
       reader: self.reader.clone(),
       input_buf: self.input_buf.clone(),
-      bracketed_paste: self.bracketed_paste,
-      kitty_kbd_proto: self.kitty_kbd_proto,
-      raw_mode: self.raw_mode,
-      alt_buffer: self.alt_buffer,
-      cursor_style: self.cursor_style,
-      cursor_visible: self.cursor_visible,
-      mouse_enabled: self.mouse_enabled,
-      interactive: self.interactive,
       termios_stack: self.termios_stack.clone(),
-      term_caps: self.term_caps,
       xt_version: self.xt_version.clone(),
-      t_cols: self.t_cols,
-      t_rows: self.t_rows,
-      scroll_region: self.scroll_region,
-      last_bell: self.last_bell,
-      test_mode: self.test_mode,
+      ..*self // I guess this works if everything else is Copy, cool
     }
   }
 }
@@ -138,6 +125,8 @@ impl Terminal {
     "\x1b[>q",
     "\x1b[c",
   );
+  pub const FOCUS_REPORT_ON: &str = "\x1b[?1004h";
+  pub const FOCUS_REPORT_OFF: &str = "\x1b[?1004l";
   pub const MODIFY_OTHER_KEYS: &str = "\x1b[>4;1m";
   pub const APPLICATION_KEYPAD: &str = "\x1b=";
   pub const SYNC_START: &str = "\x1b[?2026h";
@@ -255,6 +244,7 @@ impl Terminal {
       input_buf: String::new(),
       bracketed_paste: false,
       kitty_kbd_proto: false,
+      report_focus: false,
       alt_buffer: false,
       cursor_style: CursorStyle::Default,
       interactive: false,
@@ -405,6 +395,7 @@ impl Terminal {
       .with_raw_mode(self.raw_mode)
       .with_bracketed_paste(self.bracketed_paste)
       .with_kitty_proto(self.kitty_kbd_proto)
+      .with_report_focus(self.report_focus)
       .with_alt_buffer(self.alt_buffer)
       .with_cursor_style(self.cursor_style)
       .with_mouse_support(self.mouse_enabled)
@@ -448,6 +439,10 @@ impl Terminal {
     }
     if let Some(kitty_proto) = guard.kitty_proto() {
       self.toggle_kitty_proto(kitty_proto)?;
+      wrote_seq = true;
+    }
+    if let Some(report_focus) = guard.report_focus() {
+      self.toggle_report_focus(report_focus)?;
       wrote_seq = true;
     }
     if let Some(alt_buffer) = guard.alt_buffer() {
@@ -722,6 +717,7 @@ impl Terminal {
     let guard = self.save_state();
     self.edit_termios(enable_raw_mode)?;
     self.toggle_bracketed_paste(false)?;
+    self.toggle_report_focus(false)?;
     self.toggle_alt_buffer(true)?;
     self.reset_scroll_region()?;
     self.toggle_mouse_support(true)?;
@@ -734,6 +730,7 @@ impl Terminal {
   pub fn prepare_for_exec(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
     self.toggle_bracketed_paste(false)?;
+    self.toggle_report_focus(false)?;
     self.toggle_alt_buffer(false)?;
     self.edit_termios(enable_cooked_mode)?;
     self.set_cursor_style(CursorStyle::Default)?;
@@ -836,6 +833,16 @@ impl Terminal {
     self.write_all(style_raw.as_bytes())?;
     self.cursor_style = style;
     Ok(())
+  }
+
+  pub fn toggle_report_focus(&mut self, on: bool) -> ShResult<()> {
+    Self::toggle_attr(
+      &mut self.input_buf,
+      &mut self.report_focus,
+      Self::FOCUS_REPORT_ON,
+      Self::FOCUS_REPORT_OFF,
+      on,
+    )
   }
 
   pub fn toggle_cursor_visibility(&mut self, visible: bool) -> ShResult<()> {

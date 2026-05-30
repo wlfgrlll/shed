@@ -767,7 +767,7 @@ pub(crate) struct BashCompSpec {
   pub source: String,
 }
 
-#[expect(dead_code)]
+#[allow(dead_code)]
 impl BashCompSpec {
   pub fn new() -> Self {
     Self::default()

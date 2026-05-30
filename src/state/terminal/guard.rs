@@ -17,6 +17,7 @@ pub(crate) struct TermGuard {
   bracketed_paste: Option<bool>,
   kitty_proto: Option<bool>,
   alt_buffer: Option<bool>,
+  report_focus: Option<bool>,
   cursor_style: Option<CursorStyle>,
   cursor_visible: Option<bool>,
   mouse_support: Option<bool>,
@@ -36,6 +37,7 @@ impl TermGuard {
       raw_mode: None,
       bracketed_paste: None,
       kitty_proto: None,
+      report_focus: None,
       alt_buffer: None,
       cursor_style: None,
       cursor_visible: None,
@@ -65,6 +67,13 @@ impl TermGuard {
       return self;
     }
     self.kitty_proto = Some(kitty_proto);
+    self
+  }
+  pub fn with_report_focus(mut self, report_focus: bool) -> Self {
+    if self.active {
+      return self;
+    }
+    self.report_focus = Some(report_focus);
     self
   }
   pub fn with_alt_buffer(mut self, alt_buffer: bool) -> Self {
@@ -121,6 +130,9 @@ impl TermGuard {
   }
   pub fn kitty_proto(&self) -> Option<bool> {
     self.kitty_proto
+  }
+  pub fn report_focus(&self) -> Option<bool> {
+    self.report_focus
   }
   pub fn alt_buffer(&self) -> Option<bool> {
     self.alt_buffer

@@ -37,6 +37,10 @@ pub static GOT_SIGWINCH: AtomicBool = AtomicBool::new(false);
 /// Useful for dynamic prompt content and asynchronous refreshing
 pub static GOT_SIGUSR1: AtomicBool = AtomicBool::new(false);
 
+/// The terminal has notified us that it has regained focus
+/// We refresh the prompt now
+pub static FOCUS_GAINED: AtomicBool = AtomicBool::new(false);
+
 const MISC_SIGNALS: &[Signal] = &[
   Signal::SIGINT,
   Signal::SIGILL,

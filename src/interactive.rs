@@ -15,6 +15,8 @@ use nix::{
 use scopeguard::defer;
 use smallvec::SmallVec;
 
+use crate::signal::FOCUS_GAINED;
+
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
   builtin::{source_builtin_completions, source_builtin_scripts},
@@ -61,15 +63,10 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
     readline.mark_dirty();
   }
 
-  if JOB_DONE.swap(false, Ordering::SeqCst) {
-    // update the prompt so any job count escape sequences update dynamically
-    log::info!("Job done, redrawing prompt");
-    readline.mark_dirty();
-    readline.prompt_mut().refresh();
-  }
-
-  if GOT_SIGUSR1.swap(false, Ordering::SeqCst) {
-    log::info!("SIGUSR1 received: refreshing readline state");
+  if JOB_DONE.swap(false, Ordering::SeqCst)
+    || GOT_SIGUSR1.swap(false, Ordering::SeqCst)
+    || FOCUS_GAINED.swap(false, Ordering::SeqCst)
+  {
     readline.mark_dirty();
     readline.prompt_mut().refresh();
   }
@@ -239,8 +236,11 @@ fn shed_loop_iter(
   // 3. we reap our child process, and the grandchild is orphaned
   // 4. we get back to the loop here, grandchild alters termios
   // 5. shell is softlocked
-  Shed::term_mut(|t| t.enforce_raw_mode())?;
-  Shed::term_mut(|t| t.toggle_bracketed_paste(true))?;
+  Shed::term_mut(|t| {
+    t.enforce_raw_mode()?;
+    t.toggle_bracketed_paste(true)?;
+    t.toggle_report_focus(true)
+  })?;
 
   state::util::try_hash();
   util::flog::update_log_level();

@@ -4,7 +4,10 @@ use std::{
   collections::VecDeque,
   fmt::{Debug, Display},
   os::fd::BorrowedFd,
+  sync::atomic::Ordering,
 };
+
+use crate::match_loop;
 
 use super::{
   ShErr, ShResult,
@@ -21,6 +24,8 @@ pub(crate) enum TermEvent {
   Key(KeyEvent),
   CursorPos(Rows, Cols),
   XtVersion(XtVersion),
+  FocusGained,
+  FocusLost,
   PrimaryDevAttr,
   KittyKbdFlags,
   Capabilities {
@@ -405,6 +410,10 @@ impl vte::Perform for EventParser {
       }
       // Shift+Tab: CSI Z
       ([], 'Z') => TermEvent::Key(KeyEvent(KeyCode::Tab, ModKeys::SHIFT)),
+      // Focus events, CSI I/O
+      ([], 'I') => TermEvent::FocusGained,
+      ([], 'O') => TermEvent::FocusLost,
+
       // Special keys with tilde: CSI num ~ or CSI num;mod ~
       ([], '~') => {
         let key_num = params.first().copied().unwrap_or(0);
@@ -594,11 +603,15 @@ impl PollReader {
   }
 
   pub fn readkey(&mut self) -> Result<Option<KeyEvent>, ShErr> {
-    if let Some(TermEvent::Key(event)) = self.read_event()? {
-      Ok(Some(event))
-    } else {
-      Ok(None)
-    }
+    match_loop!(self.read_event()? => ev, {
+      TermEvent::Key(event) => return Ok(Some(event)),
+      TermEvent::FocusGained => {
+        log::debug!("Focus gained");
+        crate::signal::FOCUS_GAINED.store(true, Ordering::SeqCst);
+      }
+      _ => {}
+    });
+    Ok(None)
   }
 
   pub(super) fn push_event(&mut self, event: TermEvent) {
