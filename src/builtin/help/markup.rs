@@ -278,6 +278,10 @@ fn unescape_help(raw: &str) -> String {
       result.push(ch);
       qt_state.toggle_single();
     }
+    '`' => {
+      result.push(markers::CODE);
+      find_closer('`', &mut result, &mut chars);
+    }
     _ if qt_state.in_quote() || chars.peek().is_none_or(|ch| ch.is_whitespace()) => {
       result.push(ch);
     }
@@ -304,10 +308,6 @@ fn unescape_help(raw: &str) -> String {
     '#' => {
       result.push(markers::HEADER);
       find_closer('#', &mut result, &mut chars);
-    }
-    '`' => {
-      result.push(markers::CODE);
-      find_closer('`', &mut result, &mut chars);
     }
     '{' => {
       result.push(markers::KEYWORD_2);
