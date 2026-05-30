@@ -201,6 +201,19 @@ executable with a shebang line:
           `echo ${PIPESTATUS[1]}`   # 1 (from false)
           `echo ${PIPESTATUS[2]}`   # 0 (from true)
 
+      With `set -o pipefail`, the pipeline's exit status is the
+      last non-zero status from any stage, or 0 if all succeeded.
+      This makes intermediate failures visible to `&&`, `||`, `if`,
+      and `set -e`:
+
+          `set -o pipefail`
+          `false | true`             # exit status 1 (from false)
+          `true | true`              # exit status 0
+          `(exit 3) | (exit 5) | true`  # exit status 5
+
+      `$PIPESTATUS` is independent of pipefail. It always records
+      every stage's status.
+
   3.2 Stderr Piping                              *script-pipe-stderr*
 
       `|&` pipes both stdout and stderr to the next command. This is
@@ -842,15 +855,21 @@ executable with a shebang line:
       in the printed report, making it easy to see what came from
       the script versus what came from the environment.
 
-  10.4 Interaction with `set -e`                 *script-try-errexit*
+  10.4 Interaction with `set -e` and `pipefail`  *script-try-errexit*
 
-      Inside the block, `set -e` is forced on regardless of the
-      current setting. When the block exits, the prior `errexit`
-      state is restored.
+      Inside the block, both `set -e` (errexit) and `set -o pipefail`
+      are forced on regardless of their current settings. When the
+      block exits, the prior states of both options are restored.
 
-      This means commands that would normally only set `$?` on
-      failure (builtins, simple commands without `&&`/`||`, etc.)
-      will trigger the catch arm.
+      Forcing errexit means commands that would normally only set
+      `$?` on failure (builtins, simple commands without `&&`/`||`,
+      etc.) will trigger the catch arm.
+
+      Forcing pipefail means a failure in any stage of a pipeline
+      fires the catch arm, not just the last one. Without this, a
+      pipeline like `curl ... | grep foo` would silently swallow a
+      `curl` failure because `grep`'s success becomes the pipeline's
+      status. See |script-pipe-status|.
 
       See also: |set|(builtin-set)
 

@@ -1408,7 +1408,7 @@ SET                                              *builtin-set* *set*
   Long options (`-o`/`+o`) ~
 
     allexport, emacs, errexit, hashall, ignoreeof, monitor, noclobber,
-    noexec, noglob, nolog, notify, nounset, verbose, vi, xtrace
+    noexec, noglob, nolog, notify, nounset, pipefail, verbose, vi, xtrace
 
   Reset ~
 
@@ -1556,6 +1556,7 @@ SHOPT                                            *builtin-shopt* *shopt*
     `nolog`                   don't save function definitions to history
     `notify`                  print job status immediately on completion (`set -b`)
     `nounset`                 error on expansion of unset variables (`set -u`)
+    `pipefail`                pipeline status is last non-zero stage (`set -o pipefail`)
     `verbose`                 print shell input to stderr as read (`set -v`)
     `vi`                      vi keybindings (false = emacs mode)
     `xtrace`                  print commands after expansion (`set -x`)
