@@ -1,4 +1,4 @@
-use ariadne::{Color, Label, Span as AriadneSpan};
+use ariadne::{Color, Label};
 use ariadne::{Report, ReportKind};
 use nix::errno::Errno;
 use rand::TryRng;
@@ -6,6 +6,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
+
+use crate::shopt;
 
 use super::{
   FdWriter,
@@ -87,12 +89,64 @@ pub fn clear_color() {
   COLOR_RNG.with(|rng| rng.borrow_mut().last_color = None);
 }
 
-pub fn get_context(msg: String, span: Span) -> (SpanSource, Label<Span>) {
+pub fn get_context(msg: String, span: Span) -> (Span, Label<Span>) {
   let color = last_color();
-  (
-    span.clone().source().clone(),
-    Label::new(span).with_color(color).with_message(msg),
-  )
+  let label = Label::new(span.clone()).with_color(color).with_message(msg);
+  (span, label)
+}
+
+fn group_labels(labels: Vec<(Span, Label<Span>)>) -> Vec<(Span, Label<Span>)> {
+  let n = labels.len();
+  if n == 0 {
+    return labels;
+  }
+
+  let mut chain_id: Vec<usize> = (0..n).collect();
+  for i in 0..n {
+    for j in i + 1..n {
+      if related_by_containment(&labels[i].0, &labels[j].0) {
+        let (a, b) = (chain_id[i], chain_id[j]);
+        if a != b {
+          let (keep, drop) = (a.min(b), a.max(b));
+          for c in chain_id.iter_mut() {
+            if *c == drop {
+              *c = keep;
+            }
+          }
+        }
+      }
+    }
+  }
+  // labels[0] is the primary span (pushed first by `at()`); its chain id
+  // marks the chain we want to render last.
+  let primary = chain_id[0];
+
+  let mut annotated: Vec<(usize, Span, Label<Span>)> = labels
+    .into_iter()
+    .enumerate()
+    .map(|(i, (s, l))| (chain_id[i], s, l))
+    .collect();
+
+  annotated.sort_by(|a, b| {
+    let a_primary = a.0 == primary;
+    let b_primary = b.0 == primary;
+    a_primary.cmp(&b_primary).then(a.0.cmp(&b.0)).then_with(|| {
+      let size_a = a.1.range().end - a.1.range().start;
+      let size_b = b.1.range().end - b.1.range().start;
+      size_a.cmp(&size_b)
+    })
+  });
+
+  annotated.into_iter().map(|(_, s, l)| (s, l)).collect()
+}
+
+fn related_by_containment(a: &Span, b: &Span) -> bool {
+  if a.span_source() != b.span_source() {
+    return false;
+  }
+  let ra = a.range();
+  let rb = b.range();
+  (ra.start <= rb.start && ra.end >= rb.end) || (rb.start <= ra.start && rb.end >= ra.end)
 }
 
 pub trait ShResultExt {
@@ -121,8 +175,7 @@ impl<T> ShResultExt for Result<T, ShErr> {
 pub(crate) struct ShErr {
   kind: ShErrKind,
   src_span: Option<Span>,
-  labels: Vec<ariadne::Label<Span>>,
-  sources: Vec<SpanSource>,
+  labels: Vec<(Span, ariadne::Label<Span>)>,
   notes: Vec<String>,
 
   /// If we propagate through a redirect boundary, we take ownership of
@@ -138,7 +191,6 @@ impl ShErr {
       kind,
       src_span: Some(span),
       labels: vec![],
-      sources: vec![],
       notes: vec![],
       io_guards: vec![],
     }
@@ -148,7 +200,6 @@ impl ShErr {
       kind,
       src_span: None,
       labels: vec![],
-      sources: vec![],
       notes: vec![msg.into()],
       io_guards: vec![],
     }
@@ -202,14 +253,20 @@ impl ShErr {
     self
   }
   pub fn at(kind: ShErrKind, span: Span, msg: impl Into<String>) -> Self {
-    let src = span.span_source().clone();
     let msg: String = msg.into();
-    Self::new(kind, span.clone()).with_label(src, ariadne::Label::new(span).with_message(msg))
+    let color = last_color();
+    let label = ariadne::Label::new(span.clone())
+      .with_message(msg)
+      .with_color(color);
+    Self::new(kind, span.clone()).with_label(span, label)
   }
   pub fn labeled(self, span: Span, msg: impl Into<String>) -> Self {
-    let src = span.span_source().clone();
     let msg: String = msg.into();
-    self.with_label(src, ariadne::Label::new(span).with_message(msg))
+    let color = last_color();
+    let label = ariadne::Label::new(span.clone())
+      .with_message(msg)
+      .with_color(color);
+    self.with_label(span, label)
   }
   pub fn blame(mut self, span: Span) -> Self {
     self.src_span = Some(span);
@@ -230,15 +287,13 @@ impl ShErr {
   pub fn set_kind(&mut self, kind: ShErrKind) {
     self.kind = kind;
   }
-  pub fn with_label(mut self, source: SpanSource, label: ariadne::Label<Span>) -> Self {
-    self.sources.push(source);
-    self.labels.push(label);
+  pub fn with_label(mut self, span: Span, label: ariadne::Label<Span>) -> Self {
+    self.labels.push((span, label));
     self
   }
-  pub fn with_context(mut self, ctx: VecDeque<(SpanSource, ariadne::Label<Span>)>) -> Self {
-    for (src, label) in ctx {
-      self.sources.push(src);
-      self.labels.push(label);
+  pub fn with_context(mut self, ctx: VecDeque<(Span, ariadne::Label<Span>)>) -> Self {
+    for entry in ctx {
+      self.labels.push(entry);
     }
     self
   }
@@ -253,8 +308,12 @@ impl ShErr {
     } else {
       ReportKind::Error
     };
-    let mut report =
-      Report::build(kind, span.clone()).with_config(ariadne::Config::default().with_color(true));
+    let mut report = Report::build(kind, span.clone()).with_config(
+      ariadne::Config::default()
+        .with_index_type(ariadne::IndexType::Byte)
+        .with_tab_width(shopt!(line.tab_width))
+        .with_color(true),
+    );
     let msg = if self.notes.is_empty() {
       self.kind.to_string()
     } else {
@@ -262,7 +321,7 @@ impl ShErr {
     };
     report = report.with_message(msg);
 
-    for label in self.labels.clone() {
+    for (_, label) in group_labels(self.labels.clone()) {
       report = report.with_label(label);
     }
     for note in &self.notes {
@@ -279,7 +338,8 @@ impl ShErr {
         .entry(src.clone())
         .or_insert_with(|| src.content().to_string());
     }
-    for src in &self.sources {
+    for (span, _) in &self.labels {
+      let src = span.span_source().clone();
       source_map
         .entry(src.clone())
         .or_insert_with(|| src.content().to_string());
