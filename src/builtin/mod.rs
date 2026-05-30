@@ -395,20 +395,27 @@ pub(super) trait Builtin: Sync {
     // Now we inspect the error that we got, if any
     match result {
       Ok(()) => Ok(()),
-      Err(e) => {
+      Err(mut e) => {
         // if we aren't in the context these are looking for
         // then they will bubble all the way up to main
         // which cancels execution. Let's catch that here
-        let should_propagate = match e.kind() {
+        let kind = e.kind_mut();
+        let should_propagate = match kind {
           ShErrKind::CleanExit(_) => true, // this one always goes
           ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
             state::Shed::meta(|m| m.in_loop())
           }
           ShErrKind::FuncReturn(_) => state::Shed::meta(|m| m.in_func()),
+          _ if shopt!(set.errexit) => {
+            // propagate if this is enabled
+            *kind = ShErrKind::ErrInterrupt;
+            true
+          }
           _ => false,
         };
 
         if should_propagate {
+          Shed::set_status(1);
           Err(e.with_context(context))
         } else {
           e.with_context(context).print_error();

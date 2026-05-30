@@ -63,6 +63,7 @@ impl Iterator for ColorRng {
   fn next(&mut self) -> Option<Self::Item> {
     let colors = Self::get_colors();
     let idx = rand::rngs::SysRng.try_next_u32().ok()? as usize % colors.len();
+
     Some(colors[idx])
   }
 }
@@ -277,6 +278,9 @@ impl ShErr {
   }
   pub fn kind(&self) -> &ShErrKind {
     &self.kind
+  }
+  pub fn kind_mut(&mut self) -> &mut ShErrKind {
+    &mut self.kind
   }
   pub fn set_kind(&mut self, kind: ShErrKind) {
     self.kind = kind;

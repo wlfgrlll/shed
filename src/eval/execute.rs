@@ -1705,6 +1705,43 @@ mod tests {
     assert_eq!(out, "1 2 3 4\n5 6\n");
   }
 
+  // ===================== set -e + builtin failure =====================
+
+  #[test]
+  fn set_e_aborts_on_failing_builtin() {
+    // `cd /nonexistent` exits non-zero from a builtin. Under `set -e`
+    // the failure should propagate as ErrInterrupt and prevent the
+    // following command from running, same as for external commands.
+    // Regression guard against builtins being silently exempted from
+    // errexit checks.
+    let g = TestGuard::new();
+    let result = test_input("set -e; cd /__set_e_test_no_such_dir_xyz__; echo SHOULD_NOT_RUN");
+    assert!(
+      result.is_err(),
+      "expected set -e to surface ErrInterrupt for failing builtin"
+    );
+    let out = g.read_output();
+    assert!(
+      !out.contains("SHOULD_NOT_RUN"),
+      "set -e should have aborted before the second command ran; got: {out:?}"
+    );
+  }
+
+  #[test]
+  fn no_set_e_continues_past_failing_builtin() {
+    // Companion to the above: without `set -e`, the failing cd should
+    // set $? but execution should continue to the echo. Establishes
+    // that the previous test is meaningful (the abort is *because of*
+    // set -e, not because builtin errors always abort).
+    let g = TestGuard::new();
+    test_input("cd /__set_e_test_no_such_dir_xyz__; echo did_continue").unwrap();
+    let out = g.read_output();
+    assert!(
+      out.contains("did_continue"),
+      "without set -e, execution should continue past the failed cd; got: {out:?}"
+    );
+  }
+
   // ===================== negation (!) status =====================
 
   #[test]
