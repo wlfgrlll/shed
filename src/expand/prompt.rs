@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::shopt_mut;
+
 use super::{
   ShResult,
   crate_util::{ansi_from_description, format_time},
@@ -278,7 +280,13 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::Function(f) => {
-      let output = expand_cmd_sub(&f)?;
+      let errexit = shopt!(set.errexit);
+
+      shopt_mut!(set.errexit = false);
+      let res = expand_cmd_sub(&f);
+      shopt_mut!(set.errexit = errexit);
+
+      let output = res?;
       result.push_str(&output);
     }
   });
