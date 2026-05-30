@@ -1336,3 +1336,109 @@ fn not_zero_status_does_not_trigger_errexit() {
     "set -e should not fire when inverted status is 0; got: {out:?}"
   );
 }
+
+// ===================== `set -o pipefail` =====================
+
+#[test]
+fn pipefail_off_last_stage_wins() {
+  // Default POSIX behavior: pipeline status comes from the last stage.
+  let guard = TestGuard::new();
+  test_input("false | true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0\n");
+}
+
+#[test]
+fn pipefail_on_propagates_intermediate_failure() {
+  let guard = TestGuard::new();
+  test_input("set -o pipefail; false | true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "1\n");
+}
+
+#[test]
+fn pipefail_on_all_zero_stays_zero() {
+  let guard = TestGuard::new();
+  test_input("set -o pipefail; true | true | true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0\n");
+}
+
+#[test]
+fn pipefail_on_picks_last_nonzero_for_status() {
+  // With pipefail, the pipeline's status is the LAST non-zero stage's status
+  // (this is independent of which stage gets blamed in error reports).
+  // Use distinguishable exit codes so we can tell which stage "won".
+  let guard = TestGuard::new();
+  test_input("set -o pipefail; (exit 3) | (exit 5) | true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "5\n");
+}
+
+#[test]
+fn pipefail_off_pipestatus_still_records_all_stages() {
+  // PIPESTATUS is unaffected by pipefail — it always records per-stage codes.
+  let guard = TestGuard::new();
+  test_input("false | true; echo ${PIPESTATUS[0]} ${PIPESTATUS[1]}").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "1 0\n");
+}
+
+#[test]
+fn pipefail_can_be_disabled() {
+  let guard = TestGuard::new();
+  test_input("set -o pipefail; set +o pipefail; false | true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0\n");
+}
+
+#[test]
+fn pipefail_triggers_errexit_on_intermediate_failure() {
+  // With pipefail + errexit, an intermediate stage failure terminates
+  // the shell at the pipeline boundary. The echo should never run.
+  // test_input returns Err when errexit interrupts; that's expected here.
+  let guard = TestGuard::new();
+  let _ = test_input("set -e -o pipefail; false | true; echo should-not-print");
+  let out = guard.read_output();
+  assert!(
+    !out.contains("should-not-print"),
+    "errexit should fire on pipefail status; got: {out:?}"
+  );
+}
+
+// ===================== pipefail × try =====================
+
+#[test]
+fn try_forces_pipefail_on_inside_body() {
+  // try blocks force both errexit AND pipefail on inside the body, even
+  // when both are off in the surrounding shell. A failing intermediate
+  // stage that would normally be swallowed by POSIX pipeline semantics
+  // should fire the catch arm here.
+  let guard = TestGuard::new();
+  test_input(r#"try echo foo | false | cat; catch "caught"; done; echo after"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("caught"),
+    "catch should fire on intermediate failure; got: {out:?}"
+  );
+  assert!(
+    out.contains("after\n"),
+    "shell should continue past done; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_restores_pipefail_after_done() {
+  // The forced-on pipefail inside try must be restored to its prior
+  // (off) state once the block exits, otherwise the outer shell would
+  // see surprising behavior change.
+  let guard = TestGuard::new();
+  test_input(r#"try true; catch "x"; done; false | true; echo $?"#).unwrap();
+  let out = guard.read_output();
+  // After try exits, pipefail should be off again, so `false | true`
+  // takes the last stage's status (0).
+  assert!(
+    out.contains("0\n"),
+    "pipefail should be restored to off; got: {out:?}"
+  );
+}
