@@ -87,6 +87,7 @@ lib.concatLines [
         "shopt set.nounset=${boolToString cfg.shopts.set.nounset}"
         "shopt set.verbose=${boolToString cfg.shopts.set.verbose}"
         "shopt set.xtrace=${boolToString cfg.shopts.set.xtrace}"
+        "shopt set.pipefail=${boolToString cfg.shopts.set.pipefail}"
 
         "shopt prompt.leader='${cfg.shopts.prompt.leader}'"
         "shopt prompt.trunc_prompt_path=${toString cfg.shopts.prompt.trunc_prompt_path}"

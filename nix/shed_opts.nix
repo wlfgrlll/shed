@@ -326,6 +326,11 @@
                 default = false;
                 description = "Write a trace for each command after expansion but before execution (equivalent to set -x)";
               };
+              pipefail = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "A pipeline's exit status is the last non-zero status from any stage, instead of just the last stage's status (equivalent to set -o pipefail)";
+              };
             };
           };
           default = {};
