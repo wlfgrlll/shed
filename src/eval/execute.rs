@@ -431,7 +431,9 @@ impl Dispatcher {
           .with_context(context)
           .print_error();
 
-        state::Shed::set_status(1);
+        if state::Shed::get_status() == 0 {
+          state::Shed::set_status(1);
+        }
         Ok(())
       }
     }
