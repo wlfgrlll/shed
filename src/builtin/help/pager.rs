@@ -134,7 +134,7 @@ impl HelpPager {
 
   pub fn cross_refs_in_viewport(&self) -> Vec<usize> {
     let top = self.scroll_offset;
-    let t_rows = Shed::term(|t| t.t_rows());
+    let t_rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
     let bottom = top + t_rows;
 
     let first = self
@@ -155,7 +155,7 @@ impl HelpPager {
 
   pub fn display(&mut self) -> ShResult<()> {
     write_term!("\x1b[H")?;
-    let height = Shed::term(|t| t.t_rows());
+    let height = Shed::term(|t| t.t_rows()).saturating_sub(1);
 
     // Build click map for cross-references in viewport
     self.click_refs.clear();
@@ -252,6 +252,8 @@ impl HelpPager {
         Direction::Backward => '?',
       };
       write_term!("\x1b[1;7;4m {prefix}{query} \x1b[0m",).ok();
+    } else {
+      write_term!("\x1b[K").ok();
     }
 
     Shed::term_mut(|t| t.flush())?;
@@ -414,6 +416,47 @@ impl HelpPager {
       .find_iter(visible)
       .map(|m| (map[m.start()], map[m.end()]))
       .collect();
+
+    // update active idx
+    let lf_positions: Vec<_> = self
+      .content
+      .content()
+      .bytes()
+      .enumerate()
+      .filter(|(_, c)| *c == b'\n')
+      .map(|(i, _)| i)
+      .collect();
+
+    let line_for = |start: &usize| {
+      lf_positions
+        .iter()
+        .position(|pos| *pos > *start)
+        .unwrap_or(lf_positions.len())
+    };
+    if !self.search.results.is_empty() {
+      let anchor = self.search.anchor;
+      // compare line to anchor
+      let pos = match self.search.dir {
+        Direction::Forward => self
+          .search
+          .results
+          .iter()
+          .position(|(start, _)| line_for(start) >= anchor),
+        Direction::Backward => self
+          .search
+          .results
+          .iter()
+          .rposition(|(start, _)| line_for(start) <= anchor),
+      };
+      // wrap around if none found
+      self.search.active_result_idx1 = pos.map(|p| p + 1).unwrap_or_else(|| {
+        if matches!(self.search.dir, Direction::Backward) {
+          self.search.results.len()
+        } else {
+          1
+        }
+      });
+    }
 
     if jump {
       self.jump_to_match(self.search.dir);
