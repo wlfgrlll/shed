@@ -852,6 +852,8 @@ executable with a shebang line:
       failure (builtins, simple commands without `&&`/`||`, etc.)
       will trigger the catch arm.
 
+      See also: |set|(builtin-set)
+
   10.5 Flow Control                              *script-try-flow*
 
       `return`, `break`, `continue`, and `exit` are not intercepted
