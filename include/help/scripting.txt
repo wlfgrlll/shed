@@ -442,7 +442,7 @@ executable with a shebang line:
           `if [ "$count" -gt 10 ]; then echo "many"; fi`
           `[ -z "$var" ] && var="default"`
 
-  6.3 [[ (extended test)                         *script-double-bracket*
+  6.3 `[[` (extended test)                         *script-double-bracket*
 
       `[[` is an enhanced version of `[` with several advantages:
 
@@ -794,13 +794,79 @@ executable with a shebang line:
       normally, is interrupted, or encounters an error.
 
 ==============================================================================
-10. File Descriptor Manipulation with exec       *script-exec-redirect*
+10. The `try` Block                              *try* *script-try*
+
+  `try {body}; catch {message}; done`
+
+  The `try` block runs {body} with `set -e` temporarily forced on.
+  If any command in {body} fails, the block stops and {message} is
+  printed as a styled error report with the failing command
+  underlined. Execution continues after `done` with `$?` set to the
+  status of the failing command.
+
+  This is a shed extension: standard POSIX shells do not have a
+  `try` block.
+
+  10.1 Basic Usage                               *script-try-basic*
+
+      The body can be a single command or a sequence of commands:
+
+          `try`
+          `  curl -fsSL "$url" > artifact.tar.gz`
+          `  tar xf artifact.tar.gz`
+          `catch "failed to fetch and unpack $url"`
+          `done`
+
+      If `curl` fails, `tar` never runs. The catch message is
+      printed, the report points at the failing `curl` line, and
+      `$?` becomes the status of the failing command.
+
+  10.2 Single-Line Form                          *script-try-inline*
+
+      Like other compound commands, the clauses can be put on one
+      line by separating them with `;`:
+
+          `try cd "$build_dir"; catch "build dir missing"; done`
+
+  10.3 Catch Message Expansion                   *script-try-expand*
+
+      The catch message is subject to the usual expansions
+      (variables, command substitution, arithmetic). Multiple
+      arguments after `catch` are joined with a single space:
+
+          `try mount "$device" "$target"`
+          `catch "could not mount" "$device" "on $target"`
+          `done`
+
+      Expanded values are visually distinguished from literal text
+      in the printed report, making it easy to see what came from
+      the script versus what came from the environment.
+
+  10.4 Interaction with `set -e`                 *script-try-errexit*
+
+      Inside the block, `set -e` is forced on regardless of the
+      current setting. When the block exits, the prior `errexit`
+      state is restored.
+
+      This means commands that would normally only set `$?` on
+      failure (builtins, simple commands without `&&`/`||`, etc.)
+      will trigger the catch arm.
+
+  10.5 Flow Control                              *script-try-flow*
+
+      `return`, `break`, `continue`, and `exit` are not intercepted
+      by the catch arm. They propagate as in any other compound, so
+      a `try` block inside a function or loop behaves predictably
+      with respect to control flow.
+
+==============================================================================
+11. File Descriptor Manipulation with exec       *script-exec-redirect*
 
   `exec` with no command argument applies redirections to the
   current shell session. This lets you permanently redirect
   file descriptors for the rest of the script.
 
-  10.1 Redirecting stdout/stderr                 *script-exec-redir-std*
+  11.1 Redirecting stdout/stderr                 *script-exec-redir-std*
 
       Redirect all subsequent output to a file:
 
@@ -818,7 +884,7 @@ executable with a shebang line:
 
           `exec > /dev/tty 2>&1`
 
-  10.2 Opening custom file descriptors           *script-exec-custom-fd*
+  11.2 Opening custom file descriptors           *script-exec-custom-fd*
 
       Open a file on a numbered descriptor for later use:
 
@@ -833,7 +899,7 @@ executable with a shebang line:
           `read -r line <&4`         # read a line from fd 4
           `exec 4<&-`                # close fd 4
 
-  10.3 Saving and restoring descriptors          *script-exec-save-fd*
+  11.3 Saving and restoring descriptors          *script-exec-save-fd*
 
       Save a descriptor before redirecting, then restore it later:
 
@@ -843,7 +909,7 @@ executable with a shebang line:
           `exec 1>&3 3>&-`           # restore stdout, close fd 3
           `echo "this goes to the terminal"`
 
-  10.4 Read/write descriptors                    *script-exec-readwrite*
+  11.4 Read/write descriptors                    *script-exec-readwrite*
 
       Open a file for both reading and writing:
 

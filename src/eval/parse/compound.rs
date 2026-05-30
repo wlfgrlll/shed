@@ -196,7 +196,7 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_case(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("case") || !self.next_tk_is_some() {
+    if !self.check_keyword("case") {
       return Ok(None);
     }
 
@@ -223,7 +223,7 @@ impl ParseStream {
 
     node_tks.push(pattern.clone());
 
-    if !self.check_keyword("in") || !self.next_tk_is_some() {
+    if !self.check_keyword("in") {
       bail!(self, node_tks, "Expected 'in' after case variable name");
     }
     node_tks.push(self.next_tk().unwrap());
@@ -345,7 +345,7 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_time(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("time") || !self.next_tk_is_some() {
+    if !self.check_keyword("time") {
       return Ok(None);
     }
 
@@ -368,13 +368,13 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_func_keyword(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("function") || !self.next_tk_is_some() {
+    if !self.check_keyword("function") {
       return Ok(None);
     }
     self.parse_func_def()
   }
   pub(super) fn parse_arith(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_flags(TkFlags::IS_ARITH) || !self.next_tk_is_some() {
+    if !self.check_flags(TkFlags::IS_ARITH) {
       return Ok(None);
     }
 
@@ -426,7 +426,7 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_if(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("if") || !self.next_tk_is_some() {
+    if !self.check_keyword("if") {
       return Ok(None);
     }
 
@@ -449,7 +449,7 @@ impl ParseStream {
       node_tks.extend(cond.tokens.clone());
       cond.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for condition commands
 
-      if !self.check_keyword("then") || !self.next_tk_is_some() {
+      if !self.check_keyword("then") {
         bail!(
           self,
           node_tks,
@@ -471,7 +471,7 @@ impl ParseStream {
       cond_nodes.push(cond_node);
 
       self.catch_separator(&mut node_tks);
-      if !self.check_keyword("elif") || !self.next_tk_is_some() {
+      if !self.check_keyword("elif") {
         break;
       } else {
         self.block_depth -= 1;
@@ -504,7 +504,7 @@ impl ParseStream {
     }
 
     self.catch_separator(&mut node_tks);
-    if !self.check_keyword("fi") || !self.next_tk_is_some() {
+    if !self.check_keyword("fi") {
       bail!(self, node_tks, "Expected 'fi' after if statement");
     }
     node_tks.push(self.next_tk().unwrap());
@@ -532,7 +532,7 @@ impl ParseStream {
     let (init, cond, step) = split_for_arith_tk(arith_tk)?;
     self.catch_separator(&mut node_tks);
 
-    if !self.check_keyword("do") || !self.next_tk_is_some() {
+    if !self.check_keyword("do") {
       bail!(
         self,
         node_tks,
@@ -547,7 +547,7 @@ impl ParseStream {
     };
 
     self.catch_separator(&mut node_tks);
-    if !self.check_keyword("done") || !self.next_tk_is_some() {
+    if !self.check_keyword("done") {
       bail!(self, node_tks, "Expected 'done' after for loop body");
     }
     node_tks.push(self.next_tk().unwrap());
@@ -592,7 +592,7 @@ impl ParseStream {
     if vars.is_empty() {
       bail!(self, node_tks, "Expected a variable name for this for loop");
     }
-    if !self.check_keyword("do") || !self.next_tk_is_some() {
+    if !self.check_keyword("do") {
       bail!(
         self,
         node_tks,
@@ -607,7 +607,7 @@ impl ParseStream {
     };
 
     self.catch_separator(&mut node_tks);
-    if !self.check_keyword("done") || !self.next_tk_is_some() {
+    if !self.check_keyword("done") {
       bail!(self, node_tks, "Expected 'done' after for loop body");
     }
     node_tks.push(self.next_tk().unwrap());
@@ -626,7 +626,7 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_for(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("for") || !self.next_tk_is_some() {
+    if !self.check_keyword("for") {
       return Ok(None);
     }
 
@@ -640,7 +640,7 @@ impl ParseStream {
     }
   }
   pub(super) fn parse_loop(&mut self) -> ShResult<Option<Node>> {
-    if (!self.check_keyword("while") && !self.check_keyword("until")) || !self.next_tk_is_some() {
+    if !self.check_keyword("while") && !self.check_keyword("until") {
       return Ok(None);
     }
 
@@ -663,7 +663,7 @@ impl ParseStream {
     node_tks.extend(cond.tokens.clone());
     cond.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for condition commands
 
-    if !self.check_keyword("do") || !self.next_tk_is_some() {
+    if !self.check_keyword("do") {
       bail!(
         self,
         node_tks,
@@ -678,7 +678,7 @@ impl ParseStream {
     };
 
     self.catch_separator(&mut node_tks);
-    if !self.check_keyword("done") || !self.next_tk_is_some() {
+    if !self.check_keyword("done") {
       bail!(self, node_tks, "Expected 'done' after loop body");
     }
     node_tks.push(self.next_tk().unwrap());
@@ -701,6 +701,107 @@ impl ParseStream {
       },
       redirs
     )))
+  }
+  pub(super) fn parse_try(&mut self) -> ShResult<Option<Node>> {
+    if !self.check_keyword("try") {
+      return Ok(None);
+    }
+
+    let mut node_tks = vec![];
+    let mut redirs = vec![];
+
+    let try_tk = self.next_tk().unwrap();
+    let try_tk_span = try_tk.span.clone();
+
+    node_tks.push(try_tk);
+    self.catch_separator(&mut node_tks);
+
+    let mut body = vec![];
+    let mut body_tks = vec![];
+
+    loop {
+      if self.check_keyword("catch") {
+        break;
+      }
+
+      if let Some(node) = self.parse_conjunction()? {
+        body_tks.extend(node.tokens.clone());
+        node_tks.extend(node.tokens.clone());
+        body.push(node);
+      } else {
+        bail!(
+          self,
+          node_tks,
+          "Expected a command or '{}' clause after '{}'",
+          "catch",
+          "try"
+        );
+      }
+
+      self.catch_separator(&mut node_tks);
+      if !self.next_tk_is_some() {
+        bail!(
+          self,
+          node_tks,
+          "Unexpected end of input while parsing '{}' block",
+          "try"
+        );
+      }
+    }
+
+    let mut body = Box::new(node!(
+      self,
+      body_tks,
+      NdRule::List { commands: body },
+      vec![]
+    ));
+    let try_span = body.get_span().merge_with(try_tk_span.clone()).unwrap();
+    let try_span = if try_span.as_str().contains('\n') {
+      try_span
+    } else {
+      try_tk_span
+    };
+    body.propagate_context(get_context(
+      styled_format!("in '{}' block defined here", "try"),
+      try_span,
+    ));
+
+    node_tks.push(self.next_tk().unwrap()); // consume 'catch'
+    self.catch_separator(&mut node_tks); // absorb newlines after 'catch'
+
+    let mut err = vec![];
+
+    while let Some(tk) = self.peek_tk() {
+      let is_sep = tk.class == TkRule::Sep;
+      let is_done = tk.flags.contains(TkFlags::KEYWORD) && tk.span.as_str() == "done";
+      let is_terminator = matches!(tk.class, TkRule::Eoi | TkRule::Comment);
+      if is_sep || is_done || is_terminator {
+        break;
+      }
+      let tk = self.next_tk().unwrap();
+      node_tks.push(tk.clone());
+      err.push(tk);
+    }
+
+    self.catch_separator(&mut node_tks); // absorb newlines before 'done'
+
+    if !self.check_keyword("done") {
+      bail!(
+        self,
+        node_tks,
+        "Expected '{}' after '{}' clause in '{}' statement",
+        "done",
+        "catch",
+        "try"
+      );
+    }
+    node_tks.push(self.next_tk().unwrap());
+
+    self.parse_redir(&mut redirs, &mut node_tks)?;
+
+    let node = node!(self, node_tks, NdRule::TryNode { body, err }, redirs);
+
+    Ok(Some(node))
   }
 }
 

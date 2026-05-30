@@ -1,6 +1,6 @@
 use super::{
   LabelCtx,
-  lex::{Span, Tk},
+  lex::{Span, Tk, TkRule},
   procio::RedirSpec,
   two_way_display,
 };
@@ -88,6 +88,12 @@ impl Node {
       } => {
         body.walk_tree(f);
       }
+      NdRule::TryNode {
+        ref mut body,
+        err: _,
+      } => {
+        body.walk_tree(f);
+      }
       NdRule::ForArith {
         ref mut init,
         ref mut cond,
@@ -155,9 +161,12 @@ impl Node {
     let Some(first_tk) = self.tokens.first() else {
       unreachable!()
     };
-    let Some(last_tk) = self.tokens.last() else {
-      unreachable!()
-    };
+    let last_tk = self
+      .tokens
+      .iter()
+      .rev()
+      .find(|tk| !matches!(tk.class, TkRule::Sep | TkRule::Eoi))
+      .unwrap_or(first_tk);
 
     Span::from_span_source(
       first_tk.span.range().start..last_tk.span.range().end,
@@ -236,6 +245,7 @@ pub(crate) enum NdKind {
   ForArith,
   Arithmetic,
   CaseNode,
+  TryNode,
   Command,
   Pipeline,
   Conjunction,
@@ -255,6 +265,7 @@ impl NdRule {
       Self::IfNode { .. } => NdKind::IfNode,
       Self::LoopNode { .. } => NdKind::LoopNode,
       Self::ForNode { .. } => NdKind::ForNode,
+      Self::TryNode { .. } => NdKind::TryNode,
       Self::ForArith { .. } => NdKind::ForArith,
       Self::Arithmetic { .. } => NdKind::Arithmetic,
       Self::CaseNode { .. } => NdKind::CaseNode,
@@ -287,6 +298,10 @@ pub(crate) enum NdRule {
     vars: Vec<Tk>,
     arr: Vec<Tk>,
     body: Box<Node>,
+  },
+  TryNode {
+    body: Box<Node>,
+    err: Vec<Tk>,
   },
   ForArith {
     init: Option<Box<Node>>,
