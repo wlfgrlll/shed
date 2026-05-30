@@ -6,6 +6,7 @@ use std::{
 use tempfile::NamedTempFile;
 
 use super::{
+  super::state::meta::MetaTab,
   Shed,
   eval::{
     NdRule, Node,
@@ -41,16 +42,23 @@ impl Default for RangeArg {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum FixMode {
+  #[default]
+  Edit, // default
+  List,  // -l
+  Rerun, // -s
+}
+
 #[derive(Debug, Default)]
 pub struct FixCmdOpts {
   editor: Option<String>,
   replace: Option<(String, String)>,
   first: Option<RangeArg>,
   last: Option<RangeArg>,
-  list: bool,
+  mode: FixMode,
   no_numbers: bool,
   reverse: bool,
-  no_editor: bool,
 }
 
 pub fn parse_fc_args(args: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, FixCmdOpts)> {
@@ -92,7 +100,7 @@ pub fn parse_fc_args(args: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, FixCmdOpts
       continue;
     }
 
-    if opts.no_editor {
+    if opts.mode != FixMode::List {
       let mut old = String::new();
       let mut new = String::new();
       let mut chars = word.chars();
@@ -123,8 +131,8 @@ pub fn parse_fc_args(args: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, FixCmdOpts
     match word.as_str() {
       "-r" => opts.reverse = true,
       "-n" => opts.no_numbers = true,
-      "-s" => opts.no_editor = true,
-      "-l" => opts.list = true,
+      "-s" => opts.mode = FixMode::Rerun,
+      "-l" => opts.mode = FixMode::List,
       "-e" => {
         let Some((word, _)) = words_iter.next() else {
           return Err(sherr!(ParseErr @ span, "Option -e requires an argument"));
@@ -167,12 +175,16 @@ impl super::Builtin for FixCmd {
       .ok_or_else(|| sherr!(InternalErr, "database not available"))
       .promote_err(span.clone())?;
     let hist = History::new(conn, "shed_history").promote_err(span.clone())?;
-    if opts.list {
-      fc_list(hist, opts).promote_err(span)?;
-    } else if opts.no_editor {
-      fc_reexec(hist, opts).promote_err(span)?;
-    } else {
-      fc_edit(hist, opts).promote_err(span)?;
+    match opts.mode {
+      FixMode::List => {
+        fc_list(&hist, opts).promote_err(span)?;
+      }
+      FixMode::Rerun => {
+        fc_reexec(&hist, opts).promote_err(span)?;
+      }
+      FixMode::Edit => {
+        fc_edit(&hist, opts).promote_err(span)?;
+      }
     }
 
     state::Shed::set_status(0);
@@ -180,7 +192,7 @@ impl super::Builtin for FixCmd {
   }
 }
 
-fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
+fn fc_edit(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
   let editor = if let Some(editor) = opts.editor {
     editor
   } else if let Some(editor) = try_var!("FCEDIT") {
@@ -193,10 +205,10 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   let first = opts.first.unwrap_or_default();
   let last = opts.last.unwrap_or(first.clone());
 
-  let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
+  let entries = get_entry_range(hist, Some(first), Some(last), opts.reverse)?;
   let mut should_push;
 
-  Shed::meta_mut(|m| m.set_no_hist_save());
+  Shed::meta_mut(MetaTab::set_no_hist_save);
 
   for (_, entry) in entries {
     let old_cmd = entry.command;
@@ -226,12 +238,12 @@ fn fc_edit(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   Ok(())
 }
 
-fn fc_reexec(hist: History, opts: FixCmdOpts) -> ShResult<()> {
+fn fc_reexec(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
   let first = opts.first.unwrap_or_default();
   let last = opts.last.unwrap_or(first.clone());
-  let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
+  let entries = get_entry_range(hist, Some(first), Some(last), opts.reverse)?;
 
-  Shed::meta_mut(|m| m.no_hist_save());
+  Shed::meta_mut(MetaTab::no_hist_save);
   for (_, entry) in entries {
     let mut command = entry.command;
     let mut should_push = false;
@@ -252,7 +264,7 @@ fn fc_reexec(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   Ok(())
 }
 
-fn fc_list(hist: History, opts: FixCmdOpts) -> ShResult<()> {
+fn fc_list(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
   let first = if let Some(first) = opts.first {
     first
   } else {
@@ -260,13 +272,13 @@ fn fc_list(hist: History, opts: FixCmdOpts) -> ShResult<()> {
   };
   let last = opts.last.clone().unwrap_or_default();
 
-  let entries = get_entry_range(&hist, Some(first), Some(last), opts.reverse)?;
+  let entries = get_entry_range(hist, Some(first), Some(last), opts.reverse)?;
 
   let mut buf = String::new();
   for (id, entry) in entries {
     let cmd = entry.command;
     if !opts.no_numbers {
-      write!(buf, "{}\t", id).unwrap();
+      write!(buf, "{id}\t").unwrap();
     }
     buf.push_str(&cmd);
     buf.push('\n');
@@ -289,14 +301,9 @@ fn get_entry_range(
     match arg {
       // Negative indices count back from the most recent entry: -1 is
       // the last command, -2 the one before it, etc.
-      RangeArg::Number(n) if *n < 0 => Ok(last_id + 1 + *n as i64),
-      RangeArg::Number(n) => Ok(*n as i64),
-      RangeArg::Prefix(p) => Ok(
-        hist
-          .query_by_prefix(p)?
-          .map(|(id, _)| id)
-          .unwrap_or(last_id),
-      ),
+      RangeArg::Number(n) if *n < 0 => Ok(last_id + 1 + i64::from(*n)),
+      RangeArg::Number(n) => Ok(i64::from(*n)),
+      RangeArg::Prefix(p) => Ok(hist.query_by_prefix(p)?.map_or(last_id, |(id, _)| id)),
     }
   };
 
@@ -318,7 +325,7 @@ mod tests {
   use crate::eval::lex::{LexFlags, LexStream, TkRule};
   use crate::tests::testutil::TestGuard;
 
-  /// Lex an `fc <args>` invocation into the Tk vec that parse_fc_args expects.
+  /// Lex an `fc <args>` invocation into the Tk vec that `parse_fc_args` expects.
   fn lex_fc(input: &str) -> Vec<Tk> {
     LexStream::new(input.into(), LexFlags::empty())
       .filter_map(Result::ok)
@@ -343,10 +350,9 @@ mod tests {
     let _g = TestGuard::new();
     let (non_opts, opts) = parse("fc");
     assert!(non_opts.is_empty());
-    assert!(!opts.list);
+    assert_eq!(opts.mode, FixMode::Edit);
     assert!(!opts.no_numbers);
     assert!(!opts.reverse);
-    assert!(!opts.no_editor);
     assert!(opts.editor.is_none());
     assert!(opts.first.is_none());
     assert!(opts.last.is_none());
@@ -354,10 +360,10 @@ mod tests {
   }
 
   #[test]
-  fn fc_dash_l_sets_list() {
+  fn fc_dash_l_sets_list_mode() {
     let _g = TestGuard::new();
     let (_, opts) = parse("fc -l");
-    assert!(opts.list);
+    assert_eq!(opts.mode, FixMode::List);
   }
 
   #[test]
@@ -375,19 +381,31 @@ mod tests {
   }
 
   #[test]
-  fn fc_dash_s_sets_no_editor() {
+  fn fc_dash_s_sets_rerun_mode() {
     let _g = TestGuard::new();
     let (_, opts) = parse("fc -s");
-    assert!(opts.no_editor);
+    assert_eq!(opts.mode, FixMode::Rerun);
   }
 
   #[test]
   fn fc_multiple_flags_compose() {
     let _g = TestGuard::new();
     let (_, opts) = parse("fc -l -n -r");
-    assert!(opts.list);
+    assert_eq!(opts.mode, FixMode::List);
     assert!(opts.no_numbers);
     assert!(opts.reverse);
+  }
+
+  #[test]
+  fn fc_dash_l_overrides_dash_s() {
+    // `-l` and `-s` set the same field; whichever comes last wins.
+    // This documents the precedence rather than enforcing one — change
+    // the assertion if the policy changes.
+    let _g = TestGuard::new();
+    let (_, opts) = parse("fc -s -l");
+    assert_eq!(opts.mode, FixMode::List);
+    let (_, opts) = parse("fc -l -s");
+    assert_eq!(opts.mode, FixMode::Rerun);
   }
 
   // ─── -e <editor> ──────────────────────────────────────────────────────
@@ -502,7 +520,7 @@ mod tests {
     // the word goes to the range-arg catch-all (becoming a Prefix).
     let _g = TestGuard::new();
     let (_, opts) = parse("fc -s plainword");
-    assert!(opts.no_editor);
+    assert_eq!(opts.mode, FixMode::Rerun);
     assert!(opts.replace.is_none());
     assert_eq!(opts.first, Some(RangeArg::Prefix("plainword".into())));
   }
@@ -522,7 +540,7 @@ mod tests {
   fn fc_double_dash_collects_remaining_as_non_opts() {
     let _g = TestGuard::new();
     let (non_opts, opts) = parse("fc -l -- -r foo 42");
-    assert!(opts.list);
+    assert_eq!(opts.mode, FixMode::List);
     // Everything after `--`, including the literal `--`, lands in non_opts.
     let collected: Vec<&str> = non_opts.iter().map(|(s, _)| s.as_str()).collect();
     assert_eq!(collected, vec!["--", "-r", "foo", "42"]);
@@ -554,7 +572,7 @@ mod fc_edit_tests {
   }
 
   /// New View over the same DB without dropping data. For asserting on
-  /// what's in history after fc_edit consumed the previous handle.
+  /// what's in history after `fc_edit` consumed the previous handle.
   fn hist_view() -> History {
     let conn = state::util::get_db_conn().unwrap();
     History::new(conn, "shed_history").unwrap()
@@ -576,7 +594,7 @@ mod fc_edit_tests {
 
   /// Writes a small shell script to a temp dir that, when invoked with a
   /// path arg, overwrites that file with `new_content` (plus a trailing
-  /// newline that fc_edit's `.trim()` strips). Returns the TempDir
+  /// newline that `fc_edit`'s `.trim()` strips). Returns the `TempDir`
   /// (keep alive!) and the script path.
   fn overwriting_editor(new_content: &str) -> (TempDir, PathBuf) {
     let dir = TempDir::new().unwrap();
@@ -610,7 +628,7 @@ mod fc_edit_tests {
     unset_editor_vars();
     let hist = fresh_history();
     hist.push("true".into()).unwrap();
-    let result = fc_edit(hist, fc_opts(None, None, None));
+    let result = fc_edit(&hist, fc_opts(None, None, None));
     assert!(result.is_err(), "expected error when no editor is set");
   }
 
@@ -620,7 +638,7 @@ mod fc_edit_tests {
     unset_editor_vars();
     let hist = fresh_history();
     hist.push("true".into()).unwrap();
-    fc_edit(hist, fc_opts(Some("true".into()), None, None))
+    fc_edit(&hist, fc_opts(Some("true".into()), None, None))
       .expect("fc_edit should succeed with 'true' as opts.editor");
   }
 
@@ -631,7 +649,7 @@ mod fc_edit_tests {
     set_shell_var("FCEDIT", "true");
     let hist = fresh_history();
     hist.push("true".into()).unwrap();
-    fc_edit(hist, fc_opts(None, None, None)).expect("FCEDIT should be picked up");
+    fc_edit(&hist, fc_opts(None, None, None)).expect("FCEDIT should be picked up");
   }
 
   #[test]
@@ -641,7 +659,7 @@ mod fc_edit_tests {
     set_shell_var("EDITOR", "true");
     let hist = fresh_history();
     hist.push("true".into()).unwrap();
-    fc_edit(hist, fc_opts(None, None, None)).expect("EDITOR should be picked up");
+    fc_edit(&hist, fc_opts(None, None, None)).expect("EDITOR should be picked up");
   }
 
   #[test]
@@ -658,7 +676,7 @@ mod fc_edit_tests {
     let hist = fresh_history();
     hist.push(": original".into()).unwrap();
     fc_edit(
-      hist,
+      &hist,
       fc_opts(Some(opts_path.to_string_lossy().to_string()), None, None),
     )
     .unwrap();
@@ -679,7 +697,7 @@ mod fc_edit_tests {
     set_shell_var("EDITOR", &editor_path.to_string_lossy());
     let hist = fresh_history();
     hist.push(": original".into()).unwrap();
-    fc_edit(hist, fc_opts(None, None, None)).unwrap();
+    fc_edit(&hist, fc_opts(None, None, None)).unwrap();
     let cmds: Vec<String> = hist_view()
       .query_range(1, 100)
       .unwrap()
@@ -696,9 +714,9 @@ mod fc_edit_tests {
   // ─── range iteration ───────────────────────────────────────────────
 
   /// Editor that records each invocation by appending a line to a log
-  /// file. Used to confirm fc_edit iterates over every entry in its
+  /// file. Used to confirm `fc_edit` iterates over every entry in its
   /// range (which can't be checked by counting history pushes, because
-  /// hist_ignore_dupes drops consecutive identical commands).
+  /// `hist_ignore_dupes` drops consecutive identical commands).
   fn tally_editor(log_path: &Path) -> (TempDir, PathBuf) {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("editor.sh");
@@ -725,7 +743,7 @@ mod fc_edit_tests {
     hist.push(": two".into()).unwrap();
     hist.push(": three".into()).unwrap();
     fc_edit(
-      hist,
+      &hist,
       fc_opts(
         Some(editor_path.to_string_lossy().to_string()),
         Some(RangeArg::Number(1)),
@@ -786,8 +804,8 @@ mod fc_edit_tests {
 
 #[cfg(test)]
 mod fc_run_builtin_tests {
-  //! Tests for the `fc` builtin's run_builtin routing — verifies it
-  //! dispatches to fc_list / fc_reexec / fc_edit based on opts.
+  //! Tests for the `fc` builtin's `run_builtin` routing — verifies it
+  //! dispatches to `fc_list` / `fc_reexec` / `fc_edit` based on opts.
 
   use crate::readline::History;
   use crate::state::{self, Shed};

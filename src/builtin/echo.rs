@@ -12,9 +12,9 @@ use bitflags::bitflags;
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct EchoFlags: u32 {
-    const NO_NEWLINE = 0b000001;
-    const USE_ESCAPE = 0b000010;
-    const USE_PROMPT = 0b000100;
+    const NO_NEWLINE = 0b0000_0001;
+    const USE_ESCAPE = 0b0000_0010;
+    const USE_PROMPT = 0b0000_0100;
   }
 }
 

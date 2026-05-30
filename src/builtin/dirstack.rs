@@ -1,6 +1,7 @@
 use std::{env, path::PathBuf};
 
 use super::{
+  super::state::meta::MetaTab,
   ShResult, Shed, Span,
   getopt::{Opt, OptSpec},
   out, outln, sherr,
@@ -114,7 +115,7 @@ impl super::Builtin for PopDir {
       match idx {
         StackIdx::FromTop(0) => {
           // +0 is same as plain popd: pop top, cd to it
-          let dir = Shed::meta_mut(|m| m.pop_dir());
+          let dir = Shed::meta_mut(MetaTab::pop_dir);
           if !parsed.no_cd {
             if let Some(dir) = dir {
               change_dir(&dir).promote_err(blame)?;
@@ -157,7 +158,7 @@ impl super::Builtin for PopDir {
       }
       print_dirs()?;
     } else {
-      let dir = Shed::meta_mut(|m| m.pop_dir());
+      let dir = Shed::meta_mut(super::super::state::meta::MetaTab::pop_dir);
 
       if parsed.no_cd {
         return with_status(0);
@@ -195,7 +196,7 @@ impl super::Builtin for Dirs {
     let mut clear_stack = false;
     let mut target_idx: Option<StackIdx> = None;
     let blame = args.span();
-    let argv = args.argv;
+    let arg_vec = args.argv;
 
     for opt in args.opts {
       match opt {
@@ -207,7 +208,7 @@ impl super::Builtin for Dirs {
       }
     }
 
-    for (arg, _) in argv {
+    for (arg, _) in arg_vec {
       match arg.as_str() {
         _ if is_index_arg(&arg) => {
           target_idx = Some(parse_stack_idx(&arg, blame.clone(), "dirs")?);
@@ -293,7 +294,7 @@ pub fn truncate_home_path(path: String) -> String {
     let new = path.strip_prefix(&home).unwrap();
     return format!("~{new}");
   }
-  path.to_string()
+  path
 }
 
 enum StackIdx {

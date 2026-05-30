@@ -20,9 +20,9 @@ impl super::Builtin for AutoCmdBuiltin {
       }
     }
 
-    let mut argv = args.argv.into_iter();
+    let mut arg_vec = args.argv.into_iter();
 
-    let Some((kind, kind_span)) = argv.next() else {
+    let Some((kind, kind_span)) = arg_vec.next() else {
       return display_autocmds(None);
     };
 
@@ -38,7 +38,7 @@ impl super::Builtin for AutoCmdBuiltin {
       return with_status(0);
     }
 
-    let Some((autocmd_cmd, _)) = argv.next() else {
+    let Some((autocmd_cmd, _)) = arg_vec.next() else {
       return display_autocmds(Some(autocmd_kind));
     };
 

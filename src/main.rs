@@ -1,4 +1,5 @@
 #![expect(
+  clippy::cast_possible_truncation,
   clippy::derivable_impls,
   clippy::tabs_in_doc_comments,
   clippy::while_let_on_iterator,
@@ -49,7 +50,7 @@ fn main() -> ExitCode {
         QUIT_CODE.store(1, Ordering::SeqCst);
       }
     }
-  };
+  }
 
   lifecycle::tear_down()
 }

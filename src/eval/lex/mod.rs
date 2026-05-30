@@ -70,9 +70,6 @@ impl SpanSource {
   pub fn content(&self) -> Rc<str> {
     self.content.clone()
   }
-  pub fn rename(&mut self, name: Rc<str>) {
-    self.name = name;
-  }
 }
 
 impl Display for SpanSource {
@@ -130,10 +127,6 @@ impl Span {
   }
   pub fn rename(&mut self, name: Rc<str>) {
     self.source.name = name;
-  }
-  pub fn with_name(mut self, name: Rc<str>) -> Self {
-    self.source.name = name;
-    self
   }
   pub fn line_and_col(&self) -> (usize, usize) {
     (self.pos.row, self.pos.col)

@@ -56,7 +56,7 @@ impl super::Builtin for Unalias {
           SyntaxErr @ span,
           "unalias: alias '{arg}' not found",
         ));
-      };
+      }
       Shed::logic_mut(|l| l.remove_alias(&arg));
     }
 
@@ -202,7 +202,7 @@ mod tests {
 
     test_input("unalias").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("x"));
+    assert!(out.contains('x'));
     assert!(out.contains("hello"));
   }
 

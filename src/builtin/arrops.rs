@@ -249,7 +249,10 @@ mod tests {
   use std::collections::VecDeque;
 
   fn set_arr(name: &str, elems: &[&str]) {
-    let arr = VecDeque::from_iter(elems.iter().map(|s| s.to_string()));
+    let arr = elems
+      .iter()
+      .map(ToString::to_string)
+      .collect::<VecDeque<_>>();
     Shed::vars_mut(|v| v.set_var(name, VarKind::Arr(arr), VarFlags::empty())).unwrap();
   }
 

@@ -159,10 +159,8 @@ fn scan_refs(fmt_str: &str) -> ScanResult {
           named.push(name);
         }
       }
-      '}' => {
-        if chars.peek() == Some(&'}') {
-          chars.next();
-        }
+      '}' if chars.peek() == Some(&'}') => {
+        chars.next();
       }
       _ => {}
     }
