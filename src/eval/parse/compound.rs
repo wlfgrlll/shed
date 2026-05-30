@@ -721,6 +721,15 @@ impl ParseStream {
 
     loop {
       if self.check_keyword("catch") {
+        if body.is_empty() {
+          bail!(
+            self,
+            node_tks,
+            "Expected a command before '{}' clause in '{}' block",
+            "catch",
+            "try"
+          );
+        }
         break;
       }
 

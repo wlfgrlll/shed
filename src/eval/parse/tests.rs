@@ -1059,3 +1059,280 @@ fn heredoc_two_on_one_line() {
   let out = guard.read_output();
   assert_eq!(out, "foo\nbar\n");
 }
+
+// ===================== Try Block =====================
+
+#[test]
+fn parse_try_basic() {
+  let input = r#"try false; catch "msg"; done"#;
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::TryNode,
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_try_multiple_body_commands() {
+  let input = r#"try false; true; catch "msg"; done"#;
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::TryNode,
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_try_multi_line() {
+  let input = "try\n  false\ncatch \"msg\"\ndone";
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::TryNode,
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_try_missing_catch() {
+  let input = "try false; done";
+  assert!(get_ast(input).is_err());
+}
+
+#[test]
+fn parse_try_missing_done() {
+  let input = r#"try false; catch "msg""#;
+  assert!(get_ast(input).is_err());
+}
+
+#[test]
+fn parse_try_empty_body() {
+  let input = r#"try; catch "msg"; done"#;
+  assert!(get_ast(input).is_err());
+}
+
+#[test]
+fn try_block_success_no_error() {
+  let guard = TestGuard::new();
+  test_input(r#"try true; catch "should not appear"; done; echo after"#).unwrap();
+  let out = guard.read_output();
+  assert!(out.contains("after\n"), "got: {out:?}");
+  assert!(!out.contains("should not appear"), "got: {out:?}");
+}
+
+#[test]
+fn try_block_failure_prints_catch() {
+  let guard = TestGuard::new();
+  test_input(r#"try false; catch "body failed"; done"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("Try Failed"),
+    "expected report header; got: {out:?}"
+  );
+  assert!(
+    out.contains("body failed"),
+    "expected catch message; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_block_continues_after_done() {
+  let guard = TestGuard::new();
+  test_input(r#"try false; catch "err"; done; echo survived"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("survived\n"),
+    "shell should continue past try; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_block_catch_message_expansion() {
+  let guard = TestGuard::new();
+  Shed::vars_mut(|v| v.set_var("name", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
+  test_input(r#"try false; catch "hello $name"; done"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("hello world"),
+    "catch message should expand $name; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_block_multi_arg_catch_joined_with_space() {
+  let guard = TestGuard::new();
+  test_input(r#"try false; catch "alpha" "beta" "gamma"; done"#).unwrap();
+  let out = guard.read_output();
+  assert!(out.contains("alpha beta gamma"), "got: {out:?}");
+}
+
+#[test]
+fn try_block_forces_errexit_on_body() {
+  // Without errexit, a failing simple command in a list doesn't halt
+  // execution. Inside the try block, errexit is forced on, so a failing
+  // command should fire the catch arm even when set +e is otherwise active.
+  let guard = TestGuard::new();
+  test_input(r#"set +e; try false; echo body-continued; catch "caught"; done"#).unwrap();
+  let out = guard.read_output();
+  assert!(out.contains("caught"), "catch should fire; got: {out:?}");
+  assert!(
+    !out.contains("body-continued"),
+    "body should halt at first failure; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_block_restores_errexit_after_done() {
+  // After the try block exits, the prior errexit state should be restored.
+  // With set +e active before the block, set +e should still be active after.
+  let guard = TestGuard::new();
+  test_input(r#"set +e; try false; catch "x"; done; false; echo post"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("post\n"),
+    "errexit should be restored to off; got: {out:?}"
+  );
+}
+
+// ===================== `not` keyword =====================
+
+#[test]
+fn parse_not_basic() {
+  let input = "not false";
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Negate,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_not_matches_bang_structure() {
+  // `not` and `!` should produce identical node structures.
+  let bang_ast = get_ast("! false").unwrap();
+  let not_ast = get_ast("not false").unwrap();
+
+  let mut bang_kinds = vec![];
+  bang_ast[0]
+    .clone()
+    .walk_tree(&mut |n| bang_kinds.push(n.class.as_nd_kind()));
+  let mut not_kinds = vec![];
+  not_ast[0]
+    .clone()
+    .walk_tree(&mut |n| not_kinds.push(n.class.as_nd_kind()));
+
+  assert_eq!(bang_kinds, not_kinds);
+}
+
+#[test]
+fn parse_not_without_command_errors() {
+  assert!(get_ast("not").is_err());
+}
+
+#[test]
+fn not_inverts_false_to_zero() {
+  let guard = TestGuard::new();
+  test_input("not false; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0\n");
+}
+
+#[test]
+fn not_inverts_true_to_one() {
+  let guard = TestGuard::new();
+  test_input("not true; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "1\n");
+}
+
+#[test]
+fn not_and_bang_equivalent_at_runtime() {
+  let guard = TestGuard::new();
+  test_input("not false; a=$?; ! false; b=$?; echo $a $b").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0 0\n");
+}
+
+#[test]
+fn not_in_if_condition() {
+  let guard = TestGuard::new();
+  test_input("if not false; then echo taken; else echo skipped; fi").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "taken\n");
+}
+
+#[test]
+fn not_in_while_condition() {
+  // Loop while the file does not exist (it never will), capped by a counter.
+  let guard = TestGuard::new();
+  test_input("i=0; while not [ \"$i\" = 3 ]; do i=$((i+1)); done; echo $i").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "3\n");
+}
+
+#[test]
+fn not_negates_pipeline() {
+  // The body of `not` is a pipeline, so a multi-stage pipe negates as a whole.
+  let guard = TestGuard::new();
+  test_input("not echo foo | grep bar; echo $?").unwrap();
+  let out = guard.read_output();
+  assert_eq!(out, "0\n");
+}
+
+#[test]
+fn not_zero_status_does_not_trigger_errexit() {
+  // `not false` inverts a failing status to success, so the shell should
+  // continue under set -e. (The complementary case — `not true` producing
+  // status 1 — correctly triggers errexit and is not exercised here.)
+  let guard = TestGuard::new();
+  test_input("set -e; not false; echo survived").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("survived\n"),
+    "set -e should not fire when inverted status is 0; got: {out:?}"
+  );
+}
