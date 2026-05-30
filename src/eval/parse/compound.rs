@@ -402,16 +402,17 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_negate(&mut self) -> ShResult<Option<Node>> {
-    if !self.check_keyword("!") || !self.next_tk_is_some() {
+    if (!self.check_keyword("not") && !self.check_keyword("!")) || !self.next_tk_is_some() {
       return Ok(None);
     }
+    let display = if self.check_keyword("!") { "!" } else { "not" };
 
     let mut node_tks: Vec<Tk> = vec![];
 
     node_tks.push(self.next_tk().unwrap());
 
     let Some(mut cmd) = self.parse_block(true)? else {
-      bail!(self, node_tks, "Expected a command after '!'");
+      bail!(self, node_tks, "Expected a command after '{display}'");
     };
     cmd.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for negated commands
 
