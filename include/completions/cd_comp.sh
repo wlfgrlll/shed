@@ -6,7 +6,7 @@ _cd_comp() {
 	COMPREPLY=()
 	for match in ${word}*; do
 		if [ -d "$match" ]; then
-			push COMPREPLY $match
+			push COMPREPLY $match/
 		fi
 	done
 	local cdpath=$CDPATH
@@ -14,7 +14,7 @@ _cd_comp() {
 		ran=1
 		for match in "$dir/$word"*; do
 			if [ -d "$match" ]; then
-				push COMPREPLY ${match#$dir/}
+				push COMPREPLY ${match#$dir/}/
 			fi
 		done
 	done
@@ -22,7 +22,7 @@ _cd_comp() {
 		cdpath="${cdpath%/}"
 		for match in "$cdpath/$word"*; do
 			if [ -d "$match" ]; then
-				push COMPREPLY "${match#$cdpath/}"
+				push COMPREPLY "${match#$cdpath/}"/
 			fi
 		done
 	fi
