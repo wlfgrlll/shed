@@ -1,5 +1,8 @@
-use ariadne::Label;
 use std::rc::Rc;
+
+use shed_macros::styled_format;
+
+use crate::util::error::get_context;
 
 use super::{
   CaseNode, CondNode, LoopKind, NdFlags, NdRule, Node, ParseStream, ShResult, Tk, TkFlags, TkRule,
@@ -9,7 +12,6 @@ use super::{
 impl ParseStream {
   pub(super) fn parse_func_def(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks: Vec<Tk> = vec![];
-
     let has_func_kw = self.check_keyword("function");
 
     if has_func_kw {
@@ -27,47 +29,50 @@ impl ParseStream {
         return Ok(None);
       }
     }
-
     let name_tk = self.next_tk().unwrap();
     node_tks.push(name_tk.clone());
+
     let name = name_tk.clone();
     let name_raw: Rc<str> = name.as_str().into();
 
     self.catch_separator(&mut node_tks);
-    let mut src = name_tk.span.span_source().clone();
-    src.rename(name_raw.clone());
-    // Push a placeholder context so child nodes inherit it
-    self.context.push_back((
-      src.clone(),
-      Label::new(name_tk.span.clone().with_name(name_raw.clone()))
-        .with_message(format!("in function '{}' defined here", name_raw.clone())),
-    ));
 
     let Some(mut compound_cmd) = self.parse_compound()? else {
-      self.context.pop_back();
       bail!(
         self,
         node_tks,
         "Expected a compound command after function name"
       );
     };
+
+    let span = compound_cmd
+      .get_span()
+      .merge_with(name_tk.span.clone())
+      .unwrap();
+
+    compound_cmd.propagate_context(get_context(
+      styled_format!("in function '{name_raw}' defined here"),
+      span,
+    ));
+
     node_tks.extend(compound_cmd.tokens.clone());
     self.parse_redir(&mut compound_cmd.redirs, &mut node_tks)?;
     let body = Box::new(compound_cmd);
-    // Replace placeholder with full-span label
-    self.context.pop_back();
 
-    Ok(Some(node!(self, node_tks, NdRule::FuncDef { name, body })))
+    let node = node!(self, node_tks, NdRule::FuncDef { name, body });
+
+    Ok(Some(node))
   }
   pub(super) fn parse_subsh(&mut self) -> ShResult<Option<Node>> {
+    if *self.next_tk_class() != TkRule::SubshStart {
+      return Ok(None);
+    }
+
     let mut node_tks = vec![];
     let mut body = vec![];
     let mut body_tks = vec![];
     let mut redirs = vec![];
 
-    if *self.next_tk_class() != TkRule::SubshStart {
-      return Ok(None);
-    }
     node_tks.push(self.next_tk().unwrap());
     self.catch_separator(&mut node_tks);
 
@@ -117,22 +122,20 @@ impl ParseStream {
 
     self.parse_redir(&mut redirs, &mut node_tks)?;
 
-    Ok(Some(node!(
-      self,
-      node_tks,
-      NdRule::Subshell { body },
-      redirs
-    )))
+    let node = node!(self, node_tks, NdRule::Subshell { body }, redirs);
+
+    Ok(Some(node))
   }
   pub(super) fn parse_brc_grp(&mut self, from_func_def: bool) -> ShResult<Option<Node>> {
+    if *self.next_tk_class() != TkRule::BraceGrpStart {
+      return Ok(None);
+    }
+
     let mut node_tks = vec![];
     let mut body = vec![];
     let mut body_tks = vec![];
     let mut redirs = vec![];
 
-    if *self.next_tk_class() != TkRule::BraceGrpStart {
-      return Ok(None);
-    }
     node_tks.push(self.next_tk().unwrap());
 
     self.catch_separator(&mut node_tks);
@@ -193,16 +196,15 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_case(&mut self) -> ShResult<Option<Node>> {
-    // Needs a pattern token
-    // Followed by any number of CaseNodes
+    if !self.check_keyword("case") || !self.next_tk_is_some() {
+      return Ok(None);
+    }
+
     let mut node_tks: Vec<Tk> = vec![];
 
     let mut case_blocks: Vec<CaseNode> = vec![];
     let redirs = vec![];
 
-    if !self.check_keyword("case") || !self.next_tk_is_some() {
-      return Ok(None);
-    }
     node_tks.push(self.next_tk().unwrap());
 
     let pat_err = parse_err!(self, node_tks, "Expected a pattern after 'case' keyword")
@@ -343,11 +345,12 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_time(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-
     if !self.check_keyword("time") || !self.next_tk_is_some() {
       return Ok(None);
     }
+
+    let mut node_tks: Vec<Tk> = vec![];
+
     node_tks.push(self.next_tk().unwrap());
 
     let Some(mut cmd) = self.parse_block(true)? else {
@@ -371,12 +374,13 @@ impl ParseStream {
     self.parse_func_def()
   }
   pub(super) fn parse_arith(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-    let mut redirs = vec![];
-
     if !self.check_flags(TkFlags::IS_ARITH) || !self.next_tk_is_some() {
       return Ok(None);
     }
+
+    let mut node_tks: Vec<Tk> = vec![];
+    let mut redirs = vec![];
+
     let arith_tk = self.next_tk().unwrap();
     node_tks.push(arith_tk.clone());
 
@@ -398,11 +402,11 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_negate(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-
     if !self.check_keyword("!") || !self.next_tk_is_some() {
       return Ok(None);
     }
+
+    let mut node_tks: Vec<Tk> = vec![];
 
     node_tks.push(self.next_tk().unwrap());
 
@@ -421,17 +425,15 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_if(&mut self) -> ShResult<Option<Node>> {
-    // Needs at last one 'if-then',
-    // Any number of 'elif-then',
-    // Zero or one 'else'
+    if !self.check_keyword("if") || !self.next_tk_is_some() {
+      return Ok(None);
+    }
+
     let mut node_tks: Vec<Tk> = vec![];
     let mut cond_nodes: Vec<CondNode> = vec![];
     let mut else_block: Option<Node> = None;
     let mut redirs = vec![];
 
-    if !self.check_keyword("if") || !self.next_tk_is_some() {
-      return Ok(None);
-    }
     node_tks.push(self.next_tk().unwrap());
 
     loop {
@@ -623,11 +625,11 @@ impl ParseStream {
     )))
   }
   pub(super) fn parse_for(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks: Vec<Tk> = vec![];
-
     if !self.check_keyword("for") || !self.next_tk_is_some() {
       return Ok(None);
     }
+
+    let mut node_tks: Vec<Tk> = vec![];
     node_tks.push(self.next_tk().unwrap());
 
     if self.check_flags(TkFlags::IS_ARITH) {
@@ -637,14 +639,13 @@ impl ParseStream {
     }
   }
   pub(super) fn parse_loop(&mut self) -> ShResult<Option<Node>> {
-    // Requires a single CondNode and a LoopKind
+    if (!self.check_keyword("while") && !self.check_keyword("until")) || !self.next_tk_is_some() {
+      return Ok(None);
+    }
 
     let mut node_tks = vec![];
     let mut redirs = vec![];
 
-    if (!self.check_keyword("while") && !self.check_keyword("until")) || !self.next_tk_is_some() {
-      return Ok(None);
-    }
     let loop_tk = self.next_tk().unwrap();
     let loop_kind: LoopKind = loop_tk
       .span

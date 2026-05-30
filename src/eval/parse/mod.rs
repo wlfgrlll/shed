@@ -24,7 +24,7 @@ mod util;
 pub mod tests;
 
 use super::{
-  lex::{self, LexFlags, LexStream, Span, SpanSource, Tk, TkFlags, TkRule, clean_input},
+  lex::{self, LexFlags, LexStream, Span, Tk, TkFlags, TkRule, clean_input},
   procio, sherr, two_way_display,
   util::{self as crate_util, ShErr, ShResult},
 };
@@ -155,7 +155,7 @@ impl Ast {
   }
 }
 
-pub(crate) type LabelCtx = VecDeque<(SpanSource, Label<Span>)>;
+pub(crate) type LabelCtx = VecDeque<(Span, Label<Span>)>;
 
 bitflags! {
   #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,Hash,PartialOrd,Ord)]

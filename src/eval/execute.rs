@@ -9,6 +9,7 @@ use nix::{
   unistd::{ForkResult, Pid, execve, fork, isatty, setpgid},
 };
 use scopeguard::defer;
+use shed_macros::styled_format;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
@@ -145,7 +146,6 @@ impl ExecArgs {
 /// directly without forking. This avoids process group issues where grandchild
 /// processes (e.g. nvim spawning opencode) lose their controlling terminal.
 pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
-  log::debug!("Executing -c command: {input}");
   let stdin = procio::stdin_fileno();
   let is_tty = isatty(stdin).unwrap_or(false);
   let _guard = Shed::term_mut(|t| t.interactive_guard(is_tty));
@@ -414,11 +414,9 @@ impl Dispatcher {
       unreachable!();
     };
 
-    log::debug!("self.timer_stack before push: {:?}", self.timer_stack);
     self.timer_stack.push(Some(CmdTimer::new()?));
     let res = self.dispatch_node(*cmd);
     self.timer_stack.pop();
-    log::debug!("self.timer_stack after pop: {:?}", self.timer_stack);
     res
   }
   pub fn exec_conjunction(&mut self, conjunction: Node) -> ShResult<()> {
@@ -500,9 +498,10 @@ impl Dispatcher {
       .unwrap_or_default();
 
     let func_ctx = util::get_context(
-      format!("in call to function '{func_name}'",),
+      styled_format!("in call to function '{func_name}'",),
       func.get_span(),
     );
+    let caller_contexts: Vec<_> = func.context.iter().cloned().collect();
     let NdRule::Command {
       assignments,
       mut argv,
@@ -551,6 +550,9 @@ impl Dispatcher {
       let _guard = scope_guard(Some(argv));
       let _func_guard = Shed::meta_mut(|m| m.enter_func());
 
+      for ctx in caller_contexts.into_iter().rev() {
+        func_body.body_mut().propagate_context(ctx);
+      }
       func_body.body_mut().propagate_context(func_ctx);
       func_body.body_mut().flags = func.flags;
 
@@ -1019,7 +1021,6 @@ impl Dispatcher {
       };
 
       if !tty_attached && let Some(pgid) = tty_controller(self) {
-        log::debug!("Attaching to tty with pgid {pgid}");
         Shed::term_mut(|t| t.attach(pgid)).ok();
         tty_attached = true;
       }

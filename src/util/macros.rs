@@ -279,25 +279,25 @@ macro_rules! sherr {
 	($kind:ident($($inner:tt)*)@$span:expr, $($arg:tt)*) => {
 		$crate::util::ShErr::at(
 			$crate::util::ShErrKind::$kind($($inner)*),
-			$span, format!($($arg)*)
+			$span, ::shed_macros::styled_format!($($arg)*)
 		)
 	};
 	($kind:ident($($inner:tt)*), $($arg:tt)*) => {
 		$crate::util::ShErr::simple(
 			$crate::util::ShErrKind::$kind($($inner)*),
-			format!($($arg)*)
+			::shed_macros::styled_format!($($arg)*)
 		)
 	};
 	($kind:ident@$span:expr, $($arg:tt)*) => {
 		$crate::util::ShErr::at(
 			$crate::util::ShErrKind::$kind,
-			$span, format!($($arg)*)
+			$span, ::shed_macros::styled_format!($($arg)*)
 		)
 	};
 	($kind:ident, $($arg:tt)*) => {
 		$crate::util::ShErr::simple(
 			$crate::util::ShErrKind::$kind,
-			format!($($arg)*)
+			::shed_macros::styled_format!($($arg)*)
 		)
 	};
 }

@@ -78,7 +78,7 @@ impl super::Builtin for Cd {
     }
 
     if !new_dir.exists() {
-      return Err(sherr!(ExecFail @ span.clone(), "Directory not found"));
+      return Err(sherr!(ExecFail @ span.clone(), "Directory not found: {}", new_dir.display()));
     }
     if !new_dir.is_dir() {
       return Err(sherr!(ExecFail @ span.clone(), "Not a directory"));

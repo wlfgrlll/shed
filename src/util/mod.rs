@@ -1,4 +1,4 @@
-mod error;
+pub(crate) mod error;
 pub mod flog;
 mod guards;
 mod macros;

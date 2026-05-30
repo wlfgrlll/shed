@@ -104,13 +104,6 @@ impl CompStrat {
 
       (!branch.is_empty()).then_some(branch)
     });
-    log::debug!(
-      "Got branch {:?} for cursor position {}",
-      branch
-        .as_ref()
-        .map(|b| b.iter().map(|t| t.class()).collect::<Vec<_>>()),
-      cursor_pos
-    );
 
     if let Some(mut branch) = branch {
       while let Some(node) = branch.pop() {
@@ -123,7 +116,6 @@ impl CompStrat {
     }
 
     let Some(prev) = tks.iter().rfind(|t| t.range().end <= cursor_pos) else {
-      log::debug!("Cursor in empty input or leading whitespace");
       return (
         Self::Command {
           prefix: String::new(),
@@ -132,11 +124,6 @@ impl CompStrat {
         0,
       );
     };
-    log::debug!(
-      "Cursor after {:?} with class {:?}",
-      prev.span().as_str(),
-      prev.class(),
-    );
     (
       Self::from_predecessor(prev),
       Span::new(cursor_pos..cursor_pos, prev.span().get_source()),
@@ -156,12 +143,6 @@ impl CompStrat {
   /// `$VAR`/`~` in the user's literal text) or wholesale-replace (for glob
   /// patterns where the literal text doesn't appear in the match).
   fn from_leaf(leaf: &CtxTk, cursor_pos: usize) -> (Self, Span, usize) {
-    log::debug!(
-      "Cursor inside {:?} with class {:?}",
-      leaf.span().as_str(),
-      leaf.class(),
-    );
-
     let prefix = leaf.prefix_from(cursor_pos).unwrap_or_default().to_string();
     let whole = leaf.span().as_str();
     let cursor_pos = leaf.relative_cursor_pos(cursor_pos);
@@ -612,8 +593,6 @@ fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
       .collect()
   });
 
-  log::debug!("After utilities, candidates are: {:?}", candidates);
-
   if shopt!(core.autocd) {
     let dirs = complete_dirs(start, cursor_pos);
     candidates.extend(dirs);
@@ -944,14 +923,7 @@ impl BashCompSpec {
 
     let comp_add: Vec<Candidate> = Shed::meta_mut(|m| m.take_comp_candidates())
       .into_iter()
-      .filter(|c| {
-        log::debug!(
-          "Filtering comp_add candidate {:?} against cword_str {:?}",
-          c.content,
-          cword_str
-        );
-        c.is_match(&cword_str)
-      })
+      .filter(|c| c.is_match(&cword_str))
       .collect();
 
     let candidates: Vec<Candidate> = comp_reply.into_iter().chain(comp_add).collect();
@@ -1419,7 +1391,6 @@ impl SimpleCompleter {
   }
 
   pub fn try_comp_spec(&self, ctx: &CompContext) -> ShResult<CompSpecResult> {
-    log::debug!("Trying to find comp spec for context: {:?}", ctx);
     let Some(cmd) = ctx.cmd() else {
       return Ok(CompSpecResult::NoSpec);
     };
@@ -1445,10 +1416,6 @@ impl SimpleCompleter {
     let tks = get_context_tokens(&line);
     let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
-    log::debug!(
-      "get_candidates: line={line:?} cursor_pos={cursor_pos} strat={strat:?} span={:?} leaf_cursor_pos={leaf_cursor_pos}",
-      replace_span.range()
-    );
     self.token_span = (replace_span.range().start, replace_span.range().end);
     let mut result = match strat {
       CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),

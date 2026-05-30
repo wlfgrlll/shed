@@ -1,7 +1,7 @@
-use ariadne::Span as AriadneSpan;
+use crate::util::error::get_context;
 
 use super::{
-  Label, LabelCtx, NdFlags, NdRule, Node, ParseStream, ShResult, Span, Tk, TkFlags, TkRule,
+  LabelCtx, NdFlags, NdRule, Node, ParseStream, ShResult, Span, Tk, TkFlags, TkRule,
   node::{AssignKind, NodeVecUtils},
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
@@ -209,10 +209,9 @@ impl ParseStream {
           self.commit(node_tks.len());
           let mut context = self.context.clone();
           let assignments_span = assignments.get_span().unwrap();
-          context.push_back((
-            assignments_span.source().clone(),
-            Label::new(assignments_span)
-              .with_message("in variable assignment defined here".to_string()),
+          context.push_back(get_context(
+            "in variable assignment defined here".to_string(),
+            assignments_span,
           ));
           return Ok(Some(node!(
             self,

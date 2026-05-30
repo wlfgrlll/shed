@@ -1,6 +1,6 @@
 use super::{
   LabelCtx,
-  lex::{Span, SpanSource, Tk},
+  lex::{Span, Tk},
   procio::RedirSpec,
   two_way_display,
 };
@@ -148,7 +148,7 @@ impl Node {
       NdRule::Arithmetic { .. } | NdRule::Assignment { .. } => (), // No nodes to check
     }
   }
-  pub fn propagate_context(&mut self, ctx: (SpanSource, Label<Span>)) {
+  pub fn propagate_context(&mut self, ctx: (Span, Label<Span>)) {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
   }
   pub fn get_span(&self) -> Span {
