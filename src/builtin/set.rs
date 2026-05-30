@@ -28,6 +28,7 @@ bitflags! {
     const XTRACE = 1 << 12;
     const HASHALL = 1 << 13;
     const EMACS_MODE = 1 << 14;
+    const PIPEFAIL = 1 << 15;
   }
 }
 
@@ -51,6 +52,7 @@ impl SetFlags {
         _ if flag == SetFlags::EMACS_MODE => "emacs",
         _ if flag == SetFlags::XTRACE => "xtrace",
         _ if flag == SetFlags::HASHALL => "hashall",
+        _ if flag == SetFlags::PIPEFAIL => "pipefail",
         _ => continue,
       };
       fields.push(opt.to_string());
@@ -111,6 +113,7 @@ impl FromStr for SetFlags {
       "errexit" => Ok(Self::ERREXIT),
       "noglob" => Ok(Self::NO_GLOB),
       "hashall" => Ok(Self::HASHALL),
+      "pipefail" => Ok(Self::PIPEFAIL),
       "monitor" => Ok(Self::MONITOR),
       "noexec" => Ok(Self::NO_EXEC),
       "nounset" => Ok(Self::NO_UNSET),

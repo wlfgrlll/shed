@@ -14,6 +14,8 @@ use nix::{
 use scopeguard::defer;
 use yansi::Color;
 
+use crate::shopt;
+
 use super::{
   ShResult, Shed,
   meta::CmdTimer,
@@ -530,8 +532,13 @@ pub fn wait_bg(id: JobID) -> ShResult<()> {
 
       let mut was_stopped = false;
       let mut code = 0;
+      let pipefail = shopt!(set.pipefail);
+
       for status in &statuses {
-        code = code_from_status(status).unwrap_or(0);
+        let stage_code = code_from_status(status).unwrap_or(0);
+        if !pipefail || stage_code != 0 {
+          code = stage_code;
+        }
         match status {
           WtStat::Stopped(_, _) => {
             was_stopped = true;
@@ -558,7 +565,6 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
   if job.children().is_empty() {
     return Ok(());
   }
-  let mut code = 0;
   let mut was_stopped = false;
   if interactive {
     Shed::term_mut(|t| t.attach(job.pgid()))?;
@@ -568,9 +574,14 @@ pub fn wait_fg(job: Job, interactive: bool) -> ShResult<()> {
     enable_reaping();
   }
   let statuses = Shed::jobs_mut(|j| j.new_fg(job))?;
+  let mut code = 0;
+  let pipefail = shopt!(set.pipefail);
 
   for status in &statuses {
-    code = code_from_status(status).unwrap_or(0);
+    let stage_code = code_from_status(status).unwrap_or(0);
+    if !pipefail || stage_code != 0 {
+      code = stage_code;
+    }
     match status {
       WtStat::Stopped(_, _) => {
         was_stopped = true;

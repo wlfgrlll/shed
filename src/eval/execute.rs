@@ -407,10 +407,13 @@ impl Dispatcher {
     };
     let context = body.context.clone();
 
-    // enable set -e temporarily
+    // enable set -e -o pipefail temporarily
     let errexit = shopt!(set.errexit);
+    let pipefail = shopt!(set.pipefail);
     shopt_mut!(set.errexit = true);
+    shopt_mut!(set.pipefail = true);
     defer!(shopt_mut!(set.errexit = errexit));
+    defer!(shopt_mut!(set.pipefail = pipefail));
 
     match self.dispatch_node(*body) {
       Ok(()) => Ok(()),
@@ -1023,6 +1026,7 @@ impl Dispatcher {
     let saved_region = Shed::term_mut(|t| t.scroll_region());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(|t| t.yield_terminal()));
     let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(|t| t.prepare_for_exec()));
+    let mut spans = vec![];
 
     for (i, mut cmd) in cmds.into_iter().enumerate() {
       if num_cmds > 1 {
@@ -1047,6 +1051,8 @@ impl Dispatcher {
       if i == last {
         std::mem::take(&mut out_rdrs).apply_persistent().ok();
       };
+
+      spans.push(cmd.get_span());
 
       result = if should_fork_segment(&cmd) {
         let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
@@ -1088,7 +1094,13 @@ impl Dispatcher {
       });
     }
 
-    check_err(pipeline_flags, None, Some(pipeline_span))?;
+    let blame_span = if shopt!(set.pipefail) {
+      pipefail_span(&spans).or(Some(pipeline_span))
+    } else {
+      Some(pipeline_span)
+    };
+
+    check_err(pipeline_flags, None, blame_span)?;
     Ok(())
   }
 
@@ -1524,6 +1536,17 @@ pub fn will_fork(cmd: &Node) -> bool {
     }
     _ => false,
   }
+}
+
+pub fn pipefail_span(spans: &[Span]) -> Option<Span> {
+  let pipestatus = Shed::vars(|v| v.try_get_arr_elems("PIPESTATUS")).ok()?;
+  for (i, status) in pipestatus.into_iter().enumerate().rev() {
+    let status = status.parse::<usize>().ok()?;
+    if status != 0 {
+      return spans.get(i).cloned();
+    }
+  }
+  None
 }
 
 pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShResult<()> {

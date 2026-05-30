@@ -312,6 +312,10 @@ pub(crate) struct ShOptSet {
   /// If set, the shell will write a trace for each command after it is expanded but before it is executed.
   #[default(false)]
   pub xtrace: bool,
+
+  /// If set, a pipeline's status is its last non-zero status, instead of the status of the last command
+  #[default(false)]
+  pub pipefail: bool,
 }
 
 fn validate_max_hist(v: &isize) -> Result<(), String> {
