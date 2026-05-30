@@ -1491,7 +1491,13 @@ impl ShedLine {
   fn get_layout(&mut self, line: &str) -> Layout {
     let to_cursor = self.editor.window_slice_to_cursor().unwrap_or_default();
     let cols = Shed::term(|t| t.t_cols());
-    Layout::from_parts(cols, self.prompt.get_ps1(), &to_cursor, line)
+    let prompt = layout::pad_prompt_for_gutter(
+      self.prompt.get_ps1(),
+      line,
+      self.editor.scroll_offset(),
+      cols,
+    );
+    Layout::from_parts(cols, &prompt, &to_cursor, line)
   }
   fn scroll_history_virtual(&mut self, cmd: EditCmd) {
     // This function is used for the Shift/Ctrl+Up/Down history concatenation.

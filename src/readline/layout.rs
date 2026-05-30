@@ -6,6 +6,31 @@ use super::{
   Shed, linebuf::Pos, shopt, state::terminal::width, try_var, util::ShResult, write_term,
 };
 
+fn gutter_width(offset: usize, line_count: usize) -> usize {
+  let max_num_len = (offset + line_count).to_string().len();
+  max_num_len + 3
+}
+
+pub fn pad_prompt_for_gutter(prompt: &str, line: &str, offset: usize, term_width: usize) -> String {
+  let prompt_end = Layout::calc_pos(term_width, prompt, Pos { col: 0, row: 0 }, 0, false);
+  let multiline = line.contains('\n') || prompt_end.col == 0;
+  if !multiline {
+    return prompt.to_string();
+  }
+  let line_count = line.split('\n').count();
+  let pad = gutter_width(offset, line_count).saturating_sub(prompt_end.col);
+  if pad == 0 {
+    return prompt.to_string();
+  }
+  let padding = " ".repeat(pad);
+  let mut out = prompt.to_string();
+  match out.rfind('\n') {
+    Some(nl_pos) => out.insert_str(nl_pos + 1, &padding),
+    None => out.insert_str(0, &padding),
+  }
+  out
+}
+
 pub fn enumerate_lines(
   s: &str,
   left_pad: usize,
@@ -38,7 +63,7 @@ pub fn enumerate_lines(
         let prefix = if show_numbers {
           format!("\x1b[0m\x1b[90m{}{num} |\x1b[0m ", " ".repeat(num_pad))
         } else {
-          " ".repeat(prefix_len + 1).to_string()
+          " ".repeat(prefix_len).to_string()
         };
         write!(acc, "{prefix}{}{last_style}{ln}", " ".repeat(trail_pad)).unwrap();
       }
@@ -186,20 +211,21 @@ pub fn redraw(
   let end = new_layout.end;
   let cursor = new_layout.cursor;
 
+  let t_cols = Shed::term(|t| t.t_cols());
+  let padded_prompt = pad_prompt_for_gutter(prompt, line, offset, t_cols);
+
   Shed::term_mut(|t| t.emit_osc_prompt_start()).ok();
   if let Some(prefix) = try_var!("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
-  write_term!("{prompt}").ok();
+  write_term!("{padded_prompt}").ok();
   if let Some(suffix) = try_var!("SHELL_PROMPT_SUFFIX") {
     write_term!("{suffix}").ok();
   }
   Shed::term_mut(|t| t.emit_osc_prompt_end()).ok();
 
-  let t_cols = Shed::term(|t| t.t_cols());
-
   let tab_width = shopt!(line.tab_width);
-  let prompt_end = Layout::calc_pos(t_cols, prompt, Pos { col: 0, row: 0 }, 0, false);
+  let prompt_end = Layout::calc_pos(t_cols, &padded_prompt, Pos { col: 0, row: 0 }, 0, false);
   let expanded = expand_tabs(line, prompt_end.col, tab_width);
   let multiline = expanded.contains('\n') || prompt_end.col == 0;
   if multiline {
