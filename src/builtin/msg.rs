@@ -63,7 +63,7 @@ impl super::Builtin for Msg {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)] // test names deliberately preserve the -s vs -S case distinction
+#[expect(non_snake_case)] // test names deliberately preserve the -s vs -S case distinction
 mod msg_tests {
   use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};

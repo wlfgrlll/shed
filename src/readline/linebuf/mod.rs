@@ -133,7 +133,7 @@ impl Default for LineBuf {
   }
 }
 
-#[allow(dead_code, unused_variables)]
+#[expect(unused_variables)]
 impl LineBuf {
   pub fn new() -> Self {
     Self::default()

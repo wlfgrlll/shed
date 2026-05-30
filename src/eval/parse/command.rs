@@ -144,7 +144,7 @@ impl ParseStream {
       )))
     }
   }
-  #[allow(clippy::while_let_loop)]
+  #[expect(clippy::while_let_loop)]
   pub(super) fn parse_cmd(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks = vec![];
 

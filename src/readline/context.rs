@@ -949,7 +949,7 @@ fn parse_op_body(
   arg_end
 }
 
-#[allow(clippy::too_many_arguments)] // teehee
+#[expect(clippy::too_many_arguments)] // teehee
 fn get_subtoken(
   chars: &mut Peekable<CharIndices>,
   span: &Span,

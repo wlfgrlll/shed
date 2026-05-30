@@ -77,7 +77,7 @@ macro_rules! semver {
   };
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) enum XtVersion {
   Iterm2(SemVer),
@@ -86,7 +86,7 @@ pub(crate) enum XtVersion {
   Unknown(String),
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl XtVersion {
   pub fn parse(raw: &str) -> Self {
     Self::parse_iterm2(raw)
@@ -236,7 +236,6 @@ impl EventParser {
 }
 
 impl vte::Perform for EventParser {
-  #[allow(clippy::single_match)]
   fn hook(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
     let params: Vec<u16> = params
       .iter()

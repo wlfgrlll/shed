@@ -590,7 +590,7 @@ mod tests {
       new
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn vi() -> Self {
       let new = Self::new();
       shopt_mut!(set.vi = true);

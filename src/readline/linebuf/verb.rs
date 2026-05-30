@@ -13,7 +13,7 @@ use super::{
 };
 
 impl super::LineBuf {
-  #[allow(clippy::unit_arg)]
+  #[expect(clippy::unit_arg)]
   pub(super) fn exec_verb(&mut self, cmd: &EditCmd) -> ShResult<()> {
     let EditCmd { verb, motion, .. } = cmd;
 

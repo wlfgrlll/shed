@@ -650,7 +650,7 @@ mod format_time_tests {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)] // names preserve uppercase vs lowercase E
+#[expect(non_snake_case)] // names preserve uppercase vs lowercase E
 mod expand_ansi_c_tests {
   use super::expand_ansi_c;
 

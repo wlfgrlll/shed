@@ -213,7 +213,6 @@ const COMMANDS: &[(&str, ExCommand)] = &[
   ("help", ExCommand::Help),
 ];
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ExTkRule {
   Bang,

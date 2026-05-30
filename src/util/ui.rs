@@ -74,7 +74,7 @@ pub struct PaletteEntry {
   decorations: Decorations,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl PaletteEntry {
   pub fn new() -> Self {
     Self {

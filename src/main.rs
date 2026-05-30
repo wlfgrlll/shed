@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
   clippy::derivable_impls,
   clippy::tabs_in_doc_comments,
   clippy::while_let_on_iterator,

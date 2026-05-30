@@ -414,7 +414,7 @@ pub enum LineAddr {
   Mark(char),
 }
 
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Motion {
   WholeLine,

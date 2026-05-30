@@ -42,7 +42,7 @@ two_way_display! {CompleteStyle,
   Fuzzy <=> "fuzzy";
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ShedBellStyle {
   Audible,
@@ -201,7 +201,7 @@ impl ShOpts {
   }
 }
 
-#[allow(clippy::ptr_arg)]
+#[expect(clippy::ptr_arg)]
 fn validate_viewport_height(v: &String) -> Result<(), String> {
   if v.ends_with('%') {
     let num_part = &v[..v.len() - 1];
@@ -322,7 +322,7 @@ fn validate_max_hist(v: &isize) -> Result<(), String> {
   }
 }
 
-#[allow(clippy::ptr_arg)]
+#[expect(clippy::ptr_arg)]
 fn validate_bell_style(v: &String) -> Result<(), String> {
   match v.as_str() {
     "audible" | "visible" | "both" => Ok(()),
@@ -380,7 +380,6 @@ pub(crate) struct ShOptCore {
   pub bell_style: String,
 }
 
-#[allow(clippy::ptr_arg)]
 fn validate_leader(v: &String) -> Result<(), String> {
   if expand_keymap(v).is_empty() {
     Err(format!("invalid leader key sequence '{v}'"))

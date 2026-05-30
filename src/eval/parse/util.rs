@@ -99,7 +99,7 @@ pub(super) fn node_is_punctuated(tokens: &[Tk]) -> bool {
     .is_some_and(|tk| matches!(tk.class, TkRule::Sep))
 }
 
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub(super) fn split_for_arith_tk(
   tk: Tk,
 ) -> ShResult<(Option<Box<Node>>, Option<Box<Node>>, Option<Box<Node>>)> {

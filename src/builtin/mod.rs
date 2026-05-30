@@ -861,7 +861,7 @@ pub mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)]
+  #[expect(non_snake_case)]
   fn command_V_builtin_says_shell_builtin() {
     let g = TestGuard::new();
     test_input("command -V echo").unwrap();
@@ -871,7 +871,7 @@ pub mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)]
+  #[expect(non_snake_case)]
   fn command_V_keyword_says_shell_keyword() {
     let g = TestGuard::new();
     test_input("command -V if").unwrap();
@@ -881,7 +881,7 @@ pub mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)]
+  #[expect(non_snake_case)]
   fn command_V_not_found_writes_stderr_and_127() {
     let g = TestGuard::new();
     test_input("command -V __hopefully__not__a__command__").unwrap();
@@ -891,7 +891,7 @@ pub mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)]
+  #[expect(non_snake_case)]
   fn command_v_and_V_together_errors() {
     let _g = TestGuard::new();
     let _ = test_input("command -v -V echo");
@@ -899,7 +899,7 @@ pub mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)]
+  #[expect(non_snake_case)]
   fn command_V_and_v_together_errors() {
     let _g = TestGuard::new();
     let _ = test_input("command -V -v echo");

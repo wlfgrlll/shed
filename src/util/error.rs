@@ -71,8 +71,7 @@ thread_local! {
   static COLOR_RNG: RefCell<ColorRng> = const { RefCell::new(ColorRng { last_color: None }) };
 }
 
-#[allow(dead_code)]
-pub fn next_color() -> Color {
+pub(crate) fn next_color() -> Color {
   COLOR_RNG.with(|rng| {
     let color = rng.borrow_mut().next().unwrap();
     rng.borrow_mut().last_color = Some(color);
@@ -80,13 +79,8 @@ pub fn next_color() -> Color {
   })
 }
 
-pub fn last_color() -> Color {
+pub(crate) fn last_color() -> Color {
   COLOR_RNG.with(|rng| rng.borrow_mut().last_color())
-}
-
-#[allow(dead_code)]
-pub fn clear_color() {
-  COLOR_RNG.with(|rng| rng.borrow_mut().last_color = None);
 }
 
 pub fn get_context(msg: String, span: Span) -> (Span, Label<Span>) {

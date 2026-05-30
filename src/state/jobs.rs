@@ -1408,7 +1408,7 @@ mod tests {
   }
 
   #[test]
-  #[allow(non_snake_case)] // name preserves the TIMEFMT env-var spelling
+  #[expect(non_snake_case)] // name preserves the TIMEFMT env-var spelling
   fn report_timer_respects_TIMEFMT_var() {
     let g = TestGuard::new();
     Shed::logic_mut(|l| l.clear_autocmds(AutoCmdKind::OnTimeReport));
