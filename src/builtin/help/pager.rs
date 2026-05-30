@@ -417,6 +417,47 @@ impl HelpPager {
       .map(|m| (map[m.start()], map[m.end()]))
       .collect();
 
+    // update active idx
+    let lf_positions: Vec<_> = self
+      .content
+      .content()
+      .bytes()
+      .enumerate()
+      .filter(|(_, c)| *c == b'\n')
+      .map(|(i, _)| i)
+      .collect();
+
+    let line_for = |start: &usize| {
+      lf_positions
+        .iter()
+        .position(|pos| *pos > *start)
+        .unwrap_or(lf_positions.len())
+    };
+    if !self.search.results.is_empty() {
+      let anchor = self.search.anchor;
+      // compare line to anchor
+      let pos = match self.search.dir {
+        Direction::Forward => self
+          .search
+          .results
+          .iter()
+          .position(|(start, _)| line_for(start) >= anchor),
+        Direction::Backward => self
+          .search
+          .results
+          .iter()
+          .rposition(|(start, _)| line_for(start) <= anchor),
+      };
+      // wrap around if none found
+      self.search.active_result_idx1 = pos.map(|p| p + 1).unwrap_or_else(|| {
+        if matches!(self.search.dir, Direction::Backward) {
+          self.search.results.len()
+        } else {
+          1
+        }
+      });
+    }
+
     if jump {
       self.jump_to_match(self.search.dir);
     }
