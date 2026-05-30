@@ -252,6 +252,8 @@ impl HelpPager {
         Direction::Backward => '?',
       };
       write_term!("\x1b[1;7;4m {prefix}{query} \x1b[0m",).ok();
+    } else {
+      write_term!("\x1b[K").ok();
     }
 
     Shed::term_mut(|t| t.flush())?;
@@ -394,7 +396,7 @@ impl HelpPager {
   }
 
   pub fn max_scroll(&self) -> usize {
-    let t_rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
+    let t_rows = Shed::term(|t| t.t_rows());
     self.content().lines().count().saturating_sub(t_rows)
   }
 
@@ -562,7 +564,7 @@ impl HelpPager {
         self.scroll_offset = 0;
       }
       PagerCmd::BottomOfPage => {
-        let rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
+        let rows = Shed::term(|t| t.t_rows());
         let n_lines = self.content().lines().count();
         self.scroll_offset = n_lines.saturating_sub(rows);
       }
