@@ -11,7 +11,7 @@ use crate::shopt;
 
 use super::{
   FdWriter,
-  eval::lex::{Span, SpanSource, get_char},
+  eval::lex::{Span, SpanSource},
   procio::{RedirGuard, stderr_fileno},
   sherr,
 };
