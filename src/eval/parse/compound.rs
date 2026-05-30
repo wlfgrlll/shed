@@ -754,7 +754,12 @@ impl ParseStream {
       NdRule::List { commands: body },
       vec![]
     ));
-    let try_span = body.get_span().merge_with(try_tk_span).unwrap();
+    let try_span = body.get_span().merge_with(try_tk_span.clone()).unwrap();
+    let try_span = if try_span.as_str().contains('\n') {
+      try_span
+    } else {
+      try_tk_span
+    };
     body.propagate_context(get_context(
       styled_format!("in '{}' block defined here", "try"),
       try_span,
