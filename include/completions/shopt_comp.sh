@@ -120,6 +120,7 @@ _shopt_comp() {
 			nolog
 			notify
 			nounset
+			pipefail
 			verbose
 			xtrace
 		)
@@ -135,6 +136,7 @@ _shopt_comp() {
 			"If enabled, function definitions are not written to command history. Current value: '$(shopt set.nolog)'"
 			"If enabled, asynchronous job status info is printed when jobs exit or stop. Current value: '$(shopt set.notify)'"
 			"If enabled, expanding an unset variable (other than \$* or \$@) is an error. Current value: '$(shopt set.nounset)'"
+			"If enabled, a pipeline's exit status is the last non-zero status from any stage. Current value: '$(shopt set.pipefail)'"
 			"If enabled, the shell writes its input to stderr as it is read. Current value: '$(shopt set.verbose)'"
 			"If enabled, the shell prints a trace of each command before executing it. Current value: '$(shopt set.xtrace)'"
 		)

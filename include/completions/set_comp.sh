@@ -13,6 +13,7 @@ _set_comp() {
 		nolog
 		notify
 		nounset
+		pipefail
 		verbose
 		vi
 		xtrace
