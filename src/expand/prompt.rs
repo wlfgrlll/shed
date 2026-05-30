@@ -215,20 +215,13 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       }
     }
     PromptTk::Pwd => {
-      let mut pwd = var!("PWD");
-      let home = state::util::get_home_str().unwrap_or_default();
-      if pwd.starts_with(&home) {
-        pwd = pwd.replacen(&home, "~", 1);
-      }
+      let pwd = state::util::display_path(var!("PWD"));
       result.push_str(&pwd);
     }
     PromptTk::PwdShort => {
-      let mut pwd = var!("PWD");
-      let home = state::util::get_home_str().unwrap_or_default();
-      if pwd.starts_with(&home) {
-        pwd = pwd.replacen(&home, "~", 1);
-      }
+      let pwd = state::util::display_path(var!("PWD"));
       let pathbuf = PathBuf::from(&pwd);
+
       let mut segments = pathbuf.iter().count();
       let mut path_iter = pathbuf.iter();
       let max_segments = shopt!(prompt.trunc_prompt_path);
@@ -237,10 +230,8 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
         segments -= 1;
       }
       let path_rebuilt: PathBuf = path_iter.collect();
-      let mut path_rebuilt = path_rebuilt.to_str().unwrap().to_string();
-      if path_rebuilt.starts_with(&home) {
-        path_rebuilt = path_rebuilt.replacen(&home, "~", 1);
-      }
+      let path_rebuilt = path_rebuilt.to_str().unwrap().to_string();
+
       result.push_str(&path_rebuilt);
     }
     PromptTk::Hostname => {

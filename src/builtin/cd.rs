@@ -1,7 +1,4 @@
-use std::{
-  env,
-  path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use super::{
   ShResult,
@@ -30,16 +27,13 @@ impl super::Builtin for Cd {
     }
 
     let (mut new_dir, arg_span) = if let Some((arg, span)) = args.argv.into_iter().next() {
-      match arg.as_str() {
-        "-" => {
-          let old_pwd = get_old_pwd();
-          print_dir = true;
-          (old_pwd, Some(span))
-        }
-        _ => {
-          try_cd_path = !arg.starts_with(['/', '.']);
-          (PathBuf::from(arg), Some(span))
-        }
+      if arg.as_str() == "-" {
+        let old_pwd = get_old_pwd();
+        print_dir = true;
+        (old_pwd, Some(span))
+      } else {
+        try_cd_path = !arg.starts_with(['/', '.']);
+        (PathBuf::from(arg), Some(span))
       }
     } else {
       (
@@ -55,7 +49,9 @@ impl super::Builtin for Cd {
       new_dir = found;
     }
 
-    let logical_pwd = if !resolve_syms {
+    let logical_pwd = if resolve_syms {
+      None
+    } else {
       let base = if new_dir.is_absolute() {
         PathBuf::new()
       } else {
@@ -69,8 +65,6 @@ impl super::Builtin for Cd {
           .display()
           .to_string(),
       )
-    } else {
-      None
     };
 
     if resolve_syms && let Ok(canon) = std::fs::canonicalize(&new_dir) {
@@ -88,7 +82,7 @@ impl super::Builtin for Cd {
     }
 
     if print_dir {
-      let mut dir = env::current_dir()?.display().to_string();
+      let mut dir = util::display_path(var!("PWD"));
       if let Some(home) = util::get_home_str()
         && let Some(home_dir) = dir.strip_prefix(&home)
       {

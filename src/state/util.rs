@@ -649,12 +649,29 @@ pub fn source_env() -> ShResult<()> {
 
 pub fn source_file(path: PathBuf) -> ShResult<()> {
   let source_name = path.to_string_lossy().to_string();
+  let source_display = display_path_normalized(source_name);
   let mut file = OpenOptions::new().read(true).open(path)?;
 
   let mut buf = String::new();
   file.read_to_string(&mut buf)?;
-  exec_nonint(buf, Some(source_name.into()))?;
+  exec_nonint(buf, Some(source_display.into()))?;
   Ok(())
+}
+
+pub fn display_path<P: AsRef<Path>>(path: P) -> String {
+  let s = path.as_ref().to_string_lossy().into_owned();
+  if let Some(home) = get_home_str()
+    && !home.is_empty()
+    && let Some(rest) = s.strip_prefix(&home)
+  {
+    format!("~{}", rest)
+  } else {
+    s
+  }
+}
+
+pub fn display_path_normalized<P: AsRef<Path>>(path: P) -> String {
+  display_path(lex_normalize_path(path.as_ref()))
 }
 
 pub fn set_ver_info() -> ShResult<()> {
