@@ -21,7 +21,7 @@ impl super::Builtin for Shopt {
     if args.argv.is_empty() {
       let output = Shed::shopts_mut(|s| s.display_opts())?;
 
-      outln!("{output}");
+      outln!("{}", prefix_sourceable(&output));
 
       return with_status(0);
     }
@@ -49,17 +49,39 @@ impl super::Builtin for Shopt {
         continue;
       };
 
-      // kind of a hack but idc
-      if print_help || output.lines().count() > 2 {
+      if print_help {
         outln!("{output}");
+      } else if output.lines().count() > 2 {
+        outln!("{}", prefix_sourceable(&output));
       } else {
-        let second_line = output.lines().nth(1).unwrap_or("");
-        outln!("{second_line}");
+        let value = output.lines().nth(1).unwrap_or("");
+        outln!("shopt {arg}={value}");
       }
     }
 
     with_status(0)
   }
+}
+
+fn prefix_sourceable(s: &str) -> String {
+  s.lines()
+    .map(|line| {
+      // A sourceable shopt line is a single 'key=value' with no
+      // leading whitespace and at least one '.' in the key (every
+      // group is namespaced). Comments and blank lines pass through.
+      let trimmed = line.trim_end();
+      if trimmed.is_empty() || trimmed.starts_with('#') {
+        return trimmed.to_string();
+      }
+      match trimmed.split_once('=') {
+        Some((key, _)) if key.contains('.') && !key.contains(char::is_whitespace) => {
+          format!("shopt {trimmed}")
+        }
+        _ => trimmed.to_string(),
+      }
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 #[cfg(test)]
