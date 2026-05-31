@@ -817,7 +817,7 @@ impl ParseStream {
 
     self.catch_separator(&mut node_tks);
 
-    let Some(catch_body) = self.parse_cmd_list()? else {
+    let Some(mut catch_body) = self.parse_cmd_list()? else {
       bail!(
         self,
         node_tks,
@@ -827,6 +827,8 @@ impl ParseStream {
       );
     };
     node_tks.extend(catch_body.tokens.clone());
+
+    catch_body.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR);
 
     if !self.check_keyword("done") {
       bail!(

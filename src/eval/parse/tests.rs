@@ -1232,6 +1232,116 @@ fn try_block_restores_errexit_after_catch() {
   );
 }
 
+// ===================== try/catch four-form matrix =====================
+//
+//                 no body                with body
+// no msg          silent swallow         override (body only)
+// with msg        default report         report + post-hook
+
+#[test]
+fn try_bare_catch_swallows_silently() {
+  // catch with no message, no body: swallow the failure, no report,
+  // status goes to 0 as if nothing happened.
+  let guard = TestGuard::new();
+  test_input("try false; catch; echo $?").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("0\n"),
+    "bare catch should set $? to 0 (silent swallow); got: {out:?}"
+  );
+  assert!(
+    !out.contains("Try Failed"),
+    "bare catch should not print an error report; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_catch_body_runs_after_report() {
+  // catch with message AND body: the styled report prints first, then
+  // the body runs as a post-hook.
+  let guard = TestGuard::new();
+  test_input(r#"try false; catch "fail"; do echo recovered; done"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("Try Failed"),
+    "report should print; got: {out:?}"
+  );
+  assert!(
+    out.contains("fail"),
+    "catch message should print; got: {out:?}"
+  );
+  assert!(
+    out.contains("recovered\n"),
+    "body should run after the report; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_catch_body_only_skips_report() {
+  // catch with body but no message: the user is overriding the default
+  // reporting, no styled report appears.
+  let guard = TestGuard::new();
+  test_input("try false; catch; do echo recovered; done").unwrap();
+  let out = guard.read_output();
+  assert!(
+    !out.contains("Try Failed"),
+    "body-only catch should suppress the report; got: {out:?}"
+  );
+  assert!(
+    out.contains("recovered\n"),
+    "body should still run; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_caught_failure_resets_status() {
+  // A try block that catches a failure is structurally "successful" —
+  // $? is 0 after, regardless of what the body or the original failure
+  // set it to. This prevents outer errexit from refiring on the original
+  // failure's status, and matches the "exception handled" mental model.
+  let guard = TestGuard::new();
+  test_input("try false; catch; do false; done; echo $?").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("0\n"),
+    "$? should be 0 after a caught failure; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_catch_body_failure_does_not_propagate() {
+  // A failure inside the recovery body must not retrigger the surrounding
+  // errexit. The `echo after` line proves outer execution continued.
+  let guard = TestGuard::new();
+  test_input("set -e; try false; catch; do false; done; echo after").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("after\n"),
+    "failing recovery must not propagate; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_catch_multiline_do_done_form() {
+  // Verify the do/done form works with a newline-separated body.
+  let guard = TestGuard::new();
+  test_input("try\n  false\ncatch \"oops\"; do\n  echo line1\n  echo line2\ndone").unwrap();
+  let out = guard.read_output();
+  assert!(out.contains("Try Failed"), "got: {out:?}");
+  assert!(
+    out.contains("line1\nline2"),
+    "body statements should run in order; got: {out:?}"
+  );
+}
+
+#[test]
+fn parse_try_empty_do_body_errors() {
+  // `catch; do done` with nothing between `do` and `done` should error
+  // at parse time. Empty do-blocks are essentially never intentional.
+  let input = "try false; catch; do done";
+  assert!(get_ast(input).is_err());
+}
+
 // ===================== `not` keyword =====================
 
 #[test]

@@ -462,16 +462,15 @@ impl Dispatcher {
             .print_error();
         }
 
-        if state::Shed::get_status() == 0 {
-          state::Shed::set_status(1);
+        if let Some(catch) = catch
+          && let Err(e) = self.dispatch_node(*catch)
+        {
+          if e.is_flow_control() {
+            return Err(e);
+          }
+          e.print_error();
         }
-
-        if let Some(catch) = catch {
-          shopt_mut!(set.errexit = errexit);
-          shopt_mut!(set.pipefail = pipefail);
-
-          self.dispatch_node(*catch)?;
-        }
+        state::Shed::set_status(0);
 
         Ok(())
       }
