@@ -13,7 +13,6 @@ _builtin_comp() {
 		"compgen"
 		"complete"
 		"continue"
-		"defer"
 		"dirs"
 		"disown"
 		"echo"
