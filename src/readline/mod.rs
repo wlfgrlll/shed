@@ -1865,35 +1865,6 @@ impl ShedLine {
       new_layout.cursor.row = new_layout.end.row;
     }
 
-    // Tell the completer the width of the prompt line above its \n so it can
-    // account for wrapping when clearing after a resize.
-    let preceding_width = if new_layout.psr_end.is_some() {
-      t_cols
-    } else {
-      // Without PSR, use the content width on the cursor's row
-      (new_layout.end.col + 1).max(new_layout.cursor.col + 1)
-    };
-
-    let mut overlay_rows: usize = 0;
-    if let Some(comp) = self.completer.as_mut() {
-      comp.set_prompt_line_context(preceding_width, new_layout.end.col);
-      overlay_rows += comp.draw();
-    }
-
-    if let Some(finder) = self.history_fzf() {
-      finder.set_prompt_line_context(preceding_width, new_layout.end.col);
-      overlay_rows += finder.draw();
-    }
-    self.overlay_displacement = overlay_rows.try_into().unwrap_or(u16::MAX);
-
-    if let Some(statline) = self.statline.as_mut()
-      && !final_draw
-    {
-      let cols = Shed::term(Terminal::t_cols);
-      let rendered = statline.render(cols);
-      Shed::term_mut(|t| t.draw_status_line(&rendered));
-    }
-
     // write sub-prompts for stuff like ex mode
     if let ModeReport::Ex | ModeReport::RevSearch | ModeReport::Search = self.mode.report_mode() {
       let mut pending_seq = self.mode.pending_seq().unwrap_or_default();
@@ -1930,6 +1901,35 @@ impl ShedLine {
       };
 
       write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
+    }
+
+    // Tell the completer the width of the prompt line above its \n so it can
+    // account for wrapping when clearing after a resize.
+    let preceding_width = if new_layout.psr_end.is_some() {
+      t_cols
+    } else {
+      // Without PSR, use the content width on the cursor's row
+      (new_layout.end.col + 1).max(new_layout.cursor.col + 1)
+    };
+
+    let mut overlay_rows: usize = 0;
+    if let Some(comp) = self.completer.as_mut() {
+      comp.set_prompt_line_context(preceding_width, new_layout.end.col);
+      overlay_rows += comp.draw();
+    }
+
+    if let Some(finder) = self.history_fzf() {
+      finder.set_prompt_line_context(preceding_width, new_layout.end.col);
+      overlay_rows += finder.draw();
+    }
+    self.overlay_displacement = overlay_rows.try_into().unwrap_or(u16::MAX);
+
+    if let Some(statline) = self.statline.as_mut()
+      && !final_draw
+    {
+      let cols = Shed::term(Terminal::t_cols);
+      let rendered = statline.render(cols);
+      Shed::term_mut(|t| t.draw_status_line(&rendered));
     }
 
     while let Some(msg) = Shed::pop_status_msg() {
