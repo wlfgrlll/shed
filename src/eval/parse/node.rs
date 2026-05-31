@@ -1,3 +1,5 @@
+use crate::ShResult;
+
 use super::{
   LabelCtx,
   lex::{Span, Tk, TkRule},
@@ -83,9 +85,10 @@ impl Node {
       }
       NdRule::ForNode { ref mut body, .. }
       | NdRule::TryNode { ref mut body, .. }
+      | NdRule::FuncDef { ref mut body, .. }
+      | NdRule::DeferNode { ref mut body }
       | NdRule::Subshell { ref mut body }
-      | NdRule::BraceGrp { ref mut body }
-      | NdRule::FuncDef { ref mut body, .. } => {
+      | NdRule::BraceGrp { ref mut body } => {
         body.walk_tree(f);
       }
       NdRule::ForArith {
@@ -138,6 +141,29 @@ impl Node {
       }
       NdRule::Arithmetic { .. } | NdRule::Assignment { .. } => (), // No nodes to check
     }
+  }
+  pub fn eager_expand(&mut self) -> ShResult<()> {
+    let expand_tk = |tk: &mut Tk| -> ShResult<()> {
+      *tk = std::mem::take(tk).expand()?;
+      Ok(())
+    };
+
+    match &mut self.class {
+      NdRule::Command { argv: tks, .. } | NdRule::ForNode { arr: tks, .. } => {
+        for tk in tks {
+          expand_tk(tk)?;
+        }
+      }
+      NdRule::Assignment { val: tk, .. }
+      | NdRule::CaseNode { pattern: tk, .. }
+      | NdRule::Arithmetic { body: tk } => {
+        expand_tk(tk)?;
+      }
+
+      _ => {}
+    }
+
+    Ok(())
   }
   pub fn propagate_context(&mut self, ctx: &(Span, Label<Span>)) {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
@@ -231,6 +257,7 @@ pub(crate) enum NdKind {
   Arithmetic,
   CaseNode,
   TryNode,
+  DeferNode,
   Command,
   Pipeline,
   Conjunction,
@@ -251,6 +278,7 @@ impl NdRule {
       Self::LoopNode { .. } => NdKind::LoopNode,
       Self::ForNode { .. } => NdKind::ForNode,
       Self::TryNode { .. } => NdKind::TryNode,
+      Self::DeferNode { .. } => NdKind::DeferNode,
       Self::ForArith { .. } => NdKind::ForArith,
       Self::Arithmetic { .. } => NdKind::Arithmetic,
       Self::CaseNode { .. } => NdKind::CaseNode,
@@ -287,6 +315,9 @@ pub(crate) enum NdRule {
   TryNode {
     body: Box<Node>,
     err: Vec<Tk>,
+  },
+  DeferNode {
+    body: Box<Node>,
   },
   ForArith {
     init: Option<Box<Node>>,

@@ -1,4 +1,4 @@
-use crate::{autocmd, shopt_mut};
+use crate::{autocmd, eval::parse::LabelCtx, shopt_mut};
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use crate::state::util::with_vars;
@@ -326,6 +326,7 @@ impl Dispatcher {
       NdRule::Timed { .. } => self.exec_timed(node),
       NdRule::Command { .. } => self.dispatch_cmd(node),
       NdRule::TryNode { .. } => self.exec_try(node),
+      NdRule::DeferNode { .. } => Self::exec_defer(node),
 
       NdRule::FuncDef { .. } => Self::exec_func_def(node),
       NdRule::Arithmetic { .. } => Self::exec_arith(node),
@@ -399,6 +400,31 @@ impl Dispatcher {
     } else {
       self.exec_cmd(node)
     }
+  }
+  pub fn exec_defer(node: Node) -> ShResult<()> {
+    let NdRule::DeferNode { mut body } = node.class else {
+      unreachable!()
+    };
+
+    // we have to eagerly expand the tokens of this command
+    // something like `defer eval "$(shopt core.nullglob)"`
+    // needs to expand at registration time, and not at
+    // execution time.
+    let mut err: Option<ShErr> = None;
+    body.walk_tree(&mut |n| {
+      if err.is_some() {
+        return;
+      }
+      if let Err(e) = n.eager_expand() {
+        err = Some(e);
+      }
+    });
+    if let Some(e) = err {
+      return Err(e);
+    }
+
+    Shed::vars_mut(|v| v.cur_scope_mut().defer_cmd(*body));
+    Ok(())
   }
   pub fn exec_try(&mut self, node: Node) -> ShResult<()> {
     let try_blame = node.get_span();
@@ -962,6 +988,7 @@ impl Dispatcher {
     flags: NdFlags,
   ) -> ShResult<()> {
     let span = cmd.get_span();
+    let context = cmd.context.clone();
     // it's a single command
     // just thread it through dispatch_node directly.
     // this avoids the stdio setup that follows this
@@ -987,13 +1014,14 @@ impl Dispatcher {
       // but you never know
       dispatch_job(job, false, Shed::term(Terminal::interactive))?;
     }
-    check_err(flags, None, Some(span))?;
+    check_err(flags, None, Some(span), context)?;
     res
   }
 
   fn exec_pipeline(&mut self, pipeline: Node) -> ShResult<()> {
     let pipeline_span = pipeline.get_span().clone();
     let pipeline_flags = pipeline.flags;
+    let pipeline_context = pipeline.context.clone();
     let NdRule::Pipeline { mut cmds } = pipeline.class else {
       unreachable!()
     };
@@ -1108,7 +1136,7 @@ impl Dispatcher {
       Some(pipeline_span)
     };
 
-    check_err(pipeline_flags, None, blame_span)?;
+    check_err(pipeline_flags, None, blame_span, pipeline_context)?;
     Ok(())
   }
 
@@ -1553,7 +1581,12 @@ pub fn pipefail_span(spans: &[Span]) -> Option<Span> {
   None
 }
 
-pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShResult<()> {
+pub fn check_err(
+  flags: NdFlags,
+  err: Option<ShErr>,
+  span: Option<Span>,
+  context: LabelCtx,
+) -> ShResult<()> {
   if state::Shed::get_status() != 0 && !flags.contains(NdFlags::NOT_ERR) {
     if let Some(trap) = Shed::logic(|l| l.get_trap(TrapTarget::Error)) {
       let saved_status = state::Shed::get_status();
@@ -1564,17 +1597,19 @@ pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShRe
       if let Some(mut e) = err {
         e.set_kind(ShErrKind::ErrInterrupt);
         e.persist_redirs();
-        return Err(e);
+        return Err(e.with_context(context));
       } else if let Some(span) = span {
-        return Err(sherr!(
-            ErrInterrupt @ span,
-            "Command returned non-zero exit status",
-        ));
+        return Err(
+          sherr!(
+              ErrInterrupt @ span,
+              "Command returned non-zero exit status",
+          )
+          .with_context(context),
+        );
       }
-      return Err(sherr!(
-        ErrInterrupt,
-        "Command returned non-zero exit status",
-      ));
+      return Err(
+        sherr!(ErrInterrupt, "Command returned non-zero exit status",).with_context(context),
+      );
     }
   }
   Ok(())

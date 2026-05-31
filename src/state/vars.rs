@@ -12,7 +12,10 @@ use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use super::{
   ShResult,
-  eval::lex::{LexFlags, LexStream, Tk},
+  eval::{
+    lex::{LexFlags, LexStream, Tk},
+    parse::node::Node,
+  },
   expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
   procio::stdin_fileno,
   readline::Candidate,
@@ -559,7 +562,7 @@ pub(crate) struct VarTab {
   params: HashMap<ShellParam, String>,
   sh_argv: VecDeque<String>, /* Using a VecDeque makes the implementation of `shift` straightforward */
 
-  deferred_cmds: Vec<String>,
+  deferred_cmds: Vec<Node>,
 }
 
 impl VarTab {
@@ -696,19 +699,11 @@ impl VarTab {
       self.bpush_arg(arg);
     }
   }
-  pub fn defer_cmd(&mut self, cmd: String) {
+  pub fn defer_cmd(&mut self, cmd: Node) {
     self.deferred_cmds.push(cmd);
   }
-  pub fn take_deferred_cmds(&mut self) -> Vec<String> {
+  pub fn take_deferred_cmds(&mut self) -> Vec<Node> {
     std::mem::take(&mut self.deferred_cmds)
-  }
-  pub fn display_deferred_cmds(&self) -> String {
-    self
-      .deferred_cmds
-      .iter()
-      .map(|s| as_var_val_display(s))
-      .collect::<Vec<_>>()
-      .join("\n")
   }
   pub fn sh_argv(&self) -> &VecDeque<String> {
     &self.sh_argv

@@ -35,6 +35,9 @@ pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'
 impl Tk {
   /// Create a new expanded token
   pub fn expand(self) -> ShResult<Self> {
+    if let TkRule::Expanded { .. } = self.class {
+      return Ok(self);
+    }
     let flags = self.flags;
     let span = self.span.clone();
     let exp = Expander::new(&self).expand().promote_err(span.clone())?;
@@ -42,10 +45,16 @@ impl Tk {
     Ok(Self { class, span, flags })
   }
   pub fn expand_to_words(self) -> ShResult<Vec<String>> {
+    if let TkRule::Expanded { exp } = self.class {
+      return Ok(exp);
+    }
     let span = self.span.clone();
     Expander::new(&self).expand().promote_err(span)
   }
   pub fn expand_no_side_effects(self) -> ShResult<Self> {
+    if let TkRule::Expanded { .. } = self.class {
+      return Ok(self);
+    }
     let flags = self.flags;
     let span = self.span.clone();
     let exp = Expander::new(&self)
@@ -55,6 +64,9 @@ impl Tk {
     Ok(Self { class, span, flags })
   }
   pub fn expand_no_split(self) -> ShResult<String> {
+    if let TkRule::Expanded { exp } = &self.class {
+      return Ok(exp.join(" "));
+    }
     let span = self.span.clone();
     let exp = Expander::new(&self)
       .no_glob()

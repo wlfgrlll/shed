@@ -295,6 +295,7 @@ impl ParseStream {
           try_match!(self.parse_try()?);
           try_match!(self.parse_negate()?);
           try_match!(self.parse_time()?);
+          try_match!(self.parse_defer()?);
           try_match!(self.parse_func_keyword()?);
           try_match!(self.parse_arith()?);
           try_match!(self.parse_cmd()?);
@@ -328,6 +329,7 @@ impl ParseStream {
       try_match!(self.parse_loop()?);
       try_match!(self.parse_for()?);
       try_match!(self.parse_try()?);
+      try_match!(self.parse_defer()?);
       try_match!(self.parse_if()?);
 
       Ok(None)

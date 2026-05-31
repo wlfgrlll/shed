@@ -807,6 +807,54 @@ impl ParseStream {
 
     Ok(Some(node))
   }
+  pub(super) fn parse_defer(&mut self) -> ShResult<Option<Node>> {
+    if !self.check_keyword("defer") {
+      return Ok(None);
+    }
+    let mut node_tks = vec![];
+
+    let defer_tk = self.next_tk().unwrap();
+    let defer_tk_span = defer_tk.span.clone();
+
+    node_tks.push(defer_tk);
+
+    self.catch_separator(&mut node_tks);
+
+    let Some(mut body) = self.parse_block(true)? else {
+      bail!(
+        self,
+        node_tks,
+        "Expected a command after '{}' keyword",
+        "defer"
+      );
+    };
+
+    let body_span = body.get_span();
+    let defer_span = if body_span.as_str().contains('\n') {
+      body_span.merge_with(&defer_tk_span).unwrap()
+    } else {
+      defer_tk_span
+    };
+
+    node_tks.extend(body.tokens.clone());
+
+    body.propagate_context(&get_context(
+      styled_format!("in '{}' block defined here", "defer"),
+      defer_span,
+    ));
+
+    self.catch_separator(&mut node_tks);
+
+    let node = node!(
+      self,
+      node_tks,
+      NdRule::DeferNode {
+        body: Box::new(body)
+      }
+    );
+
+    Ok(Some(node))
+  }
 }
 
 #[cfg(test)]

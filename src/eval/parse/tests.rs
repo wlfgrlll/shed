@@ -1442,3 +1442,238 @@ fn try_restores_pipefail_after_done() {
     "pipefail should be restored to off; got: {out:?}"
   );
 }
+
+// ===================== `defer` keyword =====================
+
+#[test]
+fn parse_defer_basic() {
+  let input = "defer echo hi";
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::DeferNode,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_defer_brace_group_body() {
+  let input = "defer { echo a; echo b; }";
+  let expected = &mut [
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::DeferNode,
+    NdKind::Pipeline,
+    NdKind::BraceGrp,
+    NdKind::List,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+    NdKind::Conjunction,
+    NdKind::Pipeline,
+    NdKind::Command,
+  ]
+  .into_iter();
+  let ast = get_ast(input).unwrap();
+  let mut node = ast[0].clone();
+  if let Err(e) = node.assert_structure(expected) {
+    panic!("{}", e);
+  }
+}
+
+#[test]
+fn parse_defer_matches_time_structure() {
+  // defer and time both take a single block as body and wrap it the
+  // same way (no extra list-of-conjunctions layer like try has).
+  let time_ast = get_ast("time echo x").unwrap();
+  let defer_ast = get_ast("defer echo x").unwrap();
+
+  let mut time_kinds = vec![];
+  time_ast[0]
+    .clone()
+    .walk_tree(&mut |n| time_kinds.push(n.class.as_nd_kind()));
+  let mut defer_kinds = vec![];
+  defer_ast[0]
+    .clone()
+    .walk_tree(&mut |n| defer_kinds.push(n.class.as_nd_kind()));
+
+  // Replace Timed with DeferNode for the comparison.
+  let normalized: Vec<NdKind> = time_kinds
+    .into_iter()
+    .map(|k| {
+      if k == NdKind::Timed {
+        NdKind::DeferNode
+      } else {
+        k
+      }
+    })
+    .collect();
+  assert_eq!(normalized, defer_kinds);
+}
+
+#[test]
+fn parse_defer_missing_body_errors() {
+  assert!(get_ast("defer").is_err());
+}
+
+#[test]
+fn defer_fires_at_brace_group_exit() {
+  let guard = TestGuard::new();
+  test_input("{ defer echo bye; echo hi; }").unwrap();
+  let out = guard.read_output();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+  assert_eq!(lines, vec!["hi", "bye"]);
+}
+
+#[test]
+fn defer_lifo_in_brace_group() {
+  let guard = TestGuard::new();
+  test_input("{ defer echo a; defer echo b; defer echo c; }").unwrap();
+  let out = guard.read_output();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+  assert_eq!(lines, vec!["c", "b", "a"]);
+}
+
+#[test]
+fn defer_lifo_in_function() {
+  let guard = TestGuard::new();
+  test_input("foo() { defer echo a; defer echo b; defer echo c; }").unwrap();
+  test_input("foo").unwrap();
+  let out = guard.read_output();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+  assert_eq!(lines, vec!["c", "b", "a"]);
+}
+
+#[test]
+fn defer_nested_scope_isolation() {
+  // Inner defers fire when the inner brace group exits, not when the
+  // outer one does.
+  let guard = TestGuard::new();
+  test_input("{ defer echo outer; { defer echo inner; }; echo middle; }").unwrap();
+  let out = guard.read_output();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+  assert_eq!(lines, vec!["inner", "middle", "outer"]);
+}
+
+#[test]
+fn defer_variable_snapshot_at_registration_time() {
+  // Variables in the defer body are expanded at registration time, so
+  // changing the variable after defer is registered does not affect what
+  // the deferred body sees.
+  let guard = TestGuard::new();
+  test_input(r#"foo() { x=before; defer echo "$x"; x=after; }"#).unwrap();
+  test_input("foo").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("before"),
+    "defer body should snapshot $x at register time; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_command_sub_resolves_at_registration_time() {
+  // Command substitution inside the defer body fires when the defer is
+  // registered, not when it fires. This matches the canonical
+  // save-now-restore-later defer pattern.
+  let guard = TestGuard::new();
+  test_input(r#"foo() { x=before; defer echo "$(echo $x)"; x=after; }"#).unwrap();
+  test_input("foo").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("before"),
+    "command sub should snapshot at register time; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_eager_capture_via_eval() {
+  // To capture a value at registration time, route the defer through
+  // eval. eval expands its argument string first, so the parsed defer
+  // body sees the literal value baked in.
+  let guard = TestGuard::new();
+  test_input(r#"foo() { x=before; eval "defer echo $x"; x=after; }"#).unwrap();
+  test_input("foo").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("before"),
+    "eval should bake literal value into AST; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_brace_group_body_runs_in_order() {
+  // Within a single defer's brace-group body, statements run top to
+  // bottom (only the registration of defers themselves is LIFO).
+  let guard = TestGuard::new();
+  test_input("{ defer { echo a; echo b; echo c; }; }").unwrap();
+  let out = guard.read_output();
+  let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+  assert_eq!(lines, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn defer_does_not_clobber_outer_status() {
+  // Status set by the body before scope exit should survive the
+  // defer firing. The defer body's `true` would otherwise overwrite
+  // the `false` exit status.
+  let guard = TestGuard::new();
+  test_input("foo() { false; defer true; }; foo; echo $?").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("1\n"),
+    "outer status should still be 1 from `false`; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_failure_does_not_propagate_to_outer_errexit() {
+  // A failing defer body must not trigger the surrounding errexit. The
+  // `echo after` line proves the outer execution continued past the
+  // brace group's defer-fire phase.
+  let guard = TestGuard::new();
+  test_input("set -e; { defer false; }; echo after").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("after\n"),
+    "defer failure must not trigger outer errexit; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_failure_does_not_fire_try_catch() {
+  // The defer-in-try regression: a failing defer body inside a try
+  // block's scope should NOT propagate into the try's catch arm,
+  // because defer failures are absorbed at the scope boundary.
+  let guard = TestGuard::new();
+  test_input(r#"{ try { defer false; }; catch "should not fire"; done; echo after; }"#).unwrap();
+  let out = guard.read_output();
+  assert!(
+    !out.contains("should not fire"),
+    "try's catch arm should not fire on defer failure; got: {out:?}"
+  );
+  assert!(
+    out.contains("after\n"),
+    "execution should continue past try; got: {out:?}"
+  );
+}
+
+#[test]
+fn defer_registration_returns_zero_status() {
+  // The defer keyword itself (the registration) should succeed.
+  let guard = TestGuard::new();
+  test_input("defer echo unused; echo $?").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("0\n"),
+    "defer registration should return 0; got: {out:?}"
+  );
+}

@@ -4,7 +4,7 @@ use clap::Parser;
 
 use super::{
   ShResult, Shed, autocmd,
-  eval::execute::exec_nonint,
+  eval::execute::{Dispatcher, exec_nonint},
   outln,
   procio::{
     self, MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack,
@@ -199,7 +199,8 @@ pub(super) fn tear_down() -> ExitCode {
   let mut deferred = Shed::vars_mut(|v| v.cur_scope_mut().take_deferred_cmds());
 
   while let Some(cmd) = deferred.pop() {
-    if let Err(e) = exec_nonint(cmd, Some("defer".into())) {
+    let mut dispatcher = Dispatcher::new(vec![cmd], "defer".into());
+    if let Err(e) = dispatcher.begin_dispatch() {
       e.print_error();
     }
   }
