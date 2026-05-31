@@ -439,7 +439,11 @@ impl HintWorker {
         cursor_pos,
       } = req;
       completer.reset();
-      let outcome = completer.complete(buffer, cursor_pos, 1).ok().flatten();
+      let source = complete::CompSource::Shell;
+      let outcome = completer
+        .complete(buffer, cursor_pos, 1, source)
+        .ok()
+        .flatten();
 
       // If we got an exact match, use it as the hint
       if let Some(CompMatch::Exact { line }) = outcome {
@@ -1031,7 +1035,12 @@ impl ShedLine {
         CompleteStyle::Grid => Box::new(GridCompleter::new()),
         CompleteStyle::Fuzzy => Box::new(FuzzyCompleter::default()),
       });
-    match comp.complete(line, cursor_pos, direction) {
+    let source = if self.mode.report_mode() == ModeReport::Ex {
+      complete::CompSource::ExMode
+    } else {
+      complete::CompSource::Shell
+    };
+    match comp.complete(line, cursor_pos, direction, source) {
       Err(e) => {
         e.print_error();
         // Printing the error invalidates the layout

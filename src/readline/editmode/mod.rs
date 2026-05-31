@@ -26,7 +26,8 @@ mod visual;
 
 pub(super) use emacs::Emacs;
 pub(super) use ex::{
-  AddressRange, ExCommand, ExLexer, ExLineAddr, ExNdRule, ExNode, ExTk, ExTkRule, SubFlags, ViEx,
+  AddressRange, COMMANDS, ExCommand, ExLexer, ExLineAddr, ExNdRule, ExNode, ExTk, ExTkRule,
+  SubFlags, ViEx,
 };
 pub(super) use insert::ViInsert;
 pub(super) use normal::ViNormal;

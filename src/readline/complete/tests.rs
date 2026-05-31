@@ -212,7 +212,7 @@ fn wordbreak_equals_default() {
 
   let line = "cmd --foo=bar".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(&line, cursor);
+  let _ = comp.get_candidates(&line, cursor, super::CompSource::Shell);
 
   let eq_idx = line.find('=').unwrap();
   assert_eq!(
@@ -239,7 +239,7 @@ fn wordbreak_colon_when_set() {
   let mut comp = SimpleCompleter::default();
   let line = "scp host:foo".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(&line, cursor);
+  let _ = comp.get_candidates(&line, cursor, super::CompSource::Shell);
 
   let colon_idx = line.find(':').unwrap();
   assert_eq!(
@@ -266,7 +266,7 @@ fn wordbreak_rightmost_wins() {
   let mut comp = SimpleCompleter::default();
   let line = "cmd --opt=host:val".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(&line, cursor);
+  let _ = comp.get_candidates(&line, cursor, super::CompSource::Shell);
 
   let colon_idx = line.rfind(':').unwrap();
   assert_eq!(
@@ -297,7 +297,9 @@ fn get_candidates_empty_line_routes_to_command_strategy() {
   // `Self::Command { prefix: "" }` default in CompStrat::resolve.
   let _g = TestGuard::new();
   let mut comp = SimpleCompleter::default();
-  let result = comp.get_candidates("", 0).unwrap();
+  let result = comp
+    .get_candidates("", 0, super::CompSource::Shell)
+    .unwrap();
   // Almost certainly Many — even a minimal PATH has > 1 binary. But
   // accept Exact too in case some sandboxed env has exactly one.
   match result {
@@ -321,7 +323,9 @@ fn get_candidates_var_prefix_completes_with_shell_var() {
   let mut comp = SimpleCompleter::default();
   let line = "echo $UNIQUE_COMP_TEST".to_string();
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   let cs = contents(&result);
   assert!(
     cs.contains(&"UNIQUE_COMP_TEST_VAR_XYZZY"),
@@ -336,7 +340,9 @@ fn get_candidates_var_prefix_with_no_matches_returns_nomatch() {
   // A prefix that absolutely won't match any shell or env var.
   let line = "echo $ZZZZZZZ_NOT_A_REAL_VAR_PREFIX_QQQ".to_string();
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   assert!(matches!(result, CompResult::NoMatch));
 }
 
@@ -351,7 +357,9 @@ fn get_candidates_path_arg_lists_directory_entries() {
   let mut comp = SimpleCompleter::default();
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("apple.txt")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("banana.txt")), "got: {cs:?}");
@@ -370,7 +378,9 @@ fn get_candidates_path_arg_with_prefix_filters() {
   // Prefix "ap" should match apple + apricot but not banana.
   let line = format!("ls {}/ap", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("apple")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("apricot")), "got: {cs:?}");
@@ -386,7 +396,9 @@ fn get_candidates_redirect_uses_files_strategy() {
   let mut comp = SimpleCompleter::default();
   let line = format!("echo hi > {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("output.log")), "got: {cs:?}");
 }
@@ -409,7 +421,9 @@ fn get_candidates_dirs_only_does_not_filter_argument_path() {
 
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("file.txt")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("subdir")), "got: {cs:?}");
@@ -423,7 +437,9 @@ fn get_candidates_token_span_set_for_var_prefix() {
   let mut comp = SimpleCompleter::default();
   let line = "echo $PA".to_string();
   let dollar_idx = line.find('$').unwrap();
-  let _ = comp.get_candidates(&line, line.len()).unwrap();
+  let _ = comp
+    .get_candidates(&line, line.len(), super::CompSource::Shell)
+    .unwrap();
   // The span should cover the $ token; start should be at or just
   // after the $ depending on whether the leaf starts at $ or 'P'.
   assert!(
@@ -447,7 +463,9 @@ fn get_candidates_dedups_and_sorts_many_results() {
   let mut comp = SimpleCompleter::default();
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(&line, cursor).unwrap();
+  let result = comp
+    .get_candidates(&line, cursor, super::CompSource::Shell)
+    .unwrap();
   if let CompResult::Many { candidates } = result {
     // Sort key is (len, content), so the two shorter names come
     // before the longer one regardless of alphabetical order.
@@ -693,9 +711,10 @@ fn dispatch(input: &str, cursor: usize) -> (CompStrat, (usize, usize)) {
 /// Helper: extract the prefix from a Var/Tilde/Command/Argument/Files/Dirs strat.
 fn prefix_of(strat: &CompStrat) -> &str {
   match strat {
-    CompStrat::Var { prefix } | CompStrat::Tilde { prefix } | CompStrat::Command { prefix } => {
-      prefix
-    }
+    CompStrat::ExCommand { prefix }
+    | CompStrat::Var { prefix }
+    | CompStrat::Tilde { prefix }
+    | CompStrat::Command { prefix } => prefix,
     CompStrat::Argument { path } | CompStrat::Files { path } => path,
     CompStrat::Separator | CompStrat::Null => "",
   }

@@ -308,9 +308,24 @@ pub enum CtxTkRule {
   HereDocEnd,
 
   // ex mode rules
+  ValidExCommand,
+  InvalidExCommand,
   ExAddress,
   ExBang,
   ExPattern,
+}
+
+impl CtxTkRule {
+  pub fn is_ex_tk(self) -> bool {
+    matches!(
+      self,
+      Self::ValidExCommand
+        | Self::InvalidExCommand
+        | Self::ExAddress
+        | Self::ExBang
+        | Self::ExPattern
+    )
+  }
 }
 
 /// A token with richer contextual data than `Tk`
@@ -576,9 +591,9 @@ impl CtxTk {
       },
       ExTkRule::Command(cmd) => {
         if let ExCommand::Unknown = cmd {
-          vec![Self::leaf(span, CtxTkRule::InvalidCommand)]
+          vec![Self::leaf(span, CtxTkRule::InvalidExCommand)]
         } else {
-          vec![Self::leaf(span, CtxTkRule::ValidCommand(CmdKind::Builtin))]
+          vec![Self::leaf(span, CtxTkRule::ValidExCommand)]
         }
       }
       ExTkRule::ShellTk(tk) => Self::from_tk(&tk),

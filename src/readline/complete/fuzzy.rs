@@ -768,8 +768,11 @@ impl Completer for FuzzyCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
+    source: super::CompSource,
   ) -> ShResult<Option<CompMatch>> {
-    let inner = self.completer.complete(line, cursor_pos, direction)?;
+    let inner = self
+      .completer
+      .complete(line, cursor_pos, direction, source)?;
     let candidates: Vec<_> = self.completer.candidates.clone();
     if candidates.is_empty() {
       self.completer.reset();

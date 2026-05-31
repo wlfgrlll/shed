@@ -109,7 +109,8 @@ impl Palette {
           }
         }
       }
-      CtxTkRule::InvalidCommand => self.invalid_command,
+      CtxTkRule::ValidExCommand => self.builtin,
+      CtxTkRule::InvalidExCommand | CtxTkRule::InvalidCommand => self.invalid_command,
       CtxTkRule::Argument
       | CtxTkRule::Separator
       | CtxTkRule::ArithNumber

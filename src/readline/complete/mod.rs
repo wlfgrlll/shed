@@ -18,6 +18,8 @@ pub(crate) use fuzzy::{FuzzyCompleter, FuzzySelector, ScoredCandidate, SelectorR
 
 pub(crate) use grid::GridCompleter;
 
+use crate::readline::context::get_ex_context_tokens;
+
 use super::{
   super::state::meta::MetaTab,
   builtin::BUILTIN_NAMES,
@@ -82,6 +84,9 @@ enum CompStrat {
     prefix: String,
   },
   Command {
+    prefix: String,
+  },
+  ExCommand {
     prefix: String,
   },
   Argument {
@@ -152,6 +157,8 @@ impl CompStrat {
         Self::Command { prefix }
       }
 
+      CtxTkRule::InvalidExCommand | CtxTkRule::ValidExCommand => Self::ExCommand { prefix },
+
       CtxTkRule::AssignmentRight
       | CtxTkRule::CmdSub
       | CtxTkRule::BacktickSub
@@ -213,6 +220,8 @@ impl CompStrat {
       // After a finished command/argument-position token, we're typing args.
       CtxTkRule::ValidCommand(_)
       | CtxTkRule::InvalidCommand
+      | CtxTkRule::InvalidExCommand
+      | CtxTkRule::ValidExCommand
       | CtxTkRule::Argument
       | CtxTkRule::ArgumentFile
       | CtxTkRule::CmdSub
@@ -569,6 +578,14 @@ fn complete_builtins(start: &str) -> Vec<Candidate> {
     .iter()
     .map(Candidate::from)
     .filter(|b| b.is_match(start))
+    .collect()
+}
+
+fn complete_ex_commands(start: &str) -> Vec<Candidate> {
+  super::editmode::COMMANDS
+    .iter()
+    .map(|(c, _)| Candidate::from(*c))
+    .filter(|c| c.is_match(start))
     .collect()
 }
 
@@ -1102,12 +1119,19 @@ pub(crate) enum CompResponse {
   DismissPassthrough, // dismisses completer, and passes input to the main editor
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CompSource {
+  Shell,
+  ExMode,
+}
+
 pub(crate) trait Completer {
   fn complete(
     &mut self,
     line: String,
     cursor_pos: usize,
     direction: i32,
+    source: CompSource,
   ) -> ShResult<Option<CompMatch>>;
   fn reset(&mut self);
   fn reset_stay_active(&mut self);
@@ -1162,13 +1186,14 @@ impl Completer for SimpleCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
+    source: CompSource,
   ) -> ShResult<Option<CompMatch>> {
     if self.active {
       Ok(Some(CompMatch::Cycled {
         line: self.cycle_completion(direction),
       }))
     } else {
-      self.start_completion(line, cursor_pos)
+      self.start_completion(line, cursor_pos, source)
     }
   }
 
@@ -1236,8 +1261,9 @@ impl SimpleCompleter {
     &mut self,
     line: String,
     cursor_pos: usize,
+    source: CompSource,
   ) -> ShResult<Option<CompMatch>> {
-    let result = self.get_candidates(&line, cursor_pos)?;
+    let result = self.get_candidates(&line, cursor_pos, source)?;
     self.cursor_pos = cursor_pos;
     match result {
       CompResult::Many { candidates } => {
@@ -1319,7 +1345,14 @@ impl SimpleCompleter {
       })
       .map_or(segments.len().saturating_sub(1), |i| i.saturating_sub(1));
 
-    let relevant = segments[relevant_pos].clone();
+    // filter out ex tokens, makes completion after '!'
+    // in ex mode work automatically
+    let relevant: Vec<CtxTk> = segments[relevant_pos]
+      .iter()
+      .filter(|tk| !tk.class().is_ex_tk())
+      .cloned()
+      .collect();
+
     let mut words = relevant
       .iter()
       .map(|s| s.span().as_str().to_string())
@@ -1367,14 +1400,23 @@ impl SimpleCompleter {
     }
   }
 
-  pub fn get_candidates(&mut self, line: &str, cursor_pos: usize) -> ShResult<CompResult> {
-    let tks = get_context_tokens(line);
+  pub fn get_candidates(
+    &mut self,
+    line: &str,
+    cursor_pos: usize,
+    source: CompSource,
+  ) -> ShResult<CompResult> {
+    let tks = match source {
+      CompSource::Shell => get_context_tokens(line),
+      CompSource::ExMode => get_ex_context_tokens(line),
+    };
     let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
     self.token_span = (replace_span.range().start, replace_span.range().end);
     let mut result = match strat {
       CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),
       CompStrat::Tilde { prefix } => CompResult::from_candidates(complete_users(&prefix)),
+      CompStrat::ExCommand { prefix } => CompResult::from_candidates(complete_ex_commands(&prefix)),
       CompStrat::Command { prefix } => {
         CompResult::from_candidates(complete_commands(&prefix, leaf_cursor_pos))
       }

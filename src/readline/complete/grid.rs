@@ -430,8 +430,11 @@ impl Completer for GridCompleter {
     line: String,
     cursor_pos: usize,
     direction: i32,
+    source: super::CompSource,
   ) -> ShResult<Option<CompMatch>> {
-    let inner = self.completer.complete(line, cursor_pos, direction)?;
+    let inner = self
+      .completer
+      .complete(line, cursor_pos, direction, source)?;
     let candidates = self.completer.candidates.clone();
     match candidates.len() {
       0 => {

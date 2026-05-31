@@ -198,7 +198,7 @@ bitflags! {
 /// It iterates through these to find a prefix of a command.
 /// This means that common ones like `edit`, `read`, and `write`
 /// should be at the top
-const COMMANDS: &[(&str, ExCommand)] = &[
+pub const COMMANDS: &[(&str, ExCommand)] = &[
   ("edit", ExCommand::Edit),
   ("read", ExCommand::Read),
   ("write", ExCommand::Write),
