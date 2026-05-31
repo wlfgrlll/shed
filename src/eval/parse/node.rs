@@ -315,6 +315,7 @@ pub(crate) enum NdRule {
   TryNode {
     body: Box<Node>,
     err: Vec<Tk>,
+    catch: Option<Box<Node>>,
   },
   DeferNode {
     body: Box<Node>,

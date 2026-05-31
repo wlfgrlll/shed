@@ -697,10 +697,13 @@ impl ParseStream {
       redirs
     )))
   }
+  #[expect(clippy::too_many_lines)]
   pub(super) fn parse_try(&mut self) -> ShResult<Option<Node>> {
     if !self.check_keyword("try") {
       return Ok(None);
     }
+
+    self.block_depth += 1;
 
     let mut node_tks = vec![];
     let mut redirs = vec![];
@@ -717,6 +720,7 @@ impl ParseStream {
     loop {
       if self.check_keyword("catch") {
         if body.is_empty() {
+          self.block_depth -= 1;
           bail!(
             self,
             node_tks,
@@ -753,6 +757,8 @@ impl ParseStream {
       }
     }
 
+    self.block_depth -= 1;
+
     let mut body = Box::new(node!(
       self,
       body_tks,
@@ -771,7 +777,6 @@ impl ParseStream {
     ));
 
     node_tks.push(self.next_tk().unwrap()); // consume 'catch'
-    self.catch_separator(&mut node_tks); // absorb newlines after 'catch'
 
     let mut err = vec![];
 
@@ -787,7 +792,41 @@ impl ParseStream {
       err.push(tk);
     }
 
-    self.catch_separator(&mut node_tks); // absorb newlines before 'done'
+    self.catch_separator(&mut node_tks);
+
+    if !self.check_keyword("do") {
+      self.parse_redir(&mut redirs, &mut node_tks)?;
+
+      let node = node!(
+        self,
+        node_tks,
+        NdRule::TryNode {
+          body,
+          err,
+          catch: None
+        },
+        redirs
+      );
+
+      return Ok(Some(node));
+    }
+
+    self.block_depth += 1;
+
+    node_tks.push(self.next_tk().unwrap()); // consume 'do'
+
+    self.catch_separator(&mut node_tks);
+
+    let Some(catch_body) = self.parse_cmd_list()? else {
+      bail!(
+        self,
+        node_tks,
+        "Expected a command after '{}' in this '{}' clause",
+        "do",
+        "catch"
+      );
+    };
+    node_tks.extend(catch_body.tokens.clone());
 
     if !self.check_keyword("done") {
       bail!(
@@ -802,8 +841,9 @@ impl ParseStream {
     node_tks.push(self.next_tk().unwrap());
 
     self.parse_redir(&mut redirs, &mut node_tks)?;
+    let catch = Some(Box::new(catch_body));
 
-    let node = node!(self, node_tks, NdRule::TryNode { body, err }, redirs);
+    let node = node!(self, node_tks, NdRule::TryNode { body, err, catch }, redirs);
 
     Ok(Some(node))
   }

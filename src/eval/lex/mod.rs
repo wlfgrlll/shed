@@ -19,7 +19,7 @@ pub const KEYWORDS: [&str; 21] = [
   "case", "esac", "!", "not", "time", "function", "try", "catch", "defer",
 ];
 
-pub const MIDDLES: [&str; 2] = ["elif", "else"];
+pub const MIDDLES: [&str; 3] = ["elif", "else", "catch"];
 
 pub const CLOSERS: [&str; 6] = ["fi", "done", "esac", "}", ")", ";;"];
 

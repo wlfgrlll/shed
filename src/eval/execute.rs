@@ -428,7 +428,7 @@ impl Dispatcher {
   }
   pub fn exec_try(&mut self, node: Node) -> ShResult<()> {
     let try_blame = node.get_span();
-    let NdRule::TryNode { body, err } = node.class else {
+    let NdRule::TryNode { body, err, catch } = node.class else {
       unreachable!()
     };
     let context = body.context.clone();
@@ -450,19 +450,29 @@ impl Dispatcher {
 
         let blame = e.src_span().cloned().unwrap_or(try_blame);
 
-        let mut msg_parts = Vec::with_capacity(err.len());
-        for tk in err {
-          msg_parts.push(tk.expand_no_split()?);
-        }
-        let msg = msg_parts.join(" ");
+        if !err.is_empty() {
+          let mut msg_parts = Vec::with_capacity(err.len());
+          for tk in err {
+            msg_parts.push(tk.expand_no_split()?);
+          }
+          let msg = msg_parts.join(" ");
 
-        ShErr::at(ShErrKind::TryFailed, blame, msg)
-          .with_context(context)
-          .print_error();
+          ShErr::at(ShErrKind::TryFailed, blame, msg)
+            .with_context(context)
+            .print_error();
+        }
 
         if state::Shed::get_status() == 0 {
           state::Shed::set_status(1);
         }
+
+        if let Some(catch) = catch {
+          shopt_mut!(set.errexit = errexit);
+          shopt_mut!(set.pipefail = pipefail);
+
+          self.dispatch_node(*catch)?;
+        }
+
         Ok(())
       }
     }
