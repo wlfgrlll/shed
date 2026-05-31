@@ -12,7 +12,10 @@ use super::{
   signal::QUIT_CODE,
   state::{
     self,
+    jobs::JobTab,
     logic::TrapTarget,
+    meta::MetaTab,
+    terminal::Terminal,
     util::{self, generate_default_rc, source_env},
     vars::{VarFlags, VarKind},
   },
@@ -20,6 +23,7 @@ use super::{
   util::flog,
 };
 
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Parser, Debug)]
 #[command(
   author = "Kyler Clay",
@@ -47,7 +51,7 @@ pub(super) struct ShedArgs {
   #[arg(short)]
   pub(super) stdin: bool,
 
-  /// Start the shell as a login shell (sources .shed_profile)
+  /// Start the shell as a login shell (sources .`shed_profile`)
   #[arg(long, short)]
   pub(super) login_shell: bool,
 
@@ -158,7 +162,7 @@ fn setup_panic_handler() {
   // set our hook
   std::panic::set_hook(Box::new(move |info| {
     // hang up jobs
-    Shed::jobs_mut(|j| j.hang_up());
+    Shed::jobs_mut(JobTab::hang_up);
 
     // log panic
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
@@ -176,7 +180,7 @@ fn setup_panic_handler() {
 
     let backtrace = std::backtrace::Backtrace::force_capture();
     log_file
-      .write_all(format!("\nBacktrace:\n{:#?}", backtrace).as_bytes())
+      .write_all(format!("\nBacktrace:\n{backtrace:#?}").as_bytes())
       .unwrap();
 
     // call the default panic hook
@@ -184,6 +188,7 @@ fn setup_panic_handler() {
   }));
 }
 
+#[expect(clippy::cast_sign_loss)]
 pub(super) fn tear_down() -> ExitCode {
   if let Some(trap) = Shed::logic(|l| l.get_trap(TrapTarget::Exit))
     && let Err(e) = exec_nonint(trap, Some("trap".into()))
@@ -201,11 +206,11 @@ pub(super) fn tear_down() -> ExitCode {
 
   autocmd!(OnExit);
 
-  if Shed::meta(|m| m.interactive_shell()) {
+  if Shed::meta(MetaTab::interactive_shell) {
     crate::write_term!("\n").ok();
   }
-  Shed::jobs_mut(|j| j.hang_up());
-  Shed::term_mut(|t| t.reset_for_exit());
+  Shed::jobs_mut(JobTab::hang_up);
+  Shed::term_mut(Terminal::reset_for_exit);
 
   ExitCode::from(QUIT_CODE.load(Ordering::SeqCst) as u8)
 }

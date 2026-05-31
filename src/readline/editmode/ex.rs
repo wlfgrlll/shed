@@ -60,7 +60,7 @@ impl ExEditor {
     Self { editor }
   }
   pub fn clear(&mut self) {
-    *self = Self::default()
+    *self = Self::default();
   }
   pub fn is_empty(&self) -> bool {
     self.editor.buf.is_empty()
@@ -82,6 +82,7 @@ impl ViEx {
 
 impl EditMode for ViEx {
   // Ex mode can return errors, so we use this fallible method instead of the normal one
+  #[expect(clippy::unnested_or_patterns)]
   fn handle_key_fallible(&mut self, key: KeyEvent) -> ShResult<Option<EditCmd>> {
     match key {
       key!('\r') | key!(Enter) => {
@@ -105,7 +106,7 @@ impl EditMode for ViEx {
         };
 
         if let Some(hist) = self.history()
-          && let Err(e) = hist.push(input)
+          && let Err(e) = hist.push(&input)
         {
           status_msg!("Failed to save ex command to history: {e}");
         }
@@ -121,16 +122,16 @@ impl EditMode for ViEx {
         verb: None,
         motion: None,
         flags: CmdFlags::EXIT_CUR_MODE,
-        raw_seq: "".into(),
+        raw_seq: String::new(),
       })),
       key!(Esc) => Ok(Some(EditCmd {
         register: RegisterName::default(),
         verb: None,
         motion: None,
         flags: CmdFlags::EXIT_CUR_MODE,
-        raw_seq: "".into(),
+        raw_seq: String::new(),
       })),
-      _ => self.pending_cmd.editor.handle_key(key).map(|_| None),
+      _ => self.pending_cmd.editor.handle_key(key).map(|()| None),
     }
   }
   fn handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
@@ -191,7 +192,7 @@ bitflags! {
   }
 }
 
-/// The ex mode commands, mapped to their ExCommand enum members
+/// The ex mode commands, mapped to their `ExCommand` enum members
 ///
 /// Order matters because we allow prefix matching.
 /// It iterates through these to find a prefix of a command.
@@ -401,7 +402,7 @@ impl<'a> ExLexer<'a> {
   }
   /// Lets us skip whitespace between every individual parsing step.
   ///
-  /// Takes a function pointer array and calls self.skip_whitespace() between
+  /// Takes a function pointer array and calls `self.skip_whitespace()` between
   /// function call.
   ///
   /// Panics if `funcs` is empty.
@@ -485,7 +486,7 @@ impl<'a> ExLexer<'a> {
     }
 
     // recursively parse the command
-    self.ignoring_ws(&[Self::parse_address, Self::parse_cmd_name, Self::parse_args])
+    self.ignoring_ws(&[Self::parse_address, Self::parse_cmd_name, Self::parse_args]);
   }
   fn parse_normal_seq(&mut self) {
     // everything after this is parsed as a single literal arg
@@ -501,6 +502,11 @@ impl<'a> ExLexer<'a> {
     }
   }
   fn parse_args(&mut self) {
+    const FILE_ARG_STRIP: lex::TkFlags = lex::TkFlags::IS_CMD
+      .union(lex::TkFlags::BUILTIN)
+      .union(lex::TkFlags::KEYWORD)
+      .union(lex::TkFlags::FUNCNAME)
+      .union(lex::TkFlags::ASSIGN);
     let Some(cmd) = self.command() else { return };
 
     match cmd {
@@ -531,17 +537,6 @@ impl<'a> ExLexer<'a> {
           .filter_map(|tk| tk.filter_meta().then_some(tk))
           .map(|tk| tk.rebase_into(&outer, start_pos));
 
-        // In file-arg mode we strip every flag that would make the shell
-        // highlighter classify the token in command-position (IS_CMD,
-        // BUILTIN, KEYWORD, FUNCNAME, ASSIGN). We keep flags that affect
-        // *inner structure* highlighting (IS_SUBSH, IS_CMDSUB, IS_ARITH,
-        // IS_HEREDOC, IS_PROCSUB) so `$()`/`$(())`/`${}` inside args still
-        // get highlighted properly.
-        const FILE_ARG_STRIP: lex::TkFlags = lex::TkFlags::IS_CMD
-          .union(lex::TkFlags::BUILTIN)
-          .union(lex::TkFlags::KEYWORD)
-          .union(lex::TkFlags::FUNCNAME)
-          .union(lex::TkFlags::ASSIGN);
         let mut pushed = false;
 
         for mut shell_tk in stream {
@@ -631,7 +626,7 @@ impl<'a> ExLexer<'a> {
     };
     let mut rest = String::new();
     while let Some((_, ch)) = self.chars.next() {
-      rest.push(ch)
+      rest.push(ch);
     }
 
     let outer = Span::new(0..self.input.len(), self.input.clone());
@@ -867,7 +862,7 @@ impl ExParser {
       .is_none()
     {
       return ExR::success(AddressRange::Single(resolved));
-    };
+    }
 
     let Some(end_tk) = self
       .tokens
@@ -917,7 +912,7 @@ impl ExParser {
         let pat = tk.span.as_str().to_string();
         ExPR::Partial(LineAddr::PatternRev(pat))
       }
-      _ => unreachable!(),
+      ExLineAddr::Comma => unreachable!(),
     }
   }
   fn parse_command(&mut self) -> ExR<ExNdRule> {
@@ -1028,7 +1023,7 @@ impl ExParser {
           .map(|n| match n.as_str() {
             _ if "stack".starts_with(n.trim()) => Ok(Some(StashListArg::Stack)),
             _ if "named".starts_with(n.trim()) => Ok(Some(StashListArg::Named)),
-            _ => Err(ExR::error(format!("invalid stash list argument: {}", n))),
+            _ => Err(ExR::error(format!("invalid stash list argument: {n}"))),
           })
           .transpose();
         let target = match target {
@@ -1038,7 +1033,7 @@ impl ExParser {
 
         ExR::success(ExNdRule::Stash(StashArgs::List(target.flatten())))
       }
-      _ => ExR::error(format!("invalid stash argument: {}", arg)),
+      _ => ExR::error(format!("invalid stash argument: {arg}")),
     }
   }
   fn parse_substitute(&mut self) -> ExR<ExNdRule> {
@@ -1074,7 +1069,7 @@ impl ExParser {
           'p' => flags |= SubFlags::PRINT_RESULT,
           '#' => flags |= SubFlags::PRINT_NUMBERED,
           'l' => flags |= SubFlags::PRINT_LEFT_ALIGN,
-          _ => return ExR::error(format!("invalid substitute flag: {}", ch)),
+          _ => return ExR::error(format!("invalid substitute flag: {ch}")),
         }
       }
     }
@@ -1164,7 +1159,7 @@ impl ExParser {
 mod parse_stash_tests {
   use super::*;
 
-  /// Parse a stash command and return the resulting StashArgs, or panic
+  /// Parse a stash command and return the resulting `StashArgs`, or panic
   /// if it didn't parse as a stash.
   fn parse_stash(input: &str) -> StashArgs {
     let node = match parse_ex_input(input) {
@@ -1440,7 +1435,7 @@ mod parse_one_addr_tests {
 
   /// Extract the (single) address token and return its rule and lexeme.
   /// Panics if no address token was produced. Useful for verifying that
-  /// parse_one_addr classified the opening character correctly.
+  /// `parse_one_addr` classified the opening character correctly.
   fn first_token(input: &str) -> (ExTkRule, String) {
     let tokens = lex(input);
     let tk = tokens
@@ -1534,8 +1529,8 @@ mod parse_one_addr_tests {
 
 #[cfg(test)]
 mod parse_one_address_tests {
-  //! ExParser::parse_one_address is static + private, but it's invoked
-  //! by parse_address whenever the lexer hands the parser an address
+  //! `ExParser::parse_one_address` is static + private, but it's invoked
+  //! by `parse_address` whenever the lexer hands the parser an address
   //! token. We can verify each branch by feeding `<addr>d` and asserting
   //! on the resulting ExNode.address.
 
@@ -1615,7 +1610,7 @@ mod parse_one_address_tests {
         assert_eq!(s, LineAddr::Number(1));
         assert_eq!(e, LineAddr::Number(5));
       }
-      other => panic!("expected Range, got {other:?}"),
+      other @ AddressRange::Single(_) => panic!("expected Range, got {other:?}"),
     }
   }
 
@@ -1632,9 +1627,9 @@ mod parse_one_address_tests {
 
 #[cfg(test)]
 mod parse_command_tests {
-  //! `parse_command` dispatches each ExCommand variant to a sub-parser.
+  //! `parse_command` dispatches each `ExCommand` variant to a sub-parser.
   //! We verify the simple ones (Delete, Yank, Put, Quit), the Unknown
-  //! arm, the bang side-effect, and the NoMatch path.
+  //! arm, the bang side-effect, and the `NoMatch` path.
 
   use super::*;
   use crate::readline::editcmd::Anchor;

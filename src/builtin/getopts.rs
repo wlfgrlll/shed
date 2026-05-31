@@ -1,10 +1,14 @@
 use std::str::FromStr;
 
 use super::{
+  super::state::meta::MetaTab,
   eval::lex::Span,
   getopt::{Opt, OptArg, OptSpec},
   sherr,
-  state::{self, Shed, vars::VarFlags, vars::VarKind},
+  state::{
+    self, Shed,
+    vars::{VarFlags, VarKind},
+  },
   util::{ShErr, ShResult, ShResultExt, with_status},
   var,
 };
@@ -27,13 +31,12 @@ impl GetOptsSpec {
       let OptSpec { opt, takes_arg } = spec;
       match opt {
         Opt::Short(opt_ch) if ch == *opt_ch => {
-          if *takes_arg != OptArg::None {
-            return OptMatch::WantsArg;
-          } else {
+          if *takes_arg == OptArg::None {
             return OptMatch::IsMatch;
           }
+          return OptMatch::WantsArg;
         }
-        _ => continue,
+        _ => (),
       }
     }
     OptMatch::NoMatch
@@ -66,7 +69,7 @@ impl FromStr for GetOptsSpec {
           } else {
             OptArg::None
           };
-          opt_specs.push(OptSpec { opt, takes_arg })
+          opt_specs.push(OptSpec { opt, takes_arg });
         }
         _ => {
           return Err(sherr!(ParseErr, "unexpected character '{ch}'",));
@@ -85,15 +88,15 @@ pub(super) struct GetOpts;
 impl super::Builtin for GetOpts {
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let span = args.span();
-    let mut argv = args.argv.into_iter();
+    let mut arg_vec = args.argv.into_iter();
 
-    let Some(arg_string) = argv.next() else {
+    let Some(arg_string) = arg_vec.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "getopts: missing option spec",
       ));
     };
-    let Some(opt_var) = argv.next() else {
+    let Some(opt_var) = arg_vec.next() else {
       return Err(sherr!(
           ExecFail @ span,
           "getopts: missing variable name",
@@ -102,12 +105,12 @@ impl super::Builtin for GetOpts {
 
     let opts_spec = GetOptsSpec::from_str(&arg_string.0).promote_err(arg_string.1.clone())?;
 
-    let explicit_args: Vec<String> = argv.map(|s| s.0).collect();
-    if !explicit_args.is_empty() {
-      getopts_inner(&opts_spec, &opt_var.0, &explicit_args, span)
-    } else {
+    let explicit_args: Vec<String> = arg_vec.map(|s| s.0).collect();
+    if explicit_args.is_empty() {
       let pos_params: Vec<String> = Shed::vars(|v| v.sh_argv().iter().skip(1).cloned().collect());
-      getopts_inner(&opts_spec, &opt_var.0, &pos_params, span)
+      getopts_inner(&opts_spec, &opt_var.0, &pos_params, &span)
+    } else {
+      getopts_inner(&opts_spec, &opt_var.0, &explicit_args, &span)
     }
   }
 }
@@ -126,7 +129,7 @@ fn getopts_inner(
   opts_spec: &GetOptsSpec,
   opt_var: &str,
   argv: &[String],
-  blame: Span,
+  blame: &Span,
 ) -> ShResult<()> {
   let opt_index = var!("OPTIND").parse::<usize>().unwrap_or(1);
   // OPTIND is 1-based
@@ -140,7 +143,7 @@ fn getopts_inner(
   // "--" stops option processing
   if arg.as_str() == "--" {
     advance_optind(opt_index, 1)?;
-    Shed::meta_mut(|m| m.reset_getopts_char_offset());
+    Shed::meta_mut(MetaTab::reset_getopts_char_offset);
     return with_status(1);
   }
 
@@ -154,11 +157,11 @@ fn getopts_inner(
     return with_status(1);
   }
 
-  let char_idx = Shed::meta(|m| m.getopts_char_offset());
+  let char_idx = Shed::meta(MetaTab::getopts_char_offset);
   let Some(ch) = opt_str.chars().nth(char_idx) else {
     // Ran out of chars in this arg (shouldn't normally happen),
     // advance to next arg and signal done for this call
-    Shed::meta_mut(|m| m.reset_getopts_char_offset());
+    Shed::meta_mut(MetaTab::reset_getopts_char_offset);
     advance_optind(opt_index, 1)?;
     return with_status(1);
   };
@@ -169,10 +172,10 @@ fn getopts_inner(
   // arg, or reset offset and bump OPTIND to the next arg.
   let advance_one_char = |last: bool| -> ShResult<()> {
     if last {
-      Shed::meta_mut(|m| m.reset_getopts_char_offset());
+      Shed::meta_mut(MetaTab::reset_getopts_char_offset);
       advance_optind(opt_index, 1)?;
     } else {
-      Shed::meta_mut(|m| m.inc_getopts_char_offset());
+      Shed::meta_mut(MetaTab::inc_getopts_char_offset);
     }
     Ok(())
   };
@@ -199,7 +202,7 @@ fn getopts_inner(
       state::Shed::set_status(0);
     }
     OptMatch::WantsArg => {
-      Shed::meta_mut(|m| m.reset_getopts_char_offset());
+      Shed::meta_mut(MetaTab::reset_getopts_char_offset);
 
       if !last_char_in_arg {
         // Remaining chars in this arg are the argument: -bVALUE

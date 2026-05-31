@@ -1,9 +1,11 @@
-use std::io::Write;
+use std::io;
 
 use nix::unistd::{isatty, write};
 use regex::Regex;
 
 use yansi::Style;
+
+use crate::state::terminal::Terminal;
 
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
@@ -25,6 +27,7 @@ pub(super) enum PagerEvent {
   ExitPager,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum PagerCmd {
   Scroll(isize), // line offset
   TopOfPage,
@@ -66,8 +69,7 @@ impl CrossRef {
   pub fn resolve_target(&self, content: &str) -> String {
     self
       .target
-      .as_ref()
-      .cloned()
+      .clone()
       .unwrap_or_else(|| self.span.content(content).to_string())
   }
 }
@@ -100,7 +102,7 @@ pub(super) struct HelpPager {
 }
 
 impl HelpPager {
-  pub fn new(content: String, scroll_offset: usize, filename: Option<String>) -> Option<Self> {
+  pub fn new(content: &str, scroll_offset: usize, filename: Option<String>) -> Option<Self> {
     if !isatty(stdout_fileno()).unwrap_or(false) {
       // If we're not in a terminal, just print the content and exit
       // Someone could be piping the output, like `help | grep foo`
@@ -108,7 +110,7 @@ impl HelpPager {
       write(stdout_fileno(), b"\n").ok();
       return None;
     }
-    let mut content = StyledHelp::new(&content);
+    let mut content = StyledHelp::new(content);
     let cross_refs = content
       .find_markers(REF_SEQ)
       .into_iter()
@@ -134,7 +136,7 @@ impl HelpPager {
 
   pub fn cross_refs_in_viewport(&self) -> Vec<usize> {
     let top = self.scroll_offset;
-    let t_rows = Shed::term(|t| t.t_rows()).saturating_sub(1);
+    let t_rows = Shed::term(Terminal::t_rows).saturating_sub(1);
     let bottom = top + t_rows;
 
     let first = self
@@ -155,7 +157,7 @@ impl HelpPager {
 
   pub fn display(&mut self) -> ShResult<()> {
     write_term!("\x1b[H")?;
-    let height = Shed::term(|t| t.t_rows()).saturating_sub(1);
+    let height = Shed::term(Terminal::t_rows).saturating_sub(1);
 
     // Build click map for cross-references in viewport
     self.click_refs.clear();
@@ -256,13 +258,13 @@ impl HelpPager {
       write_term!("\x1b[K").ok();
     }
 
-    Shed::term_mut(|t| t.flush())?;
+    Shed::term_mut(io::Write::flush)?;
     Ok(())
   }
 
   pub fn handle_input(&mut self) -> ShResult<PagerEvent> {
-    Shed::term_mut(|t| t.read())?;
-    let keys = Shed::term_mut(|t| t.drain_keys())?;
+    Shed::term_mut(Terminal::read)?;
+    let keys = Shed::term_mut(Terminal::drain_keys);
 
     let mut res = PagerEvent::Continue;
     for key in keys {
@@ -272,6 +274,7 @@ impl HelpPager {
     Ok(res)
   }
 
+  #[expect(clippy::unnested_or_patterns)]
   pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<PagerEvent> {
     let cmd = match key {
       key!(Tab) => {
@@ -290,9 +293,8 @@ impl HelpPager {
         } else if self.search.active {
           self.search.reset();
           return Ok(PagerEvent::Continue);
-        } else {
-          return Ok(PagerEvent::ClosePage);
         }
+        return Ok(PagerEvent::ClosePage);
       }
 
       key!(Backspace) if self.search.active && self.search.is_empty() => {
@@ -350,10 +352,9 @@ impl HelpPager {
           let target = c_ref.resolve_target(self.content());
 
           return Ok(PagerEvent::OpenRef(target));
-        } else {
-          self.ref_keys.clear();
-          return self.handle_key(key); // re-process the key without hint mode
         }
+        self.ref_keys.clear();
+        return self.handle_key(key); // re-process the key without hint mode
       }
 
       KeyEvent(KeyCode::Char(dir @ ('n' | 'N')), _) => {
@@ -370,8 +371,8 @@ impl HelpPager {
       key!('g') => PagerCmd::TopOfPage,
       key!('G') => PagerCmd::BottomOfPage,
 
-      key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist as isize),
-      key!('u') | key!(PageUp) => PagerCmd::Scroll(-(self.jump_dist as isize)),
+      key!('d') | key!(PageDown) => PagerCmd::Scroll(self.jump_dist.cast_signed()),
+      key!('u') | key!(PageUp) => PagerCmd::Scroll(-self.jump_dist.cast_signed()),
 
       key!(ScrollDown) | key!(Down) | key!('j') | key!(Enter) if !self.search.active => {
         PagerCmd::Scroll(1)
@@ -384,19 +385,19 @@ impl HelpPager {
         return self.handle_hover(row, col);
       }
       KeyEvent(KeyCode::LeftClick(row, col), _) => {
-        return self.handle_click(row, col);
+        return Ok(self.handle_click(row, col));
       }
 
       _ => return Ok(PagerEvent::Continue),
     };
 
-    self.exec_cmd(cmd)?;
+    self.exec_cmd(cmd);
 
     Ok(PagerEvent::Continue)
   }
 
   pub fn max_scroll(&self) -> usize {
-    let t_rows = Shed::term(|t| t.t_rows());
+    let t_rows = Shed::term(Terminal::t_rows);
     self.content().lines().count().saturating_sub(t_rows)
   }
 
@@ -449,13 +450,16 @@ impl HelpPager {
           .rposition(|(start, _)| line_for(start) <= anchor),
       };
       // wrap around if none found
-      self.search.active_result_idx1 = pos.map(|p| p + 1).unwrap_or_else(|| {
-        if matches!(self.search.dir, Direction::Backward) {
-          self.search.results.len()
-        } else {
-          1
-        }
-      });
+      self.search.active_result_idx1 = pos.map_or_else(
+        || {
+          if matches!(self.search.dir, Direction::Backward) {
+            self.search.results.len()
+          } else {
+            1
+          }
+        },
+        |p| p + 1,
+      );
     }
 
     if jump {
@@ -509,7 +513,7 @@ impl HelpPager {
       Direction::Backward => self.search.results.iter().max_by_key(|(start, _)| *start),
     });
 
-    let height = Shed::term(|t| t.t_rows()).saturating_sub(1); // Get current terminal height
+    let height = Shed::term(Terminal::t_rows).saturating_sub(1); // Get current terminal height
     if let Some((start, _)) = found {
       let line_no = line_for(start);
 
@@ -579,7 +583,7 @@ impl HelpPager {
     Ok(PagerEvent::Continue)
   }
 
-  fn handle_click(&mut self, row: usize, col: usize) -> ShResult<PagerEvent> {
+  fn handle_click(&mut self, row: usize, col: usize) -> PagerEvent {
     if let Some(cr) = self
       .click_refs
       .iter()
@@ -588,12 +592,12 @@ impl HelpPager {
       let c_ref = &self.cross_refs[cr.ref_idx];
       let target = c_ref.resolve_target(self.content());
 
-      return Ok(PagerEvent::OpenRef(target));
+      return PagerEvent::OpenRef(target);
     }
-    Ok(PagerEvent::Continue)
+    PagerEvent::Continue
   }
 
-  pub fn exec_cmd(&mut self, cmd: PagerCmd) -> ShResult<()> {
+  pub fn exec_cmd(&mut self, cmd: PagerCmd) {
     match cmd {
       PagerCmd::Scroll(n) => {
         self.scroll_offset = self
@@ -605,13 +609,11 @@ impl HelpPager {
         self.scroll_offset = 0;
       }
       PagerCmd::BottomOfPage => {
-        let rows = Shed::term(|t| t.t_rows());
+        let rows = Shed::term(Terminal::t_rows);
         let n_lines = self.content().lines().count();
         self.scroll_offset = n_lines.saturating_sub(rows);
       }
     }
-
-    Ok(())
   }
 }
 
@@ -664,7 +666,7 @@ mod tests {
 
   fn pager_with(content: &str) -> (TestGuard, HelpPager) {
     let g = TestGuard::new();
-    let p = HelpPager::new(content.into(), 0, None)
+    let p = HelpPager::new(content, 0, None)
       .expect("HelpPager::new should succeed under TestGuard's pty");
     (g, p)
   }

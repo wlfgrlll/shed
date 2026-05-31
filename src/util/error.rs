@@ -103,7 +103,7 @@ fn group_labels(labels: Vec<(Span, Label<Span>)>) -> Vec<(Span, Label<Span>)> {
         let (a, b) = (chain_id[i], chain_id[j]);
         if a != b {
           let (keep, drop) = (a.min(b), a.max(b));
-          for c in chain_id.iter_mut() {
+          for c in &mut chain_id {
             if *c == drop {
               *c = keep;
             }
@@ -147,7 +147,7 @@ fn related_by_containment(a: &Span, b: &Span) -> bool {
 pub trait ShResultExt {
   fn blame(self, span: Span) -> Self;
   fn try_blame(self, span: Span) -> Self;
-  /// If the value is Err(), attach a span to it
+  /// If the value is `Err()`, attach a span to it
   fn promote_err(self, span: Span) -> Self;
 }
 
@@ -233,7 +233,7 @@ impl ShErr {
   }
   /// Persist all io guards, closing saved fds without restoring them.
   /// Use this when an error is being converted to a control flow signal
-  /// (like ErrInterrupt) that will propagate past the redirect scope.
+  /// (like `ErrInterrupt`) that will propagate past the redirect scope.
   pub fn persist_redirs(&mut self) {
     for guard in self.io_guards.drain(..) {
       guard.persist();
@@ -468,7 +468,6 @@ impl Display for ShErrKind {
     let output = match self {
       Self::IoErr(e) => &format!("I/O Error: {e}"),
       Self::InvalidOpt => "Invalid option",
-      Self::SyntaxErr => "Syntax Error",
       Self::ParseErr => "Parse Error",
       Self::InternalErr => "Internal Error",
       Self::HistoryReadErr => "History Parse Error",
@@ -478,13 +477,12 @@ impl Display for ShErrKind {
       Self::Errno(e) => &format!("Errno: {}", e.desc()),
       Self::NotFound => "Not Found",
       Self::TryFailed => "Try Failed",
-      Self::CleanExit(_) => "",
-      Self::FuncReturn(_) => "Syntax Error",
-      Self::LoopContinue(_) => "Syntax Error",
-      Self::LoopBreak(_) => "Syntax Error",
+      Self::CleanExit(_) | Self::Interrupt => "",
       Self::InvalidAssignment => "Invalid Assignment",
-      Self::Interrupt => "",
       Self::ErrInterrupt => "errexit",
+      Self::SyntaxErr | Self::FuncReturn(_) | Self::LoopContinue(_) | Self::LoopBreak(_) => {
+        "Syntax Error"
+      }
     };
     write!(f, "{output}")
   }

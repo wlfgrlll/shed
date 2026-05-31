@@ -19,8 +19,11 @@ use super::{
   state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg, try_var,
 };
-use crate::util::{format_size, var_ctx_guard};
 use crate::verb;
+use crate::{
+  state::terminal::Terminal,
+  util::{format_size, var_ctx_guard},
+};
 
 impl super::LineBuf {
   pub(super) fn dispatch_ex_node(&mut self, cmd: &EditCmd) -> ShResult<()> {
@@ -42,15 +45,18 @@ impl super::LineBuf {
       ExNdRule::Delete /*--------------------*/ => self.ex_delete(cmd, address),
       ExNdRule::Yank /*======================*/ => self.ex_yank(cmd, address),
       ExNdRule::Put(anchor) /*---------------*/ => self.ex_put(cmd, *anchor, address),
-      ExNdRule::Edit(paths) /*---------------*/ => self.ex_edit(paths),
-      ExNdRule::Read(read_src) /*============*/ => self.ex_read(read_src),
+      ExNdRule::Edit(paths) /*---------------*/ => Self::ex_edit(paths),
       ExNdRule::Write(write_dest) /*---------*/ => self.ex_write(write_dest),
       ExNdRule::RepeatSubstitute /*==========*/ => self.repeat_substitute(cmd),
       ExNdRule::RepeatGlobal /*--------------*/ => self.repeat_global(cmd),
       ExNdRule::Shell(sh_cmd) /*=============*/ => self.ex_shell_cmd(cmd, sh_cmd),
       ExNdRule::Stash(stash_args) /*---------*/ => self.ex_stash(stash_args),
-      ExNdRule::Substitute { pat, repl, flags } => self.ex_substitute(cmd, pat, repl, *flags, address.clone()),
+      ExNdRule::Substitute { pat, repl, flags } => self.ex_substitute(cmd, pat, repl, *flags, address.as_ref()),
       ExNdRule::Global { pat, nested } => self.ex_global(cmd, *bang, pat, nested, address),
+      ExNdRule::Read(read_src) /*============*/ => {
+        self.ex_read(read_src);
+        Ok(())
+      }
 
       ExNdRule::Normal {..} /*---------------*/ |
       ExNdRule::Quit /*======================*/ => unreachable!(/* handled in readline/mod.rs */),
@@ -96,9 +102,9 @@ impl super::LineBuf {
     old: &str,
     new: &str,
     flags: SubFlags,
-    range: Option<AddressRange>,
+    range: Option<&AddressRange>,
   ) -> ShResult<()> {
-    let line_nums = self.lines_for_address(range.as_ref())?;
+    let line_nums = self.lines_for_address(range)?;
 
     let re = match Shed::meta_mut(|m| m.get_regex(old.to_string())) {
       Ok(re) => re,
@@ -123,7 +129,7 @@ impl super::LineBuf {
       } else {
         re.replace(&s, new)
       };
-      let lines = Lines::to_lines(res);
+      let lines = Lines::to_lines(&res);
       changes.push((i, lines));
     }
 
@@ -138,6 +144,7 @@ impl super::LineBuf {
 
     Ok(())
   }
+  #[expect(clippy::too_many_lines)]
   fn ex_stash(&mut self, args: &StashArgs) -> ShResult<()> {
     let Ok(stash) = Stash::new() else {
       status_msg!("Failed to access stash - database unreachable");
@@ -153,7 +160,7 @@ impl super::LineBuf {
         let buffer = self.joined();
         let (s, e) = (self.row(), self.col());
 
-        stash.push(name, &buffer, (s, e))?;
+        stash.push(name.as_ref(), &buffer, (s, e))?;
         self.clear_buffer();
         self.clear_hint();
         self.set_cursor(Pos::new(0, 0));
@@ -173,12 +180,11 @@ impl super::LineBuf {
           buffer,
           cursor_pos,
         } = match stash.pop(idx) {
-          Ok(ent) => match ent {
-            Some(ent) => {
+          Ok(ent) => {
+            if let Some(ent) = ent {
               status_msg!("stash: Popped stash entry");
               ent
-            }
-            None => {
+            } else {
               if stack_len == 0 {
                 status_msg!("stash: Stash is empty, nothing to pop");
               } else {
@@ -186,14 +192,14 @@ impl super::LineBuf {
               }
               return Ok(());
             }
-          },
+          }
           Err(e) => {
             status_msg!("stash: Failed to pop stash entry: {e}");
             return Ok(());
           }
         };
 
-        self.set_buffer(buffer);
+        self.set_buffer(&buffer);
 
         let cursor_pos = match self.parse_pos(&cursor_pos) {
           Ok(pos) => pos,
@@ -256,7 +262,7 @@ impl super::LineBuf {
           status_msg!("stash: Applied stash entry '{}'", name);
         }
 
-        self.set_buffer(buffer);
+        self.set_buffer(&buffer);
 
         let cursor_pos = match self.parse_pos(&cursor_pos) {
           Ok(pos) => pos,
@@ -349,7 +355,7 @@ impl super::LineBuf {
         // from `idx` up to the top, returning to the original state
         // after (stack_len - idx + 1) invocations.
         if let Some(name) = ent_name.clone() {
-          stash.push(Some(name), &curr_buf, curr_cursor)?;
+          stash.push(Some(&name), &curr_buf, curr_cursor)?;
         } else {
           let idx = ident
             .parse::<usize>()
@@ -358,7 +364,7 @@ impl super::LineBuf {
           stash.push(None, &curr_buf, curr_cursor)?;
         }
 
-        self.set_buffer(stashed_buf);
+        self.set_buffer(&stashed_buf);
 
         let cursor_pos = match self.parse_pos(&stashed_cursor) {
           Ok(pos) => pos,
@@ -415,7 +421,7 @@ impl super::LineBuf {
     let Some(merged) = merge_repeat_addr(cmd, &saved) else {
       return Ok(());
     };
-    self.exec_cmd(merged)
+    self.exec_cmd(&merged)
   }
 
   fn repeat_substitute(&mut self, cmd: &EditCmd) -> ShResult<()> {
@@ -425,7 +431,7 @@ impl super::LineBuf {
     let Some(merged) = merge_repeat_addr(cmd, &saved) else {
       return Ok(());
     };
-    self.exec_cmd(merged)
+    self.exec_cmd(&merged)
   }
 
   fn ex_write(&mut self, dest: &WriteDest) -> ShResult<()> {
@@ -445,7 +451,7 @@ impl super::LineBuf {
         };
         let joined = self.joined();
         let bytes = joined.as_bytes();
-        let lines = bytes.iter().filter(|b| **b == b'\n').count();
+        let lines = bytecount::count(bytes, b'\n');
         let len = bytes.len() as u64;
         let size = format_size(len);
 
@@ -471,23 +477,22 @@ impl super::LineBuf {
         autocmd!(PreCmd);
         {
           defer!(autocmd!(PostCmd));
-          exec_nonint(cmd.to_string(), Some("ex write".into()))?;
+          exec_nonint(cmd.clone(), Some("ex write".into()))?;
         }
       }
     }
     Ok(())
   }
 
-  fn ex_read(&mut self, src: &ReadSrc) -> ShResult<()> {
+  fn ex_read(&mut self, src: &ReadSrc) {
     let contents = match src {
       ReadSrc::File(path_buf) => {
         if !path_buf.is_file() {
           system_msg!("{} is not a file", path_buf.display());
-          return Ok(());
         }
         let Ok(contents) = std::fs::read_to_string(path_buf) else {
           system_msg!("Failed to read file {}", path_buf.display());
-          return Ok(());
+          return;
         };
         let line_count = contents.lines().count();
         let byte_count = contents.len();
@@ -505,7 +510,7 @@ impl super::LineBuf {
           Ok(out) => out,
           Err(e) => {
             e.print_error();
-            return Ok(());
+            return;
           }
         }
       }
@@ -514,10 +519,9 @@ impl super::LineBuf {
     let new_lines = Lines::to_lines(&contents);
     self.insert_lines_at(self.cursor.pos, new_lines);
     self.indent_cache = None;
-    Ok(())
   }
 
-  fn ex_edit(&mut self, paths: &[PathBuf]) -> ShResult<()> {
+  fn ex_edit(paths: &[PathBuf]) -> ShResult<()> {
     if try_var!("EDITOR").is_none() {
       system_msg!("$EDITOR is unset. Aborting edit.");
       Ok(())
@@ -551,7 +555,7 @@ impl super::LineBuf {
     }
     let input = format!("{}\n", Lines(lines).join());
     let output = self.run_shell_cmd(sh_cmd, Some(&input))?;
-    let new_lines = Lines::to_lines(output.unwrap_or_default());
+    let new_lines = Lines::to_lines(&output.unwrap_or_default());
     self.lines.0.splice(s..s, new_lines.0);
 
     Ok(())
@@ -571,7 +575,7 @@ impl super::LineBuf {
 
     Shed::vars_mut(|v| -> ShResult<()> {
       v.set_var("BUFFER", VarKind::Str(buf.clone()), VarFlags::EXPORT)?;
-      v.set_var("CURSOR", VarKind::Str(cursor.to_string()), VarFlags::EXPORT)?;
+      v.set_var("CURSOR", VarKind::Str(cursor.clone()), VarFlags::EXPORT)?;
       if let Some(anchor) = anchor {
         v.set_var("ANCHOR", VarKind::Str(anchor.to_string()), VarFlags::EXPORT)?;
       }
@@ -584,7 +588,7 @@ impl super::LineBuf {
       Some(capture_command(sh_cmd, Some(stdin))?)
     } else {
       defer!(autocmd!(PostCmd));
-      let _guard = Shed::term_mut(|t| t.cooked_mode_guard());
+      let _guard = Shed::term_mut(Terminal::cooked_mode_guard);
       exec_int(sh_cmd.to_string(), Some("<ex-mode-cmd>".into()))?;
       None
     };
@@ -600,16 +604,13 @@ impl super::LineBuf {
       v.take_var("KEYS")
     });
 
-    self.set_buffer(buf);
+    self.set_buffer(&buf);
 
     if let Some(new_anchor) = new_anchor {
       if let Ok(pos) = self.parse_pos(&new_anchor) {
         anchor = Some(self.pos_to_flat(pos));
       } else {
-        log::warn!(
-          "Invalid anchor position returned from shell command: '{}'",
-          new_anchor
-        );
+        log::warn!("Invalid anchor position returned from shell command: '{new_anchor}'");
         anchor = None;
       }
     }
@@ -617,10 +618,7 @@ impl super::LineBuf {
     if let Ok(pos) = self.parse_pos(&cursor) {
       self.set_cursor(pos);
     } else {
-      log::warn!(
-        "Invalid cursor position returned from shell command: '{}'",
-        cursor
-      );
+      log::warn!("Invalid cursor position returned from shell command: '{cursor}'",);
       self.set_cursor_from_flat(cursor_raw);
     }
 
@@ -631,25 +629,25 @@ impl super::LineBuf {
       self.set_anchor_from_flat(anchor);
     }
     if !keys.is_empty() {
-      Shed::meta_mut(|m| m.set_pending_widget_keys(&keys))
+      Shed::meta_mut(|m| m.set_pending_widget_keys(&keys));
     }
     Ok(output)
   }
 
   fn ex_delete(&mut self, cmd: &EditCmd, range: Option<AddressRange>) -> ShResult<()> {
     let range = range.unwrap_or_default();
-    self.replace_verb(cmd, Verb::Delete, range)
+    self.replace_verb(cmd, Verb::Delete, &range)
   }
   fn ex_yank(&mut self, cmd: &EditCmd, range: Option<AddressRange>) -> ShResult<()> {
     let range = range.unwrap_or_default();
-    self.replace_verb(cmd, Verb::Yank, range)
+    self.replace_verb(cmd, Verb::Yank, &range)
   }
   fn ex_put(&mut self, cmd: &EditCmd, anchor: Anchor, range: Option<AddressRange>) -> ShResult<()> {
     let range = range.unwrap_or_default();
-    self.replace_verb(cmd, Verb::Put(anchor), range)
+    self.replace_verb(cmd, Verb::Put(anchor), &range)
   }
 
-  fn replace_verb(&mut self, cmd: &EditCmd, verb: Verb, range: AddressRange) -> ShResult<()> {
+  fn replace_verb(&mut self, cmd: &EditCmd, verb: Verb, range: &AddressRange) -> ShResult<()> {
     // TODO: this can probably be performed way before we get here
     let verb = Some(verb!(verb));
     let motion = Some(motion!(range.as_motion()));
@@ -662,7 +660,7 @@ impl super::LineBuf {
     self.exec_verb(&new_cmd)
   }
 
-  /// Recursively determines the set of lines an ExNode operates on.
+  /// Recursively determines the set of lines an `ExNode` operates on.
   ///
   /// - Leaf nodes (Normal, Delete, Substitute, etc.) use the node's address
   ///   (current row if None).
@@ -748,7 +746,7 @@ mod tests {
 
   fn make_buf(content: &str) -> LineBuf {
     let mut buf = LineBuf::default();
-    buf.set_buffer(content.into());
+    buf.set_buffer(content);
     buf
   }
 
@@ -819,7 +817,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut buf = make_buf("entry one");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
-    buf.set_buffer("entry two".into());
+    buf.set_buffer("entry two");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
     // stack now: [entry one, entry two] (idx 0 oldest, idx 1 newest)
 
@@ -836,7 +834,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut buf = make_buf("to be stashed");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
-    buf.set_buffer("current work".into());
+    buf.set_buffer("current work");
 
     buf.ex_stash(&StashArgs::Drop(Some("0".into()))).unwrap();
     assert_eq!(
@@ -855,7 +853,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut buf = make_buf("saved cmd");
     buf.ex_stash(&StashArgs::Push(Some("snap".into()))).unwrap();
-    buf.set_buffer("now editing".into());
+    buf.set_buffer("now editing");
 
     buf
       .ex_stash(&StashArgs::Apply(Some("snap".into())))
@@ -887,7 +885,7 @@ mod tests {
       .ex_stash(&StashArgs::Push(Some("piece".into())))
       .unwrap();
 
-    buf.set_buffer("hello world".into());
+    buf.set_buffer("hello world");
     // Cursor defaults to (0,0); insert at start.
     buf
       .ex_stash(&StashArgs::Insert(Some("piece".into())))
@@ -915,9 +913,9 @@ mod tests {
       .unwrap();
 
     // Populate and list again.
-    buf.set_buffer("on the stack".into());
+    buf.set_buffer("on the stack");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
-    buf.set_buffer("by name".into());
+    buf.set_buffer("by name");
     buf
       .ex_stash(&StashArgs::Push(Some("alpha".into())))
       .unwrap();
@@ -1114,7 +1112,7 @@ mod tests {
       let path = dir.path().join("in.txt");
       std::fs::write(&path, "line one\nline two\n").unwrap();
       let mut buf = make_buf("");
-      buf.ex_read(&ReadSrc::File(path)).unwrap();
+      buf.ex_read(&ReadSrc::File(path));
       let joined = buf.joined();
       assert!(joined.contains("line one"), "got: {joined:?}");
       assert!(joined.contains("line two"), "got: {joined:?}");
@@ -1127,7 +1125,7 @@ mod tests {
       let _g = TestGuard::new();
       let mut buf = make_buf("original");
       let bad_path = std::path::PathBuf::from("/this/does/not/exist/zzz.txt");
-      buf.ex_read(&ReadSrc::File(bad_path)).unwrap();
+      buf.ex_read(&ReadSrc::File(bad_path));
       assert_eq!(buf.joined(), "original");
     }
 
@@ -1138,9 +1136,7 @@ mod tests {
       let _g = TestGuard::new();
       let dir = tempfile::TempDir::new().unwrap();
       let mut buf = make_buf("untouched");
-      buf
-        .ex_read(&ReadSrc::File(dir.path().to_path_buf()))
-        .unwrap();
+      buf.ex_read(&ReadSrc::File(dir.path().to_path_buf()));
       assert_eq!(buf.joined(), "untouched");
     }
 
@@ -1154,7 +1150,7 @@ mod tests {
       let path = dir.path().join("c.txt");
       std::fs::write(&path, "x").unwrap();
       let mut buf = make_buf("");
-      buf.ex_read(&ReadSrc::File(path)).unwrap();
+      buf.ex_read(&ReadSrc::File(path));
       assert!(buf.indent_cache.is_none());
     }
 
@@ -1169,7 +1165,7 @@ mod tests {
     use super::*;
     use crate::readline::editcmd::{Cmd, EditCmd, LineAddr, Motion};
 
-    /// No motion attached → ex_shell_cmd falls through to
+    /// No motion attached → `ex_shell_cmd` falls through to
     /// `run_shell_cmd(_, None)` and the buffer is mutated only by
     /// side effects the shell command itself causes.
     #[test]
@@ -1184,7 +1180,7 @@ mod tests {
       assert_eq!(buf.joined(), "after_no_motion");
     }
 
-    /// With a Line motion attached, ex_shell_cmd drains the indicated
+    /// With a Line motion attached, `ex_shell_cmd` drains the indicated
     /// lines, pipes their text to the shell command, and splices the
     /// output back in their place. `cat` is a faithful echo, so the
     /// extracted lines should round-trip identically.

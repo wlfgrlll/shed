@@ -1,6 +1,5 @@
 use std::{
   collections::VecDeque,
-  io::Write,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
   sync::atomic::Ordering,
@@ -22,8 +21,7 @@ use super::{
   builtin::{source_builtin_completions, source_builtin_scripts},
   errln,
   eval::execute::exec_int,
-  lifecycle,
-  lifecycle::first_run_setup,
+  lifecycle::{self, first_run_setup},
   outln, sherr, shopt, shopt_mut,
   signal::{
     GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
@@ -31,7 +29,8 @@ use super::{
   socket::{ShedSocket, handle_socket_request},
   state::{
     self,
-    terminal::TermGuard,
+    meta::MetaTab,
+    terminal::{TermGuard, Terminal},
     util::{rc_file_path, source_login, source_rc},
   },
   try_var, util,
@@ -59,7 +58,7 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
     log::info!("Window size change detected, updating readline dimensions");
     // Restore cursor to saved row before clearing, since the terminal
     // may have moved it during resize/rewrap
-    Shed::term_mut(|t| t.update_t_dims());
+    Shed::term_mut(Terminal::update_t_dims);
     readline.mark_dirty();
   }
 
@@ -81,12 +80,12 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
 fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
   let mut exec_if_timeout = None;
 
-  let timeout = if Shed::term(|t| t.reader_has_pending()) {
+  let timeout = if Shed::term(Terminal::reader_has_pending) {
     PollTimeout::ZERO
   } else if !readline.pending_keymap().is_empty() {
     // wait for more keymap keys
     PollTimeout::from(1000u16)
-  } else if let Some(timeout) = Shed::meta_mut(|m| m.take_poll_timeout()) {
+  } else if let Some(timeout) = Shed::meta_mut(MetaTab::take_poll_timeout) {
     // something gave us an explicit poll timeout to use.
     // usually this means there is a status message showing.
     // after the timeout, it will trigger a redraw that clears
@@ -107,17 +106,17 @@ fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
   (timeout, exec_if_timeout)
 }
 
-fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
-  let raw_mode = Shed::term_mut(|t| t.setup_terminal())?;
+fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
+  let raw_mode = Shed::term_mut(Terminal::setup_terminal)?;
 
   sig_setup(args.login_shell);
 
   Shed::meta_mut(|m| {
-    m.ensure_meta_table()?;
+    MetaTab::ensure_meta_table()?;
     m.create_socket()
   })?;
 
-  if let Some(msg) = Shed::meta(|m| m.welcome_message(args.welcome)) {
+  if let Some(msg) = MetaTab::welcome_message(args.welcome) {
     outln!("\n{msg}\n\n");
   }
 
@@ -147,13 +146,13 @@ fn interactive_setup(args: lifecycle::ShedArgs) -> ShResult<TermGuard> {
     errln!("\n{welcome}\n\n");
   }
 
-  Shed::term_mut(|t| t.reserve_status_rows())?;
+  Shed::term_mut(Terminal::reserve_status_rows);
 
   Ok(raw_mode)
 }
 
 pub(super) fn shed_interactive(
-  args: lifecycle::ShedArgs,
+  args: &lifecycle::ShedArgs,
   script_keys: Option<Vec<KeyEvent>>,
 ) -> ShResult<()> {
   let _raw_mode = interactive_setup(args)?;
@@ -207,7 +206,7 @@ pub(super) fn shed_interactive(
       &mut vi_mode,
       &mut socket_mode,
     )? {
-      LoopAction::Continue => continue,
+      LoopAction::Continue => (),
       LoopAction::Break => return Ok(()),
     }
   }
@@ -218,6 +217,7 @@ enum LoopAction {
   Break,
 }
 
+#[expect(clippy::too_many_lines)]
 fn shed_loop_iter(
   readline: &mut ShedLine,
   poll_fds: &mut SmallVec<[PollFd<'static>; 2]>,
@@ -237,10 +237,10 @@ fn shed_loop_iter(
   // 4. we get back to the loop here, grandchild alters termios
   // 5. shell is softlocked
   Shed::term_mut(|t| {
-    t.enforce_raw_mode()?;
-    t.toggle_bracketed_paste(true)?;
-    t.toggle_report_focus(true)
-  })?;
+    let _ = t.enforce_raw_mode();
+    t.toggle_bracketed_paste(true);
+    t.toggle_report_focus(true);
+  });
 
   state::util::try_hash();
   util::flog::update_log_level();
@@ -258,7 +258,7 @@ fn shed_loop_iter(
     readline.fix_editing_mode();
 
     *vi_mode = !(*vi_mode); // and toggle this
-  } else if Shed::meta(|m| m.num_subscribers()) == 0 && readline.in_insert_mode() {
+  } else if Shed::meta(MetaTab::num_subscribers) == 0 && readline.in_insert_mode() {
     // we are in remote mode with no consumers for our broadcasted input.
     // That effectively soft locks the shell, so let's fix that
     readline.fix_editing_mode();
@@ -269,7 +269,7 @@ fn shed_loop_iter(
   }
 
   let (timeout, exec_if_timeout) = get_poll_timeout(readline);
-  Shed::term_mut(|t| t.flush())?;
+  Shed::term_mut(std::io::Write::flush)?;
 
   match poll(poll_fds, timeout) {
     Ok(0) => {
@@ -291,10 +291,10 @@ fn shed_loop_iter(
           handle_readline_event(readline, Ok(prepared))?
         };
 
-        match res {
-          true => return Ok(LoopAction::Break),
-          false => return Ok(LoopAction::Continue),
+        if res {
+          return Ok(LoopAction::Break);
         }
+        return Ok(LoopAction::Continue);
       }
     }
     Err(Errno::EINTR) => {
@@ -326,7 +326,7 @@ fn shed_loop_iter(
       return Ok(LoopAction::Break);
     }
     if revents.contains(PollFlags::POLLIN) {
-      match Shed::term_mut(|t| t.read()) {
+      match Shed::term_mut(Terminal::read) {
         Ok(_) => { /* data read, will be processed below */ }
         Err(e) => match e.kind() {
           ShErrKind::LoopBreak(_) => return Ok(LoopAction::Break),
@@ -343,10 +343,10 @@ fn shed_loop_iter(
   // check socket fd
   if poll_fds
     .get(1)
-    .and_then(|fd| fd.revents())
+    .and_then(nix::poll::PollFd::revents)
     .is_some_and(|r| r.contains(PollFlags::POLLIN))
   {
-    let requests = Shed::meta_mut(|m| m.read_socket())?;
+    let requests = Shed::meta_mut(MetaTab::read_socket);
     for (conn, req) in requests {
       let res = handle_socket_request(conn, req, readline).transpose();
       if let Some(event) = res
@@ -358,12 +358,11 @@ fn shed_loop_iter(
   }
 
   // Process the input that we read above
-  let keys = Shed::term_mut(|t| t.drain_keys())?;
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let event = readline.process_input(keys);
 
-  match handle_readline_event(readline, event)? {
-    true => return Ok(LoopAction::Break),
-    false => { /* continue looping */ }
+  if handle_readline_event(readline, event)? {
+    return Ok(LoopAction::Break);
   }
 
   // check the socket mode
@@ -402,7 +401,7 @@ fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()>
   Ok(())
 }
 
-/// Handle a ReadlineEvent. Returns a boolean, `true` means "exit the shell", `false` means "keep looping"
+/// Handle a `ReadlineEvent`. Returns a boolean, `true` means "exit the shell", `false` means "keep looping"
 fn handle_readline_event(
   readline: &mut ShedLine,
   event: ShResult<ReadlineEvent>,
@@ -410,16 +409,16 @@ fn handle_readline_event(
   match event {
     Ok(ReadlineEvent::Line(input)) => {
       let token = shopt!(core.auto_hist)
-        .then(|| readline.history_mut().push(input.clone()).ok().flatten())
+        .then(|| readline.history_mut().push(&input).ok().flatten())
         .flatten(); // token is used as a stable identifier for the command in the history
 
       autocmd!(PreCmd);
 
       let cmd_start = Instant::now();
-      Shed::meta_mut(|m| m.start_timer());
+      Shed::meta_mut(MetaTab::start_timer);
 
-      Shed::term_mut(|t| t.emit_osc_exec_start()).ok();
-      Shed::term_mut(|t| t.flush()).ok();
+      Shed::term_mut(Terminal::emit_osc_exec_start).ok();
+      Shed::term_mut(std::io::Write::flush).ok();
 
       let res = exec_int(input.clone(), Some("<stdin>".into()));
 
@@ -445,14 +444,14 @@ fn handle_readline_event(
         }
       }
       let command_run_time = cmd_start.elapsed();
-      log::info!("Command executed in {:.2?}", command_run_time);
-      let runtime = Shed::meta_mut(|m| m.stop_timer());
+      log::info!("Command executed in {command_run_time:.2?}");
+      let runtime = Shed::meta_mut(MetaTab::stop_timer);
 
       autocmd!(PostCmd);
 
-      let no_hist_save = Shed::meta_mut(|m| m.no_hist_save());
+      let no_hist_save = Shed::meta_mut(MetaTab::no_hist_save);
 
-      let was_func_def = Shed::meta_mut(|m| m.take_last_was_func_def());
+      let was_func_def = Shed::meta_mut(MetaTab::take_last_was_func_def);
       let nolog = was_func_def && shopt!(set.nolog);
 
       let should_write = shopt!(core.auto_hist) && !nolog && !no_hist_save && !input.is_empty();
@@ -468,14 +467,13 @@ fn handle_readline_event(
       if shopt!(core.auto_hist)
         && should_write
         && let Some(token) = token
-        && let Err(e) = readline
-          .history_mut()
-          .set_status(token, runtime, state::Shed::get_status())
       {
-        e.print_error();
+        readline
+          .history_mut()
+          .set_status(token, runtime, state::Shed::get_status());
       }
 
-      Shed::term_mut(|t| t.fix_cursor_column())?;
+      Shed::term_mut(Terminal::fix_cursor_column)?;
 
       // Reset for next command with fresh prompt
       readline.reset(true)?;
@@ -490,16 +488,15 @@ fn handle_readline_event(
       // No complete input yet, keep polling
       Ok(false)
     }
-    Err(e) => match e.kind() {
-      ShErrKind::CleanExit(code) => {
+    Err(e) => {
+      if let ShErrKind::CleanExit(code) = e.kind() {
         QUIT_CODE.store(*code, Ordering::SeqCst);
         Ok(true)
-      }
-      _ => {
+      } else {
         e.print_error();
         Ok(false)
       }
-    },
+    }
   }
 }
 
@@ -514,7 +511,7 @@ fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
     let action = km.action_expanded();
     readline.pending_keymap_mut().clear();
     for key in action {
-      let event = readline.handle_key(key).transpose();
+      let event = readline.handle_key(&key).transpose();
       if let Some(event) = event {
         handle_readline_event(readline, event)?;
       }
@@ -522,7 +519,7 @@ fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
   } else {
     let buffered = std::mem::take(readline.pending_keymap_mut());
     for key in buffered {
-      let event = readline.handle_key(key).transpose();
+      let event = readline.handle_key(&key).transpose();
       if let Some(event) = event {
         handle_readline_event(readline, event)?;
       }
@@ -560,7 +557,7 @@ mod tests {
       // aren't intercepted by the kernel's cooked-mode special chars
       // (VEOF=^D, VINTR=^C, VERASE=^?, etc.). Without this, those bytes
       // are consumed by the tty driver before they reach shed.
-      Shed::term_mut(|t| t.enforce_raw_mode()).unwrap();
+      Shed::term_mut(Terminal::enforce_raw_mode).unwrap();
       Self {
         g,
         readline,
@@ -573,7 +570,7 @@ mod tests {
     }
 
     /// Run a single loop iteration.
-    fn iter(&mut self) -> ShResult<LoopAction> {
+    fn iterate(&mut self) -> ShResult<LoopAction> {
       shed_loop_iter(
         &mut self.readline,
         &mut self.poll_fds,
@@ -618,7 +615,7 @@ mod tests {
   fn loop_iter_continues_when_poll_times_out_with_no_input() {
     let mut h = LoopHarness::emacs();
     arm_short_poll_timeout();
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Continue));
   }
 
@@ -626,7 +623,7 @@ mod tests {
   fn loop_iter_consumes_typed_char_into_buffer() {
     let mut h = LoopHarness::emacs();
     h.type_chars(b"x");
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     let content = h.editor_content();
     assert!(matches!(action, LoopAction::Continue));
     assert_eq!(content, "x");
@@ -636,7 +633,7 @@ mod tests {
   fn loop_iter_consumes_multi_byte_input() {
     let mut h = LoopHarness::emacs();
     h.type_chars(b"abc");
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Continue));
     let content = h.editor_content();
     assert_eq!(content, "abc");
@@ -651,7 +648,7 @@ mod tests {
       h.type_chars(b"not empty");
       h.type_chars(b"\x01"); // ctrl+a (beginning of line)
       h.type_chars(b"\x04"); // ctrl+d (delete char under cursor)
-      let action = h.iter().unwrap();
+      let action = h.iterate().unwrap();
       let content = h.editor_content();
       assert!(matches!(action, LoopAction::Continue));
       assert_eq!(content, "ot empty");
@@ -661,7 +658,7 @@ mod tests {
     {
       let mut h = LoopHarness::emacs();
       h.type_chars(b"\x04");
-      let action = h.iter().unwrap();
+      let action = h.iterate().unwrap();
       assert!(matches!(action, LoopAction::Break));
     }
   }
@@ -675,7 +672,7 @@ mod tests {
     // vi_mode and calls fix_editing_mode to swap modes for real.
     shopt_mut!(set.vi = true);
     arm_short_poll_timeout();
-    h.iter().unwrap();
+    h.iterate().unwrap();
 
     assert!(h.vi_mode, "harness vi_mode flag should now be true");
     // ShedLine's actual mode should be ViInsert, which reports "INSERT".
@@ -696,7 +693,7 @@ mod tests {
     });
 
     h.type_chars(b"j");
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Continue));
     assert!(
       !h.readline.pending_keymap().is_empty(),
@@ -712,7 +709,7 @@ mod tests {
     let mut h = LoopHarness::new();
     GOT_SIGWINCH.store(true, Ordering::SeqCst);
     arm_short_poll_timeout();
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Continue));
     // The signal-handling path swap()s the flag back to false; verify
     // shed_loop_iter actually reached and processed it.
@@ -729,7 +726,7 @@ mod tests {
     // Closing the master end makes the slave (shed's tty) raise POLLHUP
     // on the next poll, signalling the terminal disappeared.
     h.g.close_tty_master();
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Break));
   }
 
@@ -740,7 +737,7 @@ mod tests {
     // command that just toggles a variable so we can observe it ran.
     shopt_mut!(prompt.screensaver_cmd = "export SCREENSAVER_FIRED=1".into());
     shopt_mut!(prompt.screensaver_idle_time = 0.05.into()); // 50ms
-    let action = h.iter().unwrap();
+    let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Continue));
     assert_eq!(var!("SCREENSAVER_FIRED"), "1");
   }
@@ -763,7 +760,7 @@ mod tests {
       let _ = l;
     });
     // Start in raw mode to keep things deterministic.
-    Shed::term_mut(|t| t.enforce_raw_mode()).ok();
+    Shed::term_mut(Terminal::enforce_raw_mode).ok();
     readline.print_line(false).ok();
     g.read_output();
     (readline, g)

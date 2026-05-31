@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display};
 
 use itertools::Itertools;
 
-use super::{expand::expand_keymap, keys::KeyEvent, linebuf::Line};
+use super::{super::keys::KeyEvent, expand::expand_keymap, linebuf::Line};
 
 thread_local! {
   pub static REGISTERS: RefCell<Registers> = RefCell::new(Registers::new());
@@ -68,10 +68,10 @@ impl RegisterName {
       append,
     }
   }
-  pub fn name(&self) -> Option<char> {
+  pub fn name(self) -> Option<char> {
     self.name
   }
-  pub fn display(&self) -> Option<char> {
+  pub fn display(self) -> Option<char> {
     let name = self.name?;
     if self.append {
       Some(name.to_ascii_uppercase())
@@ -79,17 +79,17 @@ impl RegisterName {
       Some(name)
     }
   }
-  pub fn is_none(&self) -> bool {
+  pub fn is_none(self) -> bool {
     self.name.is_none()
   }
-  pub fn write_to_register(&self, buf: RegisterContent) {
+  pub fn write_to_register(self, buf: RegisterContent) {
     if self.append {
       append_register(self.name, buf);
     } else {
       write_register(self.name, buf);
     }
   }
-  pub fn read_from_register(&self) -> Option<RegisterContent> {
+  pub fn read_from_register(self) -> Option<RegisterContent> {
     read_register(self.name)
   }
 }
@@ -125,17 +125,14 @@ impl Display for RegisterContent {
       Self::Block(s) | Self::Line(s) | Self::Span(s) => {
         let joined = s
           .iter()
-          .map(|l| l.to_string())
+          .map(ToString::to_string)
           .collect::<Vec<_>>()
           .join("\n");
 
         write!(f, "{joined}")
       }
       Self::Macro(keys) => {
-        let expanded = keys
-          .iter()
-          .map(|k| k.as_vim_seq().unwrap_or_default())
-          .join("");
+        let expanded = keys.iter().map(KeyEvent::as_vim_seq).join("");
         write!(f, "{expanded}")
       }
       Self::Empty => write!(f, ""),
@@ -185,9 +182,10 @@ impl Register {
     &self.content
   }
   pub fn write(&mut self, buf: RegisterContent) {
-    self.content = buf
+    self.content = buf;
   }
   pub fn append(&mut self, buf: RegisterContent) {
+    use RegisterContent as C;
     if matches!(buf, RegisterContent::Empty) {
       return;
     }
@@ -196,7 +194,6 @@ impl Register {
       return;
     }
 
-    use RegisterContent as C;
     match (&mut self.content, buf) {
       // same-shape text-into-text: extend in place
       (
@@ -217,7 +214,7 @@ impl Register {
       ) => {
         let text = b
           .iter()
-          .map(|l| l.to_string())
+          .map(ToString::to_string)
           .collect::<Vec<_>>()
           .join("\n");
         a.extend(expand_keymap(&text));
@@ -228,7 +225,7 @@ impl Register {
         C::Span(a) | C::Line(a) | C::Block(a),
         C::Macro(b),
       ) => {
-        let rendered: String = b.iter().filter_map(|k| k.as_vim_seq().ok()).collect();
+        let rendered: String = b.iter().map(KeyEvent::as_vim_seq).collect();
         let mut line = crate::readline::linebuf::Line::default();
         line.push_str(&rendered);
         a.push(line);

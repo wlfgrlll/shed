@@ -278,13 +278,13 @@ impl Shed {
     })
   }
   pub fn post_system_msg(msg: String) {
-    if Self::meta(|t| t.interactive_shell()) {
+    if Self::meta(meta::MetaTab::interactive_shell) {
       SHED.with(|shed| {
         let msg = Message::new(msg);
         shed.system_msg_queue.borrow_mut().push_back(msg);
       });
     } else {
-      errln!("{msg}")
+      errln!("{msg}");
     }
   }
   pub fn pop_system_msg() -> Option<String> {
@@ -333,7 +333,7 @@ impl Shed {
     SHED.with(|shed| shed.status_code.store(code, Ordering::Relaxed));
   }
   pub fn set_status_from_bool(code: bool) {
-    Self::set_status(if code { 0 } else { 1 })
+    Self::set_status(i32::from(!code));
   }
   pub fn set_pipe_status(stats: &[WtStat]) -> ShResult<()> {
     if let Some(pipe_status) = jobs::Job::pipe_status(stats) {
@@ -349,12 +349,12 @@ impl Shed {
 
   #[cfg(test)]
   pub fn save_state() {
-    SHED.with(|shed| shed.save())
+    SHED.with(Shed::save);
   }
 
   #[cfg(test)]
   pub fn restore_state() {
-    SHED.with(|shed| shed.restore())
+    SHED.with(Shed::restore);
   }
 
   #[cfg(test)]

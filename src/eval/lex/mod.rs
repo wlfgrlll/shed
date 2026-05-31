@@ -108,7 +108,7 @@ impl Span {
       source,
     }
   }
-  pub fn merge_with(mut self, other: Span) -> Option<Self> {
+  pub fn merge_with(mut self, other: &Span) -> Option<Self> {
     // make sure these two spans originate from the same input
     if !Rc::ptr_eq(&self.source.content, &other.source.content) {
       return None;
@@ -185,7 +185,7 @@ impl ariadne::Span for Span {
 /// The "class" of a token, i.e. what kind of token it is. This is the result of lexing, and is used during parsing to determine how to interpret the token.
 pub(crate) enum TkRule {
   /// A normal string token. By far the most common type of token. Used for command names, keywords, arguments, basically any "words".
-  /// String tokens are further disambiguated using the TkFlags on the token itself, which can mark a string token as a keyword, a command name, a subshell, etc.
+  /// String tokens are further disambiguated using the `TkFlags` on the token itself, which can mark a string token as a keyword, a command name, a subshell, etc.
   Str,
 
   /// The start of a given input.
@@ -299,21 +299,21 @@ impl Display for Tk {
 bitflags! {
   #[derive(Debug,Clone,Copy,PartialEq,Default)]
   pub struct TkFlags: u32 {
-    const KEYWORD      = 0b0000000000000001;
-    const OPENER       = 0b0000000000000010;
-    const IS_CMD       = 0b0000000000000100;
-    const IS_SUBSH     = 0b0000000000001000;
-    const IS_CMDSUB    = 0b0000000000010000;
-    const IS_OP        = 0b0000000000100000;
-    const ASSIGN       = 0b0000000001000000;
-    const BUILTIN      = 0b0000000010000000;
-    const IS_PROCSUB   = 0b0000000100000000;
-    const IS_HEREDOC   = 0b0000001000000000;
-    const LIT_HEREDOC  = 0b0000010000000000;
-    const TAB_HEREDOC  = 0b0000100000000000;
-    const IS_ARITH     = 0b0001000000000000;
-    const FUNCNAME		 = 0b0010000000000000;
-    const REDIR_ALL		 = 0b0100000000000000;
+    const KEYWORD      = 0b0000_0000_0000_0001;
+    const OPENER       = 0b0000_0000_0000_0010;
+    const IS_CMD       = 0b0000_0000_0000_0100;
+    const IS_SUBSH     = 0b0000_0000_0000_1000;
+    const IS_CMDSUB    = 0b0000_0000_0001_0000;
+    const IS_OP        = 0b0000_0000_0010_0000;
+    const ASSIGN       = 0b0000_0000_0100_0000;
+    const BUILTIN      = 0b0000_0000_1000_0000;
+    const IS_PROCSUB   = 0b0000_0001_0000_0000;
+    const IS_HEREDOC   = 0b0000_0010_0000_0000;
+    const LIT_HEREDOC  = 0b0000_0100_0000_0000;
+    const TAB_HEREDOC  = 0b0000_1000_0000_0000;
+    const IS_ARITH     = 0b0001_0000_0000_0000;
+    const FUNCNAME		 = 0b0010_0000_0000_0000;
+    const REDIR_ALL		 = 0b0100_0000_0000_0000;
   }
 }
 
@@ -345,6 +345,7 @@ bitflags! {
   }
 }
 
+#[expect(clippy::similar_names)]
 pub fn clean_input(input: &str) -> String {
   let input = input.to_string();
   let mut chars = input.char_indices().peekable();
@@ -448,7 +449,7 @@ pub fn clean_input(input: &str) -> String {
 /// This struct is useful for more than just the lex-parse-execute pipeline. A single input will be lexed multiple times in many places throughout the codebase. Examples include the syntax highlighter, the line editor auto-indent logic, the bodies of subshells, etc
 ///
 /// Notes:
-/// The first and last lexed token will be an empty token with class TkRule::Soi and TkRule::Eoi respectively. These tokens must be handled specially if you are using the lexer for internal stuff like the cases mentioned above.
+/// The first and last lexed token will be an empty token with class `TkRule::Soi` and `TkRule::Eoi` respectively. These tokens must be handled specially if you are using the lexer for internal stuff like the cases mentioned above.
 pub(crate) struct LexStream {
   source: Rc<str>,
   pub cursor: usize,
@@ -587,6 +588,7 @@ impl LexStream {
       self.flags &= !LexFlags::NEXT_IS_CMD;
     }
   }
+  #[expect(clippy::too_many_lines)]
   pub fn read_redir(&mut self) -> Option<ShResult<Tk>> {
     assert!(self.cursor <= self.source.len());
     let slice = self.slice(self.cursor..)?.to_string();
@@ -628,7 +630,7 @@ impl LexStream {
           found_fd = true;
           pos += 1;
         } else {
-          while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+          while chars.peek().is_some_and(char::is_ascii_digit) {
             chars.next();
             found_fd = true;
             pos += 1;
@@ -643,10 +645,9 @@ impl LexStream {
             span_start..pos,
             "Invalid redirection",
           )));
-        } else {
-          tk = self.get_token(self.cursor..pos, TkRule::Redir);
-          break;
         }
+        tk = self.get_token(self.cursor..pos, TkRule::Redir);
+        break;
       }
       '<' => {
         if chars.peek() == Some(&'(') {
@@ -720,7 +721,7 @@ impl LexStream {
               found_fd = true;
               pos += 1;
             } else {
-              while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+              while chars.peek().is_some_and(char::is_ascii_digit) {
                 chars.next();
                 found_fd = true;
                 pos += 1;
@@ -735,10 +736,9 @@ impl LexStream {
                 span_start..pos,
                 "Invalid redirection",
               )));
-            } else {
-              tk = self.get_token(self.cursor..pos, TkRule::Redir);
-              break;
             }
+            tk = self.get_token(self.cursor..pos, TkRule::Redir);
+            break;
           }
           _ => {}
         }
@@ -748,7 +748,7 @@ impl LexStream {
       }
       '0'..='9' => {
         pos += 1;
-        while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+        while chars.peek().is_some_and(char::is_ascii_digit) {
           chars.next();
           pos += 1;
         }
@@ -765,6 +765,7 @@ impl LexStream {
     self.update_cursor(pos);
     Some(Ok(tk))
   }
+  #[expect(clippy::too_many_lines)]
   pub fn read_heredoc(&mut self, mut pos: usize) -> ShResult<Option<Tk>> {
     let slice = self.slice(pos..).unwrap_or_default().to_string();
     let span_start = pos;
@@ -925,6 +926,7 @@ impl LexStream {
       ))
     }
   }
+  #[expect(clippy::too_many_lines)]
   pub fn read_string(&mut self) -> ShResult<Tk> {
     assert!(self.cursor <= self.source.len());
     let slice = self.slice_from_cursor().unwrap().to_string();
@@ -936,9 +938,8 @@ impl LexStream {
       _ if self.flags.contains(LexFlags::RAW) => {
         if ch.is_whitespace() {
           break;
-        } else {
-          pos += ch.len_utf8()
         }
+        pos += ch.len_utf8();
       }
       '\\' if !self.quote_state.in_single() => {
         pos += 1;
@@ -1274,7 +1275,7 @@ impl LexStream {
       self.case_depth -= 1;
       self.flags &= !LexFlags::CASE_PAT_EXPECTED;
     } else if is_cmd_sub(text) {
-      new_tk.mark(TkFlags::IS_CMDSUB)
+      new_tk.mark(TkFlags::IS_CMDSUB);
     }
     self.update_cursor(pos);
     Ok(new_tk)
@@ -1320,6 +1321,7 @@ impl LexStream {
 
 impl Iterator for LexStream {
   type Item = ShResult<Tk>;
+  #[expect(clippy::too_many_lines)]
   fn next(&mut self) -> Option<Self::Item> {
     assert!(self.cursor <= self.source.len());
     // We are at the end of the input

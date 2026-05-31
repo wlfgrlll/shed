@@ -111,9 +111,8 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       if allow_side_effects {
         let expanded = expand_cmd_sub(&subsh_body)?;
         return Ok(expanded);
-      } else {
-        return Ok(subsh_body);
       }
+      return Ok(subsh_body);
     }
     '{' if var_name.is_empty() && brace_depth == 0 => {
       chars.next(); // consume the brace
@@ -180,14 +179,14 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       var_name.push(ch);
     }
   });
-  if !var_name.is_empty() {
+  if var_name.is_empty() {
+    Ok(String::new())
+  } else {
     let val = try_var!(&var_name);
     if val.is_none() && shopt!(set.nounset) {
       return Err(sherr!(NotFound, "Variable '{var_name}' is not set"));
     }
     Ok(val.unwrap_or_default())
-  } else {
-    Ok(String::new())
   }
 }
 
@@ -222,7 +221,7 @@ pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
       .ok_or_else(|| sherr!(SyntaxErr, "Non-UTF8 filename found in glob"))?;
     let escaped = escape_str(entry_raw, true);
 
-    words.push(escaped)
+    words.push(escaped);
   }
   Ok(words)
 }
@@ -357,6 +356,7 @@ mod tests {
 
   #[test]
   fn expand_glob_matches_escaped_space() {
+    use crate::expand::markers::strip_markers;
     // The original bug: `my\ *` should match a file named `my file.txt`.
     let _g = TestGuard::new();
     let tmp = std::env::temp_dir().join("shed_test_glob_escape");
@@ -379,7 +379,6 @@ mod tests {
     let result = result.expect("expand_glob should succeed").join(" ");
     // Glob expansion should match `my file.txt`. Result is escape-marker-
     // wrapped post-glob; check via strip_markers.
-    use crate::expand::markers::strip_markers;
     let stripped = strip_markers(&result);
     assert!(
       stripped.contains("my file.txt"),
@@ -389,18 +388,15 @@ mod tests {
 
   // ===================== Tk::expand glob tests (full pipeline) =====================
 
-  /// Helper: drive the full expansion pipeline (unescape_str → expand_raw →
-  /// split_words → expand_glob → strip ESCAPE) on a raw shell word.
+  /// Helper: drive the full expansion pipeline (`unescape_str` → `expand_raw` →
+  /// `split_words` → `expand_glob` → strip ESCAPE) on a raw shell word.
   fn expand_words_in(dir: &std::path::Path, raw: &str) -> Vec<String> {
     use crate::eval::lex::TkFlags;
     use crate::expand::Expander;
 
     let saved = std::env::current_dir().ok();
     std::env::set_current_dir(dir).unwrap();
-    let result = Expander::from_raw(raw, TkFlags::empty())
-      .unwrap()
-      .expand()
-      .unwrap();
+    let result = Expander::from_raw(raw, TkFlags::empty()).expand().unwrap();
     if let Some(prev) = saved {
       let _ = std::env::set_current_dir(prev);
     }

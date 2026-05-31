@@ -46,7 +46,7 @@ impl super::Builtin for KeyMapBuiltin {
     }
 
     if args.argv.is_empty() && remove.is_none() {
-      display_keymaps(flags)?;
+      display_keymaps(flags);
       return with_status(0);
     }
 
@@ -90,7 +90,7 @@ impl super::Builtin for KeyMapBuiltin {
   }
 }
 
-fn display_keymaps(mut flags: KeyMapFlags) -> ShResult<()> {
+fn display_keymaps(mut flags: KeyMapFlags) {
   if flags.is_empty() {
     flags = KeyMapFlags::all();
   }
@@ -102,8 +102,6 @@ fn display_keymaps(mut flags: KeyMapFlags) -> ShResult<()> {
     .join("\n");
 
   outln!("{lines}");
-
-  Ok(())
 }
 
 #[cfg(test)]

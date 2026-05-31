@@ -1,4 +1,5 @@
 use super::{
+  super::state::terminal::Terminal,
   ShResult, Shed, match_loop, sherr,
   state::terminal::{ColorMode, calc_str_width},
   write_term,
@@ -16,23 +17,23 @@ pub const TREE_LEFT: &str = "\x1b[90m├\x1b[0m";
 pub const TREE_RIGHT: &str = "\x1b[90m┤\x1b[0m";
 
 fn rgb_to_xterm256(r: u8, g: u8, b: u8) -> u8 {
-  let r = (r as u16 * 5 / 255) as u8;
-  let g = (g as u16 * 5 / 255) as u8;
-  let b = (b as u16 * 5 / 255) as u8;
+  let r = (u16::from(r) * 5 / 255) as u8;
+  let g = (u16::from(g) * 5 / 255) as u8;
+  let b = (u16::from(b) * 5 / 255) as u8;
 
   16 + r * 36 + g * 6 + b
 }
 
 fn rgb_to_xterm16(r: u8, g: u8, b: u8) -> u8 {
-  let r = if r > 128 { 1 } else { 0 };
-  let g = if g > 128 { 1 } else { 0 };
-  let b = if b > 128 { 1 } else { 0 };
+  let r = u8::from(r > 128);
+  let g = u8::from(g > 128);
+  let b = u8::from(b > 128);
 
   (b << 2) | (g << 1) | r
 }
 
 fn apply_fg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
-  match Shed::term(|t| t.color_mode()) {
+  match Shed::term(Terminal::color_mode) {
     None => style,
     Some(ColorMode::Truecolor) => style.rgb(r, g, b),
     Some(ColorMode::Palette256) => style.fixed(rgb_to_xterm256(r, g, b)),
@@ -41,7 +42,7 @@ fn apply_fg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
 }
 
 fn apply_fg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> {
-  match Shed::term(|t| t.color_mode()) {
+  match Shed::term(Terminal::color_mode) {
     None => style,
     Some(ColorMode::Truecolor) => style.rgb(r, g, b),
     Some(ColorMode::Palette256) => style.fixed(rgb_to_xterm256(r, g, b)),
@@ -50,7 +51,7 @@ fn apply_fg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> 
 }
 
 fn apply_bg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
-  match Shed::term(|t| t.color_mode()) {
+  match Shed::term(Terminal::color_mode) {
     None => style,
     Some(ColorMode::Truecolor) => style.on_rgb(r, g, b),
     Some(ColorMode::Palette256) => style.on_fixed(rgb_to_xterm256(r, g, b)),
@@ -59,7 +60,7 @@ fn apply_bg_rgb(style: Style, r: u8, g: u8, b: u8) -> Style {
 }
 
 fn apply_bg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> {
-  match Shed::term(|t| t.color_mode()) {
+  match Shed::term(Terminal::color_mode) {
     None => style,
     Some(ColorMode::Truecolor) => style.on_rgb(r, g, b),
     Some(ColorMode::Palette256) => style.on_fixed(rgb_to_xterm256(r, g, b)),
@@ -67,7 +68,7 @@ fn apply_bg_rgb_raw(style: Painted<&str>, r: u8, g: u8, b: u8) -> Painted<&str> 
   }
 }
 
-/// A wrapper around yansi::Style. Defers application of text attributes like bold/italic.
+/// A wrapper around `yansi::Style`. Defers application of text attributes like bold/italic.
 #[derive(Clone, Debug, Default, Copy)]
 pub struct PaletteEntry {
   style: Style,
@@ -248,6 +249,7 @@ impl PaletteEntry {
 ///
 /// This is made as a workaround for the fact that yansi's `Style` struct does not offer any kind of introspection.
 #[derive(Clone, Default, Debug, Copy)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct Decorations {
   underline: bool,
   bold: bool,
@@ -271,7 +273,7 @@ impl Decorations {
       s = s.italic();
     }
     if self.strike {
-      s = s.strike()
+      s = s.strike();
     }
     if self.dimmed {
       s = s.dim();
@@ -579,12 +581,12 @@ mod stylize_loglevel_tests {
 
 #[cfg(test)]
 mod color_application_tests {
-  //! Tests for the apply_fg_rgb / apply_bg_rgb family + the
-  //! rgb_to_xterm{256,16} lookup tables they depend on.
+  //! Tests for the `apply_fg_rgb` / `apply_bg_rgb` family + the
+  //! `rgb_to_xterm{256,16}` lookup tables they depend on.
   //!
   //! The functions branch on `Shed::term(|t| t.color_mode())`, which
-  //! consults env vars (NO_COLOR, SHED_COLOR_MODE, TERM, plus
-  //! terminfo). We drive the dispatch by setting SHED_COLOR_MODE in
+  //! consults env vars (`NO_COLOR`, `SHED_COLOR_MODE`, TERM, plus
+  //! terminfo). We drive the dispatch by setting `SHED_COLOR_MODE` in
   //! the test vars.
 
   use super::*;

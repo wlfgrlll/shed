@@ -10,7 +10,10 @@ use std::{
   path::Path,
 };
 
+use crate::state::meta::MetaTab;
+
 use super::{
+  super::state::terminal::Terminal,
   Shed,
   eval::lex::Span,
   expand,
@@ -37,12 +40,9 @@ const fn validate_help_page(s: &str) {
   let bytes = s.as_bytes();
   let mut i = 0;
   while i < bytes.len() {
-    if bytes[i] == b'\t' {
-      panic!("help file contains tabs")
-    }
-    if bytes[i] > 127 {
-      panic!("help file contains non-ascii characters")
-    }
+    assert!(bytes[i] != b'\t', "help file contains tabs");
+    assert!(bytes[i] <= 127, "help file contains non-ascii characters");
+
     i += 1;
   }
 }
@@ -83,22 +83,22 @@ impl super::Builtin for Help {
     vec![OptSpec::flag("list-tags"), OptSpec::flag('l')]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let _guard = scopeguard::guard((), |_| {
-      if !Shed::term(|t| t.test_mode()) {
-        Shed::meta_mut(|m| m.disable_welcome_message()).unwrap();
+    let _guard = scopeguard::guard((), |()| {
+      if !Shed::term(Terminal::test_mode) {
+        Shed::meta_mut(|_| MetaTab::disable_welcome_message()).unwrap();
       }
     });
 
-    let mut argv = args.argv.into_iter().peekable();
+    let mut arg_vec = args.argv.into_iter().peekable();
     let list_tags =
       args.opts.contains(&Opt::Long("list-tags".into())) || args.opts.contains(&Opt::Short('l'));
 
     // Join all of the word-split arguments into a single string
     // Preserve the span too
-    let (topic, span) = if argv.peek().is_none() {
+    let (topic, span) = if arg_vec.peek().is_none() {
       ("help/help.txt".to_string(), Span::default())
     } else {
-      super::join_raw_arg_iter(argv)
+      super::join_raw_arg_iter(arg_vec)
     };
 
     if list_tags {
@@ -140,7 +140,7 @@ pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   }
 
   for (page, content) in HELP_PAGES {
-    let mut new_tags = read_tags(content, page)?;
+    let mut new_tags = read_tags(content, page);
     tags.append(&mut new_tags);
   }
 
@@ -211,12 +211,12 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   }
 
   for (page, content) in HELP_PAGES {
-    let mut new_tags = read_tags(content, page).ok()?;
+    let mut new_tags = read_tags(content, page);
     score_matches(topic, &mut new_tags);
     tags.append(&mut new_tags);
   }
 
-  tags.sort_by_key(|t| t.score());
+  tags.sort_by_key(ScoredTag::score);
   log::debug!("tags: {tags:#?}");
   tags.last().and_then(|best| {
     let ScoredTag { tag: _, line, file } = best;
@@ -225,7 +225,7 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
       return Some((
         line.saturating_sub(2),
         content.to_string(),
-        Some(file.to_string()),
+        Some(file.clone()),
       ));
     }
 
@@ -239,10 +239,10 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
 }
 
 pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResult<()> {
-  if Shed::term(|t| t.test_mode()) {
+  if Shed::term(Terminal::test_mode) {
     return with_status(0);
   }
-  let Some(pager) = HelpPager::new(content.to_string(), line, filename) else {
+  let Some(pager) = HelpPager::new(content, line, filename) else {
     return Ok(()); // means stdout is not a terminal, so return
   };
 
@@ -256,7 +256,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
   let tty_fd = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty) }, PollFlags::POLLIN);
 
   // restores terminal state on drop
-  let _tui_guard = Shed::term_mut(|t| t.prepare_for_pager());
+  let _tui_guard = Shed::term_mut(Terminal::prepare_for_pager);
 
   loop {
     let res = {
@@ -287,7 +287,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
       PagerEvent::OpenRef(crossref) => match get_help_content(&crossref) {
         // open new pager, push to stack
         Some((line, content, filename)) => {
-          let new_pager = HelpPager::new(content, line, filename).ok_or_else(|| {
+          let new_pager = HelpPager::new(&content, line, filename).ok_or_else(|| {
             sherr!(
               NotFound,
               "No relevant help page found for topic '{crossref}'",
@@ -313,12 +313,11 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
       PagerEvent::ClosePage => {
         if pager == 0 {
           break; // if we close the last page, just exit
-        } else {
-          page_stack.pop();
-          pager -= 1;
         }
+        page_stack.pop();
+        pager -= 1;
       }
-      PagerEvent::Continue => continue,
+      PagerEvent::Continue => (),
       PagerEvent::ExitPager => break,
     }
   }
@@ -362,13 +361,13 @@ pub fn read_tags_from_file(path: &Path) -> ShResult<Vec<ScoredTag>> {
   // Pass the full path as `name` so that get_help_content's tag-search
   // restore step can re-read the file. The display filename (a bare stem)
   // is recovered at return time.
-  read_tags(&contents, path.to_string_lossy().as_ref())
+  Ok(read_tags(&contents, path.to_string_lossy().as_ref()))
 }
 
-pub fn read_tags(content: &str, name: &str) -> ShResult<Vec<ScoredTag>> {
+pub fn read_tags(content: &str, name: &str) -> Vec<ScoredTag> {
   let styled = StyledHelp::new(content);
 
-  let tags = styled
+  styled
     .find_markers(TAG_SEQ)
     .into_iter()
     .map(|span| {
@@ -378,15 +377,14 @@ pub fn read_tags(content: &str, name: &str) -> ShResult<Vec<ScoredTag>> {
         name,
       )
     })
-    .collect();
-
-  Ok(tags)
+    .collect()
 }
 
 #[cfg(test)]
 mod open_help_tests {
   use super::*;
   use crate::state::Shed;
+  use crate::state::terminal::Terminal;
   use crate::state::vars::{VarFlags, VarKind};
   use crate::tests::testutil::TestGuard;
 
@@ -394,7 +392,7 @@ mod open_help_tests {
     "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10";
 
   fn arm_raw_tty() {
-    Shed::term_mut(|t| t.enforce_raw_mode()).unwrap();
+    Shed::term_mut(Terminal::enforce_raw_mode).unwrap();
   }
 
   // ─── Exit paths ──────────────────────────────────────────────────────
@@ -544,7 +542,8 @@ mod open_help_tests {
   fn get_help_content_direct_absolute_file_path() {
     let _g = TestGuard::new();
     // Wipe HPATH so we don't accidentally match a system file.
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
+      .unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let file_path = dir.path().join("mytopic.txt");
     std::fs::write(&file_path, "direct file body").unwrap();
@@ -585,7 +584,8 @@ mod open_help_tests {
   #[test]
   fn get_help_content_builtin_page_prefix_match() {
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
+      .unwrap();
     // "help/help" is a prefix of the bundled "help/help.txt" page name.
     let (line, _content, filename) = get_help_content("help/help").unwrap();
     assert_eq!(line, 0);
@@ -597,7 +597,8 @@ mod open_help_tests {
     // The prefix "help/" matches every bundled page, but we return the
     // first one — "help/arith.txt" is the first entry in HELP_PAGES.
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
+      .unwrap();
     let (_, _, filename) = get_help_content("help/").unwrap();
     assert_eq!(filename, Some("help/arith.txt".to_string()));
   }
@@ -607,7 +608,8 @@ mod open_help_tests {
   #[test]
   fn get_help_content_no_match_returns_none() {
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
+      .unwrap();
     // A long random topic ensures fuzzy_score returns i32::MIN for every
     // tag (some char in the topic won't appear in any tag), so tags is
     // empty after score_matches retains, and tags.last() yields None.
@@ -660,7 +662,8 @@ mod open_help_tests {
     // Passing a directory path means `is_file()` is false, so direct
     // lookup is skipped and we proceed to the HPATH/HELP_PAGES loops.
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
+      .unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     // The dir path won't match anything; expect None (no tags will
     // fuzzy-match a full /tmp/... path either).
@@ -671,17 +674,19 @@ mod open_help_tests {
 #[cfg(test)]
 mod help_execute_tests {
   use crate::state;
+  use crate::state::meta::MetaTab;
+  use crate::state::terminal::Terminal;
   use crate::tests::testutil::{TestGuard, test_input};
 
   fn arm_raw_tty() {
-    state::Shed::term_mut(|t| t.enforce_raw_mode()).unwrap();
+    state::Shed::term_mut(Terminal::enforce_raw_mode).unwrap();
   }
 
-  /// Help::execute's scopeguard calls `disable_welcome_message` which
+  /// `Help::execute`'s scopeguard calls `disable_welcome_message` which
   /// INSERTs into the `meta` table; that table is only created during
-  /// interactive_setup. Tests need to set it up themselves.
+  /// `interactive_setup`. Tests need to set it up themselves.
   fn ensure_meta_table() {
-    state::Shed::meta(|m| m.ensure_meta_table()).unwrap();
+    state::Shed::meta(|_| MetaTab::ensure_meta_table()).unwrap();
   }
 
   // ─── help -l / --list-tags ──────────────────────────────────────
@@ -756,7 +761,7 @@ mod get_all_tags_tests {
     let _g = TestGuard::new();
     // Empty HPATH so only the builtin HELP_PAGES contribute.
     Shed::vars_mut(|v| {
-      v.set_var("SHED_HPATH", VarKind::Str("".into()), VarFlags::EXPORT)
+      v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT)
         .unwrap();
     });
     let tags = get_all_tags().unwrap();

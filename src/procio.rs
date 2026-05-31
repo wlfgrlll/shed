@@ -50,18 +50,20 @@ fn dup_high_no_cloexec(fd: BorrowedFd) -> nix::Result<OwnedFd> {
   Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-/// Like `dup_high()` but takes and closes an existing OwnedFd.
+#[expect(clippy::needless_pass_by_value)]
+/// Like `dup_high()` but takes and closes an existing `OwnedFd`.
 pub fn move_high(fd: OwnedFd) -> nix::Result<OwnedFd> {
   let new_fd = dup_high(fd.as_fd())?;
   Ok(new_fd)
 } // fd is closed here
 
+#[expect(clippy::needless_pass_by_value)]
 fn move_high_no_cloexec(fd: OwnedFd) -> nix::Result<OwnedFd> {
   let new_fd = dup_high_no_cloexec(fd.as_fd())?;
   Ok(new_fd)
 }
 
-/// SQLite opens long-lived file descriptors on its own and we cant call move_high on them.
+/// `SQLite` opens long-lived file descriptors on its own and we cant call `move_high` on them.
 ///
 /// These files usually end up polluting the user-space 3-10 range which we work so hard to keep clear
 /// so that users can open resources on those file descriptors without any weirdness happening.
@@ -100,9 +102,9 @@ pub fn pipes_high_no_cloexec() -> nix::Result<(OwnedFd, OwnedFd)> {
   Ok((move_high_no_cloexec(r)?, move_high_no_cloexec(w)?))
 }
 
-/// Basically just a fancy deferred dup2() call.
+/// Basically just a fancy deferred `dup2()` call.
 ///
-/// If constructed using Redir::close(), this will close the target fd when applied.
+/// If constructed using `Redir::close()`, this will close the target fd when applied.
 #[derive(Debug)]
 pub struct Redir {
   fd: RawFd,
@@ -134,7 +136,7 @@ impl Redir {
 
 /// Step one of our redirection building pipeline.
 ///
-/// The parser uses these to create RedirSpecs.
+/// The parser uses these to create `RedirSpecs`.
 #[derive(Default, Debug)]
 pub(super) struct RedirBldr {
   pub fd: Option<RawFd>,
@@ -145,7 +147,7 @@ pub(super) struct RedirBldr {
 
 impl RedirBldr {
   pub fn new() -> Self {
-    Default::default()
+    RedirBldr::default()
   }
   pub fn with_fd(self, fd: RawFd) -> Self {
     Self {
@@ -187,7 +189,7 @@ impl RedirBldr {
       RedirTarget::Close => Ok(RedirSpec::close(fd)),
       RedirTarget::Fd(src_fd) if class.is_dup_op() => Ok(RedirSpec::dup(src_fd, fd, class)),
       RedirTarget::HereDoc { body, flags } => {
-        log::debug!("heredoc body: {:?}", body);
+        log::debug!("heredoc body: {body:?}");
         // Strip leading tabs per line BEFORE expansion (POSIX order).
         let buf = if flags.contains(TkFlags::TAB_HEREDOC) {
           if body.is_empty() {
@@ -209,7 +211,7 @@ impl RedirBldr {
           s
         };
 
-        RedirSpec::buffer(fd, buf, flags)
+        Ok(RedirSpec::buffer(fd, buf, flags))
       }
       _ => Err(
         sherr!(ParseErr, "Invalid redirection target for redirection type")
@@ -267,7 +269,7 @@ impl FromStr for RedirBldr {
         } else {
           while let Some(next_ch) = chars.next() {
             if next_ch.is_ascii_digit() {
-              src_fd.push(next_ch)
+              src_fd.push(next_ch);
             } else {
               break;
             }
@@ -355,19 +357,19 @@ pub(super) enum RedirType {
 }
 
 impl RedirType {
-  pub fn is_input(&self) -> bool {
+  pub fn is_input(self) -> bool {
     matches!(
       self,
       RedirType::Input | RedirType::HereDoc | RedirType::HereString | RedirType::ReadWrite
     )
   }
-  pub fn is_output(&self) -> bool {
+  pub fn is_output(self) -> bool {
     matches!(
       self,
       RedirType::Output | RedirType::OutputForce | RedirType::Append | RedirType::ReadWrite
     )
   }
-  pub fn is_file_op(&self) -> bool {
+  pub fn is_file_op(self) -> bool {
     matches!(
       self,
       RedirType::Output
@@ -377,7 +379,7 @@ impl RedirType {
         | RedirType::ReadWrite
     )
   }
-  pub fn is_dup_op(&self) -> bool {
+  pub fn is_dup_op(self) -> bool {
     matches!(self, RedirType::Output | RedirType::Input)
   }
 }
@@ -422,21 +424,18 @@ impl RedirSpec {
   pub fn close(fd: RawFd) -> Self {
     Self::Close { fd }
   }
-  pub fn buffer(fd: RawFd, buf: String, flags: TkFlags) -> ShResult<Self> {
-    Ok(Self::Buffer { fd, buf, flags })
+  pub fn buffer(fd: RawFd, buf: String, flags: TkFlags) -> Self {
+    Self::Buffer { fd, buf, flags }
   }
   pub fn target_fd(&self) -> RawFd {
     match self {
-      RedirSpec::File { fd, .. } => *fd,
       RedirSpec::Dup { to, .. } => *to,
-      RedirSpec::Close { fd } => *fd,
-      RedirSpec::Buffer { fd, .. } => *fd,
+      RedirSpec::File { fd, .. } | RedirSpec::Close { fd } | RedirSpec::Buffer { fd, .. } => *fd,
     }
   }
   pub fn mode(&self) -> RedirType {
     match self {
-      RedirSpec::File { mode, .. } => *mode,
-      RedirSpec::Dup { mode, .. } => *mode,
+      RedirSpec::File { mode, .. } | RedirSpec::Dup { mode, .. } => *mode,
       RedirSpec::Close { .. } => RedirType::Null,
       RedirSpec::Buffer { .. } => RedirType::HereDoc,
     }
@@ -479,7 +478,7 @@ impl RedirSpec {
         let owned = move_high(owned)?;
 
         if flags.contains(TkFlags::IS_HEREDOC) && !flags.contains(TkFlags::LIT_HEREDOC) {
-          buf = Expander::from_raw(&buf, flags)?
+          buf = Expander::from_raw(&buf, flags)
             .expand()?
             .into_iter()
             .next()
@@ -515,7 +514,7 @@ impl RedirSet {
     if self.0.is_empty() {
       return Ok(None);
     }
-    let targets: BTreeSet<RawFd> = self.0.iter().map(|spec| spec.target_fd()).collect();
+    let targets: BTreeSet<RawFd> = self.0.iter().map(RedirSpec::target_fd).collect();
 
     let guard = RedirGuard::new(&targets)?;
     for spec in self.0 {
@@ -739,7 +738,7 @@ pub(super) fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String
       let status = loop {
         match waitpid(child, Some(WtFlag::WUNTRACED)) {
           Ok(status) => break status,
-          Err(Errno::EINTR) => continue,
+          Err(Errno::EINTR) => (),
           Err(e) => return Err(e.into()),
         }
       };
@@ -799,7 +798,7 @@ pub mod tests {
   fn pipeline_simple() {
     if !has_cmd("sed") {
       return;
-    };
+    }
     let g = TestGuard::new();
 
     test_input("echo foo | sed 's/foo/bar/'").unwrap();

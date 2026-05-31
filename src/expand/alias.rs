@@ -17,7 +17,7 @@ struct AliasExpander<'a> {
 impl<'a> AliasExpander<'a> {
   pub fn new(input: String, expanded: &'a mut HashSet<String>) -> Self {
     let tokens: VecDeque<Tk> = LexStream::new(input.clone().into(), LexFlags::empty())
-      .filter_map(|tk| tk.ok())
+      .filter_map(Result::ok)
       .collect();
 
     Self {
@@ -72,7 +72,7 @@ impl<'a> AliasExpander<'a> {
 
     if changed {
       self.tokens = LexStream::new(self.input.clone().into(), LexFlags::empty())
-        .filter_map(|tk| tk.ok())
+        .filter_map(Result::ok)
         .collect();
 
       self.expand()

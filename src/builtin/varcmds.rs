@@ -19,23 +19,23 @@ use super::{
 /// assignment via `local`/`readonly`/`export`. Tokens that look like array
 /// literals are passed through verbatim so `arr_from_raw` can parse them.
 pub fn prepare_assignment_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
-  let mut args = vec![];
+  let mut out = vec![];
   for tk in argv {
     let raw = tk.span.as_str();
     let is_arr_lit = raw
       .find('=')
       .is_some_and(|eq| raw[eq + 1..].starts_with('(') && raw.ends_with(')'));
     if is_arr_lit {
-      args.push((raw.to_string(), tk.span.clone()));
+      out.push((raw.to_string(), tk.span.clone()));
     } else {
       let span = tk.span.clone();
       let expanded = tk.expand()?;
       for exp in expanded.get_words() {
-        args.push((exp, span.clone()));
+        out.push((exp, span.clone()));
       }
     }
   }
-  Ok(args)
+  Ok(out)
 }
 
 pub fn split_assignment(arg: String) -> (String, Option<VarKind>) {
@@ -594,8 +594,8 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("a"));
-    assert!(out.contains("c"));
+    assert!(out.contains('a'));
+    assert!(out.contains('c'));
   }
 
   #[test]
@@ -882,7 +882,7 @@ mod tests {
     test_input("foo=1").unwrap();
     test_input("echo ${arr[foo]}").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("b"), "got {out:?}");
+    assert!(out.contains('b'), "got {out:?}");
   }
 
   #[test]
@@ -910,14 +910,14 @@ mod tests {
     let val = Shed::vars(|v| {
       v.index_var(
         "mymap",
-        crate::state::vars::ArrIndex::Key("foo".to_string()),
+        &crate::state::vars::ArrIndex::Key("foo".to_string()),
       )
     });
     assert_eq!(val.unwrap(), "bar");
     let val2 = Shed::vars(|v| {
       v.index_var(
         "mymap",
-        crate::state::vars::ArrIndex::Key("biz".to_string()),
+        &crate::state::vars::ArrIndex::Key("biz".to_string()),
       )
     });
     assert_eq!(val2.unwrap(), "baz");
@@ -941,7 +941,7 @@ mod tests {
     test_input("echo ${aa[@]}").unwrap();
     let out = guard.read_output();
     assert!(
-      out.contains("1") && out.contains("2") && out.contains("3"),
+      out.contains('1') && out.contains('2') && out.contains('3'),
       "got {out:?}"
     );
   }
@@ -969,7 +969,7 @@ mod tests {
     test_input("declare -A aa=([key]=hello)").unwrap();
     test_input("echo ${#aa[key]}").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("5"), "got {out:?}");
+    assert!(out.contains('5'), "got {out:?}");
   }
 
   #[test]
@@ -991,7 +991,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("v"), "got {out:?}");
+    assert!(out.contains('v'), "got {out:?}");
   }
 
   #[test]
@@ -1021,7 +1021,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("y"), "got {out:?}");
+    assert!(out.contains('y'), "got {out:?}");
   }
 
   #[test]
@@ -1031,7 +1031,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("5"), "got {out:?}");
+    assert!(out.contains('5'), "got {out:?}");
   }
 
   #[test]
@@ -1107,7 +1107,7 @@ mod tests {
     let guard = TestGuard::new();
     test_input("foo").unwrap();
     let out = guard.read_output();
-    assert!(out.contains("3"), "got {out:?}");
+    assert!(out.contains('3'), "got {out:?}");
   }
 
   #[test]

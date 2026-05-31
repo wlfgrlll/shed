@@ -1,6 +1,7 @@
 use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 use scopeguard::defer;
+use std::fmt::Write;
 
 use crate::state::meta::UtilKind;
 
@@ -12,10 +13,10 @@ use super::{
     lex::{KEYWORDS, Span, Tk},
   },
   expand::{self, as_var_val_display},
-  key, keys, match_loop, out, outln, procio,
-  procio::RedirSet,
-  readline, sherr, shopt, signal, state,
-  state::{Shed, jobs::ChildProc, shopt as shopt_internal},
+  key, keys, match_loop, out, outln,
+  procio::{self, RedirSet},
+  readline, sherr, shopt, signal,
+  state::{self, Shed, jobs::ChildProc, meta::MetaTab, shopt as shopt_internal},
   status_msg, system_msg, try_var,
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
   var, write_term,
@@ -331,7 +332,7 @@ pub(super) trait Builtin: Sync {
     };
     if !argv.is_empty() {
       argv.remove(0);
-    };
+    }
     Ok((argv, opts))
   }
   /// The main entry point for running a builtin. This is responsible for setting up the environment, handling redirections, and catching control flow errors.
@@ -341,12 +342,13 @@ pub(super) trait Builtin: Sync {
     let NdRule::Command { assignments, argv } = &mut node.class else {
       unreachable!()
     };
-    let assign_behavior = match self.is_special() {
-      true => AssignBehavior::Set,
-      false => AssignBehavior::Export,
+    let assign_behavior = if self.is_special() {
+      AssignBehavior::Set
+    } else {
+      AssignBehavior::Export
     };
 
-    let vars = dispatcher.set_assignments(std::mem::take(assignments), assign_behavior)?;
+    let vars = Dispatcher::set_assignments(std::mem::take(assignments), assign_behavior)?;
     let _var_guard = var_ctx_guard(vars.into_iter().collect());
     let fork_builtins = node.flags.contains(NdFlags::FORK_BUILTINS);
 
@@ -379,7 +381,7 @@ pub(super) trait Builtin: Sync {
         Some(&cmd_raw),
         fork_builtins.then_some(child_pgid),
         timer,
-      )?;
+      );
       job.push_child(child);
     }
 
@@ -403,9 +405,9 @@ pub(super) trait Builtin: Sync {
         let should_propagate = match kind {
           ShErrKind::CleanExit(_) => true, // this one always goes
           ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
-            state::Shed::meta(|m| m.in_loop())
+            state::Shed::meta(MetaTab::in_loop)
           }
-          ShErrKind::FuncReturn(_) => state::Shed::meta(|m| m.in_func()),
+          ShErrKind::FuncReturn(_) => state::Shed::meta(MetaTab::in_func),
           _ if shopt!(set.errexit) => {
             // propagate if this is enabled
             *kind = ShErrKind::ErrInterrupt;
@@ -424,7 +426,7 @@ pub(super) trait Builtin: Sync {
       }
     }
   }
-  /// Parse arguments and options, pack BuiltinArgs, run self.execute()
+  /// Parse arguments and options, pack `BuiltinArgs`, run `self.execute()`
   fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
     let span = node.get_span().clone();
     let no_split = node.flags.contains(NdFlags::NO_SPLIT);
@@ -478,7 +480,7 @@ pub fn join_raw_arg_iter(args: impl Iterator<Item = (String, Span)>) -> (String,
     if acc.0.is_empty() {
       acc.0 = arg.0;
     } else {
-      acc.0 = acc.0 + &format!(" {}", arg.0);
+      let _ = write!(acc.0, " {}", arg.0);
     }
     acc
   })
@@ -531,7 +533,7 @@ impl Builtin for BuiltinBuiltin {
       .map(|tk| tk.clone())
       .collect::<Vec<Tk>>();
 
-    let cmd = argv.first().map(|tk| tk.as_str()).unwrap_or("");
+    let cmd = argv.first().map_or("", Tk::as_str);
     let Some(builtin) = lookup_builtin(cmd) else {
       sherr!(NotFound @ span, "builtin not found: {cmd}").print_error();
       return with_status(127);
@@ -609,10 +611,10 @@ impl Builtin for CommandBuiltin {
       };
       // TODO: Find a way to do this that doesn't involve forcing a full PATH rehash twice
       defer! {
-        Shed::meta_mut(|m| m.rehash());
+        Shed::meta_mut(super::state::meta::MetaTab::rehash);
       }
       state::util::with_vars([("PATH".to_string(), default_path)], || {
-        Shed::meta_mut(|m| m.rehash());
+        Shed::meta_mut(super::state::meta::MetaTab::rehash);
         Self::execute_inner(print_path, print_type, node, dispatcher)
       })
     } else {
@@ -672,7 +674,7 @@ impl CommandBuiltin {
           UtilKind::Function => outln!("{name_str} is a function"),
           UtilKind::Builtin => outln!("{name_str} is a shell builtin"),
           UtilKind::Command(p) | UtilKind::File(p) => {
-            outln!("{name_str} is {}", p.display())
+            outln!("{name_str} is {}", p.display());
           }
         },
         None if KEYWORDS.contains(&name_str) => outln!("{name_str} is a shell keyword"),

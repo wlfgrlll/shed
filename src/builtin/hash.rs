@@ -65,12 +65,13 @@ impl super::Builtin for Hash {
 
 #[cfg(test)]
 mod hash_tests {
+  use crate::state::meta::MetaTab;
   use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, has_cmd, test_input};
 
   /// Strip cached utilities so each test starts from a known state.
   fn clear_cache() {
-    Shed::meta_mut(|m| m.clear_cache());
+    Shed::meta_mut(MetaTab::clear_cache);
   }
 
   // ─── no args, no opts → list cached commands ────────────────────

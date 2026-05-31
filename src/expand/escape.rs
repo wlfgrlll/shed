@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::Range;
 use std::str::Chars;
@@ -114,7 +115,7 @@ pub fn unescape_str(raw: &str) -> String {
       '\\' => {
         if let Some(next_ch) = chars.next() {
           result.push(markers::ESCAPE);
-          result.push(next_ch)
+          result.push(next_ch);
         }
       }
       '(' => read_subsh(&mut chars, &mut result),
@@ -146,7 +147,7 @@ pub fn unescape_str(raw: &str) -> String {
 fn read_varsub(chars: &mut Peekable<Chars>, result: &mut String) -> bool {
   if chars
     .peek()
-    .is_none_or(|ch| *ch != '$' && *ch != '(' && *ch != '{' && !is_var_name_ch(ch))
+    .is_none_or(|ch| *ch != '$' && *ch != '(' && *ch != '{' && !is_var_name_ch(*ch))
   {
     chars.next();
     result.push('$');
@@ -168,7 +169,7 @@ fn read_subsh(chars: &mut Peekable<Chars>, result: &mut String) {
     '\\' => {
       result.push(subsh_ch);
       if let Some(next_ch) = chars.next() {
-        result.push(next_ch)
+        result.push(next_ch);
       }
     }
     '\'' => {
@@ -177,7 +178,7 @@ fn read_subsh(chars: &mut Peekable<Chars>, result: &mut String) {
         '\\' => {
           result.push(q_ch);
           if let Some(next_ch) = chars.next() {
-            result.push(next_ch)
+            result.push(next_ch);
           }
         }
         '\'' => {
@@ -189,16 +190,15 @@ fn read_subsh(chars: &mut Peekable<Chars>, result: &mut String) {
     }
     '(' => {
       paren_count += 1;
-      result.push(subsh_ch)
+      result.push(subsh_ch);
     }
     ')' => {
       paren_count -= 1;
       if paren_count == 0 {
         result.push(markers::SUBSH);
         break;
-      } else {
-        result.push(subsh_ch)
       }
+      result.push(subsh_ch);
     }
     _ => result.push(subsh_ch),
   });
@@ -348,7 +348,7 @@ pub fn read_octal(chars: &mut Peekable<Chars>, result: &mut String, first: Optio
   if let Ok(byte) = u8::from_str_radix(&oct, 8) {
     result.push(byte as char);
   } else {
-    result.push_str(&format!("\\o{oct}"));
+    let _ = write!(result, "\\o{oct}");
   }
 }
 
@@ -363,13 +363,13 @@ pub fn read_hex(chars: &mut Peekable<Chars>, result: &mut String) {
   if let Some(h2) = chars.next() {
     hex.push(h2);
   } else {
-    result.push_str(&format!("\\x{hex}"));
+    let _ = write!(result, "\\x{hex}");
     return;
   }
   if let Ok(byte) = u8::from_str_radix(&hex, 16) {
     result.push(byte as char);
   } else {
-    result.push_str(&format!("\\x{hex}"));
+    let _ = write!(result, "\\x{hex}");
   }
 }
 
@@ -394,7 +394,7 @@ fn read_proc_sub(chars: &mut Peekable<Chars>, result: &mut String, input: bool) 
     '\\' => {
       result.push(subsh_ch);
       if let Some(next_ch) = chars.next() {
-        result.push(next_ch)
+        result.push(next_ch);
       }
     }
     '$' if chars.peek() == Some(&'\'') => {
@@ -409,9 +409,8 @@ fn read_proc_sub(chars: &mut Peekable<Chars>, result: &mut String, input: bool) 
       if paren_count <= 0 {
         result.push(marker);
         break;
-      } else {
-        result.push(subsh_ch);
       }
+      result.push(subsh_ch);
     }
     _ => result.push(subsh_ch),
   });
@@ -437,7 +436,7 @@ fn read_backtick(chars: &mut Peekable<Chars>, result: &mut String) {
         '\\' => {
           result.push(subsh_ch);
           if let Some(next_ch) = chars.next() {
-            result.push(next_ch)
+            result.push(next_ch);
           }
         }
         '(' => {
@@ -463,9 +462,9 @@ fn read_backtick(chars: &mut Peekable<Chars>, result: &mut String) {
   });
 }
 
-/// Like unescape_str but for heredoc bodies. Only processes:
+/// Like `unescape_str` but for heredoc bodies. Only processes:
 /// - $var / ${var} / $(cmd) substitution markers
-/// - Backslash escapes (only before $, `, \, and newline)
+/// - Backslash escapes (only before $, \`, \, and newline)
 ///
 /// Everything else (quotes, tildes, globs, process subs, etc.) is literal.
 pub fn unescape_heredoc(raw: &str) -> String {
@@ -475,7 +474,7 @@ pub fn unescape_heredoc(raw: &str) -> String {
   match_loop!(chars.next() => ch, {
     '\\' => {
       match chars.peek() {
-        Some('$') | Some('`') | Some('\\') | Some('\n') => {
+        Some('$' | '`' | '\\' | '\n') => {
           let next_ch = chars.next().unwrap();
           if next_ch == '\n' {
             // line continuation - discard both backslash and newline
@@ -511,13 +510,13 @@ pub fn escape_str(raw: &str, use_marker: bool) -> String {
   escape_str_bounded(raw, use_marker, None)
 }
 
-/// Opposite of unescape_str, escapes a string to be executed as literal text
+/// Opposite of `unescape_str`, escapes a string to be executed as literal text
 /// Used for completion results, and glob filename matches.
 ///
-/// if use_marker is true, it will check for `markers::ESCAPE` instead of a literal backslash.
+/// if `use_marker` is true, it will check for `markers::ESCAPE` instead of a literal backslash.
 /// if a bound (something like 0..5) is provided, the escaping logic will be limited to those bytes
 /// this is mainly used for escaping the region of text that is changed during completion
-pub fn escape_str_bounded(raw: &str, use_marker: bool, bound: Option<Range<usize>>) -> String {
+pub fn escape_str_bounded(raw: &str, use_marker: bool, bound: Option<&Range<usize>>) -> String {
   let mut result = String::new();
   let mut chars = raw.char_indices();
   let esc_ch = if use_marker { markers::ESCAPE } else { '\\' };
@@ -558,7 +557,7 @@ pub fn unescape_math(raw: &str) -> ShResult<String> {
     '\\' => {
       if (!qt_state.in_single() || chars.peek().is_some_and(|&c| c == '\''))
       && let Some(next_ch) = chars.next() {
-        result.push(next_ch)
+        result.push(next_ch);
       }
     }
     '"' => qt_state.toggle_double(),
@@ -574,22 +573,21 @@ pub fn unescape_math(raw: &str) -> ShResult<String> {
           '\\' => {
             result.push(subsh_ch);
             if let Some(next_ch) = chars.next() {
-              result.push(next_ch)
+              result.push(next_ch);
             }
           }
           '$' if chars.peek() != Some(&'(') => result.push(markers::VAR_SUB),
           '(' => {
             paren_count += 1;
-            result.push(subsh_ch)
+            result.push(subsh_ch);
           }
           ')' => {
             paren_count -= 1;
             if paren_count == 0 {
               result.push(markers::SUBSH);
               break;
-            } else {
-              result.push(subsh_ch)
             }
+            result.push(subsh_ch);
           }
           _ => result.push(subsh_ch),
         });
@@ -630,7 +628,9 @@ pub fn as_var_val_display(s: &str) -> String {
         '\x08' => result.push_str("\\b"),
         '\x0B' => result.push_str("\\v"),
         '\x0C' => result.push_str("\\f"),
-        c if c.is_ascii_control() => result.push_str(&format!("\\x{:02x}", c as u8)),
+        c if c.is_ascii_control() => {
+          let _ = write!(result, "\\x{:02x}", c as u8);
+        }
         c => result.push(c),
       }
     }

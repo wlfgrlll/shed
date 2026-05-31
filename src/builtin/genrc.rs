@@ -55,7 +55,7 @@ impl super::Builtin for GenRc {
             return Err(sherr!(InvalidOpt @ span, "invalid shopt name: {arg}"));
           }
 
-          shopt_filter.push(arg)
+          shopt_filter.push(arg);
         }
         Opt::LongWithArg(name, arg) if name == "only" => {
           // Comma separated list of categories

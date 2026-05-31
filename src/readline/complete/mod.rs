@@ -19,6 +19,7 @@ pub(crate) use fuzzy::{FuzzyCompleter, FuzzySelector, ScoredCandidate, SelectorR
 pub(crate) use grid::GridCompleter;
 
 use super::{
+  super::state::meta::MetaTab,
   builtin::BUILTIN_NAMES,
   context::{CtxTk, CtxTkRule, get_context_tokens},
   editmode,
@@ -57,9 +58,9 @@ bitflags! {
   }
   #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
   pub struct CompOptFlags: u32 {
-    const DEFAULT  = 0b0000000001;
-    const DIRNAMES = 0b0000000010;
-    const SPACE    = 0b0000000100;
+    const DEFAULT  = 0b0000_0000_0001;
+    const DIRNAMES = 0b0000_0000_0010;
+    const SPACE    = 0b0000_0000_0100;
   }
 }
 
@@ -135,7 +136,7 @@ impl CompStrat {
   /// to replace when the candidate is selected.
   ///
   /// For Argument leaves: if the cursor is on a structurally-meaningful
-  /// sub-token (VarSub, Tilde, CmdSub) we dispatch on that and the
+  /// sub-token (`VarSub`, `Tilde`, `CmdSub`) we dispatch on that and the
   /// replacement targets just the sub-token's range, so `foo/$FL/bar`
   /// completing `$FL` to `$FLAKEPATH` produces `foo/$FLAKEPATH/bar`.
   /// Otherwise we treat the leaf as path-shaped and target the whole leaf;
@@ -229,12 +230,10 @@ impl CompStrat {
       },
 
       // After a separator or operator, we're at the start of a new segment.
-      CtxTkRule::Separator | CtxTkRule::Operator => Self::Command { prefix },
+      CtxTkRule::Separator | CtxTkRule::Operator | CtxTkRule::Keyword => Self::Command { prefix },
 
       // After a keyword (for/while/if/etc.) the next token is a command head.
       // TODO: split per-keyword once the cases matter (e.g. `for <var>`).
-      CtxTkRule::Keyword => Self::Command { prefix },
-
       // After a redirect we expect a file path.
       CtxTkRule::Redirect => Self::Files {
         path: String::new(),
@@ -448,7 +447,7 @@ impl Candidate {
       let delta = old_len - new_len;
       Some(self.content[delta..].to_string())
     } else {
-      self.content.strip_prefix(prefix).map(|s| s.to_string())
+      self.content.strip_prefix(prefix).map(ToString::to_string)
     }
   }
 }
@@ -475,7 +474,7 @@ pub(crate) fn complete_aliases(start: &str) -> Vec<Candidate> {
   Shed::logic(|l| {
     l.aliases()
       .iter()
-      .map(|(a, v)| Candidate::from(a.to_string()).with_desc(v.to_string()))
+      .map(|(a, v)| Candidate::from(a.clone()).with_desc(v.to_string()))
       .filter(|a| a.is_match(start))
       .collect()
   })
@@ -555,9 +554,9 @@ pub(crate) fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
       .keys()
       .map(|k| {
         if let Some(val) = try_var!(k) {
-          Candidate::from(k.to_string()).with_desc(val)
+          Candidate::from(k.clone()).with_desc(val)
         } else {
-          Candidate::from(k.to_string())
+          Candidate::from(k.clone())
         }
       })
       .filter(|c| c.is_match(raw) && c.content() != raw)
@@ -607,19 +606,14 @@ fn complete_dirs(start: &str, cursor_pos: usize) -> Vec<Candidate> {
 
   filenames
     .into_iter()
-    .filter(|f| {
-      std::fs::metadata(&f.content)
-        .map(|m| m.is_dir())
-        .unwrap_or(false)
-    })
+    .filter(|f| std::fs::metadata(&f.content).is_ok_and(|m| m.is_dir()))
     .collect()
 }
 
 fn unescape_for_completion(raw: &str) -> String {
   let unescaped = unescape_str(raw);
   expand_raw_inner(&mut unescaped.chars().peekable(), true)
-    .map(|s| strip_markers(&s))
-    .unwrap_or_else(|_| raw.to_string())
+    .map_or_else(|_| raw.to_string(), |s| strip_markers(&s))
 }
 
 fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
@@ -643,7 +637,7 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
     require_literal_leading_dot: false,
   };
   let candidates: Vec<Candidate> = glob::glob_with(&pat, match_opts)
-    .map(|it| it.filter_map(Result::ok).map(|c| c.into()).collect())
+    .map(|it| it.filter_map(Result::ok).map(Into::into).collect())
     .unwrap_or_default();
 
   candidates
@@ -666,8 +660,8 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
         // but keep whatever directory prefix the user typed (e.g. ~/ or $VAR/).
         // rfind_unescaped handles escaped slashes in filenames; unescaped_pre needs
         // plain rfind since it is already unescaped.
-        let typed_dir_end = rfind_unescaped(prefix, '/').map(|i| i + 1).unwrap_or(0);
-        let raw_dir_end = raw.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let typed_dir_end = rfind_unescaped(prefix, '/').map_or(0, |i| i + 1);
+        let raw_dir_end = raw.rfind('/').map_or(0, |i| i + 1);
 
         let filename_raw = &raw[raw_dir_end..];
         let middle = filename_raw
@@ -682,7 +676,7 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
 
       // glob strips this, we have to add it back
       if path.starts_with("./") && !new_content.starts_with("./") && !new_content.starts_with('/') {
-        new_content = format!("./{new_content}")
+        new_content = format!("./{new_content}");
       }
 
       if is_dir {
@@ -715,10 +709,10 @@ fn file_desc<P: AsRef<Path>>(path: P) -> String {
     "?"
   };
 
-  let size = if kind != "dir" {
-    util::format_size(meta.len())
-  } else {
+  let size = if kind == "dir" {
     String::from("-")
+  } else {
+    util::format_size(meta.len())
   };
   let mode = util::format_mode(meta.permissions().mode());
 
@@ -743,24 +737,8 @@ pub(crate) struct BashCompSpec {
   pub function: Option<String>,
   /// -W: The list of words
   pub wordlist: Option<Vec<String>>,
-  /// -f: complete file names
-  pub files: bool,
-  /// -d: complete directory names
-  pub dirs: bool,
-  /// -c: complete command names
-  pub commands: bool,
-  /// -b: complete builtin names
-  pub builtins: bool,
-  /// -u: complete user names
-  pub users: bool,
-  /// -v: complete variable names
-  pub vars: bool,
-  /// -A signal: complete signal names
-  pub signals: bool,
-  /// -j: complete job pids or names
-  pub jobs: bool,
-  /// -a: complete aliases
-  pub aliases: bool,
+
+  pub targets: CompFlags,
 
   pub flags: CompOptFlags,
   /// The original command
@@ -784,41 +762,44 @@ impl BashCompSpec {
     self.source = source;
     self
   }
-  pub fn files(mut self, enable: bool) -> Self {
-    self.files = enable;
-    self
+  fn toggle_flag(self, flag: CompFlags, enable: bool) -> Self {
+    let Self { targets, .. } = self;
+    let new_targets = if enable {
+      targets | flag
+    } else {
+      targets & !flag
+    };
+    Self {
+      targets: new_targets,
+      ..self
+    }
   }
-  pub fn dirs(mut self, enable: bool) -> Self {
-    self.dirs = enable;
-    self
+  pub fn files(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::FILES, enable)
   }
-  pub fn commands(mut self, enable: bool) -> Self {
-    self.commands = enable;
-    self
+  pub fn dirs(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::DIRS, enable)
   }
-  pub fn users(mut self, enable: bool) -> Self {
-    self.users = enable;
-    self
+  pub fn commands(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::CMDS, enable)
   }
-  pub fn vars(mut self, enable: bool) -> Self {
-    self.vars = enable;
-    self
+  pub fn users(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::USERS, enable)
   }
-  pub fn signals(mut self, enable: bool) -> Self {
-    self.signals = enable;
-    self
+  pub fn vars(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::VARS, enable)
   }
-  pub fn jobs(mut self, enable: bool) -> Self {
-    self.jobs = enable;
-    self
+  pub fn signals(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::SIGNALS, enable)
   }
-  pub fn aliases(mut self, enable: bool) -> Self {
-    self.aliases = enable;
-    self
+  pub fn jobs(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::JOBS, enable)
   }
-  pub fn builtins(mut self, enable: bool) -> Self {
-    self.builtins = enable;
-    self
+  pub fn aliases(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::ALIAS, enable)
+  }
+  pub fn builtins(self, enable: bool) -> Self {
+    self.toggle_flag(CompFlags::BUILTINS, enable)
   }
   pub fn from_comp_opts(opts: CompOpts) -> Self {
     let CompOpts {
@@ -831,16 +812,8 @@ impl BashCompSpec {
     Self {
       function: func,
       wordlist,
-      files: flags.contains(CompFlags::FILES),
-      dirs: flags.contains(CompFlags::DIRS),
-      commands: flags.contains(CompFlags::CMDS),
-      users: flags.contains(CompFlags::USERS),
-      vars: flags.contains(CompFlags::VARS),
-      jobs: flags.contains(CompFlags::JOBS),
-      aliases: flags.contains(CompFlags::ALIAS),
-      builtins: flags.contains(CompFlags::BUILTINS),
+      targets: flags,
       flags: opt_flags,
-      signals: flags.contains(CompFlags::SIGNALS),
       source: String::new(),
     }
   }
@@ -864,7 +837,7 @@ impl BashCompSpec {
       cursor_pos,
     } = ctx;
 
-    let raw_words = words.iter().clone().map(|tk| tk.to_string()).collect();
+    let raw_words = words.clone();
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_WORDS",
@@ -879,13 +852,7 @@ impl BashCompSpec {
         VarFlags::empty(),
       )
     })?;
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "COMP_LINE",
-        VarKind::Str(line.to_string()),
-        VarFlags::empty(),
-      )
-    })?;
+    Shed::vars_mut(|v| v.set_var("COMP_LINE", VarKind::Str(line.clone()), VarFlags::empty()))?;
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_POINT",
@@ -894,15 +861,12 @@ impl BashCompSpec {
       )
     })?;
 
-    let cmd_name = words.first().map(|s| s.to_string()).unwrap_or_default();
+    let cmd_name = words.first().cloned().unwrap_or_default();
 
-    let cword_str = words.get(*cword).map(|s| s.to_string()).unwrap_or_default();
+    let cword_str = words.get(*cword).cloned().unwrap_or_default();
 
     let pword_str = if *cword > 0 {
-      words
-        .get(cword - 1)
-        .map(|s| s.to_string())
-        .unwrap_or_default()
+      words.get(cword - 1).cloned().unwrap_or_default()
     } else {
       String::new()
     };
@@ -921,7 +885,7 @@ impl BashCompSpec {
       .map(Candidate::from)
       .collect();
 
-    let comp_add: Vec<Candidate> = Shed::meta_mut(|m| m.take_comp_candidates())
+    let comp_add: Vec<Candidate> = Shed::meta_mut(MetaTab::take_comp_candidates)
       .into_iter()
       .filter(|c| c.is_match(&cword_str))
       .collect();
@@ -940,31 +904,31 @@ impl CompSpec for BashCompSpec {
     let unescaped = unescape_str(prefix.as_str());
     let expanded = expand_raw_inner(&mut unescaped.chars().peekable(), false)?;
     let stripped = strip_markers(&expanded);
-    if self.files {
+    if self.targets.contains(CompFlags::FILES) {
       candidates.extend(complete_path(&stripped, ctx.cursor_pos));
     }
-    if self.dirs {
+    if self.targets.contains(CompFlags::DIRS) {
       candidates.extend(complete_dirs(&stripped, ctx.cursor_pos));
     }
-    if self.commands {
+    if self.targets.contains(CompFlags::CMDS) {
       candidates.extend(complete_commands(&stripped, ctx.cursor_pos));
     }
-    if self.vars {
+    if self.targets.contains(CompFlags::VARS) {
       candidates.extend(complete_vars_raw(&stripped));
     }
-    if self.users {
+    if self.targets.contains(CompFlags::USERS) {
       candidates.extend(complete_users(&stripped));
     }
-    if self.jobs {
+    if self.targets.contains(CompFlags::JOBS) {
       candidates.extend(complete_jobs(&stripped));
     }
-    if self.aliases {
+    if self.targets.contains(CompFlags::ALIAS) {
       candidates.extend(complete_aliases(&stripped));
     }
-    if self.signals {
+    if self.targets.contains(CompFlags::SIGNALS) {
       candidates.extend(complete_signals(&stripped));
     }
-    if self.builtins {
+    if self.targets.contains(CompFlags::BUILTINS) {
       candidates.extend(complete_builtins(&stripped));
     }
     if let Some(words) = &self.wordlist {
@@ -1036,7 +1000,7 @@ pub(crate) struct CompContext {
 
 impl CompContext {
   pub fn cmd(&self) -> Option<&str> {
-    self.words.first().map(|s| s.as_str())
+    self.words.first().map(String::as_str)
   }
 }
 
@@ -1079,8 +1043,7 @@ impl CompResult {
         .zip(c.char_indices())
         .take_while(|((_, c1), (_, c2))| c1 == c2)
         .last()
-        .map(|((i, ch), _)| i + ch.len_utf8())
-        .unwrap_or(0);
+        .map_or(0, |((i, ch), _)| i + ch.len_utf8());
       end = end.min(common_bytes);
 
       if end == 0 {
@@ -1163,10 +1126,8 @@ pub(crate) trait Completer {
     let (s, e) = self.token_span();
     orig.get(s..e).unwrap_or(orig)
   }
-  fn draw(&mut self) -> ShResult<usize>;
-  fn clear(&mut self) -> ShResult<()> {
-    Ok(())
-  }
+  fn draw(&mut self) -> usize;
+  fn clear(&mut self) {}
   fn set_prompt_line_context(&mut self, _line_width: usize, _cursor_col: usize) {}
   fn handle_key(&mut self, key: K) -> ShResult<CompResponse>;
   fn get_completed_line(&self, candidate: &str) -> String;
@@ -1227,8 +1188,8 @@ impl Completer for SimpleCompleter {
     self.token_span
   }
 
-  fn draw(&mut self) -> ShResult<usize> {
-    Ok(0)
+  fn draw(&mut self) -> usize {
+    0
   }
 
   fn original_input(&self) -> &str {
@@ -1262,12 +1223,12 @@ impl SimpleCompleter {
 					&& !ends_with_unescaped(&c, " ")
           {
             // already has a space
-            Candidate::from(format!("{} ", c))
+            Candidate::from(format!("{c} "))
           } else {
             c
           }
         })
-        .collect()
+        .collect();
     }
   }
 
@@ -1276,7 +1237,7 @@ impl SimpleCompleter {
     line: String,
     cursor_pos: usize,
   ) -> ShResult<Option<CompMatch>> {
-    let result = self.get_candidates(line.clone(), cursor_pos)?;
+    let result = self.get_candidates(&line, cursor_pos)?;
     self.cursor_pos = cursor_pos;
     match result {
       CompResult::Many { candidates } => {
@@ -1330,12 +1291,7 @@ impl SimpleCompleter {
     )
   }
 
-  pub fn build_comp_ctx(
-    &self,
-    tks: &[CtxTk],
-    line: &str,
-    cursor_pos: usize,
-  ) -> ShResult<CompContext> {
+  pub fn build_comp_ctx(tks: &[CtxTk], line: &str, cursor_pos: usize) -> CompContext {
     let mut ctx = CompContext {
       words: vec![],
       cword: 0,
@@ -1346,11 +1302,11 @@ impl SimpleCompleter {
     let segments = tks
       .split(|t| matches!(t.class(), CtxTkRule::Operator | CtxTkRule::Separator))
       .filter(|&s| !s.is_empty())
-      .map(|s| s.to_vec())
+      .map(<[CtxTk]>::to_vec)
       .collect::<Vec<_>>();
 
     if segments.is_empty() {
-      return Ok(ctx);
+      return ctx;
     }
 
     let relevant_pos = segments
@@ -1361,10 +1317,9 @@ impl SimpleCompleter {
           .next()
           .is_some_and(|tk| tk.range().start > cursor_pos)
       })
-      .map(|i| i.saturating_sub(1))
-      .unwrap_or(segments.len().saturating_sub(1));
+      .map_or(segments.len().saturating_sub(1), |i| i.saturating_sub(1));
 
-    let relevant = segments[relevant_pos].to_vec();
+    let relevant = segments[relevant_pos].clone();
     let mut words = relevant
       .iter()
       .map(|s| s.span().as_str().to_string())
@@ -1387,10 +1342,10 @@ impl SimpleCompleter {
     ctx.words = words;
     ctx.cword = cword;
 
-    Ok(ctx)
+    ctx
   }
 
-  pub fn try_comp_spec(&self, ctx: &CompContext) -> ShResult<CompSpecResult> {
+  pub fn try_comp_spec(ctx: &CompContext) -> ShResult<CompSpecResult> {
     let Some(cmd) = ctx.cmd() else {
       return Ok(CompSpecResult::NoSpec);
     };
@@ -1412,8 +1367,8 @@ impl SimpleCompleter {
     }
   }
 
-  pub fn get_candidates(&mut self, line: String, cursor_pos: usize) -> ShResult<CompResult> {
-    let tks = get_context_tokens(&line);
+  pub fn get_candidates(&mut self, line: &str, cursor_pos: usize) -> ShResult<CompResult> {
+    let tks = get_context_tokens(line);
     let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
     self.token_span = (replace_span.range().start, replace_span.range().end);
@@ -1435,8 +1390,8 @@ impl SimpleCompleter {
       },
       CompStrat::Null => CompResult::NoMatch,
       CompStrat::Argument { path } => {
-        let ctx = self.build_comp_ctx(&tks, &line, cursor_pos)?;
-        match self.try_comp_spec(&ctx)? {
+        let ctx = Self::build_comp_ctx(&tks, line, cursor_pos);
+        match Self::try_comp_spec(&ctx)? {
           CompSpecResult::Match { result, flags } => {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;

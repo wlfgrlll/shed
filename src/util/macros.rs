@@ -1,7 +1,7 @@
 /// Write to the internal Terminal buffer
 ///
-/// The given input will be buffered, meaning it won't be sent to the terminal until Terminal::flush() is called
-/// Note that this calls Shed::term_mut() internally, so don't call this inside of that function or the program explodes.
+/// The given input will be buffered, meaning it won't be sent to the terminal until `Terminal::flush()` is called
+/// Note that this calls `Shed::term_mut()` internally, so don't call this inside of that function or the program explodes.
 #[macro_export]
 macro_rules! write_term {
   ($($arg:tt)*) => {{
@@ -13,7 +13,7 @@ macro_rules! write_term {
 /// Write to the internal Terminal buffer, and then flush it
 ///
 /// This sends the given format args directly to the terminal.
-/// Note that this calls Shed::term() internally.
+/// Note that this calls `Shed::term()` internally.
 #[macro_export]
 macro_rules! flush_term {
   () => {
@@ -30,7 +30,7 @@ macro_rules! flush_term {
   }};
 }
 
-/// Shorthand for creating VerbCmds, like `verb!(Verb::Delete)` or `verb!(3, Verb::Change)`
+/// Shorthand for creating `VerbCmds`, like `verb!(Verb::Delete)` or `verb!(3, Verb::Change)`
 /// If no count is given, the count defaults to 1.
 #[macro_export]
 macro_rules! verb {
@@ -48,7 +48,7 @@ macro_rules! verb {
   };
 }
 
-/// Shorthand for creating MotionCmds, like `motion!(Motion::ForwardChar)` or `motion!(3, Motion::LineDown)`
+/// Shorthand for creating `MotionCmds`, like `motion!(Motion::ForwardChar)` or `motion!(3, Motion::LineDown)`
 /// If no count is given, the count defaults to 1.
 #[macro_export]
 macro_rules! motion {
@@ -66,7 +66,7 @@ macro_rules! motion {
   };
 }
 
-/// A macro for creating KeyEvent instances from a syntax like `key!(Ctrl + Shift + Enter)` or `key!(Alt + 'f')` or just `key!(Enter)`.
+/// A macro for creating `KeyEvent` instances from a syntax like `key!(Ctrl + Shift + Enter)` or `key!(Alt + 'f')` or just `key!(Enter)`.
 #[macro_export]
 macro_rules! key {
   // if anyone has ideas for how to not write out each combination manually,
@@ -267,7 +267,7 @@ macro_rules! match_loop {
 	};
 }
 
-/// A macro that abbreviates the creation of a ShErr, allowing you to specify the kind and a format string with arguments, and optionally a span for error location.
+/// A macro that abbreviates the creation of a `ShErr`, allowing you to specify the kind and a format string with arguments, and optionally a span for error location.
 /// Providing a span will automatically make the printed error point at the offending text referred to by the span.
 /// Examples:
 /// ```
@@ -302,7 +302,7 @@ macro_rules! sherr {
 	};
 }
 
-/// Defines a two-way mapping between an enum and its string representation, implementing both Display and FromStr.
+/// Defines a two-way mapping between an enum and its string representation, implementing both Display and `FromStr`.
 /// Example:
 ///
 /// ```
@@ -374,7 +374,7 @@ macro_rules! out {
   }};
 }
 
-/// Not to be confused with sherr!, which creates a ShErr struct for error handling, this macro writes directly to stderr, and is intended for printing error messages to the user.
+/// Not to be confused with sherr!, which creates a `ShErr` struct for error handling, this macro writes directly to stderr, and is intended for printing error messages to the user.
 #[macro_export]
 macro_rules! err {
   ($($arg:tt)*) => {{
@@ -395,7 +395,7 @@ macro_rules! writefd {
 /// Post a status message to the shell's status line.
 ///
 /// This is intended for transient messages that should be visible to the user but not take up space in the terminal output, such as "File saved" or "Syntax error on line 3".
-/// NOTE: This calls `Shed::meta_mut()` internally. Calling this inside of a `Shed::meta_mut()` closure will cause a RefCell panic.
+/// NOTE: This calls `Shed::meta_mut()` internally. Calling this inside of a `Shed::meta_mut()` closure will cause a `RefCell` panic.
 #[macro_export]
 macro_rules! status_msg {
   ($($arg:tt)*) => {{
@@ -431,7 +431,7 @@ macro_rules! autocmd {
   }};
 }
 
-/// Get a shell variable from Shed::vars(). Returns an empty string if unset. Checks env vars too.
+/// Get a shell variable from `Shed::vars()`. Returns an empty string if unset. Checks env vars too.
 #[macro_export]
 macro_rules! var {
   ($name:expr) => {
@@ -439,7 +439,7 @@ macro_rules! var {
   };
 }
 
-/// Try to get a shell variable from Shed::vars(). Returns None if unset. Checks env vars too.
+/// Try to get a shell variable from `Shed::vars()`. Returns None if unset. Checks env vars too.
 /// Useful if you need to match on whether a variable exists or not.
 #[macro_export]
 macro_rules! try_var {
@@ -448,7 +448,7 @@ macro_rules! try_var {
   };
 }
 
-/// Get a shell option from Shed::shopts().
+/// Get a shell option from `Shed::shopts()`.
 #[macro_export]
 macro_rules! shopt {
   ($($path:tt)*) => {
@@ -456,7 +456,7 @@ macro_rules! shopt {
   };
 }
 
-/// Get a mutable shell option from Shed::shopts_mut().
+/// Get a mutable shell option from `Shed::shopts_mut()`.
 /// You can use this to alter shopt values inline.
 #[macro_export]
 macro_rules! shopt_mut {

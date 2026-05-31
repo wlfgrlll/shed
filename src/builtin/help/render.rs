@@ -80,7 +80,7 @@ pub(super) fn render(content: &str, overlays: Vec<Overlay>) -> String {
 
       None => {
         // plain text, just copy until the next SGR sequence
-        let next_event = events_iter.peek().map(|(p, _)| *p).unwrap_or(bytes.len());
+        let next_event = events_iter.peek().map_or(bytes.len(), |(p, _)| *p);
         let next_sgr = find_sgr(bytes, cursor + 1).unwrap_or(bytes.len());
         let run_end = next_event.min(next_sgr).min(bytes.len()).max(cursor + 1);
 

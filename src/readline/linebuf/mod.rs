@@ -31,7 +31,7 @@ mod verb;
 
 pub(crate) use super::util::{Pos, SignedPos};
 pub(crate) use char_class::CharClass;
-pub(crate) use edit::{Edit, IndentCtx};
+pub(crate) use edit::Edit;
 pub(crate) use hint::Hint;
 pub(crate) use killring::KillRing;
 pub(crate) use pos::{Cursor, MotionKind};
@@ -87,7 +87,6 @@ pub struct LineBuf {
 
   insert_mode_start_pos: Option<Pos>,
   saved_col: Option<usize>,
-  indent_ctx: IndentCtx,
 
   scroll_offset: usize,
 
@@ -120,7 +119,6 @@ impl Default for LineBuf {
       pending_search: None,
       insert_mode_start_pos: None,
       saved_col: None,
-      indent_ctx: IndentCtx::new(),
       scroll_offset: 0,
       undo_stack: vec![],
       redo_stack: vec![],
@@ -147,7 +145,7 @@ impl LineBuf {
   pub fn scroll_offset(&self) -> usize {
     self.scroll_offset
   }
-  pub(super) fn exec_cmd(&mut self, cmd: EditCmd) -> ShResult<()> {
+  pub(super) fn exec_cmd(&mut self, cmd: &EditCmd) -> ShResult<()> {
     let is_char_insert = cmd.verb.as_ref().is_some_and(|v| v.1.is_char_insert());
     let is_kill = cmd.verb.as_ref().is_some_and(|v| v.1 == Verb::Kill);
     let is_killring_op = cmd
@@ -190,7 +188,7 @@ impl LineBuf {
     }
 
     // Execute the command
-    let res = self.exec_verb(&cmd);
+    let res = self.exec_verb(cmd);
 
     if self.is_empty() {
       self.set_hint(None);
@@ -234,7 +232,7 @@ impl LineBuf {
         }
       }
 
-      if self.undo_stack.last().is_some_and(|e| e.is_empty()) {
+      if self.undo_stack.last().is_some_and(Edit::is_empty) {
         self.undo_stack.pop();
       }
     }
@@ -271,7 +269,7 @@ impl LineBuf {
     let raw = self.joined();
     let (result, first_pos) = expand_alias_with_pos(raw);
     if first_pos.is_some() {
-      self.lines = Lines::to_lines(result);
+      self.lines = Lines::to_lines(&result);
       true
     } else {
       false
@@ -308,7 +306,7 @@ impl LineBuf {
       let delta = alias.graphemes(true).count() as isize - word.graphemes(true).count() as isize;
       let expanded = last.replaced(&alias);
 
-      self.lines = Lines::to_lines(expanded);
+      self.lines = Lines::to_lines(&expanded);
       self.lines.attach_lines(&mut after_cursor);
       self.cursor.pos = self.cursor.pos.col_add_signed(delta);
 
@@ -338,19 +336,15 @@ impl LineBuf {
         continue;
       };
       end = end.col_sub(1); // exclusive range
-      let change = match history.resolve_hist_token(exp.span().as_str()) {
-        Some(s) => {
-          any_changes = true;
-          s.to_string()
-        }
-        None => {
-          any_changes = true;
-          let raw = exp.span().as_str();
-          raw
-            .strip_prefix('!')
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| raw.to_string())
-        }
+      let change = if let Some(s) = history.resolve_hist_token(exp.span().as_str()) {
+        any_changes = true;
+        s.clone()
+      } else {
+        any_changes = true;
+        let raw = exp.span().as_str();
+        raw
+          .strip_prefix('!')
+          .map_or_else(|| raw.to_string(), ToString::to_string)
       };
 
       changes.push(((start, end), change));

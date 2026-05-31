@@ -62,8 +62,7 @@ impl MarkedSpan {
   pub fn line_start(&self, source: &str) -> usize {
     source[..self.prefix_seq.start]
       .rfind('\n')
-      .map(|pos| pos + 1)
-      .unwrap_or(0)
+      .map_or(0, |pos| pos + 1)
   }
 
   pub fn rel_to_line(&self, source: &str) -> (Range<usize>, Range<usize>, Range<usize>) {
@@ -237,28 +236,28 @@ fn expand_help(raw: &str) -> String {
   result
 }
 
+fn find_closer(closer: char, res: &mut String, chars: &mut Peekable<Chars>) {
+  match_loop!(chars.next() => next_ch, {
+    _ if next_ch == closer => {
+      res.push(markers::RESET);
+      break;
+    }
+    '\\' => {
+      match chars.peek() {
+        Some(ch) if *ch == closer || *ch == '\\' => {
+          res.push(chars.next().unwrap());
+        }
+        _ => res.push(next_ch),
+      }
+    }
+    _ => res.push(next_ch),
+  });
+}
+
 fn unescape_help(raw: &str) -> String {
   let mut result = String::new();
   let mut chars = raw.chars().peekable();
   let mut qt_state = QuoteState::default();
-
-  let find_closer = |closer: char, res: &mut String, chars: &mut Peekable<Chars>| {
-    match_loop!(chars.next() => next_ch, {
-      _ if next_ch == closer => {
-        res.push(markers::RESET);
-        break;
-      }
-      '\\' => {
-        match chars.peek() {
-          Some(ch) if *ch == closer || *ch == '\\' => {
-            res.push(chars.next().unwrap());
-          }
-          _ => res.push(next_ch),
-        }
-      }
-      _ => res.push(next_ch),
-    });
-  };
 
   match_loop!(chars.next() => ch, {
     '\\' => {
@@ -325,24 +324,23 @@ fn unescape_help(raw: &str) -> String {
       }
       if tilde_count != 3 {
         result.push_str(&"~".repeat(tilde_count));
-      } else {
-        match_loop!(chars.next() => ch, {
-          '~' => {
-            tilde_count = 1;
-            while tilde_count != 3 && chars.peek() == Some(&'~') {
-              chars.next();
-              tilde_count += 1;
-            }
-            if tilde_count != 3 {
-              result.push_str(&"~".repeat(3 + tilde_count));
-            } else {
-              result.push(markers::RESET);
-              break
-            }
-          }
-          _ => result.push(ch),
-        })
+        continue
       }
+      match_loop!(chars.next() => ch, {
+        '~' => {
+          tilde_count = 1;
+          while tilde_count != 3 && chars.peek() == Some(&'~') {
+            chars.next();
+            tilde_count += 1;
+          }
+          if tilde_count == 3 {
+            result.push(markers::RESET);
+            break
+          }
+          result.push_str(&"~".repeat(3 + tilde_count));
+        }
+        _ => result.push(ch),
+      });
     }
     _ => result.push(ch),
   });

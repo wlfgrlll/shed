@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use super::{
   LabelCtx, NdFlags, NdRule, Node, ParseStream, ShErr, ShResult, Span, Tk, TkFlags, TkRule,
   crate_util::split_tk, sherr,
@@ -10,7 +12,7 @@ impl ParseStream {
     self.cursor += num_consumed;
   }
   pub(super) fn next_tk_class(&self) -> &TkRule {
-    self.peek_tk().map(|tk| &tk.class).unwrap_or(&TkRule::Null)
+    self.peek_tk().map_or(&TkRule::Null, |tk| &tk.class)
   }
   pub(super) fn peek_tk(&self) -> Option<&Tk> {
     self.tokens.get(self.cursor)
@@ -101,10 +103,10 @@ pub(super) fn node_is_punctuated(tokens: &[Tk]) -> bool {
 
 #[expect(clippy::type_complexity)]
 pub(super) fn split_for_arith_tk(
-  tk: Tk,
+  tk: &Tk,
 ) -> ShResult<(Option<Box<Node>>, Option<Box<Node>>, Option<Box<Node>>)> {
   let span = tk.span.clone();
-  let mut tks = split_tk(&tk, ";").into_iter();
+  let mut tks = split_tk(tk, ";").into_iter();
 
   let Some(init_tk) = tks.next() else {
     return Err(sherr!(ParseErr @ span, "Missing init statement"));
@@ -116,7 +118,7 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     tokens: vec![init_tk],
-    context: Default::default(),
+    context: VecDeque::default(),
   }));
 
   let Some(cond_tk) = tks.next() else {
@@ -129,7 +131,7 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     tokens: vec![cond_tk],
-    context: Default::default(),
+    context: VecDeque::default(),
   }));
 
   let Some(step_tk) = tks.next() else {
@@ -142,7 +144,7 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     tokens: vec![step_tk],
-    context: Default::default(),
+    context: VecDeque::default(),
   }));
 
   Ok((init, cond, step))

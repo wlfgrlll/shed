@@ -120,51 +120,35 @@ fn replace_posix_classes(pat: &str) -> String {
 fn eval_unary(op: &UnaryOp, operand: &str) -> bool {
   match op {
     UnaryOp::Exists => PathBuf::from(operand).exists(),
-    UnaryOp::Directory => PathBuf::from(operand)
-      .metadata()
-      .map(|m| m.is_dir())
-      .unwrap_or(false),
-    UnaryOp::File => PathBuf::from(operand)
-      .metadata()
-      .map(|m| m.is_file())
-      .unwrap_or(false),
-    UnaryOp::Symlink => std::fs::symlink_metadata(operand)
-      .map(|m| m.file_type().is_symlink())
-      .unwrap_or(false),
+    UnaryOp::Directory => PathBuf::from(operand).metadata().is_ok_and(|m| m.is_dir()),
+    UnaryOp::File => PathBuf::from(operand).metadata().is_ok_and(|m| m.is_file()),
+    UnaryOp::Symlink => {
+      std::fs::symlink_metadata(operand).is_ok_and(|m| m.file_type().is_symlink())
+    }
     UnaryOp::Readable => nix::unistd::access(operand, AccessFlags::R_OK).is_ok(),
     UnaryOp::Writable => nix::unistd::access(operand, AccessFlags::W_OK).is_ok(),
     UnaryOp::Executable => nix::unistd::access(operand, AccessFlags::X_OK).is_ok(),
-    UnaryOp::NonEmpty => metadata(operand).map(|m| m.len() > 0).unwrap_or(false),
+    UnaryOp::NonEmpty => metadata(operand).is_ok_and(|m| m.len() > 0),
     UnaryOp::NamedPipe => stat::stat(operand)
-      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFIFO))
-      .unwrap_or(false),
+      .is_ok_and(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFIFO)),
     UnaryOp::Socket => stat::stat(operand)
-      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFSOCK))
-      .unwrap_or(false),
+      .is_ok_and(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFSOCK)),
     UnaryOp::BlockSpecial => stat::stat(operand)
-      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFBLK))
-      .unwrap_or(false),
+      .is_ok_and(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFBLK)),
     UnaryOp::CharSpecial => stat::stat(operand)
-      .map(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFCHR))
-      .unwrap_or(false),
-    UnaryOp::Sticky => stat::stat(operand)
-      .map(|s| s.st_mode & nix::libc::S_ISVTX != 0)
-      .unwrap_or(false),
-    UnaryOp::UIDOwner => stat::stat(operand)
-      .map(|s| s.st_uid == nix::unistd::geteuid().as_raw())
-      .unwrap_or(false),
-    UnaryOp::GIDOwner => stat::stat(operand)
-      .map(|s| s.st_gid == nix::unistd::getegid().as_raw())
-      .unwrap_or(false),
-    UnaryOp::ModifiedSinceStatusChange => stat::stat(operand)
-      .map(|s| s.st_mtime > s.st_ctime)
-      .unwrap_or(false),
-    UnaryOp::SetUID => stat::stat(operand)
-      .map(|s| s.st_mode & nix::libc::S_ISUID != 0)
-      .unwrap_or(false),
-    UnaryOp::SetGID => stat::stat(operand)
-      .map(|s| s.st_mode & nix::libc::S_ISGID != 0)
-      .unwrap_or(false),
+      .is_ok_and(|s| SFlag::from_bits_truncate(s.st_mode).contains(SFlag::S_IFCHR)),
+    UnaryOp::Sticky => stat::stat(operand).is_ok_and(|s| s.st_mode & nix::libc::S_ISVTX != 0),
+    UnaryOp::UIDOwner => {
+      stat::stat(operand).is_ok_and(|s| s.st_uid == nix::unistd::geteuid().as_raw())
+    }
+    UnaryOp::GIDOwner => {
+      stat::stat(operand).is_ok_and(|s| s.st_gid == nix::unistd::getegid().as_raw())
+    }
+    UnaryOp::ModifiedSinceStatusChange => {
+      stat::stat(operand).is_ok_and(|s| s.st_mtime > s.st_ctime)
+    }
+    UnaryOp::SetUID => stat::stat(operand).is_ok_and(|s| s.st_mode & nix::libc::S_ISUID != 0),
+    UnaryOp::SetGID => stat::stat(operand).is_ok_and(|s| s.st_mode & nix::libc::S_ISGID != 0),
     UnaryOp::Terminal => match operand.parse::<i32>() {
       Ok(fd) => isatty(unsafe { BorrowedFd::borrow_raw(fd) }).unwrap_or(false),
       Err(_) => false,
@@ -229,10 +213,10 @@ fn eval_binary(op: &BinaryOp, lhs: &(String, Span), rhs: &(String, Span)) -> ShR
 /// Recursive Descent Parser for test arguments.
 /// The grammar looks like:
 ///
-///   parse_or   ::= parse_and (('-o' | '||') parse_and)*
-///   parse_and  ::= parse_not (('-a' | '&&') parse_not)*
-///   parse_not  ::= '!' parse_not | parse_primary
-///   parse_primary ::= '(' parse_or ')' | leaf_dispatch
+///   `parse_or`   ::= `parse_and` (('-o' | '||') `parse_and`)*
+///   `parse_and`  ::= `parse_not` (('-a' | '&&') `parse_not`)*
+///   `parse_not`  ::= '!' `parse_not` | `parse_primary`
+///   `parse_primary` ::= '(' `parse_or` ')' | `leaf_dispatch`
 ///
 /// Leaf dispatch is arity-based per POSIX:
 ///   1 arg  → implicit -n on the argument
@@ -260,7 +244,7 @@ impl<'a> ArgvParser<'a> {
 
   fn parse_or(&mut self, eval: bool) -> ShResult<bool> {
     let mut left = self.parse_and(eval)?;
-    while matches!(self.peek(), Some("-o") | Some("||")) {
+    while matches!(self.peek(), Some("-o" | "||")) {
       self.advance();
       let right = self.parse_and(eval && !left)?;
       left = left || right;
@@ -270,7 +254,7 @@ impl<'a> ArgvParser<'a> {
 
   fn parse_and(&mut self, eval: bool) -> ShResult<bool> {
     let mut left = self.parse_not(eval)?;
-    while matches!(self.peek(), Some("-a") | Some("&&")) {
+    while matches!(self.peek(), Some("-a" | "&&")) {
       self.advance();
       let right = self.parse_not(eval && left)?;
       left = left && right;
@@ -314,10 +298,10 @@ impl<'a> ArgvParser<'a> {
 fn eval_leaf(leaf: &[(String, Span)]) -> ShResult<bool> {
   if leaf.is_empty() {
     return Ok(false);
-  };
+  }
   let start_span = leaf.first().unwrap().1.clone();
   let end_span = leaf.last().unwrap().1.clone();
-  let major_span = start_span.merge_with(end_span.clone()).unwrap_or(end_span);
+  let major_span = start_span.merge_with(&end_span).unwrap_or(end_span);
 
   match leaf.len() {
     1 => {
@@ -389,7 +373,7 @@ impl super::Builtin for Test {
       .parse_or(true)
       .map_err(|e| e.try_blame(span))?;
 
-    with_status(if result { 0 } else { 1 })
+    with_status(i32::from(!result))
   }
 }
 

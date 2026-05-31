@@ -8,6 +8,7 @@ use nix::{
 };
 
 use super::{
+  super::state::terminal::Terminal,
   Shed,
   eval::lex::Span,
   expand::expand_keymap,
@@ -24,11 +25,11 @@ use super::{
 
 bitflags! {
   pub struct ReadFlags: u32 {
-    const NO_ESCAPES = 	0b000001;
-    const NO_ECHO = 		0b000010; // TODO: unused
-    const ARRAY = 			0b000100;
-    const N_CHARS = 		0b001000;
-    const TIMEOUT = 		0b010000;
+    const NO_ESCAPES = 	0b0000_0001;
+    const NO_ECHO = 		0b0000_0010; // TODO: unused
+    const ARRAY = 			0b0000_0100;
+    const N_CHARS = 		0b0000_1000;
+    const TIMEOUT = 		0b0001_0000;
   }
 }
 pub(super) struct Read;
@@ -80,9 +81,9 @@ impl super::Builtin for Read {
     }
 
     let _guard = if flags.contains(ReadFlags::NO_ECHO) {
-      Shed::term_mut(|t| t.cooked_no_echo_guard())?
+      Shed::term_mut(Terminal::cooked_no_echo_guard)?
     } else {
-      Shed::term_mut(|t| t.cooked_mode_guard())?
+      Shed::term_mut(Terminal::cooked_mode_guard)?
     };
     let input = read_bytes(
       delim,
@@ -149,7 +150,6 @@ fn read_bytes(
           state::Shed::set_status(130);
           return Ok(String::new());
         }
-        continue;
       }
       Err(e) => return Err(sherr!(ExecFail, "read: Failed to read from stdin: {e}")),
     }
@@ -184,7 +184,7 @@ fn field_split_arr(input: &str, arr_name: &str) -> ShResult<()> {
   let sep = state::util::get_separators();
   let fields: VecDeque<String> = input
     .split(|c| sep.contains(c))
-    .map(|s| s.to_string())
+    .map(ToString::to_string)
     .collect();
 
   Shed::vars_mut(|v| v.set_var(arr_name, VarKind::Arr(fields), VarFlags::empty()))
@@ -200,7 +200,7 @@ impl super::Builtin for ReadKey {
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    if !Shed::term(|t| t.isatty()) {
+    if !Shed::term(Terminal::isatty) {
       return with_status(1);
     }
     let mut whitelist = None;
@@ -220,8 +220,8 @@ impl super::Builtin for ReadKey {
     }
 
     let key = {
-      let _raw = Shed::term_mut(|t| t.raw_mode_guard());
-      if let Err(e) = Shed::term_mut(|t| t.read()) {
+      let _raw = Shed::term_mut(Terminal::raw_mode_guard);
+      if let Err(e) = Shed::term_mut(Terminal::read) {
         match e.kind() {
           ShErrKind::LoopBreak(_) => return with_status(1),
           ShErrKind::LoopContinue(_) => return with_status(0),
@@ -229,7 +229,7 @@ impl super::Builtin for ReadKey {
         }
       }
 
-      let mut keys = Shed::term_mut(|t| t.drain_keys())?;
+      let mut keys = Shed::term_mut(Terminal::drain_keys);
       if keys.is_empty() {
         return with_status(1);
       }
@@ -237,7 +237,7 @@ impl super::Builtin for ReadKey {
       keys.remove(0)
     };
 
-    let vim_seq = key.as_vim_seq()?;
+    let vim_seq = key.as_vim_seq();
 
     if let Some(wl) = whitelist {
       let allowed = expand_keymap(wl);
@@ -264,6 +264,7 @@ impl super::Builtin for ReadKey {
 
 #[cfg(test)]
 mod tests {
+  use crate::state::terminal::Terminal;
   use crate::state::{self, Shed, vars::VarFlags, vars::VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
   use crate::var;
@@ -370,7 +371,7 @@ mod tests {
   /// bytes pass through without the kernel buffering them until newline
   /// or interpreting special chars (Ctrl+D as VEOF, etc.).
   fn arm_raw_tty() {
-    Shed::term_mut(|t| t.enforce_raw_mode()).unwrap();
+    Shed::term_mut(Terminal::enforce_raw_mode).unwrap();
   }
 
   #[test]

@@ -25,7 +25,7 @@ pub(crate) struct TermGuard {
   termios_depth: Option<usize>,
   /// Outer Option: did this guard capture the scroll region?
   /// Inner Option: was a scroll region active at capture time?
-  scroll_region: Option<Option<(u16, u16)>>,
+  scroll_region: Option<super::ScrollRegionState>,
 
   /// This determines whether the drop impl will actually restore the state or not.
   active: bool,
@@ -118,7 +118,7 @@ impl TermGuard {
     self.termios_depth = Some(termios_depth);
     self
   }
-  pub fn with_scroll_region(mut self, scroll_region: Option<(u16, u16)>) -> Self {
+  pub fn with_scroll_region(mut self, scroll_region: super::ScrollRegionState) -> Self {
     if self.active {
       return self;
     }
@@ -152,7 +152,7 @@ impl TermGuard {
   pub fn termios_depth(&self) -> Option<usize> {
     self.termios_depth
   }
-  pub fn scroll_region(&self) -> Option<Option<(u16, u16)>> {
+  pub fn scroll_region(&self) -> Option<super::ScrollRegionState> {
     self.scroll_region
   }
 
@@ -185,16 +185,16 @@ impl Drop for TermGuard {
   }
 }
 
-/// Terminal::save_state() returns this.
+/// `Terminal::save_state()` returns this.
 ///
-/// The point is to make it so that returning an inactive TermGuard is impossible.
+/// The point is to make it so that returning an inactive `TermGuard` is impossible.
 pub(super) struct Snapshot(TermGuard);
 impl Snapshot {
   pub(super) fn new(mut guard: TermGuard) -> Self {
     guard.active = false; // enforce this invariant
     Self(guard)
   }
-  /// Set the inner guard to active and return it. This should be the only way to ever get an active TermGuard
+  /// Set the inner guard to active and return it. This should be the only way to ever get an active `TermGuard`
   pub(super) fn activate(self) -> TermGuard {
     self.0.activate()
   }
@@ -226,7 +226,6 @@ impl Drop for SyncOutputGuard {
 pub(crate) struct FlushGuard;
 impl Drop for FlushGuard {
   fn drop(&mut self) {
-    use std::io::Write;
-    Shed::term_mut(|t| t.flush()).ok();
+    Shed::term_mut(std::io::Write::flush).ok();
   }
 }

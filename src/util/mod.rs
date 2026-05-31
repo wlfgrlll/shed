@@ -35,7 +35,7 @@ pub(super) use strops::{
 
 pub(super) struct FdWriter<'a>(pub BorrowedFd<'a>);
 
-impl<'a> std::io::Write for FdWriter<'a> {
+impl std::io::Write for FdWriter<'_> {
   fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
     nix::unistd::write(self.0, buf).map_err(|e| std::io::Error::from_raw_os_error(e as i32))
   }
@@ -56,6 +56,7 @@ pub(super) fn ordered<T: Ord>(start: T, end: T) -> (T, T) {
 /// Sets status code and always returns Ok(())
 ///
 /// It's easy to forget to set the status code, this helps with that
+#[expect(clippy::unnecessary_wraps)]
 pub(super) fn with_status(code: i32) -> ShResult<()> {
   state::Shed::set_status(code);
   Ok(())

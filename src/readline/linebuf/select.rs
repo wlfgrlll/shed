@@ -79,7 +79,7 @@ impl super::LineBuf {
 
   pub fn select_range(&self) -> Option<Motion> {
     let mode = self.select_mode.as_ref()?;
-    self.evaluate_selection(mode)
+    Some(self.evaluate_selection(mode))
   }
 
   pub fn select_range_byte_pos(&mut self) -> Option<Range<usize>> {
@@ -93,12 +93,12 @@ impl super::LineBuf {
       Motion::LineRange(s, e) => {
         let s = self.resolve_line_addr(&s).ok()??;
         let e = self.resolve_line_addr(&e).ok()??;
-        let s = self.pos_to_byte(Pos { row: s, col: 0 })?;
+        let s = self.pos_to_byte(Pos { row: s, col: 0 });
         let e = self.pos_to_byte(Pos {
           row: e,
           col: self.lines[e].len(),
-        })?;
-        let (s, e) = ordered(s, e);
+        });
+        let (s, e) = ordered(s?, e?);
         Some(s..e)
       }
       Motion::BlockRange(..) => todo!(),
@@ -106,24 +106,24 @@ impl super::LineBuf {
     }
   }
 
-  pub fn evaluate_selection(&self, mode: &SelectMode) -> Option<Motion> {
+  pub fn evaluate_selection(&self, mode: &SelectMode) -> Motion {
     match mode {
       SelectMode::Char(pos) => {
         let (s, e) = ordered(self.cursor.pos, *pos);
-        Some(Motion::CharRange(s, e))
+        Motion::CharRange(s, e)
       }
       SelectMode::Line(pos) => {
         let (s, e) = ordered(self.row() + 1, pos.row + 1);
-        Some(Motion::LineRange(LineAddr::Number(s), LineAddr::Number(e)))
+        Motion::LineRange(LineAddr::Number(s), LineAddr::Number(e))
       }
       SelectMode::Block(pos) => {
         let (s, e) = ordered(self.cursor.pos, *pos);
-        Some(Motion::BlockRange(s, e))
+        Motion::BlockRange(s, e)
       }
     }
   }
 
-  pub fn evaluate_select_shape(&self, shape: &SelectShape) -> Option<Motion> {
+  pub fn evaluate_select_shape(&self, shape: &SelectShape) -> Motion {
     let offset = shape.pos();
     let anchor = self.cursor.pos.add_signed(offset);
     assert!(anchor > self.cursor.pos);

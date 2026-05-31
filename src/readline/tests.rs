@@ -1,5 +1,6 @@
 #![expect(non_snake_case)]
 
+use super::super::state::terminal::Terminal;
 use super::{Prompt, Shed, ShedLine, eval::lex::Span, key};
 
 use crate::tests::testutil::TestGuard;
@@ -13,12 +14,12 @@ macro_rules! vi_test {
         fn $name() {
           let (mut vi, _g) = test_vi($input);
           Shed::term_mut(|t| t.feed_bytes(b"\x1b")); // Start in normal mode
-          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          let keys = Shed::term_mut(|t| t.drain_keys());
           vi.process_input(keys).unwrap();
 
           for byte in $op.as_bytes() {
             Shed::term_mut(|t| t.feed_bytes(&[*byte]));
-            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+            let keys = Shed::term_mut(|t| t.drain_keys());
             vi.process_input(keys).unwrap();
           }
           assert_eq!(vi.editor.joined(), $expected_text);
@@ -343,7 +344,7 @@ fn vi_auto_indent() {
     if i != lines.len() - 1 {
       Shed::term_mut(|t| t.feed_bytes(b"\r"));
     }
-    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+    let keys = Shed::term_mut(Terminal::drain_keys);
     vi.process_input(keys).unwrap();
   }
 
@@ -373,7 +374,7 @@ fn vi_auto_indent_siblings() {
     if i != lines.len() - 1 {
       Shed::term_mut(|t| t.feed_bytes(b"\r"));
     }
-    let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+    let keys = Shed::term_mut(Terminal::drain_keys);
     vi.process_input(keys).unwrap();
   }
 
@@ -391,7 +392,7 @@ fn vi_auto_indent_funcdef() {
 
   let bytes = b"func_def() {}";
   Shed::term_mut(|t| t.feed_bytes(bytes));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   vi.process_input(keys).unwrap();
   vi.process_input(vec![key!(Esc)]).unwrap();
   vi.process_input(vec![key!('i')]).unwrap();
@@ -407,7 +408,7 @@ fn vi_func_def_is_finished() {
 
   let bytes = b"func_def() {\r}\r";
   Shed::term_mut(|t| t.feed_bytes(bytes));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   vi.process_input(keys).unwrap();
   assert_eq!(vi.editor.joined(), "");
 }
@@ -418,7 +419,7 @@ fn case_stmt_is_finished() {
 
   let bytes = b"case foo in\rfoo)\rcase bar in\rbar)\recho foo\r;;\resac\r;;\resac\r";
   Shed::term_mut(|t| t.feed_bytes(bytes));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   vi.process_input(keys).unwrap();
   assert_eq!(vi.editor.joined(), "");
 }
@@ -436,7 +437,7 @@ macro_rules! hist_expansion_test {
           let prompt = Prompt::default();
           let mut line = ShedLine::new_no_hist(prompt).unwrap();
           for cmd in $cmds {
-            line.history.push(cmd.to_string()).unwrap();
+            line.history.push(cmd).unwrap();
           }
           line.history.refresh_hist_entries();
           line.history.update_search_mask(None);
@@ -444,7 +445,7 @@ macro_rules! hist_expansion_test {
           assert_eq!(line.history.masked_entries().len(), $cmds.len());
 
           Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
-          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          let keys = Shed::term_mut(|t| t.drain_keys());
           line.process_input(keys).unwrap();
 
           let joined = line.editor.joined();
@@ -458,13 +459,13 @@ macro_rules! hist_expansion_test {
           let prompt = Prompt::default();
           let mut line = ShedLine::new_no_hist(prompt).unwrap();
           for cmd in $cmds2 {
-            line.history.push(cmd.to_string()).unwrap();
+            line.history.push(cmd).unwrap();
           }
           line.history.update_search_mask(None);
 
           // Feed input without pressing Enter
           Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
-          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          let keys = Shed::term_mut(|t| t.drain_keys());
           line.process_input(keys).unwrap();
 
           let before = line.editor.joined();
@@ -523,8 +524,8 @@ use crate::readline::history::History;
 fn hist_push_returns_id() {
   let _g = TestGuard::new();
   let hist = History::empty("test_push_id");
-  let id1 = hist.push("cmd1".into()).unwrap();
-  let id2 = hist.push("cmd2".into()).unwrap();
+  let id1 = hist.push("cmd1").unwrap();
+  let id2 = hist.push("cmd2").unwrap();
   assert!(id1.is_some());
   assert!(id2.is_some());
   assert_ne!(id1, id2);
@@ -534,7 +535,7 @@ fn hist_push_returns_id() {
 fn hist_push_empty_returns_none() {
   let _g = TestGuard::new();
   let hist = History::empty("test_push_empty");
-  let id = hist.push("".into()).unwrap();
+  let id = hist.push("").unwrap();
   assert!(id.is_none());
   assert_eq!(hist.entry_count(), 0);
 }
@@ -544,10 +545,10 @@ fn hist_entry_count() {
   let _g = TestGuard::new();
   let hist = History::empty("test_count");
   assert_eq!(hist.entry_count(), 0);
-  hist.push("cmd1".into()).unwrap();
+  hist.push("cmd1").unwrap();
   assert_eq!(hist.entry_count(), 1);
-  hist.push("cmd2".into()).unwrap();
-  hist.push("cmd3".into()).unwrap();
+  hist.push("cmd2").unwrap();
+  hist.push("cmd3").unwrap();
   assert_eq!(hist.entry_count(), 3);
 }
 
@@ -556,9 +557,9 @@ fn hist_last_id() {
   let _g = TestGuard::new();
   let hist = History::empty("test_last_id");
   assert_eq!(hist.last_id(), 0);
-  hist.push("cmd1".into()).unwrap();
+  hist.push("cmd1").unwrap();
   assert_eq!(hist.last_id(), 1);
-  hist.push("cmd2".into()).unwrap();
+  hist.push("cmd2").unwrap();
   assert_eq!(hist.last_id(), 2);
 }
 
@@ -567,8 +568,8 @@ fn hist_last_returns_most_recent() {
   let _g = TestGuard::new();
   let hist = History::empty("test_last");
   assert!(hist.last().is_none());
-  hist.push("first".into()).unwrap();
-  hist.push("second".into()).unwrap();
+  hist.push("first").unwrap();
+  hist.push("second").unwrap();
   let last = hist.last().unwrap();
   assert_eq!(last.command, "second");
 }
@@ -577,9 +578,9 @@ fn hist_last_returns_most_recent() {
 fn hist_query_with_filter() {
   let _g = TestGuard::new();
   let hist = History::empty("test_query_filter");
-  hist.push("echo foo".into()).unwrap();
-  hist.push("ls -la".into()).unwrap();
-  hist.push("echo bar".into()).unwrap();
+  hist.push("echo foo").unwrap();
+  hist.push("ls -la").unwrap();
+  hist.push("echo bar").unwrap();
 
   let results = hist
     .query(
@@ -596,10 +597,10 @@ fn hist_query_with_filter() {
 fn hist_query_range() {
   let _g = TestGuard::new();
   let hist = History::empty("test_query_range");
-  hist.push("cmd1".into()).unwrap();
-  hist.push("cmd2".into()).unwrap();
-  hist.push("cmd3".into()).unwrap();
-  hist.push("cmd4".into()).unwrap();
+  hist.push("cmd1").unwrap();
+  hist.push("cmd2").unwrap();
+  hist.push("cmd3").unwrap();
+  hist.push("cmd4").unwrap();
 
   let results = hist.query_range(2, 3).unwrap();
   assert_eq!(results.len(), 2);
@@ -611,9 +612,9 @@ fn hist_query_range() {
 fn hist_ids_are_sequential() {
   let _g = TestGuard::new();
   let hist = History::empty("test_sequential");
-  hist.push("a".into()).unwrap();
-  hist.push("b".into()).unwrap();
-  hist.push("c".into()).unwrap();
+  hist.push("a").unwrap();
+  hist.push("b").unwrap();
+  hist.push("c").unwrap();
 
   let entries = hist.query("ORDER BY id ASC", &[]).unwrap();
   for (i, (id, _)) in entries.iter().enumerate() {
@@ -627,9 +628,9 @@ fn hist_ids_are_sequential() {
 fn hist_delete_removes_entries() {
   let _g = TestGuard::new();
   let hist = History::empty("test_delete");
-  hist.push("echo foo".into()).unwrap();
-  hist.push("echo bar".into()).unwrap();
-  hist.push("echo baz".into()).unwrap();
+  hist.push("echo foo").unwrap();
+  hist.push("echo bar").unwrap();
+  hist.push("echo baz").unwrap();
   assert_eq!(hist.entry_count(), 3);
 
   let deleted = hist
@@ -644,9 +645,9 @@ fn hist_delete_removes_entries() {
 fn hist_delete_reids_contiguously() {
   let _g = TestGuard::new();
   let hist = History::empty("test_reid");
-  hist.push("cmd1".into()).unwrap();
-  hist.push("cmd2".into()).unwrap();
-  hist.push("cmd3".into()).unwrap();
+  hist.push("cmd1").unwrap();
+  hist.push("cmd2").unwrap();
+  hist.push("cmd3").unwrap();
 
   hist
     .delete("WHERE command = ?1", &[&"cmd2" as &dyn rusqlite::ToSql])
@@ -662,8 +663,8 @@ fn hist_delete_reids_contiguously() {
 fn hist_delete_creates_backup() {
   let _g = TestGuard::new();
   let hist = History::empty("test_backup");
-  hist.push("echo foo".into()).unwrap();
-  hist.push("echo bar".into()).unwrap();
+  hist.push("echo foo").unwrap();
+  hist.push("echo bar").unwrap();
 
   hist
     .delete("WHERE command = ?1", &[&"echo bar" as &dyn rusqlite::ToSql])
@@ -677,9 +678,9 @@ fn hist_delete_creates_backup() {
 fn hist_restore_recovers_deleted_entries() {
   let _g = TestGuard::new();
   let hist = History::empty("test_restore");
-  hist.push("echo foo".into()).unwrap();
-  hist.push("echo bar".into()).unwrap();
-  hist.push("echo baz".into()).unwrap();
+  hist.push("echo foo").unwrap();
+  hist.push("echo bar").unwrap();
+  hist.push("echo baz").unwrap();
 
   hist
     .delete("WHERE command = ?1", &[&"echo bar" as &dyn rusqlite::ToSql])
@@ -696,16 +697,16 @@ fn hist_restore_recovers_deleted_entries() {
 fn hist_restore_preserves_new_entries() {
   let _g = TestGuard::new();
   let hist = History::empty("test_restore_new");
-  hist.push("cmd1".into()).unwrap();
-  hist.push("cmd2".into()).unwrap();
-  hist.push("cmd3".into()).unwrap();
+  hist.push("cmd1").unwrap();
+  hist.push("cmd2").unwrap();
+  hist.push("cmd3").unwrap();
 
   hist
     .delete("WHERE command = ?1", &[&"cmd2" as &dyn rusqlite::ToSql])
     .unwrap();
 
   // add a new command after the delete
-  hist.push("cmd4".into()).unwrap();
+  hist.push("cmd4").unwrap();
 
   let restored = hist.restore_backup().unwrap();
   assert_eq!(restored, 1); // only cmd2 was missing
@@ -724,7 +725,7 @@ fn hist_restore_preserves_new_entries() {
 fn hist_restore_no_backup_errors() {
   let _g = TestGuard::new();
   let hist = History::empty("test_no_backup");
-  hist.push("echo foo".into()).unwrap();
+  hist.push("echo foo").unwrap();
 
   assert!(hist.restore_backup().is_err());
 }
@@ -733,14 +734,14 @@ fn hist_restore_no_backup_errors() {
 fn hist_restore_ids_are_contiguous() {
   let _g = TestGuard::new();
   let hist = History::empty("test_restore_ids");
-  hist.push("cmd1".into()).unwrap();
-  hist.push("cmd2".into()).unwrap();
-  hist.push("cmd3".into()).unwrap();
+  hist.push("cmd1").unwrap();
+  hist.push("cmd2").unwrap();
+  hist.push("cmd3").unwrap();
 
   hist
     .delete("WHERE command = ?1", &[&"cmd2" as &dyn rusqlite::ToSql])
     .unwrap();
-  hist.push("cmd4".into()).unwrap();
+  hist.push("cmd4").unwrap();
   hist.restore_backup().unwrap();
 
   let entries = hist.query("ORDER BY id ASC", &[]).unwrap();
@@ -772,7 +773,7 @@ macro_rules! alias_expansion_test {
           let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
           Shed::term_mut(|t| t.feed_bytes($input.as_bytes()));
-          let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+          let keys = Shed::term_mut(|t| t.drain_keys());
           line.process_input(keys).unwrap();
 
           let joined = line.editor.joined();
@@ -793,7 +794,7 @@ macro_rules! alias_expansion_test {
             let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
             Shed::term_mut(|t| t.feed_bytes($input2.as_bytes()));
-            let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+            let keys = Shed::term_mut(|t| t.drain_keys());
             line.process_input(keys).unwrap();
 
             let before = line.editor.joined();
@@ -843,7 +844,7 @@ fn alias_no_expand_when_disabled() {
   let mut line = ShedLine::new_no_hist(prompt).unwrap();
 
   Shed::term_mut(|t| t.feed_bytes(b"gc "));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   line.process_input(keys).unwrap();
 
   let joined = line.editor.joined();
@@ -879,7 +880,7 @@ macro_rules! hint_test {
           let (mut line, _g) = test_vi("");
 
           for cmd in $hist {
-            line.history.push(cmd.to_string()).unwrap();
+            line.history.push(cmd).unwrap();
           }
           line.history.refresh_hist_entries();
           line.history.constrain_entries(None);
@@ -1428,8 +1429,8 @@ mod handle_hist_search_key {
     (line, g)
   }
 
-  /// Build a FuzzySelector with candidates carrying ids, install it as
-  /// the history's fuzzy_finder. Candidate ids must be present because
+  /// Build a `FuzzySelector` with candidates carrying ids, install it as
+  /// the history's `fuzzy_finder`. Candidate ids must be present because
   /// the Accept arm does `cmd.id().unwrap()`.
   fn install_hist_finder(line: &mut ShedLine, items: &[(usize, &str)]) {
     let mut sel = FuzzySelector::new("History");
@@ -1557,7 +1558,7 @@ mod handle_key_dispatch {
   #[test]
   fn ctrl_d_on_empty_buffer_returns_eof() {
     let (mut line, _g) = fresh_emacs("");
-    let res = line.handle_key(key!(Ctrl + 'd')).unwrap();
+    let res = line.handle_key(&key!(Ctrl + 'd')).unwrap();
     assert!(matches!(res, Some(ReadlineEvent::Eof)));
   }
 
@@ -1565,7 +1566,7 @@ mod handle_key_dispatch {
   fn ctrl_d_on_non_empty_buffer_deletes_char_returns_none() {
     let (mut line, _g) = fresh_emacs("hello");
     line.editor.edit(|e| e.set_cursor_from_flat(0));
-    let res = line.handle_key(key!(Ctrl + 'd')).unwrap();
+    let res = line.handle_key(&key!(Ctrl + 'd')).unwrap();
     assert!(res.is_none(), "expected None, got {res:?}");
     // The Ctrl+D-as-Delete should remove the char under the cursor.
     assert_eq!(line.editor.joined(), "ello");
@@ -1577,7 +1578,7 @@ mod handle_key_dispatch {
   fn ctrl_l_marks_redraw_returns_none() {
     let (mut line, _g) = fresh_emacs("anything");
     line.needs_redraw = false;
-    let res = line.handle_key(key!(Ctrl + 'l')).unwrap();
+    let res = line.handle_key(&key!(Ctrl + 'l')).unwrap();
     assert!(res.is_none());
     assert!(line.needs_redraw);
   }
@@ -1589,8 +1590,8 @@ mod handle_key_dispatch {
     let (mut line, _g) = fresh_emacs("");
     // History search needs the search-entries cache to have something.
     // Push an entry so start_search has data to work with.
-    line.history.push("prev_cmd".into()).unwrap();
-    let _ = line.handle_key(key!(Ctrl + 'r')).unwrap();
+    line.history.push("prev_cmd").unwrap();
+    let _ = line.handle_key(&key!(Ctrl + 'r')).unwrap();
     // start_hist_search sets up the finder when there are >=2 entries
     // OR adopts the single match. Either way, the call should return
     // without error and not throw an EOF.
@@ -1603,7 +1604,7 @@ mod handle_key_dispatch {
     // submit() should return ReadlineEvent::Line("") for an empty
     // buffer (the loop layer handles the empty case).
     let (mut line, _g) = fresh_emacs("");
-    let res = line.handle_key(key!(Enter)).unwrap();
+    let res = line.handle_key(&key!(Enter)).unwrap();
     match res {
       Some(ReadlineEvent::Line(s)) => assert_eq!(s, ""),
       other => panic!("expected Line(\"\"), got {other:?}"),
@@ -1613,7 +1614,7 @@ mod handle_key_dispatch {
   #[test]
   fn enter_on_simple_command_submits_line() {
     let (mut line, _g) = fresh_emacs("echo hi");
-    let res = line.handle_key(key!(Enter)).unwrap();
+    let res = line.handle_key(&key!(Enter)).unwrap();
     match res {
       Some(ReadlineEvent::Line(s)) => assert_eq!(s, "echo hi"),
       other => panic!("expected Line(\"echo hi\"), got {other:?}"),
@@ -1626,7 +1627,7 @@ mod handle_key_dispatch {
   fn typing_a_char_grows_buffer_returns_none() {
     let (mut line, _g) = fresh_emacs("");
     let key = KeyEvent(KeyCode::Char('x'), ModKeys::NONE);
-    let res = line.handle_key(key).unwrap();
+    let res = line.handle_key(&key).unwrap();
     assert!(res.is_none());
     assert_eq!(line.editor.joined(), "x");
   }
@@ -1639,7 +1640,7 @@ mod handle_key_dispatch {
     // None → handle_key returns Ok(None).
     let (mut line, _g) = fresh_emacs("");
     let res = line
-      .handle_key(KeyEvent(KeyCode::F(12), ModKeys::NONE))
+      .handle_key(&KeyEvent(KeyCode::F(12), ModKeys::NONE))
       .unwrap();
     assert!(res.is_none());
   }
@@ -1671,7 +1672,7 @@ mod readline_mod_coverage {
     {
       let hist = ed.history.as_mut().unwrap();
       for entry in entries {
-        hist.push(entry.to_string()).unwrap();
+        hist.push(entry).unwrap();
       }
       hist.refresh_hist_entries();
       hist.constrain_entries(None);
@@ -1696,7 +1697,7 @@ mod readline_mod_coverage {
     let _g = TestGuard::new();
     let mut ed = simple_editor_with_history(&["first", "second"]);
     // Seed pending with current buffer content
-    ed.buf.set_buffer("pending_input".to_string());
+    ed.buf.set_buffer("pending_input");
     ed.handle_key(KeyEvent(KeyCode::Up, ModKeys::NONE)).unwrap();
     assert_eq!(ed.buf.joined(), "second");
     ed.handle_key(KeyEvent(KeyCode::Down, ModKeys::NONE))
@@ -1720,7 +1721,7 @@ mod readline_mod_coverage {
     // Covers the Delete branch of handle_key's Ctrl+D resolution.
     let _g = TestGuard::new();
     let mut ed = SimpleEditor::new(None);
-    ed.buf.set_buffer("hello".to_string());
+    ed.buf.set_buffer("hello");
     ed.buf.set_cursor_from_flat(0);
     ed.handle_key(key!(Ctrl + 'd')).unwrap();
     assert_eq!(ed.buf.joined(), "ello");
@@ -1851,7 +1852,7 @@ mod readline_mod_coverage {
   #[test]
   fn reset_active_widget_with_no_widget_falls_through_to_reset() {
     let (mut line, _g) = fresh_emacs_line();
-    line.editor.set_buffer("some content".to_string());
+    line.editor.set_buffer("some content");
     assert_eq!(line.editor.joined(), "some content");
     line.reset_active_widget(false).unwrap();
     // reset() wipes the editor.
@@ -1863,7 +1864,7 @@ mod readline_mod_coverage {
   #[test]
   fn handle_keymap_executes_action_on_exact_match() {
     let (mut line, _g) = fresh_emacs_line();
-    line.editor.set_buffer("hello".to_string());
+    line.editor.set_buffer("hello");
     line.editor.set_cursor_from_flat(0);
     // Map <C-a> → <C-e> in emacs mode. This overrides the built-in
     // StartOfLine binding for Ctrl+A so that pressing it goes to EOL.
@@ -1872,9 +1873,9 @@ mod readline_mod_coverage {
         flags: KeyMapFlags::EMACS,
         keys: "<C-a>".to_string(),
         action: "<C-e>".to_string(),
-      })
+      });
     });
-    line.handle_keymap(key!(Ctrl + 'a')).unwrap();
+    line.handle_keymap(&key!(Ctrl + 'a')).unwrap();
     // Action expanded to Ctrl+E → EndOfLine → cursor at "hello".len().
     assert_eq!(line.editor.cursor_to_flat(), 5);
     assert!(
@@ -1893,10 +1894,10 @@ mod readline_mod_coverage {
     // wipe the "shed_history" key before pushing to keep len()==1.
     crate::readline::history::History::clear_global_caches_for_test("shed_history");
     let (mut line, _g) = fresh_emacs_line();
-    line.history.push("echo foobar".to_string()).unwrap();
+    line.history.push("echo foobar").unwrap();
     line.history.refresh_hist_entries();
     line.history.constrain_entries(None);
-    line.editor.set_buffer("echo".to_string());
+    line.editor.set_buffer("echo");
     line.editor.move_cursor_to_end();
     line.start_hist_search();
     assert_eq!(line.editor.joined(), "echo foobar");
@@ -1910,12 +1911,12 @@ mod readline_mod_coverage {
   fn start_hist_search_with_multiple_matches_opens_finder() {
     crate::readline::history::History::clear_global_caches_for_test("shed_history");
     let (mut line, _g) = fresh_emacs_line();
-    line.history.push("git status".to_string()).unwrap();
-    line.history.push("git diff".to_string()).unwrap();
-    line.history.push("ls -la".to_string()).unwrap();
+    line.history.push("git status").unwrap();
+    line.history.push("git diff").unwrap();
+    line.history.push("ls -la").unwrap();
     line.history.refresh_hist_entries();
     line.history.constrain_entries(None);
-    line.editor.set_buffer("git".to_string());
+    line.editor.set_buffer("git");
     line.editor.move_cursor_to_end();
     line.start_hist_search();
     assert!(
@@ -1946,7 +1947,7 @@ mod readline_mod_coverage {
   #[test]
   fn run_cmd_ctrl_d_motion_increments_counter_then_resets() {
     let (mut line, _g) = fresh_emacs_line();
-    line.editor.set_buffer("single line".to_string());
+    line.editor.set_buffer("single line");
     line.editor.move_cursor_to_end();
     // 3 non-moving Ctrl+D-as-motion calls increment the counter.
     line.run_cmd(ctrl_d_motion_cmd()).unwrap();
@@ -1980,14 +1981,14 @@ mod readline_mod_coverage {
     crate::readline::history::History::clear_global_caches_for_test("shed_history");
     let (mut line, g) = fresh_emacs_line();
     for entry in entries {
-      line.history.push(entry.to_string()).unwrap();
+      line.history.push(entry).unwrap();
     }
     line.history.refresh_hist_entries();
     // constrain_entries (not just update_search_mask) repositions the cursor
     // to mask.len() so virt_scroll(-1) actually moves backward from the
     // "pending" sentinel position.
     line.history.constrain_entries(None);
-    line.editor.set_buffer(initial.to_string());
+    line.editor.set_buffer(initial);
     line.editor.move_cursor_to_end();
     (line, g)
   }

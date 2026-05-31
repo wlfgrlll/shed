@@ -221,7 +221,7 @@ impl LogTab {
     entry.push(cmd);
   }
   pub fn get_autocmds(&self, kind: AutoCmdKind) -> Vec<AutoCmd> {
-    Shed::meta_mut(|m| m.notify_autocmd(kind)).ok();
+    Shed::meta_mut(|m| m.notify_autocmd(kind));
     self.autocmds.get(&kind).cloned().unwrap_or_default()
   }
   /// Iterate every registered autocmd in `(kind, command)` order. Skips
@@ -229,7 +229,7 @@ impl LogTab {
   /// dumping for `genrc` shouldn't mark autocmds as fired.
   pub fn iter_autocmds(&self) -> impl Iterator<Item = &AutoCmd> {
     let mut kinds: Vec<&AutoCmdKind> = self.autocmds.keys().collect();
-    kinds.sort_by_key(|k| k.to_string());
+    kinds.sort_by_key(ToString::to_string);
     kinds
       .into_iter()
       .flat_map(move |k| self.autocmds.get(k).map(|v| v.iter()).into_iter().flatten())
@@ -241,7 +241,7 @@ impl LogTab {
     self.autocmds.remove(&kind);
   }
   pub fn insert_keymap(&mut self, keymap: KeyMap) {
-    for map in self.keymaps.iter_mut() {
+    for map in &mut self.keymaps {
       if map.keys == keymap.keys {
         // overwrite old keymap with new one
         *map = keymap.clone();

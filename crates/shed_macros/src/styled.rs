@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use syn::{Expr, LitStr, Token, parse::Parse, parse::ParseStream, parse_macro_input};
 
 struct StyledFormatInput {
@@ -50,10 +50,10 @@ pub fn styled_format(input: TokenStream) -> TokenStream {
   let fmt_lit = parsed.fmt.clone();
   let fmt_str = parsed.fmt.value();
 
-  let scan = scan_refs(&fmt_str);
-  let ordered_names = scan.named;
-  let positional_display: Vec<bool> = scan.positional_display;
-  let seen: HashMap<&str, ()> = ordered_names.iter().map(|n| (n.as_str(), ())).collect();
+  let scan_result = scan_refs(&fmt_str);
+  let ordered_names = scan_result.named;
+  let positional_display: Vec<bool> = scan_result.positional_display;
+  let seen: HashSet<&str> = ordered_names.iter().map(String::as_str).collect();
 
   // Map user-provided named args by name for value lookup.
   let user_named: HashMap<String, Expr> = parsed
@@ -87,21 +87,22 @@ pub fn styled_format(input: TokenStream) -> TokenStream {
   }
 
   let mut named_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
-  for name in ordered_names.iter() {
+  for name in &ordered_names {
     let ident = syn::Ident::new(name, span);
     let cc = color_call(paint_count);
     paint_count += 1;
-    let value: proc_macro2::TokenStream = match user_named.get(name) {
-      Some(expr) => quote! { (#expr) },
-      None => quote! { #ident }, // scope-captured at the call site
+    let value: proc_macro2::TokenStream = if let Some(expr) = user_named.get(name) {
+      quote! { (#expr) }
+    } else {
+      quote! { #ident }
     };
     named_tokens.push(quote! {
       #ident = ::ariadne::Fmt::fg(#value, #cc)
     });
   }
 
-  for (name, expr) in parsed.named.iter() {
-    if !seen.contains_key(name.to_string().as_str()) {
+  for (name, expr) in &parsed.named {
+    if !seen.contains(name.to_string().as_str()) {
       named_tokens.push(quote! { #name = #expr });
     }
   }
@@ -119,7 +120,7 @@ struct ScanResult {
 }
 fn scan_refs(fmt_str: &str) -> ScanResult {
   let mut named: Vec<String> = Vec::new();
-  let mut seen: HashMap<String, ()> = HashMap::new();
+  let mut seen: HashSet<String> = HashSet::new();
   let mut positional_display: Vec<bool> = Vec::new();
   let mut chars = fmt_str.chars().peekable();
 
@@ -154,8 +155,8 @@ fn scan_refs(fmt_str: &str) -> ScanResult {
         if name.is_empty() {
           positional_display.push(is_display_spec(&spec));
         } else if name.chars().all(|c| c.is_ascii_digit()) {
-        } else if !seen.contains_key(&name) {
-          seen.insert(name.clone(), ());
+        } else if !seen.contains(&name) {
+          seen.insert(name.clone());
           named.push(name);
         }
       }
@@ -177,8 +178,5 @@ fn is_display_spec(spec: &str) -> bool {
     return true;
   }
   let last = spec.chars().last();
-  !matches!(
-    last,
-    Some('?') | Some('x') | Some('X') | Some('o') | Some('b') | Some('e') | Some('E')
-  )
+  !matches!(last, Some('?' | 'x' | 'X' | 'o' | 'b' | 'e' | 'E'))
 }

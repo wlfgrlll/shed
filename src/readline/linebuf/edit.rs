@@ -18,56 +18,47 @@ impl Edit {
   }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct IndentCtx;
+pub fn check_levels_per_row(input: &str) -> (Vec<(usize, usize)>, bool) {
+  // byte offset of the start of each row
+  let mut row_starts: Vec<usize> = vec![0];
+  for (i, ch) in input.char_indices() {
+    if ch == '\n' {
+      row_starts.push(i + 1);
+    }
+  }
+  let n_rows = row_starts.len();
 
-impl IndentCtx {
-  pub fn new() -> Self {
-    Self
+  // boundaries we need parser depth at: each row_start, plus input.len() for last row's end.
+  // \n is a Sep token and doesn't shift depth, so depth-just-before-\n == depth-just-after-\n,
+  // which lets depth at row_starts[i+1] double as depth at end of row i.
+  let mut boundaries = row_starts;
+  boundaries.push(input.len());
+
+  let mut depths: Vec<usize> = Vec::with_capacity(boundaries.len());
+  let last_idx = boundaries.len() - 1;
+  let mut failed = false;
+  for (i, &b) in boundaries.iter().enumerate() {
+    // Intermediate prefixes use LEX_UNFINISHED so block_depth tracks
+    // through still-open structures. The final prefix parses strictly
+    // so unterminated quotes / subshells / etc. flip `failed`.
+    let lex_flags = if i == last_idx {
+      LexFlags::LEX_UNFINISHED_STRUCTURES
+    } else {
+      LexFlags::LEX_UNFINISHED
+    };
+    let mut src = ParsedSrc::new(input[..b].into())
+      .with_lex_flags(lex_flags)
+      .with_parse_flags(ParseFlags::ERR_RETURN);
+    let parse_failed = src.parse_src().is_err();
+    if i == last_idx {
+      failed = parse_failed;
+    }
+    depths.push(src.block_depth);
   }
 
-  pub fn check_levels_per_row(&mut self, input: &str) -> (Vec<(usize, usize)>, bool) {
-    // byte offset of the start of each row
-    let mut row_starts: Vec<usize> = vec![0];
-    for (i, ch) in input.char_indices() {
-      if ch == '\n' {
-        row_starts.push(i + 1);
-      }
-    }
-    let n_rows = row_starts.len();
+  let levels: Vec<(usize, usize)> = (0..n_rows).map(|i| (depths[i], depths[i + 1])).collect();
 
-    // boundaries we need parser depth at: each row_start, plus input.len() for last row's end.
-    // \n is a Sep token and doesn't shift depth, so depth-just-before-\n == depth-just-after-\n,
-    // which lets depth at row_starts[i+1] double as depth at end of row i.
-    let mut boundaries = row_starts;
-    boundaries.push(input.len());
-
-    let mut depths: Vec<usize> = Vec::with_capacity(boundaries.len());
-    let last_idx = boundaries.len() - 1;
-    let mut failed = false;
-    for (i, &b) in boundaries.iter().enumerate() {
-      // Intermediate prefixes use LEX_UNFINISHED so block_depth tracks
-      // through still-open structures. The final prefix parses strictly
-      // so unterminated quotes / subshells / etc. flip `failed`.
-      let lex_flags = if i == last_idx {
-        LexFlags::LEX_UNFINISHED_STRUCTURES
-      } else {
-        LexFlags::LEX_UNFINISHED
-      };
-      let mut src = ParsedSrc::new(input[..b].into())
-        .with_lex_flags(lex_flags)
-        .with_parse_flags(ParseFlags::ERR_RETURN);
-      let parse_failed = src.parse_src().is_err();
-      if i == last_idx {
-        failed = parse_failed;
-      }
-      depths.push(src.block_depth);
-    }
-
-    let levels: Vec<(usize, usize)> = (0..n_rows).map(|i| (depths[i], depths[i + 1])).collect();
-
-    (levels, failed)
-  }
+  (levels, failed)
 }
 
 pub(super) fn extract_range_contiguous(buf: &mut Lines, start: Pos, end: Pos) -> Lines {

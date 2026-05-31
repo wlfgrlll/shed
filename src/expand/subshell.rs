@@ -1,6 +1,7 @@
 use std::os::fd::AsRawFd;
 
 use super::{
+  super::state::terminal::Terminal,
   ShErrKind, ShResult, Shed,
   arithmetic::expand_arithmetic_wrapped,
   eval::execute::exec_nonint,
@@ -17,19 +18,20 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
   let rpipe_raw = rpipe.as_raw_fd();
   let wpipe_raw = wpipe.as_raw_fd();
 
-  let (proc_fd, register_fd, redir_type, path) = match is_input {
-    false => (
-      wpipe,
-      rpipe,
-      RedirType::Output,
-      format!("/dev/fd/{}", rpipe_raw),
-    ),
-    true => (
+  let (proc_fd, register_fd, redir_type, path) = if is_input {
+    (
       rpipe,
       wpipe,
       RedirType::Input,
-      format!("/dev/fd/{}", wpipe_raw),
-    ),
+      format!("/dev/fd/{wpipe_raw}"),
+    )
+  } else {
+    (
+      wpipe,
+      rpipe,
+      RedirType::Output,
+      format!("/dev/fd/{rpipe_raw}"),
+    )
   };
 
   let target_fd = match redir_type {
@@ -44,7 +46,7 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
       // orphaned procsub child (we don't wait on it) holds the pty
       // slave open. On macOS that prevents the master from ever
       // returning EOF, which deadlocks TestGuard teardown.
-      Shed::term_mut(|t| t.detach_tty());
+      Shed::term_mut(Terminal::detach_tty);
       drop(register_fd);
 
       let redir: RedirSet =
@@ -74,7 +76,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
 
   match unsafe { fork()? } {
     ForkResult::Child => {
-      Shed::term_mut(|t| t.detach_tty()); // close tty fd
+      Shed::term_mut(Terminal::detach_tty); // close tty fd
       let redir: RedirSet = RedirSpec::dup(wpipe.as_raw_fd(), 1, RedirType::Output).into();
       let _redir_guard = redir.apply()?;
 
@@ -99,7 +101,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
       let status = loop {
         match waitpid(child, Some(WtFlag::WUNTRACED)) {
           Ok(status) => break status,
-          Err(Errno::EINTR) => continue,
+          Err(Errno::EINTR) => (),
           Err(e) => return Err(e.into()),
         }
       };

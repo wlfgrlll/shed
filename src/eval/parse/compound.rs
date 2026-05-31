@@ -45,12 +45,9 @@ impl ParseStream {
       );
     };
 
-    let span = compound_cmd
-      .get_span()
-      .merge_with(name_tk.span.clone())
-      .unwrap();
+    let span = compound_cmd.get_span().merge_with(&name_tk.span).unwrap();
 
-    compound_cmd.propagate_context(get_context(
+    compound_cmd.propagate_context(&get_context(
       styled_format!("in function '{name_raw}' defined here"),
       span,
     ));
@@ -195,6 +192,7 @@ impl ParseStream {
       redirs
     )))
   }
+  #[expect(clippy::too_many_lines)]
   pub(super) fn parse_case(&mut self) -> ShResult<Option<Node>> {
     if !self.check_keyword("case") {
       return Ok(None);
@@ -275,9 +273,8 @@ impl ParseStream {
           found_end = true;
           self.block_depth -= 1;
           break;
-        } else {
-          node_tks.push(self.next_tk().unwrap());
         }
+        node_tks.push(self.next_tk().unwrap());
       }
       let mut arm_commands = vec![];
       let mut arm_tks = vec![];
@@ -293,7 +290,7 @@ impl ParseStream {
           .iter()
           .rev()
           .take_while(|tk| matches!(tk.class, TkRule::Sep))
-          .any(|tk| tk.has_double_semi());
+          .any(Tk::has_double_semi);
 
         arm_commands.push(conj);
 
@@ -471,12 +468,12 @@ impl ParseStream {
       cond_nodes.push(cond_node);
 
       self.catch_separator(&mut node_tks);
-      if !self.check_keyword("elif") {
-        break;
-      } else {
+      if self.check_keyword("elif") {
         self.block_depth -= 1;
         node_tks.push(self.next_tk().unwrap());
         self.catch_separator(&mut node_tks);
+      } else {
+        break;
       }
     }
 
@@ -529,7 +526,7 @@ impl ParseStream {
 
     let arith_tk = self.next_tk().unwrap(); // we checked already
     node_tks.push(arith_tk.clone());
-    let (init, cond, step) = split_for_arith_tk(arith_tk)?;
+    let (init, cond, step) = split_for_arith_tk(&arith_tk)?;
     self.catch_separator(&mut node_tks);
 
     if !self.check_keyword("do") {
@@ -575,18 +572,16 @@ impl ParseStream {
       node_tks.push(tk.clone());
       if tk.as_str() == "in" {
         break;
-      } else {
-        vars.push(tk.clone());
       }
+      vars.push(tk.clone());
     }
 
     while let Some(tk) = self.next_tk() {
       node_tks.push(tk.clone());
       if tk.class == TkRule::Sep {
         break;
-      } else {
-        arr.push(tk.clone());
       }
+      arr.push(tk.clone());
     }
 
     if vars.is_empty() {
@@ -764,13 +759,13 @@ impl ParseStream {
       NdRule::List { commands: body },
       vec![]
     ));
-    let try_span = body.get_span().merge_with(try_tk_span.clone()).unwrap();
+    let try_span = body.get_span().merge_with(&try_tk_span).unwrap();
     let try_span = if try_span.as_str().contains('\n') {
       try_span
     } else {
       try_tk_span
     };
-    body.propagate_context(get_context(
+    body.propagate_context(&get_context(
       styled_format!("in '{}' block defined here", "try"),
       try_span,
     ));
@@ -817,7 +812,7 @@ impl ParseStream {
 #[cfg(test)]
 mod parse_for_arith_tests {
   //! End-to-end tests for C-style arithmetic `for` loops, which take
-  //! the parse_for_arith branch of compound parsing.
+  //! the `parse_for_arith` branch of compound parsing.
 
   use crate::state;
   use crate::tests::testutil::{TestGuard, test_input};
@@ -857,7 +852,7 @@ mod parse_for_arith_tests {
     test_input("total=0; for (( i=1; i<=3; i=i+1 )); do total=$((total+i)); done; echo $total")
       .unwrap();
     let out = g.read_output();
-    assert!(out.contains("6"), "expected 1+2+3=6, got: {out:?}");
+    assert!(out.contains('6'), "expected 1+2+3=6, got: {out:?}");
   }
 
   #[test]
@@ -1076,6 +1071,6 @@ mod compound_parse_error_tests {
   #[test]
   fn for_empty_array_succeeds() {
     let _g = TestGuard::new();
-    assert!(get_ast("for i in; do true; done").is_ok())
+    assert!(get_ast("for i in; do true; done").is_ok());
   }
 }

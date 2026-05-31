@@ -6,6 +6,8 @@ use nix::{
   },
 };
 
+use crate::util::ShResultExt;
+
 use super::{
   ShResult,
   eval::lex::Span,
@@ -13,29 +15,23 @@ use super::{
   outln, sherr, with_status,
 };
 
-pub(super) struct ULimit;
-impl super::Builtin for ULimit {
-  fn opts(&self) -> Vec<OptSpec> {
-    vec![
-      OptSpec::single_arg('n'), // file descriptors
-      OptSpec::single_arg('u'), // max user processes
-      OptSpec::single_arg('s'), // stack size
-      OptSpec::single_arg('c'), // core dump file size
-      OptSpec::single_arg('v'), // virtual memory
-    ]
-  }
-  fn strict_opts(&self) -> bool {
-    true
-  }
-  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let span = args.span();
+struct RLimits {
+  fds: Option<u64>,
+  procs: Option<u64>,
+  stack: Option<u64>,
+  core: Option<u64>,
+  vmem: Option<u64>,
+}
+
+impl RLimits {
+  pub fn from_opts(opts: &[Opt]) -> ShResult<Self> {
     let mut fds = None;
     let mut procs = None;
     let mut stack = None;
     let mut core = None;
     let mut vmem = None;
 
-    for o in args.opts {
+    for o in opts {
       match o {
         Opt::ShortWithArg('n', arg) => {
           fds = Some(
@@ -77,6 +73,40 @@ impl super::Builtin for ULimit {
         }
       }
     }
+
+    Ok(Self {
+      fds,
+      procs,
+      stack,
+      core,
+      vmem,
+    })
+  }
+}
+
+pub(super) struct ULimit;
+impl super::Builtin for ULimit {
+  fn opts(&self) -> Vec<OptSpec> {
+    vec![
+      OptSpec::single_arg('n'), // file descriptors
+      OptSpec::single_arg('u'), // max user processes
+      OptSpec::single_arg('s'), // stack size
+      OptSpec::single_arg('c'), // core dump file size
+      OptSpec::single_arg('v'), // virtual memory
+    ]
+  }
+  fn strict_opts(&self) -> bool {
+    true
+  }
+  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+    let span = args.span();
+    let RLimits {
+      fds,
+      procs,
+      stack,
+      core,
+      vmem,
+    } = RLimits::from_opts(&args.opts).promote_err(span.clone())?;
 
     if let Some(fds) = fds {
       let (_, hard) = getrlimit(Resource::RLIMIT_NOFILE).map_err(|e| {

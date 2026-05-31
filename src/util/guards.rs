@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use scopeguard::guard;
 
 use super::{
+  super::state::scopes::ScopeStack,
   Shed,
   eval::{execute::exec_nonint, lex::Span},
 };
@@ -22,7 +23,7 @@ fn guard_drop(_: ()) {
     }
   }
 
-  Shed::vars_mut(|v| v.ascend());
+  Shed::vars_mut(ScopeStack::ascend);
 }
 
 /// Descend into a new variable scope, with a new argv that shadows the previous one.
@@ -30,8 +31,8 @@ fn guard_drop(_: ()) {
 /// The `local` builtin uses this scope to store its variables.
 /// The `defer` builtin registers commands to run when this drops.
 pub fn scope_guard(args: Option<Vec<(String, Span)>>) -> impl Drop {
-  let argv = args.map(|a| a.into_iter().map(|(s, _)| s).collect::<Vec<_>>());
-  Shed::vars_mut(|v| v.descend(argv));
+  let arg_vec = args.map(|a| a.into_iter().map(|(s, _)| s).collect::<Vec<_>>());
+  Shed::vars_mut(|v| v.descend(arg_vec));
   guard((), guard_drop)
 }
 

@@ -55,7 +55,7 @@ impl ViNormal {
       CmdState::Complete
     }
   }
-  pub fn parse_count(&self, chars: &mut Peekable<Chars<'_>>) -> Option<usize> {
+  pub fn parse_count(chars: &mut Peekable<Chars<'_>>) -> Option<usize> {
     let mut count = String::new();
     let Some(_digit @ '1'..='9') = chars.peek() else {
       return None;
@@ -64,10 +64,10 @@ impl ViNormal {
     while let Some(_digit @ '0'..='9') = chars.peek() {
       count.push(chars.next().unwrap());
     }
-    if !count.is_empty() {
-      count.parse::<usize>().ok()
-    } else {
+    if count.is_empty() {
       None
+    } else {
+      count.parse::<usize>().ok()
     }
   }
 }
@@ -79,18 +79,19 @@ impl Default for ViNormal {
 }
 
 impl EditMode for ViNormal {
+  #[expect(clippy::too_many_lines)]
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     let mut cmd: Option<EditCmd> = match key {
       key!('V') => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: Some(verb!(Verb::VisualModeLine)),
         motion: None,
-        raw_seq: "".into(),
+        raw_seq: String::new(),
         flags: self.flags(),
       }),
       E(K::ExMode, _) => {
         return Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::ExMode)),
           motion: None,
           raw_seq: self.take_cmd(),
@@ -98,68 +99,64 @@ impl EditMode for ViNormal {
         });
       }
       key!(Ctrl + 'a') => {
-        let count = self
-          .parse_count(&mut self.pending_seq.chars().peekable())
-          .unwrap_or(1) as u16;
+        let count = Self::parse_count(&mut self.pending_seq.chars().peekable()).unwrap_or(1) as u16;
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::IncrementNumber(count))),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags(),
         })
       }
       key!(Ctrl + 'x') => {
-        let count = self
-          .parse_count(&mut self.pending_seq.chars().peekable())
-          .unwrap_or(1) as u16;
+        let count = Self::parse_count(&mut self.pending_seq.chars().peekable()).unwrap_or(1) as u16;
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::DecrementNumber(count))),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags(),
         })
       }
       key!(Ctrl + 'g') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::PrintPosition)),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags(),
         })
       }
       key!(Ctrl + 'd') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: None,
           motion: Some(motion!(Motion::HalfScreenDown)),
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags(),
         })
       }
       key!(Ctrl + 'u') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: None,
           motion: Some(motion!(Motion::HalfScreenUp)),
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags(),
         })
       }
       key!(Enter) => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: None,
           motion: Some(motion!(Motion::LineDown)),
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: self.flags() | CmdFlags::IS_SUBMIT,
         })
       }
@@ -178,15 +175,15 @@ impl EditMode for ViNormal {
         }
       }
       key!(Backspace) => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: None,
         motion: Some(motion!(Motion::BackwardChar)),
-        raw_seq: "".into(),
+        raw_seq: String::new(),
         flags: self.flags(),
       }),
       key!(Ctrl + 'r') => {
         let mut chars = self.pending_seq.chars().peekable();
-        let count = self.parse_count(&mut chars).unwrap_or(1);
+        let count = Self::parse_count(&mut chars).unwrap_or(1);
         Some(EditCmd {
           register: RegisterName::default(),
           verb: Some(verb!(count, Verb::Redo)),
@@ -200,7 +197,7 @@ impl EditMode for ViNormal {
         None
       }
       _ => {
-        if let Some(cmd) = common_cmds(key) {
+        if let Some(cmd) = common_cmds(&key) {
           self.pending_seq.clear();
           Some(cmd)
         } else {
@@ -211,7 +208,7 @@ impl EditMode for ViNormal {
 
     if let Some(cmd) = cmd.as_mut() {
       cmd.normalize_counts();
-    };
+    }
     cmd
   }
 

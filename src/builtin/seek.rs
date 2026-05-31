@@ -17,7 +17,7 @@ impl super::Builtin for Seek {
     let span = args.span();
     let mut cursor_rel = false;
     let mut end_rel = false;
-    let mut argv = args.argv.into_iter();
+    let mut arg_vec = args.argv.into_iter();
 
     for opt in args.opts {
       match opt {
@@ -29,7 +29,7 @@ impl super::Builtin for Seek {
       }
     }
 
-    let Some((fd, fd_span)) = argv.next() else {
+    let Some((fd, fd_span)) = arg_vec.next() else {
       return Err(sherr!(ExecFail @ span, "lseek: Missing required argument 'fd'",));
     };
     let Ok(fd) = fd.parse::<u32>() else {
@@ -39,7 +39,7 @@ impl super::Builtin for Seek {
       );
     };
 
-    let Some((offset, offset_span)) = argv.next() else {
+    let Some((offset, offset_span)) = arg_vec.next() else {
       return Err(sherr!(
         ExecFail,
         "lseek: Missing required argument 'offset'",
@@ -61,7 +61,7 @@ impl super::Builtin for Seek {
     };
 
     let new_off = lseek(
-      unsafe { BorrowedFd::borrow_raw(fd as i32) }, // lseek will validate this for us
+      unsafe { BorrowedFd::borrow_raw(fd.cast_signed()) }, // lseek will validate this for us
       offset,
       whence,
     )

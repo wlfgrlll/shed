@@ -13,6 +13,7 @@ use shed_macros::styled_format;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
+  super::state::{meta::MetaTab, terminal::Terminal},
   AssignKind, CaseNode, CondNode, ConjunctNode, ConjunctOp, LoopKind, NdFlags, NdRule, Node,
   ParsedSrc,
   builtin::{BUILTIN_NAMES, lookup_builtin},
@@ -69,10 +70,10 @@ pub fn is_in_path(name: Tk) -> bool {
   if name.starts_with("./") || name.starts_with("../") || name.starts_with('/') {
     let path = Path::new(&name);
     if path.exists() && path.is_file() && !path.is_dir() {
-      let meta = match path.metadata() {
-        Ok(m) => m,
-        Err(_) => return false,
+      let Ok(meta) = path.metadata() else {
+        return false;
       };
+
       if meta.permissions().mode() & 0o111 != 0 {
         return true;
       }
@@ -86,10 +87,10 @@ pub fn is_in_path(name: Tk) -> bool {
     for path in paths {
       let full_path = Path::new(path).join(&name);
       if full_path.exists() && full_path.is_file() && !full_path.is_dir() {
-        let meta = match full_path.metadata() {
-          Ok(m) => m,
-          Err(_) => continue,
+        let Ok(meta) = full_path.metadata() else {
+          continue;
         };
+
         if meta.permissions().mode() & 0o111 != 0 {
           return true;
         }
@@ -213,7 +214,6 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
           NdRule::Pipeline { mut cmds } => {
             node = cmds.remove(0);
           }
-          NdRule::Command { .. } => break,
           _ => break,
         }
       }
@@ -249,7 +249,7 @@ pub fn exec_nonint(input: String, source_name: Option<Rc<str>>) -> ShResult<()> 
 /// This should only be called directly if you wish to inherit
 /// the caller's interactive status.
 pub fn exec_input(mut input: String, source_name: Option<Rc<str>>) -> ShResult<()> {
-  let interactive = Shed::term(|t| t.interactive());
+  let interactive = Shed::term(Terminal::interactive);
 
   if !interactive || !Shed::shopts(|o| o.prompt.expand_aliases) {
     input = expand_aliases(input);
@@ -303,7 +303,7 @@ impl Dispatcher {
     Ok(())
   }
   pub fn dispatch_node(&mut self, node: Node) -> ShResult<()> {
-    let _guard = Shed::meta_mut(|m| m.push_procsub_frame());
+    let _guard = Shed::meta_mut(MetaTab::push_procsub_frame);
 
     while signals_pending() {
       // If we have received SIGINT,
@@ -322,13 +322,14 @@ impl Dispatcher {
       NdRule::CaseNode { .. } => self.exec_case(node),
       NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
       NdRule::Subshell { .. } => self.exec_subsh(node),
-      NdRule::FuncDef { .. } => self.exec_func_def(node),
-      NdRule::Arithmetic { .. } => self.exec_arith(node),
       NdRule::Negate { .. } => self.exec_negated(node),
       NdRule::Timed { .. } => self.exec_timed(node),
       NdRule::Command { .. } => self.dispatch_cmd(node),
       NdRule::TryNode { .. } => self.exec_try(node),
-      _ => unreachable!(),
+
+      NdRule::FuncDef { .. } => Self::exec_func_def(node),
+      NdRule::Arithmetic { .. } => Self::exec_arith(node),
+      NdRule::Assignment { .. } => unreachable!(),
     };
 
     if let Err(e) = result {
@@ -379,9 +380,8 @@ impl Dispatcher {
         && !assignments.is_empty()
       {
         return self.exec_cmd(node);
-      } else {
-        return Ok(());
       }
+      return Ok(());
     };
 
     let cmd_tk = node.get_command();
@@ -391,7 +391,7 @@ impl Dispatcher {
     } else if cmd.flags.contains(TkFlags::BUILTIN) || BUILTIN_NAMES.contains(&cmd_word.as_str()) {
       self.exec_builtin(node)
     } else if is_arith(cmd_tk) {
-      self.exec_arith(node)
+      Self::exec_arith(node)
     } else if Shed::shopts(|s| s.core.autocd) && in_cd_path(cmd.clone()) && !is_in_path(cmd.clone())
     {
       let dir = cmd.span.as_str().to_string();
@@ -489,7 +489,7 @@ impl Dispatcher {
     }
     Ok(())
   }
-  fn exec_arith(&mut self, arith: Node) -> ShResult<()> {
+  fn exec_arith(arith: Node) -> ShResult<()> {
     let NdRule::Arithmetic { body } = arith.class else {
       unreachable!()
     };
@@ -498,7 +498,7 @@ impl Dispatcher {
     state::Shed::set_status_from_bool(val != 0.0);
     Ok(())
   }
-  pub fn exec_func_def(&mut self, func_def: Node) -> ShResult<()> {
+  pub fn exec_func_def(func_def: Node) -> ShResult<()> {
     let blame = func_def.get_span();
     let ctx = func_def.context.clone();
     let NdRule::FuncDef { name, mut body } = func_def.class else {
@@ -520,7 +520,7 @@ impl Dispatcher {
 
     let func = ShFunc::new(*body, blame);
     Shed::logic_mut(|l| l.insert_func(func_name, func)); // Store the AST
-    if Shed::term(|t| t.interactive()) {
+    if Shed::term(Terminal::interactive) {
       Shed::meta_mut(|m| {
         m.set_last_was_func_def(true);
       });
@@ -553,7 +553,7 @@ impl Dispatcher {
     };
 
     let max_depth = Shed::shopts(|s| s.core.max_recurse_depth);
-    let depth = Shed::meta(|m| m.func_depth());
+    let depth = Shed::meta(MetaTab::func_depth);
     if depth > max_depth {
       return Err(sherr!(
         InternalErr @ blame,
@@ -561,7 +561,7 @@ impl Dispatcher {
       ));
     }
 
-    let env_vars = self.set_assignments(assignments, AssignBehavior::Export)?;
+    let env_vars = Self::set_assignments(assignments, AssignBehavior::Export)?;
     let func_name = argv.remove(0);
     let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
 
@@ -590,12 +590,12 @@ impl Dispatcher {
       }
 
       let _guard = scope_guard(Some(argv));
-      let _func_guard = Shed::meta_mut(|m| m.enter_func());
+      let _func_guard = Shed::meta_mut(MetaTab::enter_func);
 
       for ctx in caller_contexts.into_iter().rev() {
-        func_body.body_mut().propagate_context(ctx);
+        func_body.body_mut().propagate_context(&ctx);
       }
-      func_body.body_mut().propagate_context(func_ctx);
+      func_body.body_mut().propagate_context(&func_ctx);
       func_body.body_mut().flags = func.flags;
 
       let _timer = self.take_timer();
@@ -714,7 +714,7 @@ impl Dispatcher {
       let pattern_raw = exp_pattern
         .get_words()
         .first()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .unwrap_or_default();
 
       'outer: for block in case_blocks {
@@ -775,7 +775,6 @@ impl Dispatcher {
               }
               ShErrKind::LoopContinue(code) => {
                 state::Shed::set_status(*code);
-                continue 'outer;
               }
               _ => return Err(e),
             }
@@ -789,7 +788,7 @@ impl Dispatcher {
       Ok(())
     };
 
-    let _loop_guard = Shed::meta_mut(|m| m.enter_loop());
+    let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
     self.run_compound("loop", loop_stmt.redirs, loop_stmt.flags, blame, loop_logic)
   }
   fn exec_for_arith(&mut self, for_stmt: Node) -> ShResult<()> {
@@ -847,7 +846,7 @@ impl Dispatcher {
       Ok(())
     };
 
-    let _loop_guard = Shed::meta_mut(|m| m.enter_loop());
+    let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
     self.run_compound("c_for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
   fn exec_for_arr(&mut self, for_stmt: Node) -> ShResult<()> {
@@ -861,7 +860,7 @@ impl Dispatcher {
         Ok(
           tks
             .into_iter()
-            .map(|tk| tk.expand_to_words())
+            .map(Tk::expand_to_words)
             .collect::<ShResult<Vec<Vec<String>>>>()?
             .into_iter()
             .flatten()
@@ -873,7 +872,7 @@ impl Dispatcher {
       let arr: Vec<String> = to_expanded_strings(arr)?;
       let vars: Vec<String> = to_expanded_strings(vars)?;
 
-      let mut for_guard = var_ctx_guard(vars.iter().map(|v| v.to_string()).collect());
+      let mut for_guard = var_ctx_guard(vars.iter().map(ToString::to_string).collect());
 
       'outer: for chunk in arr.chunks(vars.len()) {
         let empty = String::new();
@@ -883,13 +882,9 @@ impl Dispatcher {
 
         for (var, val) in chunk_iter {
           Shed::vars_mut(|v| {
-            v.set_var(
-              &var.to_string(),
-              VarKind::Str(val.to_string()),
-              VarFlags::empty(),
-            )
+            v.set_var(var.as_str(), VarKind::Str(val.clone()), VarFlags::empty())
           })?;
-          for_guard.insert(var.to_string());
+          for_guard.insert(var.clone());
         }
 
         let _guard = shared_scope_guard();
@@ -902,7 +897,6 @@ impl Dispatcher {
             }
             ShErrKind::LoopContinue(code) => {
               state::Shed::set_status(*code);
-              continue 'outer;
             }
             _ => return Err(e),
           }
@@ -912,7 +906,7 @@ impl Dispatcher {
       Ok(())
     };
 
-    let _loop_guard = Shed::meta_mut(|m| m.enter_loop());
+    let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
     self.run_compound("for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
   fn exec_if(&mut self, if_stmt: Node) -> ShResult<()> {
@@ -938,14 +932,11 @@ impl Dispatcher {
           }
         }
 
-        match state::Shed::get_status() {
-          0 => {
-            matched = true;
-            let _guard = shared_scope_guard();
-            s.dispatch_node(*body)?;
-            break; // Don't check remaining elif conditions
-          }
-          _ => continue,
+        if state::Shed::get_status() == 0 {
+          matched = true;
+          let _guard = shared_scope_guard();
+          s.dispatch_node(*body)?;
+          break; // Don't check remaining elif conditions
         }
       }
 
@@ -963,6 +954,43 @@ impl Dispatcher {
 
     self.run_compound("if", if_stmt.redirs, if_stmt.flags, blame, if_logic)
   }
+
+  fn exec_one(
+    &mut self,
+    cmd: Node,
+    should_fork: impl Fn(&Node) -> bool,
+    flags: NdFlags,
+  ) -> ShResult<()> {
+    let span = cmd.get_span();
+    // it's a single command
+    // just thread it through dispatch_node directly.
+    // this avoids the stdio setup that follows this
+    self.job_stack.new_job();
+    let res = if should_fork(&cmd) {
+      let name = cmd
+        .get_command()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+
+      self.run_fork(&name, |s| {
+        if let Err(e) = s.dispatch_node(cmd) {
+          e.print_error();
+        }
+      })
+    } else {
+      self.dispatch_node(cmd)
+    };
+
+    if let Some(job) = self.job_stack.finalize_job() {
+      // just in case this somehow forked a child
+      // let's handle it here. Shouldn't happen in practice
+      // but you never know
+      dispatch_job(job, false, Shed::term(Terminal::interactive))?;
+    }
+    check_err(flags, None, Some(span))?;
+    res
+  }
+
   fn exec_pipeline(&mut self, pipeline: Node) -> ShResult<()> {
     let pipeline_span = pipeline.get_span().clone();
     let pipeline_flags = pipeline.flags;
@@ -971,7 +999,7 @@ impl Dispatcher {
     };
 
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
-    let interactive = Shed::term(|t| t.interactive());
+    let interactive = Shed::term(Terminal::interactive);
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
@@ -980,42 +1008,19 @@ impl Dispatcher {
     let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && !will_fork(cmd) };
 
     if cmds.len() == 1 && !is_bg && runs_inline(&cmds[0]) {
-      // it's a single command
-      // just thread it through dispatch_node directly.
-      // this avoids the stdio setup that follows this
-      self.job_stack.new_job();
       let cmd = cmds.remove(0);
-      let res = if should_fork_segment(&cmd) {
-        let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
-
-        self.run_fork(&name, |s| {
-          if let Err(e) = s.dispatch_node(cmd) {
-            e.print_error();
-          }
-        })
-      } else {
-        self.dispatch_node(cmd)
-      };
-
-      if let Some(job) = self.job_stack.finalize_job() {
-        // just in case this somehow forked a child
-        // let's handle it here. Shouldn't happen in practice
-        // but you never know
-        dispatch_job(job, false, interactive)?;
-      }
-      check_err(pipeline_flags, None, Some(pipeline_span))?;
-      return res;
+      return self.exec_one(cmd, should_fork_segment, pipeline_flags);
     }
 
     // closure that gets the pgid we need if the child wants the tty
     let tty_controller = |s: &mut Self| -> Option<Pid> {
-      (!is_bg && Shed::term(|t| t.interactive()))
+      (!is_bg && Shed::term(Terminal::interactive))
         .then(|| s.job_stack.curr_job_mut().unwrap().pgid())
         .flatten()
     };
 
     self.job_stack.new_job();
-    self.fg_job = !is_bg && Shed::term(|t| t.interactive());
+    self.fg_job = !is_bg && Shed::term(Terminal::interactive);
 
     let redirs = RedirSet::from(pipeline.redirs);
 
@@ -1024,8 +1029,8 @@ impl Dispatcher {
     let mut result = Ok(());
 
     let saved_region = Shed::term_mut(|t| t.scroll_region());
-    let _scroll_guard = (!is_bg).then(|| Shed::term_mut(|t| t.yield_terminal()));
-    let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(|t| t.prepare_for_exec()));
+    let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
+    let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
     let mut spans = vec![];
 
     for (i, mut cmd) in cmds.into_iter().enumerate() {
@@ -1039,7 +1044,7 @@ impl Dispatcher {
 
       if i == 0 {
         std::mem::take(&mut in_rdrs).apply_persistent().ok();
-      };
+      }
 
       if let Some(mut r) = r {
         r.apply()?;
@@ -1050,12 +1055,15 @@ impl Dispatcher {
 
       if i == last {
         std::mem::take(&mut out_rdrs).apply_persistent().ok();
-      };
+      }
 
       spans.push(cmd.get_span());
 
       result = if should_fork_segment(&cmd) {
-        let name = cmd.get_command().map(|t| t.to_string()).unwrap_or_default();
+        let name = cmd
+          .get_command()
+          .map(ToString::to_string)
+          .unwrap_or_default();
 
         self.run_fork(&name, |s| {
           if let Err(e) = s.dispatch_node(cmd) {
@@ -1077,13 +1085,13 @@ impl Dispatcher {
     }
 
     let job = self.job_stack.finalize_job().unwrap();
-    let dispatch_result = dispatch_job(job, is_bg, Shed::term(|t| t.interactive()));
+    let dispatch_result = dispatch_job(job, is_bg, Shed::term(Terminal::interactive));
     result?;
     dispatch_result?;
 
     if !is_bg
-      && Shed::term(|t| t.interactive())
-      && let Some((_, bottom)) = saved_region
+      && Shed::term(Terminal::interactive)
+      && let Some((_, bottom)) = saved_region.dims()
     {
       Shed::term_mut(|t| {
         use std::io::Write;
@@ -1117,25 +1125,24 @@ impl Dispatcher {
     };
 
     if fork_builtins {
-      log::trace!("Forking builtin: {}", cmd_raw);
+      log::trace!("Forking builtin: {cmd_raw}");
       self.run_fork(&cmd_raw, |s| {
         if let Err(e) = builtin.setup_builtin(cmd, s) {
           e.print_error();
         }
       })?;
       Ok(())
-    } else {
-      if let Err(e) = builtin.setup_builtin(cmd, self) {
-        let code = state::Shed::get_status();
-        if code == 0 {
-          state::Shed::set_status(1);
-        }
-        Err(e)
-      } else {
-        Ok(())
+    } else if let Err(e) = builtin.setup_builtin(cmd, self) {
+      let code = state::Shed::get_status();
+      if code == 0 {
+        state::Shed::set_status(1);
       }
+      Err(e)
+    } else {
+      Ok(())
     }
   }
+  #[expect(clippy::too_many_lines)]
   pub fn exec_cmd(&mut self, cmd: Node) -> ShResult<()> {
     let blame = cmd.get_span().clone();
     let context = cmd.context.clone();
@@ -1154,10 +1161,10 @@ impl Dispatcher {
     if let AssignBehavior::Set = assign_behavior {
       // if we are here, argv is empty. set assignments and return.
       if !assignments.is_empty() {
-        if let Err(e) = self.set_assignments(assignments, assign_behavior) {
+        if let Err(e) = Self::set_assignments(assignments, assign_behavior) {
           Shed::set_status(1);
           e.print_error();
-        };
+        }
         return Ok(());
       }
     }
@@ -1172,7 +1179,7 @@ impl Dispatcher {
     let existing_pgid = self.job_stack.curr_job_mut().unwrap().pgid();
 
     let fg_job = self.fg_job;
-    let interactive = Shed::term(|t| t.interactive());
+    let interactive = Shed::term(Terminal::interactive);
 
     let child_logic = |pgid: Option<Pid>| -> ! {
       if let Some(pgid) = pgid {
@@ -1181,7 +1188,7 @@ impl Dispatcher {
       if let AssignBehavior::Export = assign_behavior
         && !assignments.is_empty()
       {
-        self.set_assignments(assignments, assign_behavior).ok();
+        Self::set_assignments(assignments, assign_behavior).ok();
       }
       let exec_args = match ExecArgs::new(argv) {
         Ok(Some(args)) => args,
@@ -1209,7 +1216,7 @@ impl Dispatcher {
         let c_path = CString::new(path_bytes).unwrap_or_default();
         execve(&c_path, &exec_args.argv, &exec_args.envp)
       } else {
-        log::warn!("command not found in cache: {}", cmd_raw);
+        log::warn!("command not found in cache: {cmd_raw}");
         execvpe(cmd, &exec_args.argv, &exec_args.envp)
       };
 
@@ -1220,7 +1227,7 @@ impl Dispatcher {
             .with_context(context)
             .print_error();
           with_vars([("CMD".into(), cmd.to_str().unwrap_or_default())], || {
-            autocmd!(OnCommandNotFound)
+            autocmd!(OnCommandNotFound);
           });
 
           unsafe { nix::libc::_exit(127) };
@@ -1269,7 +1276,7 @@ impl Dispatcher {
           job.set_pgid(child);
           child
         };
-        let child_proc = ChildProc::new(child, Some(cmd_name), Some(child_pgid), timer)?;
+        let child_proc = ChildProc::new(child, Some(cmd_name), Some(child_pgid), timer);
         job.push_child(child_proc);
       }
     }
@@ -1295,20 +1302,17 @@ impl Dispatcher {
           job.set_pgid(child);
           child
         };
-        let child_proc = ChildProc::new(child, Some(name), Some(child_pgid), timer)?;
+        let child_proc = ChildProc::new(child, Some(name), Some(child_pgid), timer);
         job.push_child(child_proc);
         Ok(())
       }
     }
   }
   pub fn take_timer(&mut self) -> Option<CmdTimer> {
-    self.timer_stack.last_mut().and_then(|t| t.take())
+    self.timer_stack.last_mut().and_then(Option::take)
   }
-  pub fn set_assignments(
-    &self,
-    assigns: Vec<Node>,
-    behavior: AssignBehavior,
-  ) -> ShResult<Vec<String>> {
+  #[expect(clippy::too_many_lines)]
+  pub fn set_assignments(assigns: Vec<Node>, behavior: AssignBehavior) -> ShResult<Vec<String>> {
     let mut new_env_vars = vec![];
     let mut flags = match behavior {
       AssignBehavior::Export => VarFlags::EXPORT,
@@ -1327,7 +1331,7 @@ impl Dispatcher {
       let old_status = state::Shed::get_status();
       let var_name = var.span.as_str();
       let val = if is_arr {
-        VarKind::arr_from_tk(val)?
+        VarKind::arr_from_tk(&val)?
       } else {
         VarKind::Str(val.expand_to_words()?.join(" "))
       };
@@ -1349,7 +1353,7 @@ impl Dispatcher {
         op
         @ (AssignKind::PlusEq | AssignKind::MinusEq | AssignKind::MultEq | AssignKind::DivEq) => {
           let mut var = if let Some((name, idx)) = &indexed {
-            Shed::vars(|v| v.index_var(name, idx.clone()))?.into()
+            Shed::vars(|v| v.index_var(name, idx))?.into()
           } else {
             Shed::vars(|v| v.try_get_var_meta(var_name)).unwrap_or_else(|| {
               let kind = if is_arr {
@@ -1366,7 +1370,7 @@ impl Dispatcher {
             AssignKind::MinusEq => "subtract from",
             AssignKind::MultEq => "multiply",
             AssignKind::DivEq => "divide",
-            _ => unreachable!(),
+            AssignKind::Eq => unreachable!(),
           };
 
           let parse_rhs = |span: &Span| -> ShResult<i32> {
@@ -1391,7 +1395,7 @@ impl Dispatcher {
                   *s = (n + other).to_string();
                 } else {
                   let other = val.to_string();
-                  *s = [s.to_string(), other].join("");
+                  *s = [s.clone(), other].join("");
                 }
               } else {
                 let n = s.parse::<i32>().map_err(
@@ -1415,13 +1419,13 @@ impl Dispatcher {
                 AssignKind::MinusEq => *n -= other,
                 AssignKind::MultEq => *n *= other,
                 AssignKind::DivEq => *n /= other,
-                _ => unreachable!(),
+                AssignKind::Eq => unreachable!(),
               }
             }
             VarKind::Arr(items) => {
               if matches!(op, AssignKind::PlusEq) {
                 match &val {
-                  VarKind::Str(s) => items.push_back(s.to_string()),
+                  VarKind::Str(s) => items.push_back(s.clone()),
                   VarKind::Int(n) => items.push_back(n.to_string()),
                   VarKind::Arr(other) => items.extend(other.clone()),
                   VarKind::AssocArr(_) => {
@@ -1478,7 +1482,7 @@ pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
 /// `$unset` survive expansion as the empty string instead of vanishing
 /// from argv (bash `[[ ]]` semantics).
 pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String, Span)>> {
-  let mut args = Vec::with_capacity(argv.len());
+  let mut out = Vec::with_capacity(argv.len());
 
   for arg in argv {
     let span = arg.span.clone();
@@ -1489,20 +1493,20 @@ pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String,
       // but here it would turn the operator into `=/home/$USER`. Skip
       // expansion for the bare operator token.
       if arg.span.as_str() == "=~" {
-        args.push(("=~".to_string(), span));
+        out.push(("=~".to_string(), span));
         continue;
       }
       let word = arg.expand_no_split()?;
-      args.push((word, span));
+      out.push((word, span));
     } else {
       for exp in arg.expand_to_words()? {
-        args.push((exp, span.clone()))
+        out.push((exp, span.clone()));
       }
     }
   }
 
-  xtrace_print(&args);
-  Ok(args)
+  xtrace_print(&out);
+  Ok(out)
 }
 
 pub fn is_func(name: &str) -> bool {
@@ -1566,12 +1570,11 @@ pub fn check_err(flags: NdFlags, err: Option<ShErr>, span: Option<Span>) -> ShRe
             ErrInterrupt @ span,
             "Command returned non-zero exit status",
         ));
-      } else {
-        return Err(sherr!(
-          ErrInterrupt,
-          "Command returned non-zero exit status",
-        ));
       }
+      return Err(sherr!(
+        ErrInterrupt,
+        "Command returned non-zero exit status",
+      ));
     }
   }
   Ok(())
@@ -2241,7 +2244,7 @@ mod tests {
     let g = TestGuard::new();
     test_input("arr=(a b c); arr+=d; echo ${arr[3]}").unwrap();
     let out = g.read_output();
-    assert!(out.contains("d"), "got: {out:?}");
+    assert!(out.contains('d'), "got: {out:?}");
   }
 
   #[test]
@@ -2297,7 +2300,7 @@ mod tests {
     // Setting an index past the end should extend.
     test_input("arr=(a b); arr[3]=z; echo ${arr[3]}").unwrap();
     let out = g.read_output();
-    assert!(out.contains("z"));
+    assert!(out.contains('z'));
   }
 
   // ─── Export behavior ────────────────────────────────────────────────

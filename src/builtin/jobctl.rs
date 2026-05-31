@@ -4,13 +4,16 @@ use nix::{
 };
 
 use super::{
+  super::state::jobs::JobTab,
   BuiltinArgs,
   eval::lex::Span,
   getopt::{Opt, OptSpec},
   out, outln, sherr,
   signal::parse_signal,
-  state::jobs::{JobCmdFlags, JobID, wait_bg, wait_fg},
-  state::{self, Shed},
+  state::{
+    self, Shed,
+    jobs::{JobCmdFlags, JobID, wait_bg, wait_fg},
+  },
   util::{ShResult, ShResultExt, with_status},
 };
 
@@ -78,28 +81,26 @@ pub enum JobBehavior {
 pub(super) struct Fg;
 impl super::Builtin for Fg {
   fn execute(&self, args: BuiltinArgs) -> ShResult<()> {
-    continue_job(args, JobBehavior::Foregound)
+    continue_job(args, &JobBehavior::Foregound)
   }
 }
 
 pub(super) struct Bg;
 impl super::Builtin for Bg {
   fn execute(&self, args: BuiltinArgs) -> ShResult<()> {
-    continue_job(args, JobBehavior::Background)
+    continue_job(args, &JobBehavior::Background)
   }
 }
 
-pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
+pub fn continue_job(args: BuiltinArgs, behavior: &JobBehavior) -> ShResult<()> {
   let span = args.span();
-  let mut argv = args.argv.into_iter();
+  let mut arg_vec = args.argv.into_iter();
 
-  let curr_job_id = if let Some(id) = Shed::jobs(|j| j.curr_job()) {
-    id
-  } else {
+  let Some(curr_job_id) = Shed::jobs(JobTab::curr_job) else {
     return Err(sherr!(ExecFail @ span, "No jobs found"));
   };
 
-  let tabid = match argv.next() {
+  let tabid = match arg_vec.next() {
     Some((arg, blame)) => parse_job_id(&arg, blame)?,
     None => curr_job_id,
   };
@@ -118,7 +119,7 @@ pub fn continue_job(args: BuiltinArgs, behavior: JobBehavior) -> ShResult<()> {
     JobBehavior::Background => {
       let job_order = Shed::jobs(|j| j.order().to_vec());
       out!("{}", job.display(&job_order, JobCmdFlags::PIDS));
-      Shed::jobs_mut(|j| j.insert_job(job, true))?;
+      Shed::jobs_mut(|j| j.insert_job(job, true));
     }
   }
 
@@ -166,7 +167,7 @@ impl super::Builtin for Wait {
     if Shed::jobs(|j| j.curr_job().is_none()) {
       return with_status(0);
     }
-    let argv = args
+    let arg_vec = args
       .argv
       .into_iter()
       .map(|arg| {
@@ -179,11 +180,11 @@ impl super::Builtin for Wait {
       .collect::<ShResult<Vec<JobID>>>()
       .promote_err(span.clone())?;
 
-    if argv.is_empty() {
-      Shed::jobs_mut(|j| j.wait_all_bg()).promote_err(span)?;
+    if arg_vec.is_empty() {
+      Shed::jobs_mut(JobTab::wait_all_bg).promote_err(span)?;
     } else {
-      for arg in argv {
-        wait_bg(arg).promote_err(span.clone())?;
+      for arg in arg_vec {
+        wait_bg(&arg).promote_err(span.clone())?;
       }
     }
 
@@ -219,7 +220,7 @@ impl super::Builtin for Disown {
     // -a operates on every job; explicit ids and the current-job
     // fallback are both irrelevant.
     if disown_all {
-      Shed::jobs_mut(|j| j.disown_all(nohup))?;
+      Shed::jobs_mut(|j| j.disown_all(nohup));
       return with_status(0);
     }
 
@@ -231,7 +232,7 @@ impl super::Builtin for Disown {
 
     // Fall back to the current job only when no explicit ids were given.
     if ids.is_empty() {
-      let Some(id) = Shed::jobs(|j| j.curr_job()) else {
+      let Some(id) = Shed::jobs(JobTab::curr_job) else {
         return Err(sherr!(
             ExecFail @ span,
             "disown: No jobs to disown",
@@ -241,7 +242,7 @@ impl super::Builtin for Disown {
     }
 
     for id in ids {
-      Shed::jobs_mut(|j| j.disown(JobID::TableID(id), nohup))?;
+      Shed::jobs_mut(|j| j.disown(JobID::TableID(id), nohup));
     }
 
     with_status(0)
@@ -329,7 +330,7 @@ fn parse_kill_target(arg: &str, blame: Span) -> ShResult<KillTarget> {
   })
 }
 
-fn list_all_signals() -> ShResult<()> {
+fn list_all_signals() {
   let signals: String = Signal::iterator()
     .map(|sig| {
       let sig = sig.to_string();
@@ -338,7 +339,6 @@ fn list_all_signals() -> ShResult<()> {
     .collect::<Vec<_>>()
     .join(&state::util::get_separator());
   outln!("{signals}");
-  Ok(())
 }
 
 fn send_signal(target: &KillTarget, sig: KillSig, verbose: bool, blame: &Span) -> ShResult<()> {
@@ -412,7 +412,8 @@ impl super::Builtin for Kill {
     if list_sig {
       let Some((arg, span)) = args.argv.first() else {
         // kill -l - list all signals
-        return list_all_signals();
+        list_all_signals();
+        return Ok(());
       };
 
       // kill -l <signal> - print the name. Signal 0 isn't named, so we
@@ -625,16 +626,16 @@ mod kill_tests {
 
   #[test]
   fn kill_dash_zero_probes_live_pid_without_signaling() {
+    use nix::sys::wait::WaitPidFlag;
     // `kill -0 <pid>` against a running process succeeds without
     // actually delivering anything; child stays alive.
     let _g = TestGuard::new();
     let pid = fork_pausing_child();
+    // The probe didn't deliver — child is still paused. Confirm via
+    // WNOHANG: nothing has changed.
     test_input(format!("kill -0 {}", pid.as_raw())).unwrap();
     assert_eq!(state::Shed::get_status(), 0);
 
-    // The probe didn't deliver — child is still paused. Confirm via
-    // WNOHANG: nothing has changed.
-    use nix::sys::wait::WaitPidFlag;
     let stat = waitpid(pid, Some(WaitPidFlag::WNOHANG)).unwrap();
     assert!(
       matches!(stat, WaitStatus::StillAlive),
@@ -664,13 +665,13 @@ mod kill_tests {
 
   #[test]
   fn kill_dash_s_zero_probes_live_pid() {
+    use nix::sys::wait::WaitPidFlag;
     // Same probe semantics, but via -s 0 instead of -0.
     let _g = TestGuard::new();
     let pid = fork_pausing_child();
     test_input(format!("kill -s 0 {}", pid.as_raw())).unwrap();
     assert_eq!(state::Shed::get_status(), 0);
 
-    use nix::sys::wait::WaitPidFlag;
     let stat = waitpid(pid, Some(WaitPidFlag::WNOHANG)).unwrap();
     assert!(matches!(stat, WaitStatus::StillAlive));
 
@@ -681,7 +682,7 @@ mod kill_tests {
 
 #[cfg(test)]
 mod disown_tests {
-  use crate::state::jobs::{ChildProc, JobBldr, JobID};
+  use crate::state::jobs::{ChildProc, Job, JobBldr, JobID};
   use crate::state::{self, Shed};
   use crate::tests::testutil::{TestGuard, test_input};
   use nix::unistd::Pid;
@@ -697,13 +698,13 @@ mod disown_tests {
   fn insert_fake_job(pid: i32, cmd: &str) -> usize {
     use nix::sys::wait::WaitStatus;
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None);
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);
     bldr.set_pgid(pid);
     let job = bldr.build();
-    Shed::jobs_mut(|j| j.insert_job(job, true)).unwrap()
+    Shed::jobs_mut(|j| j.insert_job(job, true))
   }
 
   fn job_exists(tabid: usize) -> bool {
@@ -711,7 +712,7 @@ mod disown_tests {
   }
 
   fn job_send_hup(tabid: usize) -> Option<bool> {
-    Shed::jobs(|j| j.query(JobID::TableID(tabid)).map(|job| job.send_hup()))
+    Shed::jobs(|j| j.query(JobID::TableID(tabid)).map(Job::send_hup))
   }
 
   // ─── no jobs → error ────────────────────────────────────────────
@@ -825,13 +826,13 @@ mod jobs_builtin_tests {
 
   fn insert_job(pid: i32, cmd: &str) -> usize {
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None);
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);
     bldr.set_pgid(pid);
     let job = bldr.build();
-    Shed::jobs_mut(|j| j.insert_job(job, true)).unwrap()
+    Shed::jobs_mut(|j| j.insert_job(job, true))
   }
 
   fn drain_jobs() {

@@ -110,7 +110,11 @@ impl Palette {
         }
       }
       CtxTkRule::InvalidCommand => self.invalid_command,
-      CtxTkRule::Argument => self.argument,
+      CtxTkRule::Argument
+      | CtxTkRule::Separator
+      | CtxTkRule::ArithNumber
+      | CtxTkRule::ParamArg
+      | CtxTkRule::AssignmentRight => self.argument,
       CtxTkRule::ArgumentFile => {
         let range = tk.span().range();
         let inclusive = range.start..=range.end;
@@ -120,42 +124,35 @@ impl Palette {
           self.argument
         }
       }
-      CtxTkRule::Keyword => self.keyword,
-      CtxTkRule::Subshell => self.keyword,
-      CtxTkRule::CmdSub => self.variable,
-      CtxTkRule::BacktickSub => self.variable,
-      CtxTkRule::ProcSubIn => self.variable,
-      CtxTkRule::ProcSubOut => self.variable,
-      CtxTkRule::VarSub => self.variable,
       CtxTkRule::Comment => self.comment,
-      CtxTkRule::Glob => self.glob,
-      CtxTkRule::HistExp => self.variable,
-      CtxTkRule::Escape => self.operator,
-      CtxTkRule::Tilde => self.operator,
-      CtxTkRule::Separator => self.argument,
-      CtxTkRule::Arithmetic => self.keyword,
-      CtxTkRule::ArithOp => self.operator,
-      CtxTkRule::ArithNumber => self.argument,
-      CtxTkRule::ArithVar => self.variable,
-      CtxTkRule::ParamPrefix => self.operator,
-      CtxTkRule::ParamName => self.variable,
-      CtxTkRule::ParamIndex => self.variable,
-      CtxTkRule::ParamOp => self.operator,
-      CtxTkRule::ParamArg => self.argument,
-      CtxTkRule::DoubleString => self.string,
-      CtxTkRule::SingleString => self.string,
-      CtxTkRule::DollarString => self.string,
-      CtxTkRule::AssignmentLeft => self.variable,
-      CtxTkRule::AssignmentOp => self.operator,
-      CtxTkRule::AssignmentRight => self.argument,
-      CtxTkRule::Operator => self.operator,
-      CtxTkRule::Redirect => self.operator,
-      CtxTkRule::HereDocStart => self.operator,
-      CtxTkRule::HereDocBody => self.string,
-      CtxTkRule::HereDocEnd => self.operator,
-      CtxTkRule::ExAddress => self.string,
-      CtxTkRule::ExBang => self.glob,
-      CtxTkRule::ExPattern => self.operator,
+      CtxTkRule::Keyword | CtxTkRule::Subshell | CtxTkRule::Arithmetic => self.keyword,
+      CtxTkRule::CmdSub
+      | CtxTkRule::BacktickSub
+      | CtxTkRule::ProcSubIn
+      | CtxTkRule::ProcSubOut
+      | CtxTkRule::VarSub
+      | CtxTkRule::HistExp
+      | CtxTkRule::ArithVar
+      | CtxTkRule::ParamName
+      | CtxTkRule::ParamIndex
+      | CtxTkRule::AssignmentLeft => self.variable,
+      CtxTkRule::Glob | CtxTkRule::ExBang => self.glob,
+      CtxTkRule::Escape
+      | CtxTkRule::Tilde
+      | CtxTkRule::ArithOp
+      | CtxTkRule::ParamPrefix
+      | CtxTkRule::ParamOp
+      | CtxTkRule::AssignmentOp
+      | CtxTkRule::Operator
+      | CtxTkRule::Redirect
+      | CtxTkRule::HereDocStart
+      | CtxTkRule::HereDocEnd
+      | CtxTkRule::ExPattern => self.operator,
+      CtxTkRule::DoubleString
+      | CtxTkRule::SingleString
+      | CtxTkRule::DollarString
+      | CtxTkRule::HereDocBody
+      | CtxTkRule::ExAddress => self.string,
     }
   }
 }
@@ -168,7 +165,7 @@ impl Default for Palette {
 
 pub fn highlight_ex(input: &str, palette: &Palette, editor_cursor_pos: usize) -> String {
   let tks: Vec<CtxTk> = get_ex_context_tokens(input);
-  highlight_inner(input, tks, palette, editor_cursor_pos, vec![])
+  highlight_inner(input, &tks, palette, editor_cursor_pos, &[])
 }
 
 /// entry point for the highlighter
@@ -176,22 +173,22 @@ pub fn highlight(
   input: &str,
   palette: &Palette,
   editor_cursor_pos: usize,
-  selections: Vec<Range<usize>>,
+  selections: &[Range<usize>],
 ) -> String {
   let tks = get_context_tokens(input);
-  highlight_inner(input, tks, palette, editor_cursor_pos, selections)
+  highlight_inner(input, &tks, palette, editor_cursor_pos, selections)
 }
 
 fn highlight_inner(
   input: &str,
-  tks: Vec<CtxTk>,
+  tks: &[CtxTk],
   palette: &Palette,
   editor_cursor_pos: usize,
-  selections: Vec<Range<usize>>,
+  selections: &[Range<usize>],
 ) -> String {
   let mut out = String::with_capacity(input.len() * 2); // pre-allocate some extra space for ANSI codes
   let mut cursor = 0;
-  for tk in &tks {
+  for tk in tks {
     paint(
       &mut out,
       tk,
@@ -199,7 +196,7 @@ fn highlight_inner(
       &mut cursor,
       editor_cursor_pos,
       palette,
-      &selections,
+      selections,
     );
   }
   out.push_str("\x1b[0m"); // ensure we reset at the end
@@ -421,7 +418,7 @@ mod tests {
       "ls αβγ",
     ];
     for input in cases {
-      let out = highlight(input, &p, 0, vec![]);
+      let out = highlight(input, &p, 0, &[]);
       assert_eq!(
         strip_ansi(&out),
         input,
@@ -438,7 +435,7 @@ mod tests {
   #[test]
   fn paints_var_sub_with_variable_style() {
     let p = test_palette();
-    let out = highlight("ls $foo", &p, 0, vec![]);
+    let out = highlight("ls $foo", &p, 0, &[]);
     // Cyan = ANSI 36 - the variable style for $foo should appear in output.
     assert!(
       contains_sgr_param(&out, "36"),
@@ -455,7 +452,7 @@ mod tests {
   #[test]
   fn paints_double_string_with_string_style() {
     let p = test_palette();
-    let out = highlight(r#""hello""#, &p, 0, vec![]);
+    let out = highlight(r#""hello""#, &p, 0, &[]);
     // Yellow = ANSI 33.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -466,7 +463,7 @@ mod tests {
   #[test]
   fn nested_var_in_string_paints_both() {
     let p = test_palette();
-    let out = highlight(r#""hi $foo""#, &p, 0, vec![]);
+    let out = highlight(r#""hi $foo""#, &p, 0, &[]);
     // Both yellow (string) and cyan (var) should appear.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -482,7 +479,7 @@ mod tests {
   fn cmd_sub_round_trips() {
     let p = test_palette();
     let input = "echo $(date)";
-    let out = highlight(input, &p, 0, vec![]);
+    let out = highlight(input, &p, 0, &[]);
     assert_eq!(strip_ansi(&out), input, "cmd sub round-trip: {out:?}");
   }
 
@@ -491,13 +488,13 @@ mod tests {
     // yansi may emit empty SGR pairs around zero-width spans; that's fine
     // visually. We just want no actual characters to come through.
     let p = test_palette();
-    assert_eq!(strip_ansi(&highlight("", &p, 0, vec![])), "");
+    assert_eq!(strip_ansi(&highlight("", &p, 0, &[])), "");
   }
 
   #[test]
   fn trailing_whitespace_preserved() {
     let p = test_palette();
-    let out = highlight("ls   ", &p, 0, vec![]);
+    let out = highlight("ls   ", &p, 0, &[]);
     assert_eq!(strip_ansi(&out), "ls   ");
   }
 
@@ -506,7 +503,7 @@ mod tests {
   #[test]
   fn esc_renders_as_caret_bracket() {
     let p = test_palette();
-    let out = highlight("a\x1bb", &p, 0, vec![]);
+    let out = highlight("a\x1bb", &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("a^[b"), "got {visible:?}");
   }
@@ -514,7 +511,7 @@ mod tests {
   #[test]
   fn cr_renders_as_caret_m() {
     let p = test_palette();
-    let out = highlight("before\rafter", &p, 0, vec![]);
+    let out = highlight("before\rafter", &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("before^Mafter"), "got {visible:?}");
   }
@@ -522,7 +519,7 @@ mod tests {
   #[test]
   fn del_renders_as_caret_question() {
     let p = test_palette();
-    let out = highlight("x\x7fy", &p, 0, vec![]);
+    let out = highlight("x\x7fy", &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("x^?y"), "got {visible:?}");
   }
@@ -532,7 +529,7 @@ mod tests {
     // \n and \t are structural for multi-line buffers and indented commands;
     // visualizing them would break layout.
     let p = test_palette();
-    let out = highlight("a\nb\tc", &p, 0, vec![]);
+    let out = highlight("a\nb\tc", &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("a\nb\tc"), "got {visible:?}");
     assert!(!visible.contains("^J"));
@@ -544,7 +541,7 @@ mod tests {
     // The whole point: raw \x1b should never appear in the rendered output
     // (or it would let the terminal interpret embedded escape sequences).
     let p = test_palette();
-    let out = highlight("\x1b]0;PWNED\x07", &p, 0, vec![]);
+    let out = highlight("\x1b]0;PWNED\x07", &p, 0, &[]);
     assert!(
       !out.contains('\x1b') || {
         // shed's own styling escapes are allowed; check by stripping CSI runs
@@ -561,7 +558,7 @@ mod tests {
     // Smoke test: input without control bytes should still round-trip
     // identically (we have a fast path that skips visualization).
     let p = test_palette();
-    let out = highlight("echo hello world", &p, 0, vec![]);
+    let out = highlight("echo hello world", &p, 0, &[]);
     assert_eq!(strip_ansi(&out), "echo hello world");
   }
 
@@ -572,8 +569,8 @@ mod tests {
     // contains at least one extra SGR sequence introduced around the
     // visualized char.
     let p = test_palette();
-    let plain = highlight("ab", &p, 0, vec![]);
-    let with_ctrl = highlight("a\x1bb", &p, 0, vec![]);
+    let plain = highlight("ab", &p, 0, &[]);
+    let with_ctrl = highlight("a\x1bb", &p, 0, &[]);
     // The control variant should contain "^[" (visualization) and have
     // more bytes than the plain version (extra SGR codes).
     assert!(

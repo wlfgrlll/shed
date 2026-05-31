@@ -56,7 +56,7 @@ impl ViVisual {
       CmdState::Complete
     }
   }
-  pub fn parse_count(&self, chars: &mut Peekable<Chars<'_>>) -> Option<usize> {
+  pub fn parse_count(chars: &mut Peekable<Chars<'_>>) -> Option<usize> {
     let mut count = String::new();
     let Some(_digit @ '1'..='9') = chars.peek() else {
       return None;
@@ -65,15 +65,16 @@ impl ViVisual {
     while let Some(_digit @ '0'..='9') = chars.peek() {
       count.push(chars.next().unwrap());
     }
-    if !count.is_empty() {
-      count.parse::<usize>().ok()
-    } else {
+    if count.is_empty() {
       None
+    } else {
+      count.parse::<usize>().ok()
     }
   }
   fn parser() -> ViParser {
     ViParser::new(None, Some(Self::parse_verb), Self::validate_combination)
   }
+  #[expect(clippy::too_many_lines)]
   pub fn parse_verb(chars: &mut Peekable<Chars<'_>>, count: usize) -> CallbackResult<Cmd<Verb>> {
     use CallbackResult as C;
     let register = RegisterName::default();
@@ -119,7 +120,7 @@ impl ViVisual {
         raw_seq: String::new(),
         flags: CmdFlags::empty(),
       }),
-      'X' => C::complete(EditCmd {
+      'X' | 'D' => C::complete(EditCmd {
         register,
         verb: Some(verb!(Verb::Delete)),
         motion: Some(motion!(Motion::WholeLine)),
@@ -129,13 +130,6 @@ impl ViVisual {
       'Y' => C::complete(EditCmd {
         register,
         verb: Some(verb!(Verb::Yank)),
-        motion: Some(motion!(Motion::WholeLine)),
-        raw_seq: String::new(),
-        flags: CmdFlags::empty(),
-      }),
-      'D' => C::complete(EditCmd {
-        register,
-        verb: Some(verb!(Verb::Delete)),
         motion: Some(motion!(Motion::WholeLine)),
         raw_seq: String::new(),
         flags: CmdFlags::empty(),
@@ -175,7 +169,7 @@ impl ViVisual {
         raw_seq: String::new(),
         flags: CmdFlags::empty(),
       }),
-      'x' => C::complete(EditCmd {
+      'x' | 's' | 'd' => C::complete(EditCmd {
         register,
         verb: Some(verb!(count, Verb::Delete)),
         motion: None,
@@ -208,14 +202,7 @@ impl ViVisual {
         raw_seq: String::new(),
         flags: CmdFlags::empty(),
       }),
-      's' => C::complete(EditCmd {
-        register,
-        verb: Some(verb!(count, Verb::Delete)),
-        motion: None,
-        raw_seq: String::new(),
-        flags: CmdFlags::empty(),
-      }),
-      'S' => C::complete(EditCmd {
+      'S' | 'c' => C::complete(EditCmd {
         register,
         verb: Some(verb!(count, Verb::Change)),
         motion: None,
@@ -264,20 +251,6 @@ impl ViVisual {
         raw_seq: String::new(),
         flags: CmdFlags::empty(),
       }),
-      'd' => C::complete(EditCmd {
-        register,
-        verb: Some(verb!(count, Verb::Delete)),
-        motion: None,
-        raw_seq: String::new(),
-        flags: CmdFlags::empty(),
-      }),
-      'c' => C::complete(EditCmd {
-        register,
-        verb: Some(verb!(count, Verb::Change)),
-        motion: None,
-        raw_seq: String::new(),
-        flags: CmdFlags::empty(),
-      }),
       _ => C::no_match(),
     }
   }
@@ -290,6 +263,7 @@ impl Default for ViVisual {
 }
 
 impl EditMode for ViVisual {
+  #[expect(clippy::too_many_lines)]
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     let mut cmd: Option<EditCmd> = match key {
       E(K::Char(ch), M::NONE) => {
@@ -303,84 +277,80 @@ impl EditMode for ViVisual {
             self.pending_seq.clear();
             None
           }
-          _ => None,
+          ParseResult::Pending => None,
         }
       }
       key!(Backspace) => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: None,
         motion: Some(motion!(Motion::BackwardChar)),
-        raw_seq: "".into(),
+        raw_seq: String::new(),
         flags: CmdFlags::empty(),
       }),
       E(K::ExMode, _) => {
         return Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::ExMode)),
           motion: None,
           raw_seq: String::new(),
-          flags: Default::default(),
+          flags: CmdFlags::default(),
         });
       }
       key!(Ctrl + 'a') => {
-        let count = self
-          .parse_count(&mut self.pending_seq.chars().peekable())
-          .unwrap_or(1) as u16;
+        let count = Self::parse_count(&mut self.pending_seq.chars().peekable()).unwrap_or(1) as u16;
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::IncrementNumber(count))),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: CmdFlags::empty(),
         })
       }
       key!(Ctrl + 'x') => {
-        let count = self
-          .parse_count(&mut self.pending_seq.chars().peekable())
-          .unwrap_or(1) as u16;
+        let count = Self::parse_count(&mut self.pending_seq.chars().peekable()).unwrap_or(1) as u16;
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::DecrementNumber(count))),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: CmdFlags::empty(),
         })
       }
       key!(Ctrl + 'g') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: Some(verb!(Verb::PrintPosition)),
           motion: None,
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: CmdFlags::empty(),
         })
       }
       key!(Ctrl + 'd') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: None,
           motion: Some(motion!(Motion::HalfScreenDown)),
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: CmdFlags::empty(),
         })
       }
       key!(Ctrl + 'u') => {
         self.pending_seq.clear();
         Some(EditCmd {
-          register: Default::default(),
+          register: RegisterName::default(),
           verb: None,
           motion: Some(motion!(Motion::HalfScreenUp)),
-          raw_seq: "".into(),
+          raw_seq: String::new(),
           flags: CmdFlags::empty(),
         })
       }
       key!(Ctrl + 'r') => {
         let mut chars = self.pending_seq.chars().peekable();
-        let count = self.parse_count(&mut chars).unwrap_or(1);
+        let count = Self::parse_count(&mut chars).unwrap_or(1);
         Some(EditCmd {
           register: RegisterName::default(),
           verb: Some(verb!(count, Verb::Redo)),
@@ -390,14 +360,14 @@ impl EditMode for ViVisual {
         })
       }
       E(K::Esc, _) => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: Some(verb!(Verb::NormalMode)),
         motion: Some(motion!(Motion::Null)),
         raw_seq: self.take_cmd(),
         flags: CmdFlags::empty(),
       }),
       _ => {
-        if let Some(cmd) = common_cmds(key) {
+        if let Some(cmd) = common_cmds(&key) {
           self.clear_cmd();
           Some(cmd)
         } else {
@@ -408,7 +378,7 @@ impl EditMode for ViVisual {
 
     if let Some(cmd) = cmd.as_mut() {
       cmd.normalize_counts();
-    };
+    }
     if let Some(cmd) = cmd.as_ref()
       && !matches!(
         cmd.verb.as_ref().map(|v| &v.1),

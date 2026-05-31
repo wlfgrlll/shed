@@ -1,5 +1,9 @@
+#![warn(clippy::pedantic)]
 #![expect(
+  clippy::cast_sign_loss,
+  clippy::cast_possible_wrap,
   clippy::cast_possible_truncation,
+  clippy::cast_precision_loss,
   clippy::derivable_impls,
   clippy::tabs_in_doc_comments,
   clippy::while_let_on_iterator,

@@ -1,8 +1,11 @@
-use std::str::FromStr;
+use std::{fmt::Write, str::FromStr};
 
 use unicode_width::UnicodeWidthStr;
 
+use crate::state::shopt::ShOptSet;
+
 use super::{
+  super::state::scopes::ScopeStack,
   expand::as_var_val_display,
   match_loop, outln, sherr,
   state::{Shed, vars::VarKind},
@@ -33,9 +36,9 @@ bitflags! {
 }
 
 impl SetFlags {
-  pub fn get_shopt_fields(&self) -> Vec<String> {
+  pub fn get_shopt_fields(self) -> Vec<String> {
     let mut fields = vec![];
-    for flag in *self {
+    for flag in self {
       let opt = match flag {
         _ if flag == SetFlags::ERREXIT => "errexit",
         _ if flag == SetFlags::ALLEXPORT => "allexport",
@@ -60,19 +63,19 @@ impl SetFlags {
     fields
   }
 
-  pub fn as_char(&self) -> Option<char> {
-    match *self {
-      _ if *self == Self::ALLEXPORT => Some('a'),
-      _ if *self == Self::NOTIFY => Some('b'),
-      _ if *self == Self::NO_CLOBBER => Some('C'),
-      _ if *self == Self::ERREXIT => Some('e'),
-      _ if *self == Self::NO_GLOB => Some('f'),
-      _ if *self == Self::HASHALL => Some('h'),
-      _ if *self == Self::MONITOR => Some('m'),
-      _ if *self == Self::NO_EXEC => Some('n'),
-      _ if *self == Self::NO_UNSET => Some('u'),
-      _ if *self == Self::VERBOSE => Some('v'),
-      _ if *self == Self::XTRACE => Some('x'),
+  pub fn as_char(self) -> Option<char> {
+    match self {
+      _ if self == Self::ALLEXPORT => Some('a'),
+      _ if self == Self::NOTIFY => Some('b'),
+      _ if self == Self::NO_CLOBBER => Some('C'),
+      _ if self == Self::ERREXIT => Some('e'),
+      _ if self == Self::NO_GLOB => Some('f'),
+      _ if self == Self::HASHALL => Some('h'),
+      _ if self == Self::MONITOR => Some('m'),
+      _ if self == Self::NO_EXEC => Some('n'),
+      _ if self == Self::NO_UNSET => Some('u'),
+      _ if self == Self::VERBOSE => Some('v'),
+      _ if self == Self::XTRACE => Some('x'),
       _ => None,
     }
   }
@@ -129,7 +132,38 @@ pub fn build_set_call(readable: bool) -> String {
   // I hope you like iterators :)
 
   let opts = Shed::shopts_mut(|o| o.query("set").unwrap().unwrap());
-  if !readable {
+  if readable {
+    let mut longest_width: usize = 0;
+    let lines = opts
+      .lines()
+      .map(|l| {
+        l.split_once('=')
+          .map(|(l, r)| {
+            (
+              l.strip_prefix("set.").unwrap().to_string(),
+              if r.parse::<bool>().unwrap() {
+                "on".to_string()
+              } else {
+                "off".to_string()
+              },
+            )
+          })
+          .unwrap()
+      })
+      .collect::<Vec<_>>();
+
+    for (opt, _) in &lines {
+      if opt.width() > longest_width {
+        longest_width = opt.width();
+      }
+    }
+
+    lines
+      .into_iter()
+      .map(|(l, r)| format!("{l:<longest_width$} {r}"))
+      .collect::<Vec<_>>()
+      .join("\n")
+  } else {
     let mut call = String::from("set ");
 
     let lines: Vec<_> = opts
@@ -183,53 +217,22 @@ pub fn build_set_call(readable: bool) -> String {
     });
 
     if !on_chars.is_empty() {
-      call.push_str(&format!("-{on_chars} "));
+      let _ = write!(call, "-{on_chars} ");
     }
     if !off_chars.is_empty() {
-      call.push_str(&format!("+{off_chars} "));
+      let _ = write!(call, "+{off_chars} ");
     }
     if !on_strs.is_empty() {
-      call.push_str(&format!("{on_strs} "));
+      let _ = write!(call, "{on_strs} ");
     }
     if !off_strs.is_empty() {
-      call.push_str(&format!("{off_strs} "));
+      let _ = write!(call, "{off_strs} ");
     }
     if !pos_args.is_empty() {
-      call.push_str(&format!("-- {pos_args}"));
+      let _ = write!(call, "-- {pos_args}");
     }
 
     call.trim_end().to_string()
-  } else {
-    let mut longest_width: usize = 0;
-    let lines = opts
-      .lines()
-      .map(|l| {
-        l.split_once('=')
-          .map(|(l, r)| {
-            (
-              l.strip_prefix("set.").unwrap().to_string(),
-              if r.parse::<bool>().unwrap() {
-                "on".to_string()
-              } else {
-                "off".to_string()
-              },
-            )
-          })
-          .unwrap()
-      })
-      .collect::<Vec<_>>();
-
-    for (opt, _) in lines.iter() {
-      if opt.width() > longest_width {
-        longest_width = opt.width();
-      }
-    }
-
-    lines
-      .into_iter()
-      .map(|(l, r)| format!("{l:<width$} {r}", width = longest_width))
-      .collect::<Vec<_>>()
-      .join("\n")
   }
 }
 
@@ -244,31 +247,28 @@ impl super::Builtin for Set {
 
     if args.argv.is_empty() {
       // print values of all variables
-      let all_vars = Shed::vars(|v| v.all_vars());
+      let all_vars = Shed::vars(ScopeStack::all_vars);
       for (k, v) in all_vars {
-        match v.kind() {
-          VarKind::Arr(items) => {
-            let items = items
-              .clone()
-              .into_iter()
-              .map(|v| as_var_val_display(&v.to_string()))
-              .collect::<Vec<_>>()
-              .join(" ");
-            outln!("{k}=( {items} )");
-          }
-          _ => {
-            let v = as_var_val_display(&v.to_string());
-            outln!("{k}={v}");
-          }
+        if let VarKind::Arr(items) = v.kind() {
+          let items = items
+            .clone()
+            .into_iter()
+            .map(|v| as_var_val_display(v.as_str()))
+            .collect::<Vec<_>>()
+            .join(" ");
+          outln!("{k}=( {items} )");
+        } else {
+          let v = as_var_val_display(&v.to_string());
+          outln!("{k}={v}");
         }
       }
     }
 
-    let mut argv = args.argv.into_iter().peekable();
+    let mut arg_vec = args.argv.into_iter().peekable();
     let mut clear_if_empty = false;
     let mut pos_args = vec![];
 
-    'outer: while let Some((arg, arg_span)) = argv.next() {
+    'outer: while let Some((arg, arg_span)) = arg_vec.next() {
       let mut flags = SetFlags::empty();
       let mut chars = arg.chars().peekable();
 
@@ -283,12 +283,12 @@ impl super::Builtin for Set {
             }
             Some('o') => {
               let mut found = false;
-              while let Some((arg, _)) = argv.peek() {
+              while let Some((arg, _)) = arg_vec.peek() {
                 found = true;
                 if arg.starts_with('-') || arg.starts_with('+') {
                   break;
                 }
-                let (arg, arg_span) = argv.next().unwrap();
+                let (arg, arg_span) = arg_vec.next().unwrap();
                 match SetFlags::from_str(&arg) {
                   Ok(f) => flags |= f,
                   Err(e) => return Err(e).promote_err(arg_span),
@@ -311,7 +311,7 @@ impl super::Builtin for Set {
             }
             None => {
               if should_set && flags.is_empty() {
-                Shed::shopts_mut(|o| o.set = Default::default());
+                Shed::shopts_mut(|o| o.set = ShOptSet::default());
                 continue;
               }
             }
@@ -333,7 +333,7 @@ impl super::Builtin for Set {
       }
     }
 
-    while let Some((arg, _)) = argv.next() {
+    while let Some((arg, _)) = arg_vec.next() {
       pos_args.push(arg);
     }
 
@@ -344,7 +344,7 @@ impl super::Builtin for Set {
         for arg in pos_args {
           cur_scope.bpush_arg(arg);
         }
-      })
+      });
     }
 
     with_status(0)

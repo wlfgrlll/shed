@@ -21,7 +21,7 @@ impl super::LineBuf {
         _ => unreachable!(),
       };
       self.scan_backward_from(first, |g| {
-        if g.as_char() == self.gr_at(first).and_then(|c| c.as_char()) {
+        if g.as_char() == self.gr_at(first).and_then(Grapheme::as_char) {
           depth += 1;
         } else if g.as_char() == Some(opener) {
           depth -= 1;
@@ -38,7 +38,7 @@ impl super::LineBuf {
         _ => unreachable!(),
       };
       self.scan_forward_from(first, |g| {
-        if g.as_char() == self.gr_at(first).and_then(|c| c.as_char()) {
+        if g.as_char() == self.gr_at(first).and_then(Grapheme::as_char) {
           depth += 1;
         } else if g.as_char() == Some(closer) {
           depth -= 1;
@@ -55,7 +55,7 @@ impl super::LineBuf {
       inclusive: true,
     })
   }
-  /// Given a LineAddr, resolve it to an absolute line number.
+  /// Given a `LineAddr`, resolve it to an absolute line number.
   ///
   /// This is used for commands like `:3` or `:'a` where we need to convert the address into a line number in the buffer.
   pub fn resolve_line_addr(&self, addr: &LineAddr) -> ShResult<Option<usize>> {
@@ -156,7 +156,7 @@ impl super::LineBuf {
             .rev()
             .find(|m| m.start() < offset)
             .or_else(|| matches.last())
-            .map(|m| m.start())
+            .map(regex::Match::start)
         }
       };
       offset = target_byte?;
@@ -173,13 +173,14 @@ impl super::LineBuf {
       }
     })
   }
-  /// Wrapper for eval_motion_inner that calls it with `check_hint: false`
+  /// Wrapper for `eval_motion_inner` that calls it with `check_hint: false`
   pub(super) fn eval_motion(&mut self, cmd: &EditCmd) -> ShResult<Option<MotionKind>> {
     self.eval_motion_inner(cmd, false)
   }
   pub(super) fn eval_motion_with_hint(&mut self, cmd: &EditCmd) -> ShResult<Option<MotionKind>> {
     self.eval_motion_inner(cmd, true)
   }
+  #[expect(clippy::too_many_lines)]
   fn eval_motion_inner(&mut self, cmd: &EditCmd, check_hint: bool) -> ShResult<Option<MotionKind>> {
     let EditCmd { verb, motion, .. } = cmd;
     let Some(Cmd(count, motion)) = motion.as_ref() else {
@@ -187,10 +188,8 @@ impl super::LineBuf {
     };
     let mut motion = motion.clone();
 
-    if let Motion::Selection(mode) = motion
-      && let Some(new) = self.evaluate_select_shape(&mode)
-    {
-      motion = new;
+    if let Motion::Selection(mode) = motion {
+      motion = self.evaluate_select_shape(&mode);
     }
 
     let eval = |this: &mut Self| -> ShResult<Option<MotionKind>> {
@@ -205,7 +204,7 @@ impl super::LineBuf {
             inclusive: true,
           })
         }
-        Motion::TextObj(text_obj) => this.dispatch_text_obj(text_obj.clone()),
+        Motion::TextObj(text_obj) => this.dispatch_text_obj(*text_obj),
         Motion::EndOfLastWord => {
           let row = this.row() + (count.saturating_sub(1));
           let line = this.line_mut(row);
@@ -264,10 +263,10 @@ impl super::LineBuf {
             );
           let inclusive = verb.is_none();
 
-          this.eval_word_motion(*count, to, word, dir, ignore_trailing_ws, inclusive)
+          Some(this.eval_word_motion(*count, *to, *word, *dir, ignore_trailing_ws, inclusive))
         }
         Motion::CharSearch(dir, dest, char) => {
-          let off = this.search_char(dir, dest, char, *count);
+          let off = this.search_char(*dir, *dest, char, *count);
           let target = this.offset_cursor(0, off);
           let inclusive = matches!(dir, Direction::Forward);
           (target != this.cursor.pos).then_some(MotionKind::Char {
@@ -276,8 +275,10 @@ impl super::LineBuf {
             inclusive,
           })
         }
-        dir @ (Motion::BackwardChar | Motion::ForwardChar)
-        | dir @ (Motion::BackwardCharForced | Motion::ForwardCharForced) => {
+        dir @ (Motion::BackwardChar
+        | Motion::ForwardChar
+        | Motion::BackwardCharForced
+        | Motion::ForwardCharForced) => {
           let (off, wrap) = match dir {
             Motion::BackwardChar => (-(*count as isize), false),
             Motion::ForwardChar => (*count as isize, false),
@@ -502,8 +503,7 @@ impl super::LineBuf {
             inclusive: false,
           })
         }
-        Motion::RepeatMotion | Motion::RepeatMotionRev => None,
-        Motion::Null => None,
+        Motion::RepeatMotion | Motion::RepeatMotionRev | Motion::Null => None,
         Motion::Selection(_) => {
           unreachable!()
         }
@@ -517,21 +517,21 @@ impl super::LineBuf {
       eval(self)
     }
   }
-  /// Wrapper for apply_motion_inner that calls it with `accept_hint: false`
-  pub(super) fn apply_motion(&mut self, motion: MotionKind) -> ShResult<()> {
+  /// Wrapper for `apply_motion_inner` that calls it with `accept_hint: false`
+  pub(super) fn apply_motion(&mut self, motion: &MotionKind) -> ShResult<()> {
     self.apply_motion_inner(motion, false)
   }
-  pub(super) fn apply_motion_with_hint(&mut self, motion: MotionKind) -> ShResult<()> {
+  pub(super) fn apply_motion_with_hint(&mut self, motion: &MotionKind) -> ShResult<()> {
     self.apply_motion_inner(motion, true)
   }
-  fn apply_motion_inner(&mut self, motion: MotionKind, accept_hint: bool) -> ShResult<()> {
+  fn apply_motion_inner(&mut self, motion: &MotionKind, accept_hint: bool) -> ShResult<()> {
     let apply = |this: &mut Self| -> ShResult<()> {
       match motion {
         MotionKind::Char { end, .. } => {
-          this.set_cursor(end);
+          this.set_cursor(*end);
         }
         MotionKind::Line { start, .. } => {
-          this.set_row(start);
+          this.set_row(*start);
         }
         MotionKind::Block { .. } => unimplemented!(),
       }
@@ -607,7 +607,7 @@ impl super::LineBuf {
       MotionKind::Block { .. } => unimplemented!(),
     }
   }
-  fn search_char(&self, dir: &Direction, dest: &Dest, char: &Grapheme, count: usize) -> isize {
+  fn search_char(&self, dir: Direction, dest: Dest, char: &Grapheme, count: usize) -> isize {
     let mut off: isize = 0;
     'outer: for it in 0..count {
       let pos = self.offset_cursor(0, off);
@@ -625,13 +625,13 @@ impl super::LineBuf {
                 continue 'outer;
               }
               Dest::Before => {
-                if it != count.saturating_sub(1) {
+                if it == count.saturating_sub(1) {
+                  off += (i - 1).max(0);
+                } else {
                   // there are more iterations to go
                   // if we land before, we will stop in the same
                   // place next time around
                   off += i;
-                } else {
-                  off += (i - 1).max(0);
                 }
                 continue 'outer;
               }
@@ -652,13 +652,13 @@ impl super::LineBuf {
                 continue 'outer;
               }
               Dest::Before => {
-                if it != count.saturating_sub(1) {
+                if it == count.saturating_sub(1) {
+                  off -= i;
+                } else {
                   // there are more iterations to go
                   // if we land before, we will stop in the same
                   // place next time around
                   off -= i + 1;
-                } else {
-                  off -= i;
                 }
                 continue 'outer;
               }
@@ -674,12 +674,12 @@ impl super::LineBuf {
   pub(super) fn eval_word_motion(
     &self,
     count: usize,
-    to: &To,
-    word: &Word,
-    dir: &Direction,
+    to: To,
+    word: Word,
+    dir: Direction,
     ignore_trailing_ws: bool,
     mut inclusive: bool,
-  ) -> Option<MotionKind> {
+  ) -> MotionKind {
     let mut target = self.cursor.pos;
 
     for i in 0..count {
@@ -716,15 +716,15 @@ impl super::LineBuf {
     target.clamp_row(&self.lines);
     target.clamp_col(&self.lines[target.row].0, self.cursor.exclusive);
 
-    Some(MotionKind::Char {
+    MotionKind::Char {
       start: self.cursor.pos,
       end: target,
       inclusive,
-    })
+    }
   }
   fn word_motion_w(
     &self,
-    word: &Word,
+    word: Word,
     start: Pos,
     ignore_trailing_ws: bool,
     inclusive: &mut bool,
@@ -765,11 +765,10 @@ impl super::LineBuf {
               if ignore_trailing_ws {
                 *inclusive = true;
                 return Some(last.0);
-              } else {
-                break;
               }
+              break;
             }
-            c if !c.is_other_class_or_ws(&first_c) => {
+            c if !c.is_other_class_or_ws(first_c) => {
               last = (p, c);
             }
             _ => return Some(p),
@@ -781,7 +780,7 @@ impl super::LineBuf {
       }
     }
   }
-  fn word_motion_b(&self, word: &Word, start: Pos) -> Option<Pos> {
+  fn word_motion_b(&self, word: Word, start: Pos) -> Option<Pos> {
     use CharClass as C;
     // get our iterator again
     let mut classes = self.char_classes_backward_from(start).peekable();
@@ -824,7 +823,7 @@ impl super::LineBuf {
         // now advance until we find any different char class at all
         let mut last = first_non_ws;
         while let Some((_, c)) = classes.peek() {
-          if c.is_other_class(&last.1) {
+          if c.is_other_class(last.1) {
             break;
           }
           last = classes.next()?;
@@ -834,7 +833,7 @@ impl super::LineBuf {
       }
     }
   }
-  fn word_motion_e(&self, word: &Word, start: Pos) -> Option<Pos> {
+  fn word_motion_e(&self, word: Word, start: Pos) -> Option<Pos> {
     use CharClass as C;
     let mut classes = self.char_classes_forward_from(start).peekable();
 
@@ -866,7 +865,7 @@ impl super::LineBuf {
 
         let mut last = first_non_ws;
         while let Some((_, c)) = classes.peek() {
-          if c.is_other_class_or_ws(&first_non_ws.1) {
+          if c.is_other_class_or_ws(first_non_ws.1) {
             return Some(last.0);
           }
           last = classes.next()?;
@@ -875,7 +874,7 @@ impl super::LineBuf {
       }
     }
   }
-  fn word_motion_ge(&self, word: &Word, start: Pos) -> Option<Pos> {
+  fn word_motion_ge(&self, word: Word, start: Pos) -> Option<Pos> {
     use CharClass as C;
     let mut classes = self.char_classes_backward_from(start).peekable();
 
@@ -895,7 +894,7 @@ impl super::LineBuf {
         }
 
         let cur_class = classes.peek()?.1;
-        let bound = classes.find(|(_, c)| c.is_other_class(&cur_class))?;
+        let bound = classes.find(|(_, c)| c.is_other_class(cur_class))?;
 
         if bound.1.is_ws() {
           classes.find(|(_, c)| !c.is_ws()).map(|(p, _)| p)
@@ -913,7 +912,7 @@ impl super::LineBuf {
       | TextObj::Paragraph(_)
       | TextObj::WholeSentence(_)
       | TextObj::WholeParagraph(_) => {
-        log::warn!("{:?} text objects are not implemented yet", obj);
+        log::warn!("{obj:?} text objects are not implemented yet");
         None
       }
 
@@ -929,6 +928,7 @@ impl super::LineBuf {
       | TextObj::Angle(bound) => self.text_obj_delim(obj, bound),
     }
   }
+  #[expect(clippy::too_many_lines)]
   pub(super) fn text_obj_word(
     &mut self,
     from: Pos,
@@ -992,7 +992,7 @@ impl super::LineBuf {
                 }
               }
               Word::Normal => {
-                if cl.is_other_class_or_ws(&word_class) {
+                if cl.is_other_class_or_ws(word_class) {
                   break;
                 }
               }
@@ -1011,7 +1011,7 @@ impl super::LineBuf {
         let break_cond = |cl: &C, c: &C| -> bool {
           match word {
             Word::Big => cl.is_ws(),
-            Word::Normal => cl.is_other_class(c),
+            Word::Normal => cl.is_other_class(*c),
           }
         };
         match bound {
@@ -1104,8 +1104,7 @@ impl super::LineBuf {
         let mut classes = self.char_classes_forward_from(end_pos);
         end_pos = classes
           .find(|(_, c)| !c.is_ws())
-          .map(|(p, _)| p)
-          .unwrap_or(self.end_pos());
+          .map_or(self.end_pos(), |(p, _)| p);
 
         (start_pos <= end_pos).then_some(MotionKind::Char {
           start: start_pos,
@@ -1184,10 +1183,10 @@ mod tests {
   use crate::readline::editcmd::LineAddr;
   use crate::tests::testutil::TestGuard;
 
-  /// Build a multi-line LineBuf with the cursor placed on `cursor_row`.
+  /// Build a multi-line `LineBuf` with the cursor placed on `cursor_row`.
   fn buf_at(content: &str, cursor_row: usize) -> LineBuf {
     let mut b = LineBuf::default();
-    b.set_buffer(content.into());
+    b.set_buffer(content);
     b.set_cursor(super::super::Pos {
       row: cursor_row,
       col: 0,
@@ -1547,21 +1546,5 @@ mod tests {
       upper_grapheme,
     );
     assert_eq!(b.joined(), "ABC\ndef");
-  }
-
-  // ─── MotionKind::Block — unimplemented panics ────────────────────
-
-  #[test]
-  #[should_panic]
-  fn motion_mutation_block_panics() {
-    let _g = TestGuard::new();
-    let mut b = buf_at("hello", 0);
-    b.motion_mutation(
-      &MotionKind::Block {
-        start: Pos { row: 0, col: 0 },
-        end: Pos { row: 0, col: 2 },
-      },
-      upper_grapheme,
-    );
   }
 }

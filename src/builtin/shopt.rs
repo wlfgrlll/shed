@@ -1,4 +1,5 @@
 use super::{
+  super::state::shopt::ShOpts,
   Shed,
   getopt::{Opt, OptSpec},
   outln, sherr,
@@ -19,7 +20,7 @@ impl super::Builtin for Shopt {
     let print_help = args.opts.contains(&Opt::Short('h'));
 
     if args.argv.is_empty() {
-      let output = Shed::shopts_mut(|s| s.display_opts())?;
+      let output = Shed::shopts_mut(ShOpts::display_opts)?;
 
       outln!("{}", prefix_sourceable(&output));
 

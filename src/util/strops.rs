@@ -29,20 +29,20 @@ impl QuoteState {
   pub fn in_quote(&self) -> bool {
     !self.outside()
   }
-  /// Toggles whether we are in a double quote. If self = QuoteState::Single or QuoteState::Backtick, this does nothing, since double quotes inside those quotes are just literal characters
+  /// Toggles whether we are in a double quote. If self = `QuoteState::Single` or `QuoteState::Backtick,` this does nothing, since double quotes inside those quotes are just literal characters
   pub fn toggle_double(&mut self) {
     match self {
       QuoteState::Outside => *self = QuoteState::Double,
       QuoteState::Double => *self = QuoteState::Outside,
-      _ => {}
+      QuoteState::Single => {}
     }
   }
-  /// Toggles whether we are in a single quote. If self == QuoteState::Double or QuoteState::Backtick, this does nothing, since single quotes inside those quotes are just literal characters
+  /// Toggles whether we are in a single quote. If self == `QuoteState::Double` or `QuoteState::Backtick,` this does nothing, since single quotes inside those quotes are just literal characters
   pub fn toggle_single(&mut self) {
     match self {
       QuoteState::Outside => *self = QuoteState::Single,
       QuoteState::Single => *self = QuoteState::Outside,
-      _ => {}
+      QuoteState::Double => {}
     }
   }
 }
@@ -190,6 +190,7 @@ fn scan_delims(
   Ok(depth == 0)
 }
 
+#[expect(clippy::too_many_lines)]
 pub(crate) fn format_time(dur: std::time::Duration) -> String {
   const ETERNITY: u128 = f32::INFINITY as u128;
   let mut micros = dur.as_micros();
@@ -268,99 +269,99 @@ pub(crate) fn format_time(dur: std::time::Duration) -> String {
   // Format the result
   let mut result = Vec::new();
   if eternities > 0 {
-    let mut string = format!("{} eternit", eternities);
+    let mut string = format!("{eternities} eternit");
     if eternities > 1 {
       string.push_str("ies");
     } else {
       string.push('y');
     }
-    result.push(string)
+    result.push(string);
   }
   if aeons > 0 {
-    let mut string = format!("{} aeon", aeons);
+    let mut string = format!("{aeons} aeon");
     if aeons > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if epochs > 0 {
-    let mut string = format!("{} epoch", epochs);
+    let mut string = format!("{epochs} epoch");
     if epochs > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if millennia > 0 {
-    let mut string = format!("{} millenni", millennia);
+    let mut string = format!("{millennia} millenni");
     if millennia > 1 {
-      string.push('a')
+      string.push('a');
     } else {
-      string.push_str("um")
+      string.push_str("um");
     }
-    result.push(string)
+    result.push(string);
   }
   if centuries > 0 {
-    let mut string = format!("{} centur", centuries);
+    let mut string = format!("{centuries} centur");
     if centuries > 1 {
-      string.push_str("ies")
+      string.push_str("ies");
     } else {
-      string.push('y')
+      string.push('y');
     }
-    result.push(string)
+    result.push(string);
   }
   if decades > 0 {
-    let mut string = format!("{} decade", decades);
+    let mut string = format!("{decades} decade");
     if decades > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if years > 0 {
-    let mut string = format!("{} year", years);
+    let mut string = format!("{years} year");
     if years > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if months > 0 {
-    let mut string = format!("{} month", months);
+    let mut string = format!("{months} month");
     if months > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if weeks > 0 {
-    let mut string = format!("{} week", weeks);
+    let mut string = format!("{weeks} week");
     if weeks > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if days > 0 {
-    let mut string = format!("{} day", days);
+    let mut string = format!("{days} day");
     if days > 1 {
-      string.push('s')
+      string.push('s');
     }
-    result.push(string)
+    result.push(string);
   }
   if hours > 0 {
-    let string = format!("{}h", hours);
+    let string = format!("{hours}h");
     result.push(string);
   }
   if minutes > 0 {
-    let string = format!("{}m", minutes);
+    let string = format!("{minutes}m");
     result.push(string);
   }
   if seconds > 0 {
-    let string = format!("{}s", seconds);
+    let string = format!("{seconds}s");
     result.push(string);
   }
   if result.is_empty() && millis > 0 {
-    let string = format!("{}ms", millis);
+    let string = format!("{millis}ms");
     result.push(string);
   }
   if result.is_empty() && micros > 0 {
-    let string = format!("{}µs", micros);
+    let string = format!("{micros}µs");
     result.push(string);
   }
 
@@ -511,73 +512,61 @@ mod format_time_tests {
 
   #[test]
   fn one_minute() {
-    assert_eq!(format_time(Duration::from_secs(60)), "1m");
+    assert_eq!(format_time(Duration::from_mins(1)), "1m");
   }
 
   #[test]
   fn one_hour() {
-    assert_eq!(format_time(Duration::from_secs(3600)), "1h");
+    assert_eq!(format_time(Duration::from_hours(1)), "1h");
   }
 
   #[test]
   fn one_day_uses_day_word() {
-    assert_eq!(format_time(Duration::from_secs(86_400)), "1 day");
+    assert_eq!(format_time(Duration::from_hours(24)), "1 day");
   }
 
   #[test]
   fn one_week() {
-    assert_eq!(format_time(Duration::from_secs(86_400 * 7)), "1 week");
+    assert_eq!(format_time(Duration::from_hours(168)), "1 week");
   }
 
   #[test]
   fn one_month() {
     // shed defines a month as 4 weeks (28 days).
-    assert_eq!(format_time(Duration::from_secs(86_400 * 7 * 4)), "1 month");
+    assert_eq!(format_time(Duration::from_hours(672)), "1 month");
   }
 
   #[test]
   fn one_year() {
     // ... and a year as 12 months.
-    assert_eq!(
-      format_time(Duration::from_secs(86_400 * 7 * 4 * 12)),
-      "1 year"
-    );
+    assert_eq!(format_time(Duration::from_hours(8064)), "1 year");
   }
 
   #[test]
   fn one_decade() {
-    assert_eq!(
-      format_time(Duration::from_secs(86_400 * 7 * 4 * 12 * 10)),
-      "1 decade"
-    );
+    assert_eq!(format_time(Duration::from_hours(80640)), "1 decade");
   }
 
   #[test]
   fn one_century() {
-    assert_eq!(
-      format_time(Duration::from_secs(86_400 * 7 * 4 * 12 * 100)),
-      "1 century"
-    );
+    assert_eq!(format_time(Duration::from_hours(806_400)), "1 century");
   }
 
   // ─── singular vs plural ──────────────────────────────────────────
 
   #[test]
   fn plural_days() {
-    assert_eq!(format_time(Duration::from_secs(86_400 * 2)), "2 days");
+    assert_eq!(format_time(Duration::from_hours(48)), "2 days");
   }
 
   #[test]
   fn plural_weeks() {
-    assert_eq!(format_time(Duration::from_secs(86_400 * 14)), "2 weeks");
+    assert_eq!(format_time(Duration::from_hours(336)), "2 weeks");
   }
 
   #[test]
   fn plural_centuries() {
-    assert_eq!(
-      format_time(Duration::from_secs(86_400 * 7 * 4 * 12 * 200)),
-      "2 centuries"
-    );
+    assert_eq!(format_time(Duration::from_hours(1_612_800)), "2 centuries");
   }
 
   // ─── combined output ─────────────────────────────────────────────
@@ -591,16 +580,13 @@ mod format_time_tests {
   #[test]
   fn combined_day_and_hour() {
     // 1 day 5h = 86400 + 18000 = 104400s
-    assert_eq!(format_time(Duration::from_secs(104_400)), "1 day 5h");
+    assert_eq!(format_time(Duration::from_hours(29)), "1 day 5h");
   }
 
   #[test]
   fn combined_week_and_day() {
     // 1 week 3 days = 7*86400 + 3*86400 = 10*86400
-    assert_eq!(
-      format_time(Duration::from_secs(86_400 * 10)),
-      "1 week 3 days"
-    );
+    assert_eq!(format_time(Duration::from_hours(240)), "1 week 3 days");
   }
 
   // ─── sub-unit suppression ────────────────────────────────────────
@@ -624,13 +610,13 @@ mod format_time_tests {
   fn thirteen_months_carries_one_month_not_thirteen() {
     // Regression: `months %= 12;` was previously `weeks %= 12;`, which
     // left `months` un-modulo'd and produced "1 year 13 months" instead.
-    let dur = Duration::from_secs(86_400 * 7 * 4 * 13);
+    let dur = Duration::from_hours(8736);
     assert_eq!(format_time(dur), "1 year 1 month");
   }
 
   #[test]
   fn singular_millennium_is_singular() {
-    let dur = Duration::from_secs(86_400 * 7 * 4 * 12 * 1000);
+    let dur = Duration::from_hours(8_064_000);
     assert!(
       format_time(dur).contains("1 millennium"),
       "got {:?}",
@@ -640,7 +626,7 @@ mod format_time_tests {
 
   #[test]
   fn plural_millennia_is_plural() {
-    let dur = Duration::from_secs(86_400 * 7 * 4 * 12 * 2000);
+    let dur = Duration::from_hours(16_128_000);
     assert!(
       format_time(dur).contains("2 millennia"),
       "got {:?}",

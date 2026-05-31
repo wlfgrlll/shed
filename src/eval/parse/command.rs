@@ -46,24 +46,21 @@ impl ParseStream {
       // LCOV_EXCL_STOP
     };
 
-    let target = match class {
-      RedirType::HereString => {
-        let mut body = next_tk.clone().expand_no_split()?;
-        body.push('\n');
-        RedirTarget::HereDoc {
-          body,
-          flags: redir_tk.flags,
-        }
+    let target = if class == RedirType::HereString {
+      let mut body = next_tk.clone().expand_no_split()?;
+      body.push('\n');
+      RedirTarget::HereDoc {
+        body,
+        flags: redir_tk.flags,
       }
-      _ => {
-        node_tks.push(next_tk.clone());
-        RedirTarget::Path(next_tk)
-      }
+    } else {
+      node_tks.push(next_tk.clone());
+      RedirTarget::Path(next_tk)
     };
 
     redir_bldr.with_target(target).build()
   }
-  /// Build a RedirSpec from a token
+  /// Build a `RedirSpec` from a token
   ///
   /// Handles desugaring of '&>' internally
   fn push_redir<F: FnMut() -> Option<Tk>>(
@@ -144,7 +141,7 @@ impl ParseStream {
       )))
     }
   }
-  #[expect(clippy::while_let_loop)]
+  #[expect(clippy::while_let_loop, clippy::too_many_lines)]
   pub(super) fn parse_cmd(&mut self) -> ShResult<Option<Node>> {
     let mut node_tks = vec![];
 
@@ -173,7 +170,7 @@ impl ParseStream {
             break;
           };
           node_tks.push(prefix_tk.clone());
-          assignments.push(assign)
+          assignments.push(assign);
         } else if is_keyword {
           return Ok(None);
         } else if prefix_tk.class == TkRule::Redir {
@@ -203,37 +200,35 @@ impl ParseStream {
       if argv.is_empty() {
         if assignments.is_empty() {
           break 'out Ok(None);
-        } else {
-          // If we have assignments but no command word,
-          // return the assignment-only command without parsing more tokens
-          self.commit(node_tks.len());
-          let mut context = self.context.clone();
-          let assignments_span = assignments.get_span().unwrap();
-          context.push_back(get_context(
-            "in variable assignment defined here".to_string(),
-            assignments_span,
-          ));
-          return Ok(Some(node!(
-            self,
-            node_tks,
-            NdRule::Command { assignments, argv },
-            redirs,
-            flags
-          )));
         }
+        // If we have assignments but no command word,
+        // return the assignment-only command without parsing more tokens
+        self.commit(node_tks.len());
+        let mut context = self.context.clone();
+        let assignments_span = assignments.get_span().unwrap();
+        context.push_back(get_context(
+          "in variable assignment defined here".to_string(),
+          assignments_span,
+        ));
+        return Ok(Some(node!(
+          self,
+          node_tks,
+          NdRule::Command { assignments, argv },
+          redirs,
+          flags
+        )));
       }
       loop {
         let Some(tk) = tk_iter.next() else {
           break;
         };
         match tk.class {
-          TkRule::Comment => break,
-
           TkRule::And | TkRule::Or if in_dbracket => {
             argv.push(tk.clone());
             node_tks.push(tk.clone());
           }
           TkRule::Eoi
+          | TkRule::Comment
           | TkRule::Pipe
           | TkRule::ErrPipe
           | TkRule::And
@@ -279,7 +274,7 @@ impl ParseStream {
               tk.class
             ));
           }
-        };
+        }
       }
       self.commit(node_tks.len());
 
@@ -300,6 +295,7 @@ impl ParseStream {
       }
     }
   }
+  #[expect(clippy::too_many_lines)]
   fn parse_assignment(&self, token: &Tk) -> Option<Node> {
     let mut chars = token.span.as_str().chars();
     let mut var_name = String::new();
@@ -312,19 +308,16 @@ impl ParseStream {
 
     while let Some(ch) = chars.next() {
       if assign_kind.is_some() {
-        match ch {
-          '\\' => {
-            pos += ch.len_utf8();
-            var_val.push(ch);
-            if let Some(esc_ch) = chars.next() {
-              pos += esc_ch.len_utf8();
-              var_val.push(esc_ch);
-            }
+        if ch == '\\' {
+          pos += ch.len_utf8();
+          var_val.push(ch);
+          if let Some(esc_ch) = chars.next() {
+            pos += esc_ch.len_utf8();
+            var_val.push(esc_ch);
           }
-          _ => {
-            pos += ch.len_utf8();
-            var_val.push(ch);
-          }
+        } else {
+          pos += ch.len_utf8();
+          var_val.push(ch);
         }
       } else {
         match ch {
@@ -386,7 +379,7 @@ impl ParseStream {
           }
           _ => {
             pos += ch.len_utf8();
-            var_name.push(ch)
+            var_name.push(ch);
           }
         }
       }
@@ -422,7 +415,7 @@ impl ParseStream {
 mod command_parse_tests {
   //! Targets uncovered branches in command.rs parsing — redirection
   //! errors, the Bg pipeline path, leading redirs, comment-as-argv-
-  //! terminator, and parse_assignment escape handling.
+  //! terminator, and `parse_assignment` escape handling.
 
   use crate::tests::testutil::{TestGuard, get_ast, test_input};
 
@@ -532,7 +525,7 @@ mod command_parse_tests {
     let g = TestGuard::new();
     test_input("x=a\\zb; echo \"$x\"").unwrap();
     let out = g.read_output();
-    assert!(out.contains("a"), "got: {out:?}");
+    assert!(out.contains('a'), "got: {out:?}");
     assert!(out.contains("zb"), "got: {out:?}");
   }
 
@@ -546,7 +539,7 @@ mod command_parse_tests {
 
   /// Run an `ls /nonexistent...` invocation with the given redirect
   /// expression interpolated. ls writes its "No such file" error to
-  /// stderr; if both fds get routed to the file (REDIR_ALL working),
+  /// stderr; if both fds get routed to the file (`REDIR_ALL` working),
   /// the error lands in the file rather than the terminal.
   fn run_with_ls_stderr(cmd: String, path: &std::path::Path) -> String {
     test_input(cmd).unwrap();

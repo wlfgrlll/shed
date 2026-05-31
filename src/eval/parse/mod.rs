@@ -44,7 +44,7 @@ pub(crate) struct ParsedSrc {
   pub parse_flags: ParseFlags,
   pub context: LabelCtx,
 
-  /// Not used internally, used mainly for auto-indent in the line editor. Mirrors the field on ParseStream
+  /// Not used internally, used mainly for auto-indent in the line editor. Mirrors the field on `ParseStream`
   pub block_depth: usize,
 }
 
@@ -94,7 +94,7 @@ impl ParsedSrc {
         Ok(token) => tokens.push(token),
         Err(error) => {
           if self.lex_flags.contains(LexFlags::LEX_UNFINISHED) {
-            errors.push(error)
+            errors.push(error);
           } else {
             return Err(vec![error]);
           }
@@ -111,7 +111,7 @@ impl ParsedSrc {
       match parse_result {
         Ok(node) => {
           self.block_depth = 0;
-          nodes.push(node)
+          nodes.push(node);
         }
         Err((depth, error)) => {
           self.block_depth = depth;
@@ -120,9 +120,8 @@ impl ParsedSrc {
               self.block_depth += 1;
             }
             return Err(vec![error]);
-          } else {
-            errors.push(error);
           }
+          errors.push(error);
         }
       }
     }
@@ -180,7 +179,8 @@ impl Debug for ParseStream {
     f.debug_struct("ParseStream")
       .field("tokens", &self.tokens)
       .field("cursor", &self.cursor)
-      .finish()
+      .field("block_depth", &self.block_depth)
+      .finish_non_exhaustive()
   }
 }
 
@@ -265,8 +265,8 @@ impl ParseStream {
   /// This tries to match on different stuff that can appear in a command
   /// position Matches shell commands like if-then-fi, pipelines, etc.
   /// Ordered from specialized to general, with more generally matchable stuff
-  /// appearing at the bottom The check_pipelines parameter is used to prevent
-  /// left-recursion issues in self.parse_pipeln()
+  /// appearing at the bottom The `check_pipelines` parameter is used to prevent
+  /// left-recursion issues in `self.parse_pipeln()`
   fn parse_block(&mut self, check_pipelines: bool) -> ShResult<Option<Node>> {
     if !check_pipelines {
       self.block_depth += 1;

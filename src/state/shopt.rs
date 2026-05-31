@@ -1,3 +1,9 @@
+#![expect(
+  clippy::struct_excessive_bools,
+  clippy::trivially_copy_pass_by_ref,
+  clippy::doc_markdown
+)]
+
 use std::{fmt::Display, str::FromStr, time::Duration};
 
 use nix::unistd::write;
@@ -10,19 +16,17 @@ use super::{
   eval::lex::Span,
   expand::expand_keymap,
   procio::stderr_fileno,
+  scopes::ScopeStack,
   sherr, two_way_display,
 };
 use crate::shopt;
 
 pub(crate) fn xtrace_print(argv: &[(String, Span)]) {
   if shopt!(set.xtrace) {
-    let words = argv
-      .iter()
-      .map(|(s, _)| s.to_string())
-      .collect::<Vec<String>>();
+    let words = argv.iter().map(|(s, _)| s.clone()).collect::<Vec<String>>();
 
     let stderr = stderr_fileno();
-    let depth = Shed::vars(|v| v.depth());
+    let depth = Shed::vars(ScopeStack::depth);
     let prefix = "+".repeat((depth as usize) + 1);
     let output = format!("{prefix} {}", words.join(" "));
     log::debug!("xtrace: {output:?}");
@@ -148,12 +152,12 @@ impl ShOpts {
 
   pub fn display_opts(&mut self) -> ShResult<String> {
     let output = [
-      self.query("core")?.unwrap_or_default().to_string(),
-      self.query("line")?.unwrap_or_default().to_string(),
-      self.query("set")?.unwrap_or_default().to_string(),
-      self.query("prompt")?.unwrap_or_default().to_string(),
-      self.query("highlight")?.unwrap_or_default().to_string(),
-      self.query("statline")?.unwrap_or_default().to_string(),
+      self.query("core")?.unwrap_or_default().clone(),
+      self.query("line")?.unwrap_or_default().clone(),
+      self.query("set")?.unwrap_or_default().clone(),
+      self.query("prompt")?.unwrap_or_default().clone(),
+      self.query("highlight")?.unwrap_or_default().clone(),
+      self.query("statline")?.unwrap_or_default().clone(),
     ];
 
     Ok(output.join("\n"))
@@ -254,7 +258,7 @@ pub(crate) struct ShOptLine {
   pub auto_suggest: bool,
 
   /// A command to use when text is yanked into the '+' register
-  #[default("".to_string())]
+  #[default(String::new())]
   pub clipboard_cmd: String,
 }
 
@@ -756,13 +760,13 @@ mod tests {
   #[test]
   fn idle_time_m_suffix() {
     let t: IdleTime = "5m".parse().unwrap();
-    assert_eq!(t.0, Duration::from_secs(300));
+    assert_eq!(t.0, Duration::from_mins(5));
   }
 
   #[test]
   fn idle_time_h_suffix() {
     let t: IdleTime = "2h".parse().unwrap();
-    assert_eq!(t.0, Duration::from_secs(7200));
+    assert_eq!(t.0, Duration::from_hours(2));
   }
 
   #[test]
@@ -835,7 +839,7 @@ mod tests {
   #[test]
   fn viewport_height_rejects_non_numeric() {
     assert!(validate_viewport_height(&"abc".to_string()).is_err());
-    assert!(validate_viewport_height(&"".to_string()).is_err());
+    assert!(validate_viewport_height(&String::new()).is_err());
     assert!(validate_viewport_height(&"5.5".to_string()).is_err());
   }
 }

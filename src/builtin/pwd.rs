@@ -48,13 +48,13 @@ impl super::Builtin for Pwd {
 }
 
 fn is_same_dir_as_cwd(path: &str) -> bool {
+  use std::os::unix::fs::MetadataExt;
   let Ok(p_meta) = fs::metadata(path) else {
     return false;
   };
   let Ok(dot_meta) = fs::metadata(".") else {
     return false;
   };
-  use std::os::unix::fs::MetadataExt;
   p_meta.dev() == dot_meta.dev() && p_meta.ino() == dot_meta.ino()
 }
 

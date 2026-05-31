@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 mod builtin;
 mod shopts;
 mod styled;

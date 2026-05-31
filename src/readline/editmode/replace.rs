@@ -1,3 +1,5 @@
+use crate::readline::{RegisterName, editcmd::CmdFlags};
+
 use super::{
   CmdReplay, E, EditMode, K, M, ModeReport, common_cmds,
   editcmd::{Direction, EditCmd, Motion, To, Verb, Word},
@@ -17,14 +19,14 @@ impl ViReplace {
   pub fn new() -> Self {
     Self::default()
   }
-  pub fn register_and_return(&mut self) -> Option<EditCmd> {
+  pub fn register_and_return(&mut self) -> EditCmd {
     let mut cmd = self.take_cmd();
     cmd.normalize_counts();
     self.register_cmd(&cmd);
-    Some(cmd)
+    cmd
   }
   pub fn register_cmd(&mut self, cmd: &EditCmd) {
-    self.cmds.push(cmd.clone())
+    self.cmds.push(cmd.clone());
   }
   pub fn take_cmd(&mut self) -> EditCmd {
     std::mem::take(&mut self.pending_cmd)
@@ -39,14 +41,14 @@ impl EditMode for ViReplace {
           .pending_cmd
           .set_verb(verb!(Verb::ReplaceCharInplace(ch, 1)));
         self.pending_cmd.set_motion(motion!(Motion::ForwardChar));
-        self.register_and_return()
+        Some(self.register_and_return())
       }
       E(K::ExMode, _) => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: Some(verb!(Verb::ExMode)),
         motion: None,
         raw_seq: String::new(),
-        flags: Default::default(),
+        flags: CmdFlags::default(),
       }),
       key!(Ctrl + 'w') => {
         self.pending_cmd.set_verb(verb!(Verb::Delete));
@@ -55,24 +57,24 @@ impl EditMode for ViReplace {
           Word::Normal,
           Direction::Backward
         )));
-        self.register_and_return()
+        Some(self.register_and_return())
       }
       key!(Ctrl + 'h') | key!(Backspace) => {
         self.pending_cmd.set_motion(motion!(Motion::BackwardChar));
-        self.register_and_return()
+        Some(self.register_and_return())
       }
 
       key!(Ctrl + 'i') | key!(Tab) => {
         self.pending_cmd.set_verb(verb!(Verb::Complete));
-        self.register_and_return()
+        Some(self.register_and_return())
       }
 
       key!(Esc) => {
         self.pending_cmd.set_verb(verb!(Verb::NormalMode));
         self.pending_cmd.set_motion(motion!(Motion::BackwardChar));
-        self.register_and_return()
+        Some(self.register_and_return())
       }
-      _ => common_cmds(key),
+      _ => common_cmds(&key),
     }
   }
   fn is_repeatable(&self) -> bool {

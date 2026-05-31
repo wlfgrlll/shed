@@ -64,7 +64,7 @@ impl super::Builtin for Type {
               outln!("{arg} is {}", path_buf.display());
             }
           }
-        };
+        }
       } else if KEYWORDS.contains(&arg.as_str()) {
         if short {
           outln!("keyword");
@@ -189,7 +189,7 @@ mod tests {
     let out = guard.read_output();
     assert!(out.contains("cat"));
     assert!(out.contains("is"));
-    assert!(out.contains("/")); // Should show a path
+    assert!(out.contains('/')); // Should show a path
   }
 
   // ===================== Not found =====================

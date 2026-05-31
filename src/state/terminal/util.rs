@@ -140,9 +140,7 @@ impl WidthCalculator for NoZwj {
 
 pub(crate) fn width_calculator() -> Box<dyn WidthCalculator> {
   match try_var!("TERM_PROGRAM").as_deref() {
-    Some("Apple_Terminal") => Box::new(UnicodeWidth),
-    Some("iTerm.app") => Box::new(UnicodeWidth),
-    Some("WezTerm") => Box::new(UnicodeWidth),
+    Some("Apple_Terminal" | "iTerm.app" | "WezTerm") => Box::new(UnicodeWidth),
     Some(_) => Box::new(WcWidth),
     None => match try_var!("TERM").as_deref() {
       Some("xterm-kitty") => Box::new(NoZwj),
@@ -193,7 +191,7 @@ pub(crate) fn get_win_size(fd: RawFd) -> (u16, u16) {
 
   unsafe {
     let mut size: libc::winsize = zeroed();
-    match win_size(fd, &mut size) {
+    match win_size(fd, &raw mut size) {
       Ok(0) => {
         /* rustyline code says:
          In linux pseudo-terminals are created with dimensions of

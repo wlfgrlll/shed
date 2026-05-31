@@ -14,38 +14,33 @@ use super::{
 };
 
 pub fn dispatch_input(mut args: lifecycle::ShedArgs) -> ShResult<()> {
-  match args.edit_script {
-    true => {
-      // in this arm, we interpret the input we are given as a sequence of keys
-      // for the line editor to consume and execute
-      let input = if let Some(ref cmd) = args.command {
-        cmd.clone()
-      } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
-        read_input()?
-      } else if !args.script_args.is_empty() {
-        let path = args.script_args.remove(0);
-        std::fs::read_to_string(path)?
-      } else {
-        // no input provided, just run interactively
-        status_msg!("warning: --script was passed but no input was given");
-        return interactive::shed_interactive(args, None);
-      };
+  if args.edit_script {
+    // in this arm, we interpret the input we are given as a sequence of keys
+    // for the line editor to consume and execute
+    let input = if let Some(ref cmd) = args.command {
+      cmd.clone()
+    } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
+      read_input()?
+    } else if !args.script_args.is_empty() {
+      let path = args.script_args.remove(0);
+      std::fs::read_to_string(path)?
+    } else {
+      // no input provided, just run interactively
+      status_msg!("warning: --script was passed but no input was given");
+      return interactive::shed_interactive(&args, None);
+    };
 
-      let keys = expand_keymap(&input);
-      interactive::shed_interactive(args, Some(keys))
-    }
-    false => {
-      if let Some(cmd) = args.command {
-        exec_dash_c(cmd, args.script_args)
-      } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
-        read_commands(args.script_args)
-      } else if !args.script_args.is_empty() {
-        let path = args.script_args.remove(0);
-        run_script(path, args.script_args)
-      } else {
-        interactive::shed_interactive(args, None)
-      }
-    }
+    let keys = expand_keymap(&input);
+    interactive::shed_interactive(&args, Some(keys))
+  } else if let Some(cmd) = args.command {
+    exec_dash_c(cmd, args.script_args)
+  } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
+    read_commands(args.script_args)
+  } else if !args.script_args.is_empty() {
+    let path = args.script_args.remove(0);
+    run_script(path, args.script_args)
+  } else {
+    interactive::shed_interactive(&args, None)
   }
 }
 
@@ -72,7 +67,7 @@ fn read_input() -> ShResult<String> {
     match read(procio::stdin_fileno(), &mut read_buf) {
       Ok(0) => break,
       Ok(n) => input.extend_from_slice(&read_buf[..n]),
-      Err(Errno::EINTR) => continue,
+      Err(Errno::EINTR) => (),
       Err(e) => {
         QUIT_CODE.store(1, Ordering::SeqCst);
         return Err(sherr!(CleanExit(1), "error reading from stdin: {e}",));
@@ -116,7 +111,7 @@ mod dispatch_input_tests {
   //! Tests for `dispatch_input`'s routing logic.
   //!
   //! What's covered: the `exec_dash_c` and `read_commands` branches —
-  //! both reachable through TestGuard without touching signal handlers,
+  //! both reachable through `TestGuard` without touching signal handlers,
   //! sockets, or rc files.
   //!
   //! What's not covered: every `edit_script=true` arm and the no-input
@@ -125,14 +120,14 @@ mod dispatch_input_tests {
   //! socket on disk, and may execute the user's real ~/.shedrc — not
   //! safe to invoke from tests without a hermetic harness. The
   //! `run_script` arm is also gated by stdin being a real tty, which
-  //! TestGuard can't currently provide.
+  //! `TestGuard` can't currently provide.
 
   use super::*;
   use crate::lifecycle::ShedArgs;
   use crate::state;
   use crate::tests::testutil::TestGuard;
 
-  /// Build a minimally-set ShedArgs for the non-interactive paths.
+  /// Build a minimally-set `ShedArgs` for the non-interactive paths.
   fn args(command: Option<&str>, stdin: bool, script_args: Vec<String>) -> ShedArgs {
     ShedArgs {
       command: command.map(String::from),

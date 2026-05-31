@@ -1,3 +1,5 @@
+use crate::state::terminal::Terminal;
+
 use super::{
   Candidate, CompMatch, CompResponse, Completer, ShResult, Shed, SimpleCompleter,
   editmode::{EditMode, Emacs},
@@ -199,7 +201,7 @@ impl QueryEditor {
   pub fn update_scroll_offset(&mut self) {
     let cursor_pos = self.linebuf.cursor_to_flat();
     if cursor_pos < self.scroll_offset + 1 {
-      self.scroll_offset = self.linebuf.cursor_to_flat().saturating_sub(1)
+      self.scroll_offset = self.linebuf.cursor_to_flat().saturating_sub(1);
     }
     if cursor_pos >= self.scroll_offset + self.available_width.saturating_sub(1) {
       self.scroll_offset = self
@@ -228,7 +230,7 @@ impl QueryEditor {
     let Some(cmd) = self.mode.handle_key(key) else {
       return Ok(());
     };
-    self.linebuf.exec_cmd(cmd)
+    self.linebuf.exec_cmd(&cmd)
   }
 }
 
@@ -281,7 +283,7 @@ impl FuzzySelector {
       prompt_cursor_col: 0,
       hovered: None,
       title: title.into(),
-      _mouse_guard: Shed::term_mut(|t| t.mouse_support_guard(true)).ok(),
+      _mouse_guard: Some(Shed::term_mut(|t| t.mouse_support_guard(true))),
     }
   }
 
@@ -292,7 +294,7 @@ impl FuzzySelector {
     }
   }
   fn selector_hl() -> String {
-    match Shed::term(|t| t.color_mode()) {
+    match Shed::term(Terminal::color_mode) {
       Some(ColorMode::Truecolor) => "\x1b[38;2;200;0;120m▌\x1b[1;39;48;5;237m",
       Some(ColorMode::Palette256) => "\x1b[38;5;162m▌\x1b[1;39;48;5;237m",
       Some(ColorMode::Palette16) => "\x1b[35m▌\x1b[1;39;100m",
@@ -302,9 +304,8 @@ impl FuzzySelector {
   }
 
   fn selector_hover_hl() -> String {
-    match Shed::term(|t| t.color_mode()) {
-      Some(ColorMode::Truecolor) => "\x1b[90m▌\x1b[1;39;48;5;237m",
-      Some(ColorMode::Palette256) => "\x1b[90m▌\x1b[1;39;48;5;237m",
+    match Shed::term(Terminal::color_mode) {
+      Some(ColorMode::Truecolor | ColorMode::Palette256) => "\x1b[90m▌\x1b[1;39;48;5;237m",
       Some(ColorMode::Palette16) => "\x1b[90m▌\x1b[1;39;100m",
       None => "▌\x1b[1m",
     }
@@ -313,10 +314,10 @@ impl FuzzySelector {
 
   /// Calculate how many rows we need in order to draw this thing
   pub fn predicted_rows(&self) -> usize {
+    const CHROME_ROWS: usize = 4;
     if self.candidates.is_empty() && self.filtered.is_empty() {
       return 0;
     }
-    const CHROME_ROWS: usize = 4;
 
     let mut cand_rows = 0usize;
     for c in self.filtered.iter().skip(self.scroll_offset) {
@@ -344,8 +345,8 @@ impl FuzzySelector {
     self.score_candidates();
   }
 
-  pub fn set_query(&mut self, query: String) {
-    self.query.linebuf = LineBuf::new().with_initial(&query, query.len());
+  pub fn set_query(&mut self, query: &str) {
+    self.query.linebuf = LineBuf::new().with_initial(query, query.len());
     self.query.update_scroll_offset();
     self.score_candidates();
   }
@@ -368,11 +369,9 @@ impl FuzzySelector {
   }
 
   fn candidate_height(&self, idx: usize) -> usize {
-    self
-      .filtered
-      .get(idx)
-      .map(|c| c.candidate.content().trim_end().lines().count().max(1))
-      .unwrap_or(1)
+    self.filtered.get(idx).map_or(1, |c| {
+      c.candidate.content().trim_end().lines().count().max(1)
+    })
   }
 
   fn get_window(&mut self) -> &[ScoredCandidate] {
@@ -439,25 +438,23 @@ impl FuzzySelector {
     self.filtered = scored;
   }
 
-  pub fn handle_click(&mut self, row: usize, _col: usize) -> ShResult<SelectorResponse> {
-    let top_left = self.old_layout.as_ref().map(|l| l.top_left).unwrap_or(0);
+  pub fn handle_click(&mut self, row: usize, _col: usize) -> SelectorResponse {
+    let top_left = self.old_layout.as_ref().map_or(0, |l| l.top_left);
     let relative_row = row.saturating_sub(top_left);
     if let Some(idx) = self.row_map.get(relative_row).copied().flatten() {
       if self.cursor.val == idx {
-        Ok(SelectorResponse::Accept(
-          self.filtered[idx].candidate.clone(),
-        ))
+        SelectorResponse::Accept(self.filtered[idx].candidate.clone())
       } else {
         self.cursor = ClampedUsize::new(idx, self.filtered.len(), true);
-        Ok(SelectorResponse::Consumed)
+        SelectorResponse::Consumed
       }
     } else {
-      Ok(SelectorResponse::Consumed)
+      SelectorResponse::Consumed
     }
   }
 
-  pub fn handle_hover(&mut self, row: usize) -> ShResult<SelectorResponse> {
-    let top_left = self.old_layout.as_ref().map(|l| l.top_left).unwrap_or(0);
+  pub fn handle_hover(&mut self, row: usize) -> SelectorResponse {
+    let top_left = self.old_layout.as_ref().map_or(0, |l| l.top_left);
     let relative_row = row.saturating_sub(top_left);
     let idx = self.row_map.get(relative_row).copied().flatten();
 
@@ -465,13 +462,14 @@ impl FuzzySelector {
       self.hovered = idx;
     }
 
-    Ok(SelectorResponse::Consumed)
+    SelectorResponse::Consumed
   }
 
+  #[expect(clippy::unnested_or_patterns)]
   pub fn handle_key(&mut self, key: K) -> ShResult<SelectorResponse> {
     match key {
-      K(C::MousePos(row, _), _) => self.handle_hover(row),
-      K(C::LeftClick(row, col), _) => self.handle_click(row, col),
+      K(C::MousePos(row, _), _) => Ok(self.handle_hover(row)),
+      K(C::LeftClick(row, col), _) => Ok(self.handle_click(row, col)),
       key!(Ctrl + 'd') | key!(Esc) => {
         self.filtered.clear();
         Ok(SelectorResponse::Dismiss)
@@ -513,7 +511,9 @@ impl FuzzySelector {
     }
   }
 
-  pub fn draw(&mut self) -> ShResult<usize> {
+  #[expect(clippy::too_many_lines)]
+  pub fn draw(&mut self) -> usize {
+    const MAX_DESC_COL: usize = 32;
     self.row_map.clear();
     let (cols, top_left) = Shed::term_mut(|t| {
       (
@@ -584,7 +584,6 @@ impl FuzzySelector {
       cols.saturating_sub(3)
     };
 
-    const MAX_DESC_COL: usize = 32;
     let desc_col_width = visible
       .iter()
       .filter(|sc| sc.candidate.desc.is_some())
@@ -689,12 +688,12 @@ impl FuzzySelector {
     self.old_layout = Some(new_layout);
     self.row_map = row_map;
 
-    Ok(rows)
+    rows
   }
 
-  pub fn clear(&mut self) -> ShResult<()> {
+  pub fn clear(&mut self) {
     if let Some(layout) = self.old_layout.take() {
-      let new_cols = Shed::term(|t| t.t_cols());
+      let new_cols = Shed::term(Terminal::t_cols);
       let total_cells = layout.rows * layout.cols;
       let physical_rows = if new_cols > 0 {
         total_cells.div_ceil(new_cols)
@@ -724,7 +723,6 @@ impl FuzzySelector {
         write_term!("\x1b[2K\x1b[A").unwrap();
       }
     }
-    Ok(())
   }
 }
 
@@ -749,8 +747,8 @@ impl Completer for FuzzyCompleter {
   fn reset_stay_active(&mut self) {
     self.selector.reset_query();
   }
-  fn get_completed_line(&self, _candidate: &str) -> String {
-    log::debug!("Getting completed line for candidate: {}", _candidate);
+  fn get_completed_line(&self, candidate: &str) -> String {
+    log::debug!("Getting completed line for candidate: {candidate}");
 
     let selected = self.selector.selected_candidate().unwrap_or_default();
     let (start, end) = self.completer.token_span;
@@ -762,7 +760,7 @@ impl Completer for FuzzyCompleter {
       selected.as_str(),
       &self.completer.original_input[end..],
     );
-    log::debug!("Completed line: {}", ret);
+    log::debug!("Completed line: {ret}");
     ret
   }
   fn complete(
@@ -798,10 +796,10 @@ impl Completer for FuzzyCompleter {
       SelectorResponse::Consumed => Ok(CompResponse::Consumed),
     }
   }
-  fn clear(&mut self) -> ShResult<()> {
-    self.selector.clear()
+  fn clear(&mut self) {
+    self.selector.clear();
   }
-  fn draw(&mut self) -> ShResult<usize> {
+  fn draw(&mut self) -> usize {
     self.selector.draw()
   }
   fn reset(&mut self) {

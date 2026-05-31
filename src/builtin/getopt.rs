@@ -46,11 +46,11 @@ impl Opt {
     let mut opts = vec![];
 
     if s.starts_with("--") {
-      opts.push(Opt::Long(s.trim_start_matches('-').to_string()))
+      opts.push(Opt::Long(s.trim_start_matches('-').to_string()));
     } else if s.starts_with('-') {
       let mut chars = s.trim_start_matches('-').chars();
       while let Some(ch) = chars.next() {
-        opts.push(Self::Short(ch))
+        opts.push(Self::Short(ch));
       }
     }
 
@@ -61,10 +61,10 @@ impl Opt {
 impl Display for Opt {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Self::Long(opt) => write!(f, "--{}", opt),
-      Self::Short(opt) => write!(f, "-{}", opt),
-      Self::LongWithArg(opt, arg) => write!(f, "--{} {}", opt, arg),
-      Self::ShortWithArg(opt, arg) => write!(f, "-{} {}", opt, arg),
+      Self::Long(opt) => write!(f, "--{opt}"),
+      Self::Short(opt) => write!(f, "-{opt}"),
+      Self::LongWithArg(opt, arg) => write!(f, "--{opt} {arg}"),
+      Self::ShortWithArg(opt, arg) => write!(f, "-{opt} {arg}"),
       Self::LongWithList(opt, args) => write!(f, "--{} {}", opt, args.join(" ")),
       Self::ShortWithList(opt, args) => write!(f, "-{} {}", opt, args.join(" ")),
     }
@@ -84,6 +84,7 @@ pub(crate) struct OptSpec {
   pub takes_arg: OptArg,
 }
 
+#[expect(clippy::needless_pass_by_value)]
 impl OptSpec {
   pub fn flag(opt: impl AsOpt) -> Self {
     Self {
@@ -115,7 +116,7 @@ pub(crate) fn get_opts_from_tokens(tokens: Vec<Tk>, opt_specs: &[OptSpec]) -> Ge
 }
 
 /// Variant that returns raw Tk values for callsites that need
-/// pre-expansion token operations (e.g. split_tk_at).
+/// pre-expansion token operations (e.g. `split_tk_at`).
 pub(crate) fn get_opts_from_tokens_raw(
   tokens: Vec<Tk>,
   opt_specs: &[OptSpec],
@@ -180,7 +181,7 @@ pub(crate) fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> 
             OptArg::Single => {
               let arg = words_iter.next().map(|(w, _)| w).unwrap_or_default();
               let opt = match opt {
-                Opt::Long(ref opt) => Opt::LongWithArg(opt.to_string(), arg),
+                Opt::Long(ref opt) => Opt::LongWithArg(opt.clone(), arg),
                 Opt::Short(opt) => Opt::ShortWithArg(opt, arg),
                 _ => unreachable!(),
               };
@@ -204,7 +205,7 @@ pub(crate) fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> 
                 ));
               }
               let opt = match opt {
-                Opt::Long(ref opt) => Opt::LongWithList(opt.to_string(), args),
+                Opt::Long(ref opt) => Opt::LongWithList(opt.clone(), args),
                 Opt::Short(opt) => Opt::ShortWithList(opt, args),
                 _ => unreachable!(),
               };
@@ -229,7 +230,7 @@ fn sort_tks_raw(
 ) -> ShResult<(Vec<Tk>, Vec<Opt>)> {
   let mut tokens_iter = tokens
     .into_iter()
-    .map(|t| t.expand())
+    .map(Tk::expand)
     .collect::<ShResult<Vec<_>>>()?
     .into_iter()
     .peekable();
@@ -279,7 +280,7 @@ fn sort_tks_raw(
                 .map(|t| t.to_string())
                 .unwrap_or_default();
               let opt = match opt {
-                Opt::Long(ref opt) => Opt::LongWithArg(opt.to_string(), arg),
+                Opt::Long(ref opt) => Opt::LongWithArg(opt.clone(), arg),
                 Opt::Short(opt) => Opt::ShortWithArg(opt, arg),
                 _ => unreachable!(),
               };
@@ -303,7 +304,7 @@ fn sort_tks_raw(
                 ));
               }
               let opt = match opt {
-                Opt::Long(ref opt) => Opt::LongWithList(opt.to_string(), args),
+                Opt::Long(ref opt) => Opt::LongWithList(opt.clone(), args),
                 Opt::Short(opt) => Opt::ShortWithList(opt, args),
                 _ => unreachable!(),
               };
@@ -582,7 +583,7 @@ mod tests {
 
   // ===================== sort_tks_raw =====================
 
-  /// Lex without Soi/Eoi/Sep markers so non_opts holds only real args.
+  /// Lex without Soi/Eoi/Sep markers so `non_opts` holds only real args.
   fn lex_clean(input: &str) -> Vec<Tk> {
     use crate::eval::lex::TkRule;
     LexStream::new(input.into(), LexFlags::empty())
@@ -635,7 +636,7 @@ mod tests {
     let (non_opts, opts) =
       get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert_eq!(opts, vec![Opt::Short('v')]);
-    let strs: Vec<String> = non_opts.iter().map(|t| t.to_string()).collect();
+    let strs: Vec<String> = non_opts.iter().map(ToString::to_string).collect();
     assert_eq!(strs, vec!["-not-a-flag", "plain"]);
   }
 
@@ -717,8 +718,8 @@ mod tests {
     ]
   }
 
-  /// sort_tks expands variables before classifying; a single token
-  /// holding `-v -o file` should split into three words via get_words.
+  /// `sort_tks` expands variables before classifying; a single token
+  /// holding `-v -o file` should split into three words via `get_words`.
   #[test]
   fn sort_tks_expands_var_holding_multiple_flags() {
     let _g = TestGuard::new();
@@ -739,7 +740,7 @@ mod tests {
     assert!(non_opts.is_empty());
   }
 
-  /// Unrecognized options in strict mode must surface as ShErr,
+  /// Unrecognized options in strict mode must surface as `ShErr`,
   /// even when they're hidden inside an expansion.
   #[test]
   fn sort_tks_strict_rejects_unknown_from_expansion() {
@@ -769,8 +770,8 @@ mod tests {
     assert_eq!(strs, vec!["-not-an-opt"]);
   }
 
-  /// Empty bare `--` after the only flag is preserved as a non_opt
-  /// (the `if rest.is_empty()` branch in sort_tks).
+  /// Empty bare `--` after the only flag is preserved as a `non_opt`
+  /// (the `if rest.is_empty()` branch in `sort_tks`).
   #[test]
   fn sort_tks_bare_trailing_double_dash_kept_in_non_opts() {
     let tokens = lex("-v --");
@@ -780,7 +781,7 @@ mod tests {
     assert_eq!(strs, vec!["--"]);
   }
 
-  /// Exact-arg option through sort_tks (this branch of the
+  /// Exact-arg option through `sort_tks` (this branch of the
   /// inner match — duplicated from raw — is still its own line).
   #[test]
   fn sort_tks_exact_arg_count_consumes_n_args() {
@@ -800,7 +801,7 @@ mod tests {
     assert_eq!(strs, vec!["extra"]);
   }
 
-  /// Exact-arg with not enough following args → ParseErr.
+  /// Exact-arg with not enough following args → `ParseErr`.
   #[test]
   fn sort_tks_exact_arg_count_too_few_errors() {
     let tokens = lex("-s only");
@@ -810,11 +811,11 @@ mod tests {
   }
 
   /// `OptArg::Single` with no following word — `.next()` returns
-  /// None and the arg becomes empty (unwrap_or_default).
+  /// None and the arg becomes empty (`unwrap_or_default`).
   #[test]
   fn sort_tks_single_arg_missing_uses_empty_string() {
     let tokens = lex("-o");
     let (_non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
-    assert_eq!(opts, vec![Opt::ShortWithArg('o', "".into())]);
+    assert_eq!(opts, vec![Opt::ShortWithArg('o', String::new())]);
   }
 }

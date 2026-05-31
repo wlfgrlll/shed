@@ -41,7 +41,7 @@ fn num_entries(table: &str) -> usize {
   HIST_ENTRIES
     .read()
     .ok()
-    .and_then(|cache| cache.get(table).map(|entries| entries.len()))
+    .and_then(|cache| cache.get(table).map(Vec::len))
     .unwrap_or(0)
 }
 
@@ -66,16 +66,15 @@ impl HistEntry {
 
 fn query_since(since_ts: i64, conn: &Connection, table: &str) -> Vec<HistEntry> {
   let sql = format!(
-    r##"
+    r"
     SELECT command, MAX(timestamp) as ts, runtime, cwd, status, token FROM {table}
     GROUP BY command
     HAVING MAX(timestamp) > ?1
     ORDER BY ts ASC
-    "##
+    "
   );
-  let mut stmt = match conn.prepare(&sql) {
-    Ok(s) => s,
-    Err(_) => return vec![],
+  let Ok(mut stmt) = conn.prepare(&sql) else {
+    return vec![];
   };
   match stmt.query_map(rusqlite::params![since_ts], History::row_to_entry) {
     Ok(iter) => iter.filter_map(Result::ok).collect(),
@@ -86,24 +85,23 @@ fn query_since(since_ts: i64, conn: &Connection, table: &str) -> Vec<HistEntry> 
 fn query_masked(prefix: Option<&str>, conn: &Connection, table: &str) -> Vec<HistEntry> {
   let sql = match prefix {
     Some(_) => format!(
-      r##"
+      r"
       SELECT command, MAX(timestamp) as ts, runtime, cwd, status, token FROM {table}
       WHERE command LIKE ?1 || '%'
       GROUP BY command
       ORDER BY ts ASC
-      "##
+      "
     ),
     None => format!(
-      r##"
+      r"
       SELECT command, MAX(timestamp) as ts, runtime, cwd, status, token FROM {table}
       GROUP BY command
       ORDER BY ts ASC
-      "##
+      "
     ),
   };
-  let mut stmt = match conn.prepare(&sql) {
-    Ok(s) => s,
-    Err(_) => return vec![],
+  let Ok(mut stmt) = conn.prepare(&sql) else {
+    return vec![];
   };
   let rows = match prefix {
     Some(p) => stmt.query_map(rusqlite::params![p], History::row_to_entry),
@@ -235,7 +233,7 @@ impl History {
       return Ok(());
     }
     conn.execute_batch(&format!(
-      r#"
+      r"
 			CREATE TABLE IF NOT EXISTS {table} (
 				id	INTEGER PRIMARY KEY,
 				timestamp	INTEGER NOT NULL,
@@ -247,17 +245,17 @@ impl History {
 			-- sort, which dominated CPU profiles on large histories.
 			CREATE INDEX IF NOT EXISTS {table}_command_ts_idx
 				ON {table}(command, timestamp DESC);
-		"#
+		"
     ))?;
 
     while user_version < Self::USER_VERSION {
       match user_version {
         0 => {
           conn.execute_batch(&format!(
-            r#"
+            r"
 						ALTER TABLE {table} ADD COLUMN cwd TEXT;
 						ALTER TABLE {table} ADD COLUMN status INT DEFAULT 0;
-						"#
+						"
           ))?;
           conn.execute_batch("PRAGMA user_version = 1")?;
         }
@@ -267,16 +265,16 @@ impl History {
           // the id field actually shifts after commands are deleted
           conn
             .execute_batch(&format!(
-              r#"
+              r"
 						ALTER TABLE {table} ADD COLUMN token TEXT;
-						"#
+						"
             ))
             .ok();
 
           let mut stmt = conn.prepare(&format!("SELECT id FROM {table} WHERE token IS NULL"))?;
           let ids: Vec<i64> = stmt
             .query_map([], |r| r.get(0))?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
 
           conn.execute_batch("BEGIN")?;
@@ -301,7 +299,7 @@ impl History {
 
     Ok(())
   }
-  pub fn push(&self, command: String) -> ShResult<Option<Uuid>> {
+  pub fn push(&self, command: &str) -> ShResult<Option<Uuid>> {
     if command.is_empty() {
       return Ok(None);
     }
@@ -317,7 +315,7 @@ impl History {
           |row| row.get(0),
         )
         .ok();
-      if last.as_deref() == Some(&command) {
+      if last.as_deref() == Some(command) {
         return Ok(None);
       }
     }
@@ -334,7 +332,7 @@ impl History {
 
     self.conn.execute(
       &format!("INSERT INTO {table} (id, timestamp, runtime, command, cwd, token) VALUES (?1, ?2, 0, ?3, ?4, ?5)"),
-      rusqlite::params![new_id, timestamp, command.clone(), cwd.clone(), token.to_string()],
+      rusqlite::params![new_id, timestamp, command, cwd.clone(), token.to_string()],
     )?;
 
     // Incremental cache update: the new entry supersedes any prior entry with
@@ -343,7 +341,7 @@ impl History {
     let entry = HistEntry {
       runtime: Duration::default(),
       timestamp: SystemTime::now(),
-      command: command.clone(),
+      command: command.to_string(),
       cwd: cwd.unwrap_or_default(),
       status: 0,
       token,
@@ -362,7 +360,7 @@ impl History {
     Ok(Some(token))
   }
 
-  pub fn set_status(&self, token: Uuid, runtime: Option<Duration>, status: i32) -> ShResult<()> {
+  pub fn set_status(&self, token: Uuid, runtime: Option<Duration>, status: i32) {
     let table = self.table.clone();
 
     std::thread::spawn(move || {
@@ -371,17 +369,15 @@ impl History {
           return;
         };
         conn.execute_batch("PRAGMA journal_mode=WAL").ok();
-        let micros = runtime.map(|r| r.as_micros() as i64).unwrap_or(0);
+        let micros = runtime.map_or(0, |r| r.as_micros() as i64);
         conn
           .execute(
             &format!("UPDATE {table} SET runtime = ?1, status = ?2 WHERE token = ?3"),
             rusqlite::params![micros, status, token.to_string()],
           )
           .ok();
-      })
+      });
     });
-
-    Ok(())
   }
 
   fn unique_command_count(&self) -> i64 {
@@ -398,7 +394,7 @@ impl History {
   fn trim_to_max(&self) {
     let Some(max) = self.max_size else { return };
     let count = self.unique_command_count();
-    let excess = count - max as i64;
+    let excess = count - i64::from(max);
     if excess <= 0 {
       return;
     }
@@ -539,7 +535,7 @@ impl History {
     let table = &self.table;
     let tx = self.conn.unchecked_transaction()?;
     tx.execute_batch(&format!(
-      r#"
+      r"
 			CREATE TABLE {table}_tmp (
 				id INTEGER PRIMARY KEY,
 				timestamp INT,
@@ -554,7 +550,7 @@ impl History {
 			FROM {table};
 			DROP TABLE {table};
 			ALTER TABLE {table}_tmp RENAME TO {table};
-			"#
+			"
     ))?;
     tx.commit()?;
     Ok(())
@@ -574,7 +570,7 @@ impl History {
     }
   }
 
-  /// Runs a query on the history table with the given WHERE clause and parameters, returning a vector of (id, HistEntry) tuples.
+  /// Runs a query on the history table with the given WHERE clause and parameters, returning a vector of (id, `HistEntry`) tuples.
   pub fn query(
     &self,
     where_clause: &str,
@@ -591,21 +587,21 @@ impl History {
   }
 
   pub fn query_range(&self, first: i64, last: i64) -> ShResult<Vec<(i64, HistEntry)>> {
-    let where_clause = r##"
+    let where_clause = r"
 			WHERE id BETWEEN ?1 AND ?2
 			ORDER BY id ASC
-		"##
-      .to_string();
+		"
+    .to_string();
     self.query(&where_clause, rusqlite::params![first, last])
   }
 
   pub fn query_by_prefix(&self, prefix: &str) -> ShResult<Option<(i64, HistEntry)>> {
-    let where_clause = r##"
+    let where_clause = r"
 			WHERE command LIKE ?1 || '%'
 			ORDER BY id DESC
 			LIMIT 1
-		"##
-      .to_string();
+		"
+    .to_string();
     Ok(
       self
         .query(&where_clause, rusqlite::params![prefix])?
@@ -687,7 +683,7 @@ impl History {
   /// any operation that reads the mask (history scrolling).
   pub fn ensure_mask_fresh(&mut self) {
     if self.mask_stale {
-      let prefix = self.pending.as_ref().map(|p| p.joined());
+      let prefix = self.pending.as_ref().map(LineBuf::joined);
       self.constrain_entries(prefix.as_deref());
       self.mask_stale = false;
     }
@@ -725,7 +721,7 @@ impl History {
       match num.cmp(&0) {
         // Negative: index from the bottom (!-2 = 2nd from end)
         Ordering::Less => {
-          let offset = num.unsigned_abs() as i64 - 1;
+          let offset = i64::from(num.unsigned_abs()) - 1;
           self
             .conn
             .query_row(
@@ -740,7 +736,7 @@ impl History {
         }
         // Positive: index from the top (!3 = 3rd entry)
         Ordering::Greater => {
-          let offset = num as i64 - 1;
+          let offset = i64::from(num) - 1;
           self
             .conn
             .query_row(
@@ -753,7 +749,7 @@ impl History {
             )
             .ok()
         }
-        _ => unreachable!(),
+        Ordering::Equal => unreachable!(),
       }
     } else {
       self
@@ -775,7 +771,7 @@ impl History {
       command: row.get(0)?,
       timestamp: UNIX_EPOCH + Duration::from_secs(row.get::<_, i64>(1)? as u64),
       runtime: Duration::from_micros(row.get::<_, i64>(2)? as u64),
-      cwd: row.get(3).unwrap_or_else(|_| "".to_string()),
+      cwd: row.get(3).unwrap_or_else(|_| String::new()),
       status: row.get(4).unwrap_or(0),
       token: Uuid::parse_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default(),
     })
@@ -803,7 +799,7 @@ impl History {
       // we are looking at an old command
       // compare it to the one in history
       // if it's different, reset our cursor and stuff
-      let browsed_cmd = self.search_mask.get(self.cursor).map(|e| e.command());
+      let browsed_cmd = self.search_mask.get(self.cursor).map(HistEntry::command);
       if browsed_cmd == Some(cmd.as_str()) {
         return;
       }
@@ -811,7 +807,7 @@ impl History {
     }
 
     if let Some(pending) = &mut self.pending {
-      pending.set_buffer(cmd);
+      pending.set_buffer(&cmd);
       pending.set_cursor_from_flat(cursor_pos);
     } else {
       self.pending = Some(LineBuf::new().with_initial(&cmd, cursor_pos));
@@ -833,7 +829,7 @@ impl History {
   }
 
   /// Wipe the cross-test global caches for a given table name. Without this,
-  /// tests that push to a shared table (e.g. "shed_history") see entries
+  /// tests that push to a shared table (e.g. `shed_history`) see entries
   /// from earlier tests in the same process, breaking single-entry-count
   /// assumptions.
   #[cfg(test)]
@@ -1014,7 +1010,7 @@ impl History {
     }
 
     let mut finder = FuzzySelector::new("History").number_candidates(true);
-    finder.set_query(initial.to_string());
+    finder.set_query(initial);
 
     let candidates: Vec<Candidate> = if initial.is_empty() {
       all_entries

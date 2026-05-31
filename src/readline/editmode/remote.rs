@@ -6,7 +6,7 @@ pub(crate) struct RemoteMode;
 
 impl EditMode for RemoteMode {
   fn handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
-    Shed::meta_mut(|m| m.notify_key_event(key)).ok()?;
+    Shed::meta_mut(|m| m.notify_key_event(&key));
     None
   }
 

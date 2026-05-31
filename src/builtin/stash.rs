@@ -92,7 +92,7 @@ impl super::Builtin for StashBuiltin {
     let stash = Stash::new().promote_err(span.clone())?;
 
     for cmd in stash_opts.to_save {
-      stash.stash_cmd(cmd).promote_err(span.clone())?;
+      stash.stash_cmd(&cmd).promote_err(span.clone())?;
     }
 
     for cmd in stash_opts.to_delete {
@@ -128,7 +128,7 @@ mod stash_builtin_tests {
     let g = TestGuard::new();
     let stash = fresh_stash();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("test_name".into()),
         buffer: "stashed buffer".into(),
         cursor_pos: "0".into(),
@@ -145,7 +145,7 @@ mod stash_builtin_tests {
     let g = TestGuard::new();
     let stash = fresh_stash();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("list_me".into()),
         buffer: "buf".into(),
         cursor_pos: "0".into(),
@@ -163,7 +163,7 @@ mod stash_builtin_tests {
     let g = TestGuard::new();
     let stash = fresh_stash();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("kill_me".into()),
         buffer: "buf".into(),
         cursor_pos: "0".into(),
@@ -181,7 +181,7 @@ mod stash_builtin_tests {
     let g = TestGuard::new();
     let stash = fresh_stash();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("gone".into()),
         buffer: "buf".into(),
         cursor_pos: "0".into(),
@@ -202,7 +202,7 @@ mod stash_builtin_tests {
     let stash = fresh_stash();
     // A stacked (unnamed) entry.
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: None,
         buffer: "stack_buf".into(),
         cursor_pos: "0".into(),
@@ -210,7 +210,7 @@ mod stash_builtin_tests {
       .unwrap();
     // A named entry.
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("named_one".into()),
         buffer: "named_buf".into(),
         cursor_pos: "0".into(),
@@ -228,14 +228,14 @@ mod stash_builtin_tests {
     let g = TestGuard::new();
     let stash = fresh_stash();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: None,
         buffer: "anon_buf".into(),
         cursor_pos: "0".into(),
       })
       .unwrap();
     stash
-      .stash_cmd(StashedCmd {
+      .stash_cmd(&StashedCmd {
         name: Some("the_name".into()),
         buffer: "named_buf".into(),
         cursor_pos: "0".into(),

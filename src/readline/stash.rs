@@ -24,15 +24,15 @@ impl Stash {
   }
   pub fn init_stash_table(conn: &Arc<Connection>) -> ShResult<()> {
     conn.execute_batch(
-      r#"
-			CREATE TABLE IF NOT EXISTS stash (
-				id	INTEGER PRIMARY KEY,
+      r"
+      CREATE TABLE IF NOT EXISTS stash (
+        id	INTEGER PRIMARY KEY,
         name TEXT,
         buffer TEXT NOT NULL,
         cursor TEXT,
         timestamp INTEGER
-			);
-		"#,
+      );
+      ",
     )?;
     Ok(())
   }
@@ -72,10 +72,10 @@ impl Stash {
 
     let mut output = String::new();
     if !stack.is_empty() && !named_only {
-      if !stack_only {
-        output.push_str("Stack:\n");
-      } else {
+      if stack_only {
         output.push('\n');
+      } else {
+        output.push_str("Stack:\n");
       }
       output.push_str(
         &stack
@@ -92,10 +92,10 @@ impl Stash {
       if !output.is_empty() {
         output.push_str("\n\n");
       }
-      if !named_only {
-        output.push_str("Named:\n");
-      } else {
+      if named_only {
         output.push('\n');
+      } else {
+        output.push_str("Named:\n");
       }
       output.push_str(
         &named
@@ -108,7 +108,7 @@ impl Stash {
 
     output
   }
-  pub fn stash_cmd(&self, cmd: StashedCmd) -> ShResult<()> {
+  pub fn stash_cmd(&self, cmd: &StashedCmd) -> ShResult<()> {
     if cmd
       .name
       .as_ref()
@@ -166,7 +166,7 @@ impl Stash {
     Ok(Some(cmd))
   }
 
-  pub fn push(&self, name: Option<String>, buffer: &str, cursor: (usize, usize)) -> ShResult<()> {
+  pub fn push(&self, name: Option<&String>, buffer: &str, cursor: (usize, usize)) -> ShResult<()> {
     let (row, col) = cursor;
     if name.as_ref().is_some_and(|n| n.parse::<usize>().is_ok()) {
       return Err(sherr!(ParseErr, "stashed command name cannot be a number"));

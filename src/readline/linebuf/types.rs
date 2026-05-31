@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthChar;
 
 use super::{CharClass, Pos};
 /// A single grapheme. Graphemes can be composed of multiple chars, but are always treated as a single unit for display and editing purposes.
-/// Using a SmallVec<[char; 4]> allows us to organize most multi-byte codepoints while maintaining both ownership and stack allocation.
+/// Using a `SmallVec`<[char; 4]> allows us to organize most multi-byte codepoints while maintaining both ownership and stack allocation.
 /// If we ever run into a Grapheme made of more than 4 chars, just that Grapheme will gracefully spill over onto the heap
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Grapheme(pub(super) SmallVec<[char; 4]>);
@@ -48,7 +48,7 @@ impl Grapheme {
   pub fn is_char(&self, c: char) -> bool {
     self.0.len() == 1 && self.0[0] == c
   }
-  /// Returns the CharClass of the Grapheme, which is determined by the properties of its chars
+  /// Returns the `CharClass` of the Grapheme, which is determined by the properties of its chars
   /// Used for things like word motions
   pub fn class(&self) -> CharClass {
     CharClass::from(self)
@@ -110,7 +110,7 @@ impl Display for Grapheme {
   }
 }
 
-pub fn to_graphemes(s: impl ToString) -> Vec<Grapheme> {
+pub fn to_graphemes(s: &str) -> Vec<Grapheme> {
   let s = s.to_string();
   s.graphemes(true).map(Grapheme::from).collect()
 }
@@ -163,7 +163,7 @@ impl Line {
   }
   pub fn trim_start(&mut self) -> Line {
     let mut clone = self.clone();
-    while clone.0.first().is_some_and(|g| g.is_ws()) {
+    while clone.0.first().is_some_and(Grapheme::is_ws) {
       clone.0.remove(0);
     }
     clone
@@ -201,9 +201,9 @@ impl Display for Line {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lines(pub(super) Vec<Line>);
 impl Lines {
-  pub fn to_lines(s: impl ToString) -> Lines {
+  pub fn to_lines(s: &str) -> Lines {
     let s = s.to_string();
-    let mut new: Lines = s.split("\n").map(to_graphemes).map(Line::from).collect();
+    let mut new: Lines = s.split('\n').map(to_graphemes).map(Line::from).collect();
     new.push_empty();
     new
   }
@@ -219,7 +219,7 @@ impl Lines {
     self
       .0
       .iter()
-      .map(|line| line.to_string())
+      .map(ToString::to_string)
       .collect::<Vec<String>>()
       .join("\n")
   }
@@ -318,7 +318,7 @@ impl Lines {
       self.0.insert(0, Line::default());
     }
 
-    if self.iter().all(|l| l.is_empty()) {
+    if self.iter().all(Line::is_empty) {
       None
     } else {
       Some(self)

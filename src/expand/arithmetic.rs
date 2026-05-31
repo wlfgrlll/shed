@@ -148,6 +148,7 @@ fn read_var_as_i64(name: &str) -> ShResult<i64> {
 }
 
 impl ArithTk {
+  #[expect(clippy::too_many_lines)]
   pub fn tokenize(raw: &str) -> ShResult<Vec<Self>> {
     let mut tokens = Vec::new();
     let mut chars = raw.chars().peekable();
@@ -181,7 +182,7 @@ impl ArithTk {
           i64::from_str_radix(&hex, 16).map_err(|_| sherr!(
             ParseErr, "Invalid hex literal: '0x{}'", hex,
           ))?
-        } else if first == '0' && chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+        } else if first == '0' && chars.peek().is_some_and(char::is_ascii_digit) {
           // Octal, collect remaining octal digits.
           let mut oct = String::new();
           while let Some(&d) = chars.peek() {
@@ -447,130 +448,123 @@ impl ArithTk {
 
     Ok(tokens)
   }
+  fn precedence(tk: &ArithTk) -> usize {
+    match tk {
+      // Pending markers participate in flushing at their op's precedence.
+      ArithTk::PendingTernaryElse(_) => 1,
+      ArithTk::PendingOr(_) => 2,
+      ArithTk::PendingAnd(_) => 3,
+      ArithTk::Op(op) => match op {
+        ArithOp::Assign
+        | ArithOp::PlusAssign
+        | ArithOp::MinusAssign
+        | ArithOp::MulAssign
+        | ArithOp::DivAssign
+        | ArithOp::ModAssign
+        | ArithOp::BitAndAssign
+        | ArithOp::BitOrAssign
+        | ArithOp::BitXorAssign
+        | ArithOp::ShiftLAssign
+        | ArithOp::ShiftRAssign => 1,
+        ArithOp::Or => 2,
+        ArithOp::And => 3,
+        ArithOp::BitOr => 4,
+        ArithOp::BitXor => 5,
+        ArithOp::BitAnd => 6,
+        ArithOp::Eq | ArithOp::Ne => 7,
+        ArithOp::Lt | ArithOp::Gt | ArithOp::Le | ArithOp::Ge => 8,
+        ArithOp::ShiftL | ArithOp::ShiftR => 9,
+        ArithOp::Add | ArithOp::Sub => 10,
+        ArithOp::Mul | ArithOp::Div | ArithOp::Mod => 11,
+      },
+      ArithTk::Not | ArithTk::Neg | ArithTk::UPlus | ArithTk::BitNot => 12,
+      _ => 0,
+    }
+  }
 
+  fn is_right_assoc(tk: &ArithTk) -> bool {
+    matches!(
+      tk,
+      ArithTk::Not
+        | ArithTk::Neg
+        | ArithTk::UPlus
+        | ArithTk::BitNot
+        | ArithTk::PendingTernaryElse(_)
+        | ArithTk::Op(
+          ArithOp::Assign
+            | ArithOp::PlusAssign
+            | ArithOp::MinusAssign
+            | ArithOp::MulAssign
+            | ArithOp::DivAssign
+            | ArithOp::ModAssign
+            | ArithOp::BitAndAssign
+            | ArithOp::BitOrAssign
+            | ArithOp::BitXorAssign
+            | ArithOp::ShiftLAssign
+            | ArithOp::ShiftRAssign
+        )
+    )
+  }
+
+  // Pop one op off the ops stack, translating control-flow markers into
+  // their final RPN form (and patching the corresponding jump placeholders).
+  fn pop_to_output(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>) -> ShResult<()> {
+    match ops.pop().unwrap() {
+      ArithTk::PendingAnd(jump_idx) => {
+        // After RHS of && is built. Patch JIFZ_PEEK to land at the Nez we
+        // emit now, so the short-circuit jump produces 0 directly.
+        let target = output.len();
+        output.push(ArithTk::Nez);
+        output[jump_idx] = ArithTk::JumpIfZeroPeek(target);
+      }
+      ArithTk::PendingOr(jump_idx) => {
+        let target = output.len();
+        output.push(ArithTk::Nez);
+        output[jump_idx] = ArithTk::JumpIfNonZeroPeek(target);
+      }
+      ArithTk::PendingTernaryElse(jump_idx) => {
+        // After else-arm. Patch the JMP that skips past the else.
+        let target = output.len();
+        output[jump_idx] = ArithTk::Jump(target);
+      }
+      ArithTk::PendingTernaryThen(_) | ArithTk::Question => {
+        return Err(sherr!(
+          ParseErr,
+          "'?' without matching ':' in arithmetic expression"
+        ));
+      }
+      other => output.push(other),
+    }
+    Ok(())
+  }
+
+  // True if `top` is a barrier that flushing must stop at.
+  fn is_barrier(top: &ArithTk) -> bool {
+    matches!(top, ArithTk::LParen | ArithTk::Question)
+  }
+
+  fn flush_ops(
+    ops: &mut Vec<ArithTk>,
+    output: &mut Vec<ArithTk>,
+    until_paren: bool,
+  ) -> ShResult<()> {
+    while let Some(top) = ops.last() {
+      if matches!(top, ArithTk::LParen) {
+        break;
+      }
+      Self::pop_to_output(ops, output)?;
+    }
+    if until_paren {
+      ops.pop(); // remove the LParen
+    }
+    Ok(())
+  }
+
+  #[expect(clippy::too_many_lines)]
   fn to_rpn(tokens: Vec<ArithTk>) -> ShResult<Vec<ArithTk>> {
     let mut output: Vec<ArithTk> = Vec::new();
     let mut ops: Vec<ArithTk> = Vec::new();
     let mut tokens = tokens.into_iter().peekable();
-
-    fn precedence(tk: &ArithTk) -> usize {
-      match tk {
-        ArithTk::Comma => 0,
-        // Pending markers participate in flushing at their op's precedence.
-        ArithTk::PendingTernaryElse(_) => 1,
-        ArithTk::PendingOr(_) => 2,
-        ArithTk::PendingAnd(_) => 3,
-        ArithTk::Op(op) => match op {
-          ArithOp::Assign
-          | ArithOp::PlusAssign
-          | ArithOp::MinusAssign
-          | ArithOp::MulAssign
-          | ArithOp::DivAssign
-          | ArithOp::ModAssign
-          | ArithOp::BitAndAssign
-          | ArithOp::BitOrAssign
-          | ArithOp::BitXorAssign
-          | ArithOp::ShiftLAssign
-          | ArithOp::ShiftRAssign => 1,
-          ArithOp::Or => 2,
-          ArithOp::And => 3,
-          ArithOp::BitOr => 4,
-          ArithOp::BitXor => 5,
-          ArithOp::BitAnd => 6,
-          ArithOp::Eq | ArithOp::Ne => 7,
-          ArithOp::Lt | ArithOp::Gt | ArithOp::Le | ArithOp::Ge => 8,
-          ArithOp::ShiftL | ArithOp::ShiftR => 9,
-          ArithOp::Add | ArithOp::Sub => 10,
-          ArithOp::Mul | ArithOp::Div | ArithOp::Mod => 11,
-        },
-        ArithTk::Not | ArithTk::Neg | ArithTk::UPlus | ArithTk::BitNot => 12,
-        _ => 0,
-      }
-    }
-
-    fn is_right_assoc(tk: &ArithTk) -> bool {
-      matches!(
-        tk,
-        ArithTk::Not
-          | ArithTk::Neg
-          | ArithTk::UPlus
-          | ArithTk::BitNot
-          | ArithTk::PendingTernaryElse(_)
-          | ArithTk::Op(
-            ArithOp::Assign
-              | ArithOp::PlusAssign
-              | ArithOp::MinusAssign
-              | ArithOp::MulAssign
-              | ArithOp::DivAssign
-              | ArithOp::ModAssign
-              | ArithOp::BitAndAssign
-              | ArithOp::BitOrAssign
-              | ArithOp::BitXorAssign
-              | ArithOp::ShiftLAssign
-              | ArithOp::ShiftRAssign
-          )
-      )
-    }
-
-    // Pop one op off the ops stack, translating control-flow markers into
-    // their final RPN form (and patching the corresponding jump placeholders).
-    fn pop_to_output(ops: &mut Vec<ArithTk>, output: &mut Vec<ArithTk>) -> ShResult<()> {
-      match ops.pop().unwrap() {
-        ArithTk::PendingAnd(jump_idx) => {
-          // After RHS of && is built. Patch JIFZ_PEEK to land at the Nez we
-          // emit now, so the short-circuit jump produces 0 directly.
-          let target = output.len();
-          output.push(ArithTk::Nez);
-          output[jump_idx] = ArithTk::JumpIfZeroPeek(target);
-        }
-        ArithTk::PendingOr(jump_idx) => {
-          let target = output.len();
-          output.push(ArithTk::Nez);
-          output[jump_idx] = ArithTk::JumpIfNonZeroPeek(target);
-        }
-        ArithTk::PendingTernaryElse(jump_idx) => {
-          // After else-arm. Patch the JMP that skips past the else.
-          let target = output.len();
-          output[jump_idx] = ArithTk::Jump(target);
-        }
-        ArithTk::PendingTernaryThen(_) => {
-          return Err(sherr!(
-            ParseErr,
-            "'?' without matching ':' in arithmetic expression"
-          ));
-        }
-        ArithTk::Question => {
-          return Err(sherr!(
-            ParseErr,
-            "'?' without matching ':' in arithmetic expression"
-          ));
-        }
-        other => output.push(other),
-      }
-      Ok(())
-    }
-
-    // True if `top` is a barrier that flushing must stop at.
-    fn is_barrier(top: &ArithTk) -> bool {
-      matches!(top, ArithTk::LParen | ArithTk::Question)
-    }
-
-    fn flush_ops(
-      ops: &mut Vec<ArithTk>,
-      output: &mut Vec<ArithTk>,
-      until_paren: bool,
-    ) -> ShResult<()> {
-      while let Some(top) = ops.last() {
-        if matches!(top, ArithTk::LParen) {
-          break;
-        }
-        pop_to_output(ops, output)?;
-      }
-      if until_paren {
-        ops.pop(); // remove the LParen
-      }
-      Ok(())
-    }
 
     match_loop!(tokens.next() => token, {
       ArithTk::Num(_) => output.push(token),
@@ -616,8 +610,8 @@ impl ArithTk {
         // are fully evaluated before Comma is applied. Question is a barrier
         // (commas inside the then-arm of a ternary stay there).
         while let Some(top) = ops.last() {
-          if is_barrier(top) { break; }
-          pop_to_output(&mut ops, &mut output)?;
+          if Self::is_barrier(top) { break; }
+          Self::pop_to_output(&mut ops, &mut output)?;
         }
         ops.push(ArithTk::Comma);
       }
@@ -628,10 +622,10 @@ impl ArithTk {
           // Flush higher-precedence ops first (LHS finished).
           let cur_prec = if matches!(op, ArithOp::And) { 3 } else { 2 };
           while let Some(top) = ops.last() {
-            if is_barrier(top) { break; }
-            let top_prec = precedence(top);
+            if Self::is_barrier(top) { break; }
+            let top_prec = Self::precedence(top);
             if top_prec >= cur_prec {
-              pop_to_output(&mut ops, &mut output)?;
+              Self::pop_to_output(&mut ops, &mut output)?;
             } else {
               break;
             }
@@ -648,13 +642,13 @@ impl ArithTk {
             ops.push(ArithTk::PendingOr(jump_idx));
           }
         } else {
-          let right_assoc = is_right_assoc(&token);
-          let cur_prec = precedence(&token);
+          let right_assoc = Self::is_right_assoc(&token);
+          let cur_prec = Self::precedence(&token);
           while let Some(top) = ops.last() {
-            if is_barrier(top) { break; }
-            let top_prec = precedence(top);
+            if Self::is_barrier(top) { break; }
+            let top_prec = Self::precedence(top);
             if top_prec > cur_prec || (top_prec == cur_prec && !right_assoc) {
-              pop_to_output(&mut ops, &mut output)?;
+              Self::pop_to_output(&mut ops, &mut output)?;
             } else {
               break;
             }
@@ -668,10 +662,10 @@ impl ArithTk {
         // JIFZ that will jump to the else-arm once we know its position.
         let cur_prec = 1;
         while let Some(top) = ops.last() {
-          if is_barrier(top) { break; }
-          let top_prec = precedence(top);
+          if Self::is_barrier(top) { break; }
+          let top_prec = Self::precedence(top);
           if top_prec > cur_prec {
-            pop_to_output(&mut ops, &mut output)?;
+            Self::pop_to_output(&mut ops, &mut output)?;
           } else {
             break;
           }
@@ -688,7 +682,7 @@ impl ArithTk {
           if matches!(top, ArithTk::LParen) {
             return Err(sherr!(ParseErr, "Unexpected ':' before matching '?' in arithmetic"));
           }
-          pop_to_output(&mut ops, &mut output)?;
+          Self::pop_to_output(&mut ops, &mut output)?;
         }
         let Some(ArithTk::PendingTernaryThen(jifz_idx)) = ops.pop() else {
           return Err(sherr!(ParseErr, "':' without matching '?' in arithmetic expression"));
@@ -703,7 +697,7 @@ impl ArithTk {
 
       ArithTk::LParen => ops.push(token),
 
-      ArithTk::RParen => flush_ops(&mut ops, &mut output, true)?,
+      ArithTk::RParen => Self::flush_ops(&mut ops, &mut output, true)?,
 
       // Control-flow opcodes are only emitted by to_rpn, never lexed.
       ArithTk::JumpIfZero(_)
@@ -721,13 +715,14 @@ impl ArithTk {
     });
 
     while !ops.is_empty() {
-      pop_to_output(&mut ops, &mut output)?;
+      Self::pop_to_output(&mut ops, &mut output)?;
     }
 
     Ok(output)
   }
 
-  pub fn eval_rpn(tokens: Vec<ArithTk>) -> ShResult<i64> {
+  #[expect(clippy::too_many_lines, clippy::cast_sign_loss)]
+  pub fn eval_rpn(tokens: &[ArithTk]) -> ShResult<i64> {
     let mut stack: Vec<StackVal> = Vec::new();
 
     macro_rules! pop_num {
@@ -796,12 +791,12 @@ impl ArithTk {
         }
         ArithTk::Nez => {
           let val = pop_num!();
-          stack.push(StackVal::Num(if val != 0 { 1 } else { 0 }));
+          stack.push(StackVal::Num(i64::from(val != 0)));
         }
 
         ArithTk::Not => {
           let val = pop_num!();
-          stack.push(StackVal::Num(if val == 0 { 1 } else { 0 }));
+          stack.push(StackVal::Num(i64::from(val == 0)));
         }
 
         ArithTk::Neg => {
@@ -935,32 +930,32 @@ impl ArithTk {
             ArithOp::Lt => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs < rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs < rhs)));
             }
             ArithOp::Gt => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs > rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs > rhs)));
             }
             ArithOp::Le => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs <= rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs <= rhs)));
             }
             ArithOp::Ge => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs >= rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs >= rhs)));
             }
             ArithOp::Eq => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs == rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs == rhs)));
             }
             ArithOp::Ne => {
               let rhs = pop_num!();
               let lhs = pop_num!();
-              stack.push(StackVal::Num(if lhs != rhs { 1 } else { 0 }));
+              stack.push(StackVal::Num(i64::from(lhs != rhs)));
             }
 
             // && and || are decomposed into JIFZ_PEEK/JIFNZ_PEEK + Pop + Nez at
@@ -1088,7 +1083,7 @@ pub fn expand_arithmetic(expr: &str) -> ShResult<String> {
   let expanded = expand_raw(&mut unescaped.chars().peekable())?;
   let tokens = ArithTk::tokenize(&expanded)?;
   let rpn = ArithTk::to_rpn(tokens)?;
-  let result = ArithTk::eval_rpn(rpn)?;
+  let result = ArithTk::eval_rpn(&rpn)?;
   Ok(result.to_string())
 }
 
@@ -1113,6 +1108,7 @@ pub fn expand_arithmetic_wrapped(raw: &str) -> ShResult<String> {
 }
 
 #[cfg(test)]
+#[expect(clippy::float_cmp)]
 mod tests {
   use super::*;
   use crate::state::{Shed, vars::VarFlags, vars::VarKind};

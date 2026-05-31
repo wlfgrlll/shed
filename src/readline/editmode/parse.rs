@@ -9,7 +9,7 @@ use super::{
   verb,
 };
 
-/// The result of a single ViParser run
+/// The result of a single `ViParser` run
 pub enum ParseResult {
   Complete(Box<EditCmd>),
   Pending,
@@ -98,7 +98,7 @@ impl ViParser {
       C::Complete(res) => match res {
         P::Complete(mut cmd) => {
           cmd.register = register;
-          cmd.verb = verb.clone();
+          cmd.verb.clone_from(&verb);
           cmd.raw_seq = pending_seq.to_string();
           return P::Complete(cmd);
         }
@@ -127,10 +127,10 @@ impl ViParser {
       .is_none_or(|ch| *ch == '0' || !ch.is_ascii_digit())
     {
       return None;
-    };
+    }
     let mut count = String::new();
 
-    while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+    while chars.peek().is_some_and(char::is_ascii_digit) {
       count.push(chars.next().unwrap());
     }
 
@@ -167,6 +167,7 @@ impl ViParser {
       None => Self::common_verb(chars, count),
     }
   }
+  #[expect(clippy::too_many_lines)]
   fn common_motion(
     chars: &mut Peekable<Chars<'_>>,
     verb: Option<&Cmd<Verb>>,
@@ -182,10 +183,8 @@ impl ViParser {
       | ('y', Some(Cmd(_, Verb::Yank)))
       | ('=', Some(Cmd(_, Verb::Equalize)))
       | ('>', Some(Cmd(_, Verb::Indent)))
-      | ('<', Some(Cmd(_, Verb::Dedent))) => {
-        return C::partial(motion!(count, Motion::WholeLine));
-      }
-      ('c', Some(Cmd(_, Verb::Change))) => {
+      | ('<', Some(Cmd(_, Verb::Dedent)))
+      | ('c', Some(Cmd(_, Verb::Change))) => {
         return C::partial(motion!(count, Motion::WholeLine));
       }
       _ => {}
@@ -343,6 +342,7 @@ impl ViParser {
       _ => C::no_match(),
     }
   }
+  #[expect(clippy::too_many_lines)]
   fn common_verb(chars: &mut Peekable<Chars<'_>>, count: usize) -> CallbackResult<Cmd<Verb>> {
     use CallbackResult as C;
     let Some(ch) = chars.next() else {

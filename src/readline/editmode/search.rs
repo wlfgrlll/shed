@@ -1,3 +1,5 @@
+use crate::readline::RegisterName;
+
 use super::{
   CmdReplay, E as KeyEvent, EditMode, LineBuf, ModeReport, SimpleEditor,
   editcmd::{CmdFlags, Direction, EditCmd, Motion},
@@ -10,7 +12,7 @@ use super::{
 trait SearchMode {
   fn command(&self) -> EditCmd {
     EditCmd {
-      register: Default::default(),
+      register: RegisterName::default(),
       verb: None,
       motion: Some(motion!(
         self.count(),
@@ -22,7 +24,7 @@ trait SearchMode {
   }
   fn count(&self) -> usize;
   fn query_handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
-    self.query_mut().handle_key(key).map(|_| None).ok()?
+    self.query_mut().handle_key(key).map(|()| None).ok()?
   }
   fn pattern(&self) -> String {
     self.query().buf.joined()
@@ -128,6 +130,7 @@ impl SearchMode for ViSearchRev {
 }
 
 impl<S: SearchMode> EditMode for S {
+  #[expect(clippy::unnested_or_patterns)]
   fn handle_key(&mut self, key: KeyEvent) -> Option<EditCmd> {
     match key {
       key!('\r') | key!(Enter) => {
@@ -135,7 +138,7 @@ impl<S: SearchMode> EditMode for S {
         let pat = self.pattern();
 
         if let Some(hist) = self.history()
-          && let Err(e) = hist.push(pat)
+          && let Err(e) = hist.push(&pat)
         {
           status_msg!("Failed to save search to history: {e}");
         }
@@ -147,18 +150,18 @@ impl<S: SearchMode> EditMode for S {
         None
       }
       key!(Backspace) if self.pattern().is_empty() => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: None,
         motion: None,
         flags: CmdFlags::EXIT_CUR_MODE | CmdFlags::IS_CANCEL,
-        raw_seq: "".into(),
+        raw_seq: String::new(),
       }),
       key!(Esc) => Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: None,
         motion: None,
         flags: CmdFlags::EXIT_CUR_MODE | CmdFlags::IS_CANCEL,
-        raw_seq: "".into(),
+        raw_seq: String::new(),
       }),
       _ => self.query_handle_key(key),
     }

@@ -1,5 +1,5 @@
 use std::{
-  path::PathBuf,
+  path::Path,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -11,8 +11,9 @@ use super::{
   util::{ShResult, ends_with_unescaped},
 };
 
-pub fn import_history(path: PathBuf) -> ShResult<Vec<HistEntry>> {
-  let content = std::fs::read(&path)
+pub fn import_history<P: AsRef<Path>>(path: P) -> ShResult<Vec<HistEntry>> {
+  let path = path.as_ref();
+  let content = std::fs::read(path)
     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
     .map_err(|e| sherr!(ParseErr, "Failed to read history file: {e}"))?;
 
@@ -21,21 +22,25 @@ pub fn import_history(path: PathBuf) -> ShResult<Vec<HistEntry>> {
     .and_then(|n| n.to_str())
     .ok_or_else(|| sherr!(ParseErr, "Invalid history file name"))?;
 
+  // Known filenames try the matching importer first, then fall back through
+  // the chain if the file's content doesn't actually carry that format's
+  // markers. Bash is the catch-all (any text is a valid bash history).
   match filename {
-    ".bash_history" => try_import_bash(&content),
-    ".zsh_history" => try_import_zsh(&content),
-    "fish_history" => try_import_fish(&content),
-    _ => try_import_bash(&content)
-      .or_else(|_| try_import_zsh(&content))
-      .or_else(|_| try_import_fish(&content))
-      .map_err(|_| sherr!(ParseErr, "Unknown history format")),
+    ".bash_history" => Ok(try_import_bash(&content)),
+    ".zsh_history" => Ok(try_import_zsh(&content).unwrap_or_else(|_| try_import_bash(&content))),
+    "fish_history" => Ok(try_import_fish(&content).unwrap_or_else(|_| try_import_bash(&content))),
+    _ => Ok(
+      try_import_zsh(&content)
+        .or_else(|_| try_import_fish(&content))
+        .unwrap_or_else(|_| try_import_bash(&content)),
+    ),
   }
 }
 
-fn try_import_bash(content: &str) -> ShResult<Vec<HistEntry>> {
+fn try_import_bash(content: &str) -> Vec<HistEntry> {
   let mut lines = content.lines().peekable();
   let mut entries = vec![];
-  let timestamp_pat = Regex::new(r#"^#(\d+)$"#).unwrap();
+  let timestamp_pat = Regex::new(r"^#(\d+)$").unwrap();
 
   while let Some(line) = lines.next() {
     if let Some(caps) = timestamp_pat.captures(line) {
@@ -56,7 +61,7 @@ fn try_import_bash(content: &str) -> ShResult<Vec<HistEntry>> {
     }
   }
 
-  Ok(entries)
+  entries
 }
 
 fn collect_continuation<'a>(first: &'a str, lines: &mut impl Iterator<Item = &'a str>) -> String {
@@ -76,7 +81,26 @@ fn collect_continuation<'a>(first: &'a str, lines: &mut impl Iterator<Item = &'a
   parts.join("\n")
 }
 
+/// Returns true if `line` looks like a zsh extended-history header:
+/// `: <epoch>:<elapsed>;<command>`.
+fn looks_like_zsh_header(line: &str) -> bool {
+  let Some(rest) = line.strip_prefix(": ") else {
+    return false;
+  };
+  let Some((meta, _cmd)) = rest.split_once(';') else {
+    return false;
+  };
+  let Some((ts, elapsed)) = meta.split_once(':') else {
+    return false;
+  };
+  ts.parse::<u64>().is_ok() && elapsed.parse::<u64>().is_ok()
+}
+
 fn try_import_zsh(content: &str) -> ShResult<Vec<HistEntry>> {
+  if !content.lines().any(looks_like_zsh_header) {
+    return Err(sherr!(ParseErr, "no zsh extended-history markers found"));
+  }
+
   let mut lines = content.lines().peekable();
   let mut entries = vec![];
 
@@ -87,8 +111,9 @@ fn try_import_zsh(content: &str) -> ShResult<Vec<HistEntry>> {
       let timestamp = meta
         .split_once(':')
         .and_then(|(ts, _)| ts.parse::<u64>().ok())
-        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs))
-        .unwrap_or(SystemTime::now());
+        .map_or(SystemTime::now(), |secs| {
+          UNIX_EPOCH + Duration::from_secs(secs)
+        });
 
       entries.push(HistEntry {
         timestamp,
@@ -132,6 +157,10 @@ fn expand_fish_cmd(cmd: &str) -> String {
 }
 
 fn try_import_fish(content: &str) -> ShResult<Vec<HistEntry>> {
+  if !content.lines().any(|l| l.starts_with("- cmd: ")) {
+    return Err(sherr!(ParseErr, "no fish history markers found"));
+  }
+
   let mut entries = vec![];
   let mut lines = content.lines();
 
@@ -141,8 +170,9 @@ fn try_import_fish(content: &str) -> ShResult<Vec<HistEntry>> {
         .next()
         .and_then(|l| l.trim().strip_prefix("when: "))
         .and_then(|ts| ts.parse::<u64>().ok())
-        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs))
-        .unwrap_or(SystemTime::now());
+        .map_or(SystemTime::now(), |secs| {
+          UNIX_EPOCH + Duration::from_secs(secs)
+        });
 
       entries.push(HistEntry {
         timestamp,
@@ -161,8 +191,8 @@ mod tests {
   use std::io::Write;
 
   /// Write `content` to a tempfile with a chosen file name; returns
-  /// (TempDir guard, full path).
-  fn write_hist_file(name: &str, content: &str) -> (tempfile::TempDir, PathBuf) {
+  /// (`TempDir` guard, full path).
+  fn write_hist_file(name: &str, content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join(name);
     let mut f = std::fs::File::create(&path).unwrap();
@@ -179,7 +209,7 @@ mod tests {
   #[test]
   fn bash_unprefixed_lines_become_entries_without_timestamps() {
     let content = "echo one\necho two\necho three\n";
-    let entries = try_import_bash(content).unwrap();
+    let entries = try_import_bash(content);
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].command, "echo one");
     assert_eq!(entries[1].command, "echo two");
@@ -189,7 +219,7 @@ mod tests {
   #[test]
   fn bash_timestamp_comment_attaches_to_next_line() {
     let content = "#1700000000\necho stamped\n";
-    let entries = try_import_bash(content).unwrap();
+    let entries = try_import_bash(content);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].command, "echo stamped");
     assert_eq!(secs_since_epoch(entries[0].timestamp), 1_700_000_000);
@@ -201,7 +231,7 @@ mod tests {
     // simply produces no entry (the `if let Some(cmd) = lines.next()`
     // sees None).
     let content = "echo first\n#1700000000\n";
-    let entries = try_import_bash(content).unwrap();
+    let entries = try_import_bash(content);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].command, "echo first");
   }
@@ -209,7 +239,7 @@ mod tests {
   #[test]
   fn bash_mixed_timestamped_and_plain_lines() {
     let content = "echo a\n#1700000100\necho b\necho c\n";
-    let entries = try_import_bash(content).unwrap();
+    let entries = try_import_bash(content);
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].command, "echo a");
     assert_eq!(entries[1].command, "echo b");
@@ -229,14 +259,6 @@ mod tests {
   }
 
   #[test]
-  fn zsh_plain_line_becomes_entry_without_metadata() {
-    let content = "echo plain\n";
-    let entries = try_import_zsh(content).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].command, "echo plain");
-  }
-
-  #[test]
   fn zsh_backslash_continuation_joins_lines() {
     // A trailing unescaped `\` continues the command to the next line.
     let content = ": 1700000300:0;echo first \\\necho second\n";
@@ -246,14 +268,16 @@ mod tests {
   }
 
   #[test]
-  fn zsh_extended_format_with_malformed_timestamp_falls_back_to_now() {
+  fn zsh_malformed_timestamp_within_valid_file_falls_back_to_now() {
     // The unwrap_or(SystemTime::now()) branch fires when timestamp
-    // parsing fails. We just verify the entry is still produced and
-    // the command is right.
-    let content = ": notanumber:0;echo malformed\n";
+    // parsing fails *inside* a file that's already been recognized as
+    // zsh (via at least one valid header). The bad-timestamp entry is
+    // still produced.
+    let content = ": 1700000000:0;echo good\n: notanumber:0;echo bad\n";
     let entries = try_import_zsh(content).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].command, "echo malformed");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].command, "echo good");
+    assert_eq!(entries[1].command, "echo bad");
   }
 
   // ===================== try_import_fish =====================
@@ -383,9 +407,10 @@ mod tests {
   }
 
   #[test]
-  fn dispatch_unknown_filename_falls_back_to_bash_first() {
-    // Unknown filenames try bash → zsh → fish. Bash accepts any text,
-    // so it always wins on the fallback chain.
+  fn dispatch_unknown_filename_tries_zsh_then_fish_then_bash() {
+    // Unknown filenames try zsh, then fish, then bash. zsh and fish
+    // refuse content without their format markers, so plain-text input
+    // falls through to bash.
     let (_dir, path) = write_hist_file("random_name", "echo fallback\n");
     let entries = import_history(path).unwrap();
     assert_eq!(entries.len(), 1);
@@ -393,8 +418,49 @@ mod tests {
   }
 
   #[test]
+  fn dispatch_unknown_filename_with_zsh_markers_uses_zsh() {
+    // Content with zsh extended-history markers should be detected and
+    // parsed as zsh, not as bash, even with an unknown filename.
+    let (_dir, path) = write_hist_file("random_name", ": 1700000000:0;echo from_zsh\n");
+    let entries = import_history(path).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].command, "echo from_zsh");
+    assert_eq!(secs_since_epoch(entries[0].timestamp), 1_700_000_000);
+  }
+
+  #[test]
+  fn dispatch_unknown_filename_with_fish_markers_uses_fish() {
+    let (_dir, path) =
+      write_hist_file("random_name", "- cmd: echo from_fish\n  when: 1700000000\n");
+    let entries = import_history(path).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].command, "echo from_fish");
+  }
+
+  #[test]
+  fn zsh_filename_with_bash_content_falls_back_to_bash() {
+    // If the user names a file `.zsh_history` but it actually contains
+    // plain bash-style history (no extended markers), we should still
+    // import it correctly via the bash fallback.
+    let (_dir, path) = write_hist_file(".zsh_history", "echo no_markers\n");
+    let entries = import_history(path).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].command, "echo no_markers");
+  }
+
+  #[test]
+  fn try_import_zsh_errors_without_markers() {
+    assert!(try_import_zsh("echo just_bash\n").is_err());
+  }
+
+  #[test]
+  fn try_import_fish_errors_without_markers() {
+    assert!(try_import_fish("echo just_bash\n").is_err());
+  }
+
+  #[test]
   fn missing_file_errors() {
-    let path = PathBuf::from("/path/that/definitely/does/not/exist/zzz");
+    let path = std::path::PathBuf::from("/path/that/definitely/does/not/exist/zzz");
     assert!(import_history(path).is_err());
   }
 }

@@ -10,18 +10,18 @@ pub enum CharClass {
 }
 
 impl CharClass {
-  pub fn is_other_class(&self, other: &CharClass) -> bool {
-    !self.eq(other)
+  pub fn is_other_class(self, other: CharClass) -> bool {
+    !self.eq(&other)
   }
-  pub fn is_other_class_or_ws(&self, other: &CharClass) -> bool {
+  pub fn is_other_class_or_ws(self, other: CharClass) -> bool {
     if self.is_ws() || other.is_ws() {
       true
     } else {
       self.is_other_class(other)
     }
   }
-  pub fn is_ws(&self) -> bool {
-    *self == CharClass::Whitespace
+  pub fn is_ws(self) -> bool {
+    self == CharClass::Whitespace
   }
 }
 
@@ -78,7 +78,7 @@ impl<'a> CharClassIter<'a> {
   }
 }
 
-impl<'a> Iterator for CharClassIter<'a> {
+impl Iterator for CharClassIter<'_> {
   type Item = (Pos, CharClass);
   fn next(&mut self) -> Option<(Pos, CharClass)> {
     if self.exhausted {
@@ -167,7 +167,7 @@ impl<'a> CharClassIterRev<'a> {
   }
 }
 
-impl<'a> Iterator for CharClassIterRev<'a> {
+impl Iterator for CharClassIterRev<'_> {
   type Item = (Pos, CharClass);
   fn next(&mut self) -> Option<(Pos, CharClass)> {
     if self.exhausted {

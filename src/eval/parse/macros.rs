@@ -14,7 +14,7 @@ macro_rules! try_match {
 /// A helper macro for returning parse errors with context
 ///
 /// This macro is used to cut down on boilerplate when returning errors in the various parsing functions.
-/// This macro also calls 'self.panic_mode' internally, and requires a mutable borrow of the '$tks' parameter.
+/// This macro also calls `self.panic_mode` internally, and requires a mutable borrow of the '$tks' parameter.
 macro_rules! bail {
 	($parser:expr, $tks:expr, $($arg:tt)*) => {
 		$parser.panic_mode(&mut $tks);

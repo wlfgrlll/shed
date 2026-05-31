@@ -41,48 +41,48 @@ pub enum ParamExp {
 
 /// Parse a parameter expansion
 ///
-/// The "allow_side_effects" thing prevents state-mutating stuff like "set if null" or expanding command subs
+/// The `allow_side_effects` thing prevents state-mutating stuff like "set if null" or expanding command subs
 /// It's set to false in places like the syntax highlighter where we really dont want to be silently executing
 /// unfinished commands.
 pub fn parse_param_exp(s: &str, allow_side_effects: bool) -> ShResult<ParamExp> {
-  use ParamExp::*;
+  use ParamExp as PE;
 
   let parse_err = || Err(sherr!(SyntaxErr, "Invalid parameter expansion",));
 
   if s == "^^" {
-    return Ok(ToUpperAll);
+    return Ok(PE::ToUpperAll);
   }
   if s == "^" {
-    return Ok(ToUpperFirst);
+    return Ok(PE::ToUpperFirst);
   }
   if s == ",," {
-    return Ok(ToLowerAll);
+    return Ok(PE::ToLowerAll);
   }
   if s == "," {
-    return Ok(ToLowerFirst);
+    return Ok(PE::ToLowerFirst);
   }
 
   // Handle indirect var expansion: ${!var}
   if let Some(var) = s.strip_prefix('!') {
     if var.ends_with(']') && (var.contains("[@]") || var.contains("[*]")) {
-      return Ok(ExpandInnerVar(var.to_string()));
+      return Ok(PE::ExpandInnerVar(var.to_string()));
     }
     if var.ends_with('*') || var.ends_with('@') {
-      return Ok(VarNamesWithPrefix(var.to_string()));
+      return Ok(PE::VarNamesWithPrefix(var.to_string()));
     }
-    return Ok(ExpandInnerVar(var.to_string()));
+    return Ok(PE::ExpandInnerVar(var.to_string()));
   }
 
   // Pattern removals
   if let Some(rest) = s.strip_prefix("##") {
-    return Ok(RemLongestPrefix(rest.to_string()));
+    return Ok(PE::RemLongestPrefix(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('#') {
-    return Ok(RemShortestPrefix(rest.to_string()));
+    return Ok(PE::RemShortestPrefix(rest.to_string()));
   }
   if let Some(rest) = s.strip_prefix("%%") {
-    return Ok(RemLongestSuffix(rest.to_string()));
+    return Ok(PE::RemLongestSuffix(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('%') {
-    return Ok(RemShortestSuffix(rest.to_string()));
+    return Ok(PE::RemShortestSuffix(rest.to_string()));
   }
 
   // Replacements
@@ -90,51 +90,51 @@ pub fn parse_param_exp(s: &str, allow_side_effects: bool) -> ShResult<ParamExp> 
     let mut parts = rest.splitn(2, '/');
     let pattern = parts.next().unwrap_or("");
     let repl = parts.next().unwrap_or("");
-    return Ok(ReplaceAllMatches(pattern.to_string(), repl.to_string()));
+    return Ok(PE::ReplaceAllMatches(pattern.to_string(), repl.to_string()));
   }
   if let Some(rest) = s.strip_prefix('/') {
     if let Some(rest) = rest.strip_prefix('%') {
       let mut parts = rest.splitn(2, '/');
       let pattern = parts.next().unwrap_or("");
       let repl = parts.next().unwrap_or("");
-      return Ok(ReplaceSuffix(pattern.to_string(), repl.to_string()));
+      return Ok(PE::ReplaceSuffix(pattern.to_string(), repl.to_string()));
     } else if let Some(rest) = rest.strip_prefix('#') {
       let mut parts = rest.splitn(2, '/');
       let pattern = parts.next().unwrap_or("");
       let repl = parts.next().unwrap_or("");
-      return Ok(ReplacePrefix(pattern.to_string(), repl.to_string()));
-    } else {
-      let mut parts = rest.splitn(2, '/');
-      let pattern = parts.next().unwrap_or("");
-      let repl = parts.next().unwrap_or("");
-      return Ok(ReplaceFirstMatch(pattern.to_string(), repl.to_string()));
+      return Ok(PE::ReplacePrefix(pattern.to_string(), repl.to_string()));
     }
+
+    let mut parts = rest.splitn(2, '/');
+    let pattern = parts.next().unwrap_or("");
+    let repl = parts.next().unwrap_or("");
+    return Ok(PE::ReplaceFirstMatch(pattern.to_string(), repl.to_string()));
   }
 
   // Fallback / assignment / alt
   if let Some(rest) = s.strip_prefix(":-") {
-    return Ok(DefaultUnsetOrNull(rest.to_string()));
+    return Ok(PE::DefaultUnsetOrNull(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('-') {
-    return Ok(DefaultUnset(rest.to_string()));
+    return Ok(PE::DefaultUnset(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix(":+") {
-    return Ok(AltSetNotNull(rest.to_string()));
+    return Ok(PE::AltSetNotNull(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('+') {
-    return Ok(AltNotNull(rest.to_string()));
+    return Ok(PE::AltNotNull(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix(":=") {
-    return Ok(SetDefaultUnsetOrNull(rest.to_string()));
+    return Ok(PE::SetDefaultUnsetOrNull(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('=') {
-    return Ok(SetDefaultUnset(rest.to_string()));
+    return Ok(PE::SetDefaultUnset(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix(":?") {
-    return Ok(ErrUnsetOrNull(rest.to_string()));
+    return Ok(PE::ErrUnsetOrNull(rest.to_string()));
   } else if let Some(rest) = s.strip_prefix('?') {
-    return Ok(ErrUnset(rest.to_string()));
+    return Ok(PE::ErrUnset(rest.to_string()));
   }
 
   // Substring
   if let Some((pos, len)) = parse_pos_len(s, allow_side_effects) {
     return Ok(match len {
-      Some(l) => SliceClosed(pos, l),
-      None => SliceOpen(pos),
+      Some(l) => PE::SliceClosed(pos, l),
+      None => PE::SliceOpen(pos),
     });
   }
 
@@ -156,6 +156,7 @@ pub fn parse_pos_len(s: &str, allow_side_effects: bool) -> Option<(usize, Option
   }
 }
 
+#[expect(clippy::too_many_lines, clippy::single_match_else)]
 pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<String> {
   let mut chars = raw.chars();
   let mut var_name = String::new();
@@ -177,21 +178,20 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           );
         }
         _ => {
-          let val = Shed::vars(|v| v.index_var(parsed.name(), idx.clone()))?;
+          let val = Shed::vars(|v| v.index_var(parsed.name(), idx))?;
           return Ok(val.len().to_string());
         }
       }
-    } else {
-      let var = Shed::vars(|v| v.get_var_meta(var_spec));
-      return Ok(
-        match var.kind() {
-          VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
-          VarKind::Arr(items) => items.len(),
-          VarKind::AssocArr(items) => items.len(),
-        }
-        .to_string(),
-      );
     }
+    let var = Shed::vars(|v| v.get_var_meta(var_spec));
+    return Ok(
+      match var.kind() {
+        VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
+        VarKind::Arr(items) => items.len(),
+        VarKind::AssocArr(items) => items.len(),
+      }
+      .to_string(),
+    );
   }
 
   // Scan for the variable name (may include [index]) and the operator
@@ -251,10 +251,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     // for some of these that do mutation on the var, we set the status based on whether it changed
     // this allows scripts to do stuff like "while foo=${foo#bar}" or just generally check
     // whether a parameter expansion did anything without needing verbose checks like [[ "$foo" != "${foo#bar}" ]]
-    if old != new {
-      Shed::set_status(0);
-    } else {
+    if old == new {
       Shed::set_status(1);
+    } else {
+      Shed::set_status(0);
     }
   };
 
@@ -341,11 +341,11 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       },
       ParamExp::AltSetNotNull(alt) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
         Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
-        None => Ok("".into()),
+        None => Ok(String::new()),
       },
       ParamExp::AltNotNull(alt) => match Shed::vars(try_get) {
         Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
-        None => Ok("".into()),
+        None => Ok(String::new()),
       },
       ParamExp::ErrUnsetOrNull(err) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
@@ -390,7 +390,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemShortestPrefix(prefix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
+        let expanded = Expander::from_raw(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
@@ -406,7 +406,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemLongestPrefix(prefix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&prefix, TkFlags::empty())?
+        let expanded = Expander::from_raw(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
@@ -422,7 +422,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemShortestSuffix(suffix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&suffix, TkFlags::empty())?
+        let expanded = Expander::from_raw(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = Pattern::new(&expanded).unwrap();
@@ -438,7 +438,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemLongestSuffix(suffix) => {
         let value = Shed::vars(get);
-        let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())?
+        let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = Pattern::new(&expanded_suffix).unwrap();
@@ -454,10 +454,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::ReplaceFirstMatch(search, replace) => {
         let value = Shed::vars(get);
-        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
         let regex = glob_to_regex(&expanded_search, false); // unanchored pattern
@@ -465,7 +465,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         if let Some(mat) = regex.find(&value) {
           let before = &value[..mat.start()];
           let after = &value[mat.end()..];
-          let result = format!("{}{}{}", before, expanded_replace, after);
+          let result = format!("{before}{expanded_replace}{after}");
           Shed::set_status(0);
           Ok(result)
         } else {
@@ -475,10 +475,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::ReplaceAllMatches(search, replace) => {
         let value = Shed::vars(get);
-        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
         let regex = glob_to_regex(&expanded_search, false);
@@ -498,10 +498,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::ReplacePrefix(search, replace) => {
         let value = Shed::vars(get);
-        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
         let pattern = Pattern::new(&expanded_search).unwrap();
@@ -517,10 +517,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::ReplaceSuffix(search, replace) => {
         let value = Shed::vars(get);
-        let expanded_search = Expander::from_raw(&search, TkFlags::empty())?
+        let expanded_search = Expander::from_raw(&search, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())?
+        let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
         let pattern = Pattern::new(&expanded_search).unwrap();
@@ -535,7 +535,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         Ok(value)
       }
       ParamExp::VarNamesWithPrefix(prefix) => {
-        let flat = Shed::vars(|v| v.flatten_vars());
+        let flat = Shed::vars(ScopeStack::flatten_vars);
         let match_vars: Vec<_> = flat
           .keys()
           .filter(|var| var.starts_with(&prefix))
@@ -722,7 +722,7 @@ mod tests {
   #[test]
   fn param_default_unset_or_null_null() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
 
     let result = test_param_expansion("EMPTY:-fallback").unwrap();
     assert_eq!(result, "fallback");
@@ -740,7 +740,7 @@ mod tests {
   #[test]
   fn param_default_unset_only() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str("".into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
 
     // ${EMPTY-fallback} - EMPTY is set (even if null), so returns null
     let result = test_param_expansion("EMPTY-fallback").unwrap();

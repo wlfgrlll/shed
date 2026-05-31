@@ -11,8 +11,8 @@ pub fn execvpe<SA: AsRef<CStr>, SE: AsRef<CStr>>(
   env: &[SE],
 ) -> nix::Result<Infallible> {
   // for nix::unistd::execve
-  let args_c: Vec<&CStr> = args.iter().map(|a| a.as_ref()).collect();
-  let env_c: Vec<&CStr> = env.iter().map(|e| e.as_ref()).collect();
+  let args_c: Vec<&CStr> = args.iter().map(AsRef::as_ref).collect();
+  let env_c: Vec<&CStr> = env.iter().map(AsRef::as_ref).collect();
   let mut is_denied = false;
 
   if filename.to_bytes().contains(&b'/') {
@@ -24,9 +24,9 @@ pub fn execvpe<SA: AsRef<CStr>, SE: AsRef<CStr>>(
       let c_path = std::ffi::CString::new(full_path_str.to_str().unwrap()).unwrap();
       match execve(c_path.as_c_str(), &args_c, &env_c) {
         Ok(_) => unreachable!(),
-        Err(Errno::ENOENT) | Err(Errno::ENOTDIR) => continue, // Try next path
-        Err(Errno::EACCES) => is_denied = true,               // Permission denied
-        Err(e) => return Err(e),                              // Other error
+        Err(Errno::ENOENT | Errno::ENOTDIR) => (), // Try next path
+        Err(Errno::EACCES) => is_denied = true,    // Permission denied
+        Err(e) => return Err(e),                   // Other error
       }
     }
   }

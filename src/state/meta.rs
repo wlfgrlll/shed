@@ -214,6 +214,7 @@ impl CmdTimer {
     Ok(Self::format_ms(total_ms))
   }
 
+  #[expect(clippy::too_many_lines)]
   pub fn format_report(&self, fmt_str: &str) -> ShResult<String> {
     if self.still_running() {
       return Err(sherr!(
@@ -325,7 +326,7 @@ impl CmdTimer {
             output.push(param);
             break
           }
-        };
+        }
       }
       _ => output.push(ch),
     });
@@ -335,31 +336,22 @@ impl CmdTimer {
   fn report(&self) -> ShResult<()> {
     let has_autocmds = Shed::logic(|l| !l.get_autocmds(AutoCmdKind::OnTimeReport).is_empty());
 
-    if !has_autocmds {
-      let fmt_str = super::util::get_time_fmt();
-      let report = self.format_report(&fmt_str)?;
-      system_msg!("{report}");
-    } else {
+    if has_autocmds {
       let vars = [
         ("TIME_REAL_MS".into(), self.total_wall_ms()?.to_string()),
         ("TIME_USER_MS".into(), self.total_user_ms()?.to_string()),
         ("TIME_SYS_MS".into(), self.total_sys_ms()?.to_string()),
-        (
-          "TIME_REAL_FMT".into(),
-          self.total_wall_formatted()?.to_string(),
-        ),
-        (
-          "TIME_USER_FMT".into(),
-          self.total_user_formatted()?.to_string(),
-        ),
-        (
-          "TIME_SYS_FMT".into(),
-          self.total_sys_formatted()?.to_string(),
-        ),
+        ("TIME_REAL_FMT".into(), self.total_wall_formatted()?.clone()),
+        ("TIME_USER_FMT".into(), self.total_user_formatted()?.clone()),
+        ("TIME_SYS_FMT".into(), self.total_sys_formatted()?.clone()),
         ("TIME_CPU_PCT".into(), self.cpu_pct()?.to_string()),
         ("TIME_RSS".into(), self.max_rss()?.to_string()),
       ];
       super::util::with_vars(vars, || autocmd!(OnTimeReport));
+    } else {
+      let fmt_str = super::util::get_time_fmt();
+      let report = self.format_report(&fmt_str)?;
+      system_msg!("{report}");
     }
     Ok(())
   }
@@ -368,7 +360,7 @@ impl CmdTimer {
 impl Drop for CmdTimer {
   /// Calls `CmdTimer::stop()` internally
   ///
-  /// This allows CmdTimer to also be used as an RAII guard
+  /// This allows `CmdTimer` to also be used as an RAII guard
   fn drop(&mut self) {
     self.stop().ok();
   }
@@ -434,7 +426,7 @@ impl Utility {
 pub(crate) struct LoopGuard;
 impl Drop for LoopGuard {
   fn drop(&mut self) {
-    Shed::meta_mut(|m| m.leave_loop())
+    Shed::meta_mut(MetaTab::leave_loop);
   }
 }
 
@@ -444,7 +436,7 @@ impl Drop for LoopGuard {
 pub(crate) struct FuncGuard;
 impl Drop for FuncGuard {
   fn drop(&mut self) {
-    Shed::meta_mut(|m| m.leave_func())
+    Shed::meta_mut(MetaTab::leave_func);
   }
 }
 
@@ -561,7 +553,7 @@ impl Default for MetaTab {
 pub(crate) struct ProcSubGuard;
 impl Drop for ProcSubGuard {
   fn drop(&mut self) {
-    Shed::meta_mut(|m| m.pop_procsub_frame())
+    Shed::meta_mut(MetaTab::pop_procsub_frame);
   }
 }
 
@@ -610,7 +602,7 @@ impl MetaTab {
   pub fn shell_time(&self) -> Instant {
     self.shell_time
   }
-  pub fn ensure_meta_table(&self) -> ShResult<()> {
+  pub fn ensure_meta_table() -> ShResult<()> {
     query_db(|conn| {
       conn.execute(
         "CREATE TABLE IF NOT EXISTS meta (
@@ -623,7 +615,7 @@ impl MetaTab {
     })?;
     Ok(())
   }
-  pub fn disable_welcome_message(&self) -> ShResult<()> {
+  pub fn disable_welcome_message() -> ShResult<()> {
     query_db(|conn| {
       conn.execute(
         "INSERT INTO meta (key, value) VALUES ('show_welcome', '0')
@@ -663,7 +655,7 @@ impl MetaTab {
   pub fn func_depth(&self) -> usize {
     self.func_depth
   }
-  pub fn welcome_message(&self, force: bool) -> Option<String> {
+  pub fn welcome_message(force: bool) -> Option<String> {
     let res = query_db(|conn| {
       let result = conn.query_row(
         "SELECT value FROM meta WHERE key='show_welcome'",
@@ -693,11 +685,11 @@ impl MetaTab {
     ];
 
     let mut longest = -1;
-    content_lines.iter().for_each(|l| {
+    for l in &content_lines {
       if longest < (l.len() as i32) {
         longest = l.len() as i32;
       }
-    });
+    }
     let longest = longest as usize;
 
     let version = env!("CARGO_PKG_VERSION");
@@ -813,7 +805,7 @@ impl MetaTab {
   }
   pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
     let path = var!("PATH");
-    let paths = path.split(":").map(PathBuf::from);
+    let paths = path.split(':').map(PathBuf::from);
     let mut seen = HashSet::new();
     let mut cmds = vec![];
     for path in paths {
@@ -883,23 +875,23 @@ impl MetaTab {
     Ok(())
   }
   pub fn get_socket(&self) -> Option<Arc<socket::ShedSocket>> {
-    self.socket.as_ref().cloned()
+    self.socket.clone()
   }
-  pub fn read_socket(&mut self) -> ShResult<Vec<(UnixStream, socket::SocketRequest)>> {
+  pub fn read_socket(&mut self) -> Vec<(UnixStream, socket::SocketRequest)> {
     let mut requests = vec![];
     let Some(listener) = self.get_socket() else {
-      return Ok(requests);
+      return requests;
     };
 
     while let Ok((conn, _)) = listener.listener().accept()
-      && let Some(req) = self.read_request(&conn)
+      && let Some(req) = Self::read_request(&conn)
     {
       requests.push((conn, req));
     }
 
-    Ok(requests)
+    requests
   }
-  pub fn read_request(&self, conn: &UnixStream) -> Option<socket::SocketRequest> {
+  pub fn read_request(conn: &UnixStream) -> Option<socket::SocketRequest> {
     conn.set_nonblocking(false).ok();
     let mut bytes = vec![];
     loop {
@@ -913,7 +905,7 @@ impl MetaTab {
           }
           bytes.extend_from_slice(&buffer[..n]);
         }
-        Err(Errno::EINTR) => continue,
+        Err(Errno::EINTR) => (),
         Err(e) => {
           writefd!(conn, "error>> failed to parse request: {e}\n").ok();
           break;
@@ -938,12 +930,10 @@ impl MetaTab {
   pub fn push_subscriber(&mut self, subscriber: UnixStream) {
     self.subscribers.push(Arc::new(subscriber));
   }
-  pub fn notify_autocmd(&self, kind: AutoCmdKind) -> ShResult<()> {
+  pub fn notify_autocmd(&self, kind: AutoCmdKind) {
     for subscriber in &self.subscribers {
       write(subscriber, format!("autocmd_event>>{kind}\n").as_bytes()).ok();
     }
-
-    Ok(())
   }
   pub fn num_subscribers(&self) -> usize {
     self.subscribers.len()
@@ -960,7 +950,7 @@ impl MetaTab {
       self.subscribers.remove(i);
     }
   }
-  pub fn notify_job_complete(&mut self, job: &Job) -> ShResult<()> {
+  pub fn notify_job_complete(&mut self, job: &Job) {
     let id = job.tabid().map(|i| (i + 1).to_string()).unwrap_or_default();
     let pids = job.get_pids();
     let stats = job.get_stats();
@@ -975,14 +965,13 @@ impl MetaTab {
           WtStat::Signaled(_, sig, _) => format!("signaled:{sig:?}"),
           other => format!("{other:?}"),
         };
-        buf.push_str(&format!("job>>child>>{pid} {stat_str} {cmd}\n"));
+        let _ = writeln!(buf, "job>>child>>{pid} {stat_str} {cmd}");
       }
       writefd!(sub, "{buf}")?;
       Ok(())
     });
-    Ok(())
   }
-  pub fn notify_line_edit(&mut self, data: LineData) -> ShResult<()> {
+  pub fn notify_line_edit(&mut self, data: LineData) {
     let LineData {
       buffer,
       cursor,
@@ -993,32 +982,28 @@ impl MetaTab {
 
     self.broadcast(|sub| {
       let mut buf = String::new();
-      buf.push_str(&format!("line>>buffer>>{buffer}\n"));
-      buf.push_str(&format!("line>>cursor>>{cursor}\n"));
+      let _ = writeln!(buf, "line>>buffer>>{buffer}");
+      let _ = writeln!(buf, "line>>cursor>>{cursor}");
       if let Some(anchor) = anchor {
-        buf.push_str(&format!("line>>anchor>>{anchor}\n"));
+        let _ = writeln!(buf, "line>>anchor>>{anchor}");
       }
       if let Some(hint) = &hint {
-        buf.push_str(&format!("line>>hint>>{hint}\n"));
+        let _ = writeln!(buf, "line>>hint>>{hint}");
       }
-      buf.push_str(&format!("line>>mode>>{mode}\n"));
+      let _ = writeln!(buf, "line>>mode>>{mode}");
 
       write(sub, buf.as_bytes())?;
       Ok(())
     });
-
-    Ok(())
   }
-  pub fn notify_key_event(&mut self, event: KeyEvent) -> ShResult<()> {
-    let seq = event.as_vim_seq()?;
+  pub fn notify_key_event(&mut self, event: &KeyEvent) {
+    let seq = event.as_vim_seq();
 
     self.broadcast(|sub| {
       let buf = format!("line>>key_event>>{seq}\n");
       write(sub, buf.as_bytes())?;
       Ok(())
     });
-
-    Ok(())
   }
   pub fn cache_util(&mut self, util: Rc<Utility>) {
     self.util_cache.insert(util);
@@ -1080,11 +1065,11 @@ impl MetaTab {
       let funcs = l.funcs();
       let aliases = l.aliases();
       for func in funcs.keys() {
-        let util = Utility::function(func.to_string());
+        let util = Utility::function(func.clone());
         self.cache_util(util.into());
       }
       for alias in aliases.keys() {
-        let util = Utility::alias(alias.to_string());
+        let util = Utility::alias(alias.clone());
         self.cache_util(util.into());
       }
       l.set_dirty(false);
@@ -1154,13 +1139,13 @@ impl MetaTab {
 #[cfg(test)]
 mod read_request_tests {
   use crate::socket::SocketRequest;
-  use crate::state::Shed;
+  use crate::state::meta::MetaTab;
   use crate::tests::testutil::TestGuard;
   use std::io::Write;
   use std::os::unix::net::UnixStream;
 
-  /// Set up a UnixStream pair; the test writes a request to `writer`
-  /// then calls read_request on `reader`.
+  /// Set up a `UnixStream` pair; the test writes a request to `writer`
+  /// then calls `read_request` on `reader`.
   fn pair() -> (UnixStream, UnixStream) {
     UnixStream::pair().unwrap()
   }
@@ -1170,7 +1155,7 @@ mod read_request_tests {
     let _g = TestGuard::new();
     let (mut writer, reader) = pair();
     writer.write_all(b"subscribe\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     assert!(matches!(req, SocketRequest::Subscribe));
   }
 
@@ -1179,7 +1164,7 @@ mod read_request_tests {
     let _g = TestGuard::new();
     let (mut writer, reader) = pair();
     writer.write_all(b"redraw\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     assert!(matches!(req, SocketRequest::RefreshPrompt));
   }
 
@@ -1188,7 +1173,7 @@ mod read_request_tests {
     let _g = TestGuard::new();
     let (mut writer, reader) = pair();
     writer.write_all(b"msg::system::hello world\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     match req {
       SocketRequest::PostSystemMessage(msg) => assert_eq!(msg, "hello world"),
       other => panic!("expected PostSystemMessage, got {other:?}"),
@@ -1200,7 +1185,7 @@ mod read_request_tests {
     let _g = TestGuard::new();
     let (mut writer, reader) = pair();
     writer.write_all(b"msg::status::saved\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     match req {
       SocketRequest::PostStatusMessage(msg) => assert_eq!(msg, "saved"),
       other => panic!("expected PostStatusMessage, got {other:?}"),
@@ -1212,7 +1197,7 @@ mod read_request_tests {
     let _g = TestGuard::new();
     let (mut writer, reader) = pair();
     writer.write_all(b"nonsense_request\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader));
+    let req = MetaTab::read_request(&reader);
     assert!(req.is_none());
   }
 
@@ -1223,7 +1208,7 @@ mod read_request_tests {
     // Write in two chunks to exercise the loop's accumulator branch.
     writer.write_all(b"subscr").unwrap();
     writer.write_all(b"ibe\n").unwrap();
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     assert!(matches!(req, SocketRequest::Subscribe));
   }
 
@@ -1237,16 +1222,16 @@ mod read_request_tests {
       // Drop writer → EOF on reader side; the loop's Ok(0) branch
       // fires and we parse what we have.
     }
-    let req = Shed::meta(|m| m.read_request(&reader)).unwrap();
+    let req = MetaTab::read_request(&reader).unwrap();
     assert!(matches!(req, SocketRequest::Subscribe));
   }
 }
 
 #[cfg(test)]
 mod cmd_timer_tests {
-  //! Coverage targets the cold parts of CmdTimer: the still_running
+  //! Coverage targets the cold parts of `CmdTimer`: the `still_running`
   //! Err returns on every reporting method, the `hours > 0` branch in
-  //! format_ms, and the format_report %-spec branches.
+  //! `format_ms`, and the `format_report` %-spec branches.
 
   use super::*;
   use crate::tests::testutil::TestGuard;

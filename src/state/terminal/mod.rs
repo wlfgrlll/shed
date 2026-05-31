@@ -55,6 +55,21 @@ static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
   procio::move_high(owned).ok()
 });
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ScrollRegionState {
+  Set(u16, u16),
+  Unset,
+}
+
+impl ScrollRegionState {
+  pub fn dims(self) -> Option<(u16, u16)> {
+    match self {
+      ScrollRegionState::Set(top, bottom) => Some((top, bottom)),
+      ScrollRegionState::Unset => None,
+    }
+  }
+}
+
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
   pub(crate) struct TermCap: u32 {
@@ -73,6 +88,7 @@ bitflags! {
 
 /// An abstraction over the terminal that manages terminal attributes, and I/O.
 #[derive(Debug)]
+#[expect(clippy::struct_excessive_bools)]
 pub(crate) struct Terminal {
   tty: Option<RawFd>,
   reader: parse::PollReader,
@@ -95,7 +111,7 @@ pub(crate) struct Terminal {
   t_cols: usize,
   t_rows: usize,
 
-  scroll_region: Option<(u16, u16)>,
+  scroll_region: ScrollRegionState,
 
   last_bell: Option<Instant>,
 
@@ -210,33 +226,26 @@ impl Terminal {
     Some(ColorMode::Palette16)
   }
 
-  fn toggle_attr(
-    buf: &mut String,
-    switch: &mut bool,
-    on_ctl: &str,
-    off_ctl: &str,
-    on: bool,
-  ) -> ShResult<()> {
+  fn toggle_attr(buf: &mut String, switch: &mut bool, on_ctl: &str, off_ctl: &str, on: bool) {
     let control = if on && !*switch {
       on_ctl
     } else if !on && *switch {
       off_ctl
     } else {
-      return Ok(());
+      return;
     };
 
     buf.push_str(control);
 
     *switch = on;
-    Ok(())
   }
 
   pub fn new() -> Self {
     let tty: Option<RawFd> = TTY_FILENO
       .as_ref()
       .filter(|fd| isatty(fd.as_fd()).unwrap_or(false))
-      .map(|fd| fd.as_raw_fd());
-    let (cols, rows) = tty.map(get_win_size).unwrap_or((80, 24));
+      .map(AsRawFd::as_raw_fd);
+    let (cols, rows) = tty.map_or((80, 24), get_win_size);
 
     Self {
       tty,
@@ -256,7 +265,7 @@ impl Terminal {
       xt_version: None,
       t_cols: cols as usize,
       t_rows: rows as usize,
-      scroll_region: None,
+      scroll_region: ScrollRegionState::Unset,
       last_bell: None,
       test_mode: false,
     }
@@ -297,10 +306,10 @@ impl Terminal {
     guard.activate()
   }
 
-  pub fn mouse_support_guard(&mut self, on: bool) -> ShResult<TermGuard> {
+  pub fn mouse_support_guard(&mut self, on: bool) -> TermGuard {
     let guard = TermGuard::new().with_mouse_support(self.mouse_enabled);
-    self.toggle_mouse_support(on)?;
-    Ok(guard.activate())
+    self.toggle_mouse_support(on);
+    guard.activate()
   }
 
   pub fn setup_terminal(&mut self) -> ShResult<TermGuard> {
@@ -314,11 +323,11 @@ impl Terminal {
         .as_ref()
         .is_none_or(|v| !v.has_broken_kitty_kbd())
     {
-      self.toggle_kitty_proto(true)?;
+      self.toggle_kitty_proto(true);
     } else if self
       .xt_version
       .as_ref()
-      .is_some_and(|v| v.needs_wezterm_workaround())
+      .is_some_and(parse::XtVersion::needs_wezterm_workaround)
     {
       self.write_direct(Self::APPLICATION_KEYPAD)?;
     } else {
@@ -351,7 +360,7 @@ impl Terminal {
 
       self.reader.read(tty)?;
 
-      match_loop!(self.reader.read_event()? => event, {
+      match_loop!(self.reader.read_event() => event, {
         TermEvent::KittyKbdFlags => {
           self.term_caps.insert(TermCap::KITTY_KBD_PROTO);
         }
@@ -408,7 +417,7 @@ impl Terminal {
 
   pub fn yield_terminal(&mut self) -> TermGuard {
     let guard = TermGuard::new().with_scroll_region(self.scroll_region);
-    self.reset_scroll_region().ok();
+    self.reset_scroll_region();
     self.flush().ok(); // ensure the reset reaches the terminal before exec
     guard.activate()
   }
@@ -434,23 +443,23 @@ impl Terminal {
 
     let mut wrote_seq = false;
     if let Some(bracketed_paste) = guard.bracketed_paste() {
-      self.toggle_bracketed_paste(bracketed_paste)?;
+      self.toggle_bracketed_paste(bracketed_paste);
       wrote_seq = true;
     }
     if let Some(kitty_proto) = guard.kitty_proto() {
-      self.toggle_kitty_proto(kitty_proto)?;
+      self.toggle_kitty_proto(kitty_proto);
       wrote_seq = true;
     }
     if let Some(report_focus) = guard.report_focus() {
-      self.toggle_report_focus(report_focus)?;
+      self.toggle_report_focus(report_focus);
       wrote_seq = true;
     }
     if let Some(alt_buffer) = guard.alt_buffer() {
-      self.toggle_alt_buffer(alt_buffer)?;
+      self.toggle_alt_buffer(alt_buffer);
       wrote_seq = true;
     }
     if let Some(cursor_visible) = guard.cursor_visible() {
-      self.toggle_cursor_visibility(cursor_visible)?;
+      self.toggle_cursor_visibility(cursor_visible);
       wrote_seq = true;
     }
     if let Some(cursor_style) = guard.cursor_style() {
@@ -458,7 +467,7 @@ impl Terminal {
       wrote_seq = true;
     }
     if let Some(mouse_mode) = guard.mouse_support() {
-      self.toggle_mouse_support(mouse_mode)?;
+      self.toggle_mouse_support(mouse_mode);
       wrote_seq = true;
     }
     if let Some(interactive) = guard.interactive() {
@@ -466,8 +475,8 @@ impl Terminal {
     }
     if let Some(scroll_region) = guard.scroll_region() {
       match scroll_region {
-        Some((top, bottom)) => self.set_scroll_region(top, bottom)?,
-        None => self.reset_scroll_region()?,
+        ScrollRegionState::Set(top, bottom) => self.set_scroll_region(top, bottom),
+        ScrollRegionState::Unset => self.reset_scroll_region(),
       }
       wrote_seq = true;
     }
@@ -478,7 +487,7 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn reserved_rows(&self) -> u16 {
+  pub fn reserved_rows() -> u16 {
     if shopt!(statline.enable) { 2 } else { 1 }
   }
 
@@ -491,10 +500,10 @@ impl Terminal {
     // If a scroll region is active, recompute its bottom relative to the
     // new terminal size. Assumes the owner intends to reserve 2 rows at
     // the bottom (status line + gap above it).
-    if let Some((top, _)) = self.scroll_region {
-      let reserved = self.reserved_rows();
+    if let ScrollRegionState::Set(top, _) = self.scroll_region {
+      let reserved = Self::reserved_rows();
       let new_bottom = (rows.saturating_sub(reserved)).max(top);
-      self.set_scroll_region(top, new_bottom).ok();
+      self.set_scroll_region(top, new_bottom);
     }
   }
 
@@ -509,6 +518,7 @@ impl Terminal {
   }
 
   pub fn get_cursor_pos(&mut self) -> ShResult<Option<(Rows, Cols)>> {
+    use std::io::Write;
     if self.test_mode {
       return Ok(None);
     }
@@ -517,7 +527,6 @@ impl Terminal {
     };
 
     // flush the buffer to execute any cursor movements
-    use std::io::Write;
     self.flush().ok();
 
     // ask the terminal where our cursor is
@@ -530,7 +539,7 @@ impl Terminal {
 
     self.reader.read(tty)?;
 
-    while let Some(event) = self.reader.read_event_from_bytes()? {
+    while let Some(event) = self.reader.read_event_from_bytes() {
       let TermEvent::CursorPos(row, col) = event else {
         self.reader.push_event(event);
         continue;
@@ -688,24 +697,24 @@ impl Terminal {
     self.reader.read(tty)
   }
 
-  pub fn drain_keys(&mut self) -> ShResult<Vec<KeyEvent>> {
+  pub fn drain_keys(&mut self) -> Vec<KeyEvent> {
     let mut keys = vec![];
-    while let Some(key) = self.reader.readkey()? {
+    while let Some(key) = self.reader.readkey() {
       keys.push(key);
     }
-    Ok(keys)
+    keys
   }
 
   pub fn cooked_mode_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false)?;
+    self.toggle_bracketed_paste(false);
     self.edit_termios(enable_cooked_mode)?;
     Ok(guard.activate())
   }
 
   pub fn cooked_no_echo_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false)?;
+    self.toggle_bracketed_paste(false);
     self.edit_termios(|t| {
       enable_cooked_mode(t);
       t.local_flags.remove(termios::LocalFlags::ECHO);
@@ -716,25 +725,25 @@ impl Terminal {
   pub fn prepare_for_pager(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
     self.edit_termios(enable_raw_mode)?;
-    self.toggle_bracketed_paste(false)?;
-    self.toggle_report_focus(false)?;
-    self.toggle_alt_buffer(true)?;
-    self.reset_scroll_region()?;
-    self.toggle_mouse_support(true)?;
+    self.toggle_bracketed_paste(false);
+    self.toggle_report_focus(false);
+    self.toggle_alt_buffer(true);
+    self.reset_scroll_region();
+    self.toggle_mouse_support(true);
     self.set_cursor_style(CursorStyle::Default)?;
-    self.toggle_cursor_visibility(false)?;
+    self.toggle_cursor_visibility(false);
     self.flush()?;
     Ok(guard.activate())
   }
 
   pub fn prepare_for_exec(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false)?;
-    self.toggle_report_focus(false)?;
-    self.toggle_alt_buffer(false)?;
+    self.toggle_bracketed_paste(false);
+    self.toggle_report_focus(false);
+    self.toggle_alt_buffer(false);
     self.edit_termios(enable_cooked_mode)?;
     self.set_cursor_style(CursorStyle::Default)?;
-    self.toggle_kitty_proto(false)?;
+    self.toggle_kitty_proto(false);
     self.flush()?; // flush escape sequences before switching to cooked mode
     Ok(guard.activate())
   }
@@ -775,7 +784,7 @@ impl Terminal {
   ///
   /// Some child programs (notably pagers like less invoked by bat) run their
   /// own termios cleanup on exit. When they die after the shell has reaped
-  /// their parent, their cleanup races with our pop_termios and can leave
+  /// their parent, their cleanup races with our `pop_termios` and can leave
   /// the tty in cooked mode. We follow zsh's mitigation here: just re-apply
   /// raw mode at the start of every readline iteration. Cheap (one ioctl)
   /// and resilient to any late tcsetattr from orphaned descendants.
@@ -817,7 +826,7 @@ impl Terminal {
     while !buf.is_empty() {
       match write(tty, buf) {
         Ok(n) => buf = &buf[n..],
-        Err(Errno::EINTR) => continue,
+        Err(Errno::EINTR) => (),
         Err(_) => return Err(std::io::Error::last_os_error().into()),
       }
     }
@@ -835,84 +844,82 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn toggle_report_focus(&mut self, on: bool) -> ShResult<()> {
+  pub fn toggle_report_focus(&mut self, on: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.report_focus,
       Self::FOCUS_REPORT_ON,
       Self::FOCUS_REPORT_OFF,
       on,
-    )
+    );
   }
 
-  pub fn toggle_cursor_visibility(&mut self, visible: bool) -> ShResult<()> {
+  pub fn toggle_cursor_visibility(&mut self, visible: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.cursor_visible,
       Self::CURSOR_SHOW,
       Self::CURSOR_HIDE,
       visible,
-    )
+    );
   }
 
-  pub fn toggle_alt_buffer(&mut self, on: bool) -> ShResult<()> {
+  pub fn toggle_alt_buffer(&mut self, on: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.alt_buffer,
       Self::ALT_BUFFER_ENTER,
       Self::ALT_BUFFER_EXIT,
       on,
-    )?;
+    );
     // Most xterm-class terminals save/restore the scroll region across
     // alt-screen transitions. Re-assert ours on exit defensively in case
     // the terminal didn't. Bracket with cursor save/restore so DECSTBM
     // doesn't home the cursor as a side effect.
-    if !on && let Some((top, bottom)) = self.scroll_region {
+    if !on && let ScrollRegionState::Set(top, bottom) = self.scroll_region {
       self.with_saved_cursor(|this| {
         write!(this, "\x1b[{top};{bottom}r").ok();
       });
     }
-    Ok(())
   }
 
-  pub fn toggle_bracketed_paste(&mut self, on: bool) -> ShResult<()> {
+  pub fn toggle_bracketed_paste(&mut self, on: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.bracketed_paste,
       Self::BRACKET_PASTE_ON,
       Self::BRACKET_PASTE_OFF,
       on,
-    )
+    );
   }
 
-  pub fn toggle_mouse_support(&mut self, on: bool) -> ShResult<()> {
+  pub fn toggle_mouse_support(&mut self, on: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.mouse_enabled,
       Self::MOUSE_ON,
       Self::MOUSE_OFF,
       on,
-    )
+    );
   }
 
-  pub fn toggle_kitty_proto(&mut self, on: bool) -> ShResult<()> {
+  pub fn toggle_kitty_proto(&mut self, on: bool) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.kitty_kbd_proto,
       Self::KITTY_PROTO_ON,
       Self::KITTY_PROTO_OFF,
       on,
-    )
+    );
   }
 
   /// Set the terminal scroll region (DECSTBM). `top` and `bottom` are
   /// 1-indexed inclusive row numbers.
-  pub fn set_scroll_region(&mut self, top: u16, bottom: u16) -> ShResult<()> {
+  pub fn set_scroll_region(&mut self, top: u16, bottom: u16) {
     self.with_saved_cursor(|this| {
       write!(this, "\x1b[{top};{bottom}r").ok();
     });
-    self.scroll_region = Some((top, bottom));
-    Ok(())
+    self.scroll_region = ScrollRegionState::Set(top, bottom);
   }
 
   /// Perform an operation and restore the cursor's original position afterwards.
@@ -923,8 +930,8 @@ impl Terminal {
     res
   }
 
-  pub fn reset_scroll_region(&mut self) -> ShResult<()> {
-    if let Some((_, bottom)) = self.scroll_region {
+  pub fn reset_scroll_region(&mut self) {
+    if let ScrollRegionState::Set(_, bottom) = self.scroll_region {
       let max_row = self.t_rows as u16;
       self.with_saved_cursor(|this| {
         for row in (bottom + 1)..=max_row {
@@ -933,12 +940,11 @@ impl Terminal {
         }
         this.input_buf.push_str(Self::SCROLL_REGION_RESET);
       });
-      self.scroll_region = None;
+      self.scroll_region = ScrollRegionState::Unset;
     }
-    Ok(())
   }
 
-  pub fn scroll_region(&self) -> Option<(u16, u16)> {
+  pub fn scroll_region(&self) -> ScrollRegionState {
     self.scroll_region
   }
 
@@ -959,14 +965,13 @@ impl Terminal {
     write!(self, "\x1b[{row};{col}H").ok();
   }
 
-  pub fn reserve_status_rows(&mut self) -> ShResult<()> {
-    let reserved: u16 = self.reserved_rows();
+  pub fn reserve_status_rows(&mut self) {
+    let reserved: u16 = Self::reserved_rows();
     let bottom = (self.t_rows() as u16).saturating_sub(reserved).max(1);
-    self.set_scroll_region(1, bottom)?;
+    self.set_scroll_region(1, bottom);
     if shopt!(statline.enable) {
       self.move_cursor_abs(bottom, 1);
     }
-    Ok(())
   }
 
   /// Render the status line at the bottom row of the terminal.
@@ -1003,9 +1008,8 @@ impl Terminal {
     self.tty = None;
   }
 
-  pub fn clear_under_cursor(&mut self) -> ShResult<()> {
+  pub fn clear_under_cursor(&mut self) {
     self.input_buf.push_str("\x1b[0J");
-    Ok(())
   }
 
   #[cfg(test)]
@@ -1021,11 +1025,11 @@ impl Terminal {
   pub fn reset_for_exit(&mut self) {
     let Some(_tty) = self.tty() else { return };
 
-    self.reset_scroll_region().ok();
-    self.toggle_bracketed_paste(false).ok();
-    self.toggle_kitty_proto(false).ok();
-    self.toggle_cursor_visibility(true).ok();
-    self.toggle_alt_buffer(false).ok();
+    self.reset_scroll_region();
+    self.toggle_bracketed_paste(false);
+    self.toggle_kitty_proto(false);
+    self.toggle_cursor_visibility(true);
+    self.toggle_alt_buffer(false);
     if self.cursor_style != CursorStyle::Default {
       self.set_cursor_style(CursorStyle::Default).ok();
     }
@@ -1063,7 +1067,7 @@ impl std::io::Write for Terminal {
     while !buf.is_empty() {
       match write(tty, buf) {
         Ok(n) => buf = &buf[n..],
-        Err(Errno::EINTR) => continue,
+        Err(Errno::EINTR) => (),
         Err(_) => {
           self.input_buf.clear();
           return Err(std::io::Error::last_os_error());
@@ -1098,7 +1102,7 @@ mod color_mode_tests {
   }
 
   fn color_mode() -> Option<ColorMode> {
-    Shed::term(|t| t.color_mode())
+    Shed::term(super::Terminal::color_mode)
   }
 
   // ─── NO_COLOR ─────────────────────────────────────────────────────
@@ -1266,7 +1270,7 @@ mod color_mode_tests {
 #[cfg(test)]
 mod terminal_method_tests {
   //! Tier 1: pure-output assertions. Each function emits ANSI escapes
-  //! into Terminal's input_buf; we call it, flush via Shed::term_mut,
+  //! into Terminal's `input_buf`; we call it, flush via `Shed::term_mut`,
   //! and assert the escapes landed on the pty master.
 
   use super::*;
@@ -1309,7 +1313,7 @@ mod terminal_method_tests {
   #[test]
   fn set_scroll_region_emits_decstbm() {
     let g = TestGuard::new();
-    Shed::term_mut(|t| t.set_scroll_region(2, 20).unwrap());
+    Shed::term_mut(|t| t.set_scroll_region(2, 20));
     let out = drain(&g);
     assert!(out.contains("\x1b[2;20r"), "got: {out:?}");
   }
@@ -1317,9 +1321,9 @@ mod terminal_method_tests {
   #[test]
   fn set_scroll_region_updates_state() {
     let _g = TestGuard::new();
-    Shed::term_mut(|t| t.set_scroll_region(3, 15).unwrap());
-    let region = Shed::term(|t| t.scroll_region());
-    assert_eq!(region, Some((3, 15)));
+    Shed::term_mut(|t| t.set_scroll_region(3, 15));
+    let region = Shed::term(super::Terminal::scroll_region);
+    assert!(matches!(region, ScrollRegionState::Set(3, 15)));
   }
 
   // ─── reset_scroll_region ────────────────────────────────────────
@@ -1327,19 +1331,22 @@ mod terminal_method_tests {
   #[test]
   fn reset_scroll_region_after_set_emits_reset_and_clears_state() {
     let g = TestGuard::new();
-    Shed::term_mut(|t| t.set_scroll_region(2, 10).unwrap());
+    Shed::term_mut(|t| t.set_scroll_region(2, 10));
     let _ = drain(&g);
-    Shed::term_mut(|t| t.reset_scroll_region().unwrap());
+    Shed::term_mut(super::Terminal::reset_scroll_region);
     let out = drain(&g);
     // SCROLL_REGION_RESET is `\x1b[r`.
     assert!(out.contains("\x1b[r"), "got: {out:?}");
-    assert_eq!(Shed::term(|t| t.scroll_region()), None);
+    assert!(matches!(
+      Shed::term(super::Terminal::scroll_region),
+      ScrollRegionState::Unset
+    ));
   }
 
   #[test]
   fn reset_scroll_region_when_unset_is_noop() {
     let g = TestGuard::new();
-    Shed::term_mut(|t| t.reset_scroll_region().unwrap());
+    Shed::term_mut(super::Terminal::reset_scroll_region);
     let out = drain(&g);
     assert!(
       !out.contains("\x1b[r"),
@@ -1365,7 +1372,7 @@ mod terminal_method_tests {
   #[test]
   fn clear_under_cursor_emits_ed_0() {
     let g = TestGuard::new();
-    Shed::term_mut(|t| t.clear_under_cursor().unwrap());
+    Shed::term_mut(super::Terminal::clear_under_cursor);
     let out = drain(&g);
     assert!(out.contains("\x1b[0J"), "got: {out:?}");
   }
@@ -1399,11 +1406,11 @@ mod terminal_method_tests {
     let g = TestGuard::new();
     // Put the terminal in a non-default state so reset has something to do.
     Shed::term_mut(|t| {
-      t.set_scroll_region(2, 10).unwrap();
+      t.set_scroll_region(2, 10);
       t.set_cursor_style(CursorStyle::Beam(true)).unwrap();
     });
     let _ = drain(&g);
-    Shed::term_mut(|t| t.reset_for_exit());
+    Shed::term_mut(super::Terminal::reset_for_exit);
     let out = g.read_output();
     // Cursor visibility on (CURSOR_SHOW), bracketed paste off, scroll region reset, etc.
     assert!(
@@ -1418,9 +1425,9 @@ mod terminal_method_tests {
   #[test]
   fn detach_tty_makes_subsequent_writes_no_ops() {
     let g = TestGuard::new();
-    Shed::term_mut(|t| t.detach_tty());
+    Shed::term_mut(super::Terminal::detach_tty);
     // After detach, writes should be silently discarded.
-    Shed::term_mut(|t| t.clear_under_cursor().ok());
+    Shed::term_mut(super::Terminal::clear_under_cursor);
     Shed::term_mut(|t| t.flush().ok());
     let out = g.read_output();
     assert!(
@@ -1435,9 +1442,9 @@ mod terminal_method_tests {
     let _g = TestGuard::new();
     // Buffer something but don't flush.
     Shed::term_mut(|t| {
-      let _ = t.clear_under_cursor();
+      let () = t.clear_under_cursor();
     });
-    Shed::term_mut(|t| t.detach_tty());
+    Shed::term_mut(super::Terminal::detach_tty);
     // input_buf should be empty after detach (buffered output dropped).
     // We can verify by trying to flush — no output should appear.
     let g2 = TestGuard::new();
@@ -1507,9 +1514,9 @@ mod terminal_method_tests {
   #[test]
   fn query_term_caps_is_skipped_in_test_mode() {
     let _g = TestGuard::new();
-    let caps_before = Shed::term(|t| t.term_caps());
+    let caps_before = Shed::term(super::Terminal::term_caps);
     Shed::term_mut(|t| t.query_term_caps().unwrap());
-    let caps_after = Shed::term(|t| t.term_caps());
+    let caps_after = Shed::term(super::Terminal::term_caps);
     // Should be unchanged (probe was skipped).
     assert_eq!(caps_before, caps_after);
   }

@@ -37,18 +37,18 @@ impl Tk {
   pub fn expand(self) -> ShResult<Self> {
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(self)?.expand().promote_err(span.clone())?;
+    let exp = Expander::new(&self).expand().promote_err(span.clone())?;
     let class = TkRule::Expanded { exp };
     Ok(Self { class, span, flags })
   }
   pub fn expand_to_words(self) -> ShResult<Vec<String>> {
     let span = self.span.clone();
-    Expander::new(self)?.expand().promote_err(span)
+    Expander::new(&self).expand().promote_err(span)
   }
   pub fn expand_no_side_effects(self) -> ShResult<Self> {
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(self)?
+    let exp = Expander::new(&self)
       .expand_no_side_effects()
       .promote_err(span.clone())?;
     let class = TkRule::Expanded { exp: vec![exp] };
@@ -56,7 +56,7 @@ impl Tk {
   }
   pub fn expand_no_split(self) -> ShResult<String> {
     let span = self.span.clone();
-    let exp = Expander::new(self)?
+    let exp = Expander::new(&self)
       .no_glob()
       .no_split()
       .expand_no_split()
@@ -85,13 +85,13 @@ pub struct Expander {
 }
 
 impl Expander {
-  pub fn new(raw: Tk) -> ShResult<Self> {
+  pub fn new(raw: &Tk) -> Self {
     let tk_raw = raw.span.as_str();
     Self::from_raw(tk_raw, raw.flags)
   }
-  pub fn from_raw(raw: &str, flags: TkFlags) -> ShResult<Self> {
+  pub fn from_raw(raw: &str, flags: TkFlags) -> Self {
     let raw = if raw.contains('{') {
-      brace::expand_braces_full(raw)?.join(" ")
+      brace::expand_braces_full(raw).join(" ")
     } else {
       raw.to_string()
     };
@@ -100,13 +100,13 @@ impl Expander {
     } else {
       unescape_str(&raw)
     };
-    Ok(Self {
+    Self {
       raw: unescaped,
       noglob: false,
       nosplit: false,
       allow_side_effects: true,
       flags,
-    })
+    }
   }
   pub fn no_glob(self) -> Self {
     Self {
@@ -272,7 +272,7 @@ impl Expander {
 
     let null_exp = markers::NULL_EXPAND.to_string();
     words.retain(|w| w != &null_exp);
-    for w in words.iter_mut() {
+    for w in &mut words {
       if w.contains(markers::NULL_EXPAND) {
         *w = w.replace(markers::NULL_EXPAND, "");
       }
@@ -328,7 +328,7 @@ mod tests {
   #[test]
   fn word_split_empty_ifs() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str("".into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
 
     let mut exp = Expander {
       allow_side_effects: true,
@@ -422,7 +422,7 @@ mod tests {
     })
     .unwrap();
 
-    let val = Shed::vars(|v| v.index_var("arr", ArrIndex::Literal(0))).unwrap();
+    let val = Shed::vars(|v| v.index_var("arr", &ArrIndex::Literal(0))).unwrap();
     assert_eq!(val, "a");
   }
 
@@ -438,7 +438,7 @@ mod tests {
     })
     .unwrap();
 
-    let val = Shed::vars(|v| v.index_var("arr", ArrIndex::Literal(1))).unwrap();
+    let val = Shed::vars(|v| v.index_var("arr", &ArrIndex::Literal(1))).unwrap();
     assert_eq!(val, "y");
   }
 

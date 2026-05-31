@@ -1,4 +1,4 @@
-use super::{SHED, Shed, try_var};
+use super::{super::eval::lex::Tk, SHED, Shed, try_var};
 
 use std::{
   collections::HashMap,
@@ -30,7 +30,7 @@ use super::{
   vars::{ArrIndex, Var, VarFlags, VarKind},
 };
 
-/// Parse `arr[idx]` into (name, raw_index_expr). Pure parsing, no expansion.
+/// Parse `arr[idx]` into (name, `raw_index_expr`). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
   let mut chars = var_name.chars();
   let mut name = String::new();
@@ -70,10 +70,10 @@ pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
   }
 }
 
-/// Expand the raw index expression and parse it into an ArrIndex.
+/// Expand the raw index expression and parse it into an `ArrIndex`.
 pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<ArrIndex> {
   let expanded = LexStream::new(idx_raw.into(), LexFlags::empty())
-    .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
+    .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
     .try_fold(vec![], |mut acc, wrds| {
       match wrds {
         Ok(wrds) => acc.extend(wrds),
@@ -101,15 +101,15 @@ pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<Arr
  * However, we must be mindful of what the callstack looks like when we call them, to avoid re-entrancy issues.
  */
 
-/// Query the SQLite database.
+/// Query the `SQLite` database.
 ///
-/// Takes a function that returns ShResult<T>, and returns ShResult<Option<T>>.
+/// Takes a function that returns `ShResult<T>`, and returns `ShResult<Option<T>>`.
 /// The option is necessary because `Shed.db_conn` can be None. This happens
 /// in non-interactive cases, or cases where the database cannot be opened.
 ///
 /// The returns look basically like this:
 /// * Ok(None) means "there's no database connection"
-/// * Err(e) is your function's ShErr
+/// * Err(e) is your function's `ShErr`
 /// * Ok(Some(T)) means the connection exists and your function succeeded.
 pub fn query_db<T, F: FnOnce(Arc<Connection>) -> ShResult<T>>(f: F) -> ShResult<Option<T>> {
   SHED.with(|shed| {
@@ -156,7 +156,7 @@ where
           }
         }
       }
-    })
+    });
   });
   f()
 }
@@ -191,8 +191,7 @@ pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) 
   let new_pwd = logical_pwd.unwrap_or_else(|| {
     std::env::current_dir()
       .ok()
-      .map(|p| p.display().to_string())
-      .unwrap_or_else(|| dir_raw.clone())
+      .map_or_else(|| dir_raw.clone(), |p| p.display().to_string())
   });
 
   Shed::vars_mut(|v| {
@@ -304,9 +303,9 @@ pub fn which_util(name: &str) -> Option<Rc<Utility>> {
 
 pub fn try_hash() {
   if Shed::shopts(|o| o.set.hashall) {
-    Shed::meta_mut(|m| m.try_rehash_utils());
+    Shed::meta_mut(MetaTab::try_rehash_utils);
   } else {
-    Shed::meta_mut(|m| m.clear_cache());
+    Shed::meta_mut(MetaTab::clear_cache);
   }
 }
 
@@ -329,13 +328,9 @@ pub fn rc_file_path() -> Option<PathBuf> {
 /// `genrc` builtin's no-flag behavior: live shopt values, live
 /// autocmds + keymaps, header + per-section comments included.
 #[derive(Clone, Debug)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct GenRcConfig {
-  /// If `Defaults`, render shopt values from `Self::default()` and emit
-  /// the static example autocmds / keymaps. If `Current`, render shopts
-  /// from the live `ShOpts` and dump the live `LogTab` autocmds / keymaps.
   pub source: ShoptSource,
-  /// Top-of-file `# --- Shed Runtime Commands ---` block and per-section
-  /// headers + trailing `# doc` comments on shopt lines.
   pub include_comments: bool,
   pub include_shopts: bool,
   pub include_aliases: bool,
@@ -343,10 +338,6 @@ pub struct GenRcConfig {
   pub include_completions: bool,
   pub include_autocmds: bool,
   pub include_keymaps: bool,
-  /// If `Some`, only emit shopt lines whose fully-qualified key matches
-  /// any entry — exact match (`prompt.complete_style`) or prefix match
-  /// on group boundary (`prompt` matches all of `prompt.*`). `None`
-  /// means no filter.
   pub shopt_filter: Option<Vec<String>>,
 }
 
@@ -389,6 +380,7 @@ impl GenRcConfig {
 
 /// Render an rc file to a `Vec<String>` per `config`. Pure — no I/O, no
 /// side effects on `Shed` state. Caller decides where the lines go.
+#[expect(clippy::too_many_lines)]
 pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
   let mut lines: Vec<String> = vec![];
 
@@ -425,11 +417,11 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
         if current_group.is_some() {
           lines.push(String::new());
         }
-        lines.push(format!("# - {} -", group));
+        lines.push(format!("# - {group} -"));
         current_group = Some(group);
       }
       lines.push(match (doc, config.include_comments) {
-        (Some(d), true) => format!("{:<50} # {}", entry, d),
+        (Some(d), true) => format!("{entry:<50} # {d}"),
         _ => entry,
       });
     }
@@ -497,7 +489,7 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
         ];
         for (entry, doc) in comp_lines {
           lines.push(if config.include_comments {
-            format!("{:<50} # {}", entry, doc)
+            format!("{entry:<50} # {doc}")
           } else {
             (*entry).to_string()
           });
@@ -576,7 +568,7 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
   }
 
   // Trim trailing blank lines so the file doesn't end with extra padding.
-  while lines.last().is_some_and(|l| l.is_empty()) {
+  while lines.last().is_some_and(String::is_empty) {
     lines.pop();
   }
   lines
@@ -590,7 +582,7 @@ pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
   }
   if let Some(parent) = rc_path.parent() {
     std::fs::create_dir_all(parent)?;
-  };
+  }
 
   log::info!("Generating default rc file at {}", rc_path.display());
   let mut rc_file = OpenOptions::new()
@@ -600,7 +592,7 @@ pub fn generate_default_rc() -> ShResult<Option<PathBuf>> {
     .open(&rc_path)?;
 
   for line in compose_rc(&GenRcConfig::first_run()) {
-    writeln!(rc_file, "{}", line)?;
+    writeln!(rc_file, "{line}")?;
   }
 
   Ok(Some(rc_path))
@@ -664,7 +656,7 @@ pub fn display_path<P: AsRef<Path>>(path: P) -> String {
     && !home.is_empty()
     && let Some(rest) = s.strip_prefix(&home)
   {
-    format!("~{}", rest)
+    format!("~{rest}")
   } else {
     s
   }
@@ -732,9 +724,9 @@ pub fn get_db_conn() -> Option<Arc<Connection>> {
 }
 
 /// Initialize the shared database connection with an in-memory sqlite
-/// database. Used by TestGuard. Safe to call multiple times — the OnceLock
+/// database. Used by `TestGuard`. Safe to call multiple times — the `OnceLock`
 /// only takes effect on the first call, so all tests in a thread share the
-/// same in-memory db (per-test cleanup is handled separately by TestGuard).
+/// same in-memory db (per-test cleanup is handled separately by `TestGuard`).
 #[cfg(test)]
 pub fn init_test_db_conn() {
   SHED.with(|shed| {
@@ -748,10 +740,10 @@ pub fn init_test_db_conn() {
 pub fn init_db_conn() {
   SHED.with(|shed| match open_db_conn().ok() {
     Some(conn) => {
-      let Ok(_) = conn.execute_batch("PRAGMA journal_mode=WAL") else {
+      let Ok(()) = conn.execute_batch("PRAGMA journal_mode=WAL") else {
         return;
       };
-      let Ok(_) = conn.execute_batch("PRAGMA case_sensitive_like = 1") else {
+      let Ok(()) = conn.execute_batch("PRAGMA case_sensitive_like = 1") else {
         return;
       };
       let _ = shed.db_conn.set(Some(conn.into()));
@@ -759,7 +751,7 @@ pub fn init_db_conn() {
     None => {
       let _ = shed.db_conn.set(None);
     }
-  })
+  });
 }
 
 pub fn open_db_conn() -> ShResult<Connection> {
@@ -767,9 +759,10 @@ pub fn open_db_conn() -> ShResult<Connection> {
     var
   } else {
     let home = try_var!("HOME").unwrap_or_else(|| ".".to_string());
-    dirs::data_dir()
-      .map(|p| p.to_string_lossy().to_string())
-      .unwrap_or_else(|| format!("{home}/.local/share/shed/shed_hist.db"))
+    dirs::data_dir().map_or_else(
+      || format!("{home}/.local/share/shed/shed_hist.db"),
+      |p| p.to_string_lossy().to_string(),
+    )
   };
 
   let db_path = PathBuf::from(db_path);
@@ -797,7 +790,7 @@ pub fn get_default_path() -> Option<String> {
     let mut buf = vec![0u8; needed];
     let written = libc::confstr(
       libc::_CS_PATH,
-      buf.as_mut_ptr() as *mut std::ffi::c_char,
+      buf.as_mut_ptr().cast::<std::ffi::c_char>(),
       needed,
     );
     if !(1..=needed).contains(&written) {
@@ -1244,7 +1237,7 @@ mod source_runtime_file_tests {
 #[cfg(test)]
 mod source_wrapper_tests {
   //! Thin one-liner wrappers that delegate to `source_runtime_file`
-  //! with hardcoded (name, env_var) pairs. The tests verify that each
+  //! with hardcoded (name, `env_var`) pairs. The tests verify that each
   //! wrapper uses the right env-var name — if any pair gets swapped,
   //! the assertion fails.
 
@@ -1346,7 +1339,7 @@ mod lookup_cmd_tests {
 mod set_ver_info_tests {
   //! `set_ver_info` populates two shell vars from compile-time
   //! constants: `SHED_VERSION` (the Cargo.toml version string) and
-  //! `SHED_VER_INFO` (an AssocArr with major/minor/patch/arch/os keys).
+  //! `SHED_VER_INFO` (an `AssocArr` with major/minor/patch/arch/os keys).
   //! The tests pin the structure rather than specific values, so they
   //! don't churn each version bump.
 

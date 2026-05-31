@@ -2,6 +2,8 @@ use nix::{libc::STDIN_FILENO, unistd::isatty};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
+use crate::readline::linebuf::edit::check_levels_per_row;
+
 use super::{
   CharClass, DEFAULT_VIEWPORT_HEIGHT, Edit, Grapheme, Line, Lines, MotionKind, Pos, SelectMode,
   ShResult, Shed, editcmd::Motion, eval::lex, highlight, ordered, procio::stdin_fileno, sherr,
@@ -66,19 +68,18 @@ impl super::LineBuf {
       {
         if !isatty(stdin_fileno()).unwrap_or_default() {
           return DEFAULT_VIEWPORT_HEIGHT;
-        };
+        }
         let (_, rows) = get_win_size(STDIN_FILENO);
-        (rows as f64 * (num as f64 / 100.0)).round() as usize
+        (f64::from(rows) * (num as f64 / 100.0)).round() as usize
       } else {
         log::warn!(
-          "Invalid viewport height shopt value: '{}', using 50% of terminal height as default",
-          height
+          "Invalid viewport height shopt value: '{height}', using 50% of terminal height as default",
         );
         if !isatty(stdin_fileno()).unwrap_or_default() {
           return DEFAULT_VIEWPORT_HEIGHT;
-        };
+        }
         let (_, rows) = get_win_size(STDIN_FILENO);
-        (rows as f64 * 0.5).round() as usize
+        (f64::from(rows) * 0.5).round() as usize
       }
     });
     let mut hint_lines = self.hint_lines();
@@ -110,9 +111,9 @@ impl super::LineBuf {
     let mut select_spans = self.search_match_spans();
     select_spans.extend(self.select_range_byte_pos());
 
-    let highlighted = highlight::highlight(&joined, &palette, self.cursor_to_flat(), select_spans);
+    let highlighted = highlight::highlight(&joined, &palette, self.cursor_to_flat(), &select_spans);
     let hint = self.get_hint_text();
-    let lines = Lines::to_lines(format!("{highlighted}{hint}"));
+    let lines = Lines::to_lines(&format!("{highlighted}{hint}"));
 
     let offset = self.scroll_offset.min(lines.len());
     let (_, mid) = lines.split_at(offset);
@@ -134,11 +135,11 @@ impl super::LineBuf {
     // trim whitespace
     for (i, line) in self.lines.iter_mut().enumerate() {
       if i == 0 {
-        while line.0.first().is_some_and(|gr| gr.is_ws()) {
+        while line.0.first().is_some_and(super::types::Grapheme::is_ws) {
           line.0.remove(0);
         }
       }
-      while line.0.last().is_some_and(|gr| gr.is_ws()) {
+      while line.0.last().is_some_and(super::types::Grapheme::is_ws) {
         line.0.pop();
       }
     }
@@ -151,7 +152,7 @@ impl super::LineBuf {
       self.lines.pop();
     }
   }
-  pub fn window_slice_to_cursor(&self) -> Option<String> {
+  pub fn window_slice_to_cursor(&self) -> String {
     let mut result = String::new();
     let start_row = self.scroll_offset;
 
@@ -164,7 +165,7 @@ impl super::LineBuf {
     for g in &line.graphemes()[..col] {
       result.push_str(&g.to_string());
     }
-    Some(result)
+    result
   }
   pub(super) fn parse_pos(&self, pos: &str) -> ShResult<Pos> {
     if let Some((row, col)) = pos.split_once(':')
@@ -294,7 +295,7 @@ impl super::LineBuf {
     if new_lines.is_empty() {
       return;
     }
-    while first.0.first().is_some_and(|l| l.is_ws()) {
+    while first.0.first().is_some_and(Grapheme::is_ws) {
       first.0.remove(0);
     }
     let Some(new_last) = new_lines.last_mut() else {
@@ -333,7 +334,7 @@ impl super::LineBuf {
     if new_lines.is_empty() {
       return;
     }
-    while last.0.last().is_some_and(|l| l.is_ws()) {
+    while last.0.last().is_some_and(Grapheme::is_ws) {
       last.0.pop();
     }
     let Some(new_first) = new_lines.first_mut() else {
@@ -357,7 +358,7 @@ impl super::LineBuf {
     line
       .0
       .get(..col)
-      .is_none_or(|grs| grs.iter().all(|g| g.is_ws()))
+      .is_none_or(|grs| grs.iter().all(Grapheme::is_ws))
   }
 
   pub fn cursor_is_escaped(&self) -> bool {
@@ -440,15 +441,15 @@ impl super::LineBuf {
   }
   pub fn set_anchor(&mut self, new_pos: Pos) {
     match self.select_mode.as_mut() {
-      Some(SelectMode::Line(pos)) | Some(SelectMode::Block(pos)) | Some(SelectMode::Char(pos)) => {
-        *pos = new_pos
+      Some(SelectMode::Line(pos) | SelectMode::Block(pos) | SelectMode::Char(pos)) => {
+        *pos = new_pos;
       }
       None => unreachable!(),
     }
   }
 
   pub fn with_initial(mut self, s: &str, cursor_pos: usize) -> Self {
-    self.set_buffer(s.to_string());
+    self.set_buffer(s);
     // In the flat model, cursor_pos was a flat offset. Map to col on row .
     self.cursor.pos = Pos {
       row: 0,
@@ -534,8 +535,8 @@ impl super::LineBuf {
     self.clear_concats();
     self.fix_cursor();
   }
-  pub fn set_buffer(&mut self, s: String) {
-    self.lines = Lines::to_lines(&s);
+  pub fn set_buffer(&mut self, s: &str) {
+    self.lines = Lines::to_lines(s);
     if self.lines.is_empty() {
       self.lines.push(Line::default());
     }
@@ -602,7 +603,7 @@ impl super::LineBuf {
       let num_tabs = start.min(end);
 
       let line = self.line_mut(row);
-      while line.0.first().is_some_and(|c| c.is_ws()) {
+      while line.0.first().is_some_and(Grapheme::is_ws) {
         line.0.remove(0);
       }
       for tab in std::iter::repeat_n(Grapheme::from('\t'), num_tabs) {
@@ -611,25 +612,22 @@ impl super::LineBuf {
     }
   }
   pub fn indent_levels_for_row(&mut self, row: usize) -> (usize, usize) {
-    self.indent_levels().get(row).cloned().unwrap_or_default()
+    self.indent_levels().get(row).copied().unwrap_or_default()
   }
   /// Returns (depth-at-cursor, parse-failed). Computed from the prefix
   /// up to the cursor — reflects whether we're inside an open block.
   pub fn cursor_indent_level(&mut self) -> (usize, bool) {
     let (to_cursor, _) = self.lines.clone().split_lines(self.cursor.pos);
     let raw = to_cursor.join();
-    let (levels, failed) = self.indent_levels_for(&raw);
-    let depth = levels.last().cloned().unwrap_or_default().1;
+    let (levels, failed) = check_levels_per_row(&raw);
+    let depth = levels.last().copied().unwrap_or_default().1;
     (depth, failed)
-  }
-  pub fn indent_levels_for(&mut self, buf: &str) -> (Vec<(usize, usize)>, bool) {
-    self.indent_ctx.check_levels_per_row(buf)
   }
   pub fn indent_levels(&mut self) -> &[(usize, usize)] {
     let has_cache = self.indent_cache.is_some();
     if !has_cache {
       let joined = self.joined();
-      let (levels, status) = self.indent_ctx.check_levels_per_row(&joined);
+      let (levels, status) = check_levels_per_row(&joined);
       self.indent_cache = Some(levels);
       self.parse_status = status;
     }
@@ -704,15 +702,15 @@ impl super::LineBuf {
     self.lines = buf;
     extracted
   }
-  pub(super) fn move_to_start(&mut self, motion: MotionKind) {
+  pub(super) fn move_to_start(&mut self, motion: &MotionKind) {
     match motion {
       MotionKind::Char { start, end, .. } => {
         let (s, _) = ordered(start, end);
-        self.set_cursor(s);
+        self.set_cursor(*s);
       }
       MotionKind::Line { start, end, .. } => {
         let (s, _) = ordered(start, end);
-        self.set_cursor(Pos { row: s, col: 0 });
+        self.set_cursor(Pos { row: *s, col: 0 });
       }
       MotionKind::Block { .. } => unimplemented!(),
     }
@@ -871,7 +869,7 @@ impl super::LineBuf {
     if s.row == e.row {
       self.lines[s.row].0[s.col..=e.col]
         .iter()
-        .map(|g| g.to_string())
+        .map(ToString::to_string)
         .collect()
     } else {
       let mut result = String::new();
@@ -921,21 +919,20 @@ impl super::LineBuf {
 
     let mut start = self
       .scan_backward_from(pos, |g| !is_digit(g))
-      .map(|pos| Pos {
+      .map_or(Pos::MIN, |pos| Pos {
         row: pos.row,
         col: pos.col + 1,
-      })
-      .unwrap_or(Pos::MIN);
-    let end = self
-      .scan_forward_from(pos, |g| !is_digit(g))
-      .map(|pos| Pos {
-        row: pos.row,
-        col: pos.col.saturating_sub(1),
-      })
-      .unwrap_or(Pos {
+      });
+    let end = self.scan_forward_from(pos, |g| !is_digit(g)).map_or(
+      Pos {
         row: pos.row,
         col: self.lines[pos.row].len().saturating_sub(1),
-      });
+      },
+      |pos| Pos {
+        row: pos.row,
+        col: pos.col.saturating_sub(1),
+      },
+    );
 
     if start > Pos::MIN && self.lines[start.row][start.col.saturating_sub(1)].as_char() == Some('-')
     {
@@ -943,6 +940,15 @@ impl super::LineBuf {
     }
 
     Some((start, end))
+  }
+  // What predicate to use for digit bodies depends on the marker.
+  fn predicate_for(marker: char) -> Option<fn(char) -> bool> {
+    match marker {
+      'x' | 'X' => Some(|c: char| c.is_ascii_hexdigit()),
+      'o' | 'O' => Some(|c: char| matches!(c, '0'..='7')),
+      'b' | 'B' => Some(|c: char| c == '0' || c == '1'),
+      _ => None,
+    }
   }
 
   /// If `pos` is on (or inside) a `0x.../0o.../0b...` literal, return
@@ -956,20 +962,10 @@ impl super::LineBuf {
     let row = pos.row;
     let char_at = |col: usize| -> Option<char> { line.get(col)?.as_char() };
 
-    // What predicate to use for digit bodies depends on the marker.
-    fn predicate_for(marker: char) -> Option<fn(char) -> bool> {
-      match marker {
-        'x' | 'X' => Some(|c: char| c.is_ascii_hexdigit()),
-        'o' | 'O' => Some(|c: char| matches!(c, '0'..='7')),
-        'b' | 'B' => Some(|c: char| c == '0' || c == '1'),
-        _ => None,
-      }
-    }
-
     let cur = char_at(pos.col)?;
     let marker_col: usize = if cur == '0'
       && char_at(pos.col + 1).is_some_and(|c| {
-        predicate_for(c).is_some() || matches!(c, 'x' | 'X' | 'o' | 'O' | 'b' | 'B')
+        Self::predicate_for(c).is_some() || matches!(c, 'x' | 'X' | 'o' | 'O' | 'b' | 'B')
       }) {
       // Cursor on leading '0'; next char is the marker
       let next = char_at(pos.col + 1)?;
@@ -1011,7 +1007,7 @@ impl super::LineBuf {
     };
 
     let marker = char_at(marker_col)?;
-    let pred = predicate_for(marker)?;
+    let pred = Self::predicate_for(marker)?;
 
     // Walk forward through digits matching the format's predicate.
     let mut end_col = marker_col + 1;
@@ -1105,9 +1101,8 @@ impl super::LineBuf {
           row += 1;
           col = 0;
           continue;
-        } else {
-          return None;
         }
+        return None;
       }
       if !line.is_empty() && f(&line[col]) {
         return Some(Pos { row, col });
@@ -1190,7 +1185,7 @@ impl super::LineBuf {
   pub(super) fn cursor_on_ws(&self) -> bool {
     let line = self.cur_line();
     let col = self.cursor.pos.col;
-    line.graphemes().get(col).is_some_and(|g| g.is_ws())
+    line.graphemes().get(col).is_some_and(Grapheme::is_ws)
   }
   pub fn set_cursor(&mut self, mut pos: Pos) {
     pos.clamp_row(&self.lines);
@@ -1261,7 +1256,7 @@ impl super::LineBuf {
     &self.lines[self.cursor.pos.row]
   }
   pub fn count_graphemes(&self) -> usize {
-    self.lines.iter().map(|line| line.len()).sum()
+    self.lines.iter().map(Line::len).sum()
   }
   pub fn is_empty(&self) -> bool {
     self.lines.len() == 0 || (self.lines.len() == 1 && self.count_graphemes() == 0)

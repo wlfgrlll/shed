@@ -1,3 +1,5 @@
+use crate::state::terminal::Terminal;
+
 use super::{
   Candidate, CompMatch, CompResponse, Completer, K as KeyEvent, ShResult, Shed, SimpleCompleter,
   fuzzy::ClampedUsize, key, state::terminal::calc_str_width, write_term,
@@ -34,7 +36,7 @@ pub(crate) struct CellMetrics {
 pub(crate) struct GridLayout {
   top_left: usize,
   rows: usize,
-  /// Total width of each column (name_max + 2 + desc_max, or just name_max
+  /// Total width of each column (`name_max` + 2 + `desc_max`, or just `name_max`
   /// if no cell in that column has a description).
   col_widths: Vec<usize>,
   /// Max name width in each column. Used at render time to right-pad each
@@ -85,7 +87,7 @@ impl GridLayout {
     let total: usize = col_widths.iter().sum();
     if total > budget && num_cols > 0 {
       let max_per_col = budget / num_cols;
-      for cw in col_widths.iter_mut() {
+      for cw in &mut col_widths {
         *cw = (*cw).min(max_per_col);
       }
     }
@@ -175,10 +177,10 @@ impl GridSelector {
   }
 
   pub fn next_candidate(&mut self) {
-    if !self.has_selection {
-      self.has_selection = true;
-    } else {
+    if self.has_selection {
       self.cursor.wrap_add(1);
+    } else {
+      self.has_selection = true;
     }
   }
 
@@ -193,7 +195,7 @@ impl GridSelector {
     self.prompt_cursor_col = cursor_col;
   }
 
-  pub fn clear(&mut self) -> ShResult<()> {
+  pub fn clear(&mut self) {
     if let Some(layout) = self.old_layout.take() {
       // cursor is in the editor b
       for _ in 0..layout.rows {
@@ -205,7 +207,6 @@ impl GridSelector {
         write_term!("\x1b[{}C", self.prompt_cursor_col).ok();
       }
     }
-    Ok(())
   }
 
   pub fn get_metrics(&self) -> Vec<CellMetrics> {
@@ -222,8 +223,7 @@ impl GridSelector {
           .desc
           .as_ref()
           .filter(|d| !d.is_empty())
-          .map(|d| calc_str_width(d) + 2)
-          .unwrap_or(0);
+          .map_or(0, |d| calc_str_width(d) + 2);
         CellMetrics { name, desc }
       })
       .collect()
@@ -269,12 +269,12 @@ impl GridSelector {
     prev_page * self.page_size
   }
 
-  pub fn draw(&mut self) -> ShResult<usize> {
+  pub fn draw(&mut self) -> usize {
     if self.candidates.is_empty() {
-      return Ok(0);
+      return 0;
     }
 
-    let t_cols = Shed::term(|t| t.t_cols());
+    let t_cols = Shed::term(Terminal::t_cols);
 
     let metrics = self.get_metrics();
     let mut layout = GridLayout::from_metrics(&metrics, t_cols);
@@ -400,7 +400,7 @@ impl GridSelector {
     layout.rows = rows_drawn;
     self.old_layout = Some(layout);
 
-    Ok(rows_drawn)
+    rows_drawn
   }
 }
 
@@ -460,8 +460,8 @@ impl Completer for GridCompleter {
     }
   }
 
-  fn clear(&mut self) -> ShResult<()> {
-    self.selector.clear()
+  fn clear(&mut self) {
+    self.selector.clear();
   }
 
   fn reset(&mut self) {
@@ -489,7 +489,7 @@ impl Completer for GridCompleter {
     &self.completer.original_input
   }
 
-  fn draw(&mut self) -> ShResult<usize> {
+  fn draw(&mut self) -> usize {
     self.selector.draw()
   }
 
@@ -497,7 +497,7 @@ impl Completer for GridCompleter {
     if self.selector.candidates.is_empty() {
       return Some(0);
     }
-    let t_cols = Shed::term(|t| t.t_cols());
+    let t_cols = Shed::term(Terminal::t_cols);
     let metrics = self.selector.get_metrics();
     let layout = GridLayout::from_metrics(&metrics, t_cols);
     // Page-based reporting: the visible portion is at most one page of
@@ -512,7 +512,7 @@ impl Completer for GridCompleter {
     let page_end = (page_start + page_size).min(self.selector.candidates.len());
     let page_cells = page_end - page_start;
     let page_rows = page_cells.div_ceil(num_cols.max(1));
-    let counter_rows = if total_pages > 1 { 1 } else { 0 };
+    let counter_rows = usize::from(total_pages > 1);
     Some(page_rows + counter_rows)
   }
 

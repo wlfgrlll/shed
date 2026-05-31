@@ -29,6 +29,7 @@ macro_rules! cond {
   };
 }
 
+#[expect(clippy::cast_sign_loss)]
 fn interval_to_micros(interval: Interval) -> i64 {
   let secs = match interval {
     Interval::Seconds(n) => n as u64,
@@ -39,13 +40,14 @@ fn interval_to_micros(interval: Interval) -> i64 {
   Duration::from_secs(secs).as_micros() as i64
 }
 
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub struct HistQuery {
   after: (Option<String>, bool),
   before: (Option<String>, bool),
   contains: (Option<String>, bool),
-  lines_gt: (Option<usize>, bool),
-  lines_lt: (Option<usize>, bool),
+  lines_gt: (Option<u64>, bool),
+  lines_lt: (Option<u64>, bool),
   starts_with: (Option<String>, bool),
   ends_with: (Option<String>, bool),
   matches: (Option<String>, bool),
@@ -54,7 +56,7 @@ pub struct HistQuery {
   with_status: (Option<i32>, bool),
   with_token: (Option<String>, bool),
   in_dir: (Option<String>, bool),
-  limit: Option<usize>,
+  limit: Option<u64>,
   specific_ids: Vec<i64>,
   no_numbers: bool,
   reverse: bool,
@@ -72,6 +74,7 @@ impl HistQuery {
     Self::default()
   }
 
+  #[expect(clippy::too_many_lines)]
   pub fn execute(&self, hist: &History) -> ShResult<Vec<(i64, HistEntry)>> {
     let mut conditions: Vec<String> = vec![];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
@@ -148,7 +151,7 @@ impl HistQuery {
         params,
         idx,
         format!("token = ?{idx}"),
-        token.to_string()
+        token.clone()
       );
     }
     if let (Some(dir), not) = &self.in_dir {
@@ -158,7 +161,7 @@ impl HistQuery {
         params,
         idx,
         format!("cwd LIKE ?{idx}"),
-        dir.to_string()
+        dir.clone()
       );
     }
     if let (Some(ceiling), not) = &self.lines_lt {
@@ -168,7 +171,7 @@ impl HistQuery {
         params,
         idx,
         format!("(LENGTH(command) - LENGTH(REPLACE(command, char(10), ''))) + 1 < ?{idx}"),
-        *ceiling as i64
+        (*ceiling).cast_signed()
       );
     }
     if let (Some(floor), not) = &self.lines_gt {
@@ -178,7 +181,7 @@ impl HistQuery {
         params,
         idx,
         format!("(LENGTH(command) - LENGTH(REPLACE(command, char(10), ''))) + 1 > ?{idx}"),
-        *floor as i64
+        (*floor).cast_signed()
       );
     }
     if let (Some(duration), not) = &self.duration_gt {
@@ -223,7 +226,7 @@ impl HistQuery {
         params.push(Box::new(id));
         idx += 1;
       }
-      conditions.push(format!("({})", id_strings.join(" OR ")))
+      conditions.push(format!("({})", id_strings.join(" OR ")));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -237,7 +240,7 @@ impl HistQuery {
     // hardcoding DESC ordering so that limit always starts from the most recent entry
     let query = format!("{where_clause} ORDER BY id DESC {limit}");
 
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(AsRef::as_ref).collect();
     let mut entries = if self.delete {
       let res = hist.delete(&query, &param_refs)?;
       hist.refresh_hist_entries();
@@ -299,10 +302,10 @@ impl HistQuery {
 
             new.in_dir = (Some(dir), negated);
           }
-          "limit" => new.limit = Some(arg.parse().unwrap_or(usize::MAX)),
+          "limit" => new.limit = Some(arg.parse().unwrap_or(u64::MAX)),
           opt @ ("lines-gt" | "lines-lt") => {
             let is_gt = opt == "lines-gt";
-            let count = match arg.parse::<usize>() {
+            let count = match arg.parse::<u64>() {
               Ok(c) => c,
               Err(e) => return Err(sherr!(ParseErr, "Invalid number for {opt}: {e}")),
             };
@@ -404,7 +407,7 @@ impl HistQuery {
             map.insert("cwd".into(), serde_json::Value::String(cwd.clone()));
             map.insert(
               "status".into(),
-              serde_json::Value::Number((*status as i64).into()),
+              serde_json::Value::Number(i64::from(*status).into()),
             );
             map.insert("token".into(), serde_json::Value::String(token.to_string()));
 
@@ -431,7 +434,7 @@ impl HistQuery {
           } else {
             format!("{}\t{}", e.0, e.1.command())
           };
-          fmt.replace("\n", "\n\t")
+          fmt.replace('\n', "\n\t")
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -504,11 +507,11 @@ impl super::Builtin for Hist {
     }
 
     if let Some(ref path) = query.import {
-      let entries: Vec<(i64, HistEntry)> = import_history(path.into())
+      let entries: Vec<(i64, HistEntry)> = import_history(path.as_str())
         .promote_err(span.clone())?
         .into_iter()
         .enumerate()
-        .map(|(i, e)| (i as i64, e))
+        .map(|(i, e)| ((i as u64).cast_signed(), e))
         .collect();
 
       let entries_fmt = query.format_entries(&entries);
@@ -644,7 +647,7 @@ mod tests {
   fn opts_limit_invalid_falls_back_to_max() {
     // The code uses unwrap_or(usize::MAX) for limit specifically.
     let q = parse(&[Opt::LongWithArg("limit".into(), "abc".into())]);
-    assert_eq!(q.limit, Some(usize::MAX));
+    assert_eq!(q.limit, Some(u64::MAX));
   }
 
   #[test]
@@ -828,8 +831,8 @@ mod tests {
   use std::time::{Duration as StdDuration, UNIX_EPOCH};
   use uuid::Uuid;
 
-  /// Build a HistEntry with the given command and the rest filled in
-  /// from defaults. Timestamp is fixed (NOT now()) so cross-runs are
+  /// Build a `HistEntry` with the given command and the rest filled in
+  /// from defaults. Timestamp is fixed (NOT `now()`) so cross-runs are
   /// deterministic where they need to be.
   fn entry(cmd: &str) -> HistEntry {
     HistEntry {
@@ -1224,8 +1227,8 @@ mod hist_builtin_execute_tests {
   fn hist_lists_pushed_entries() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": alpha".into()).unwrap();
-    h.push(": beta".into()).unwrap();
+    h.push(": alpha").unwrap();
+    h.push(": beta").unwrap();
     test_input("hist").unwrap();
     let out = g.read_output();
     assert!(out.contains(": alpha"), "got: {out:?}");
@@ -1237,7 +1240,7 @@ mod hist_builtin_execute_tests {
   fn hist_n_flag_omits_ids() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": only-entry".into()).unwrap();
+    h.push(": only-entry").unwrap();
     // With -n, lines should NOT start with the id\t prefix.
     test_input("hist -n").unwrap();
     let out = g.read_output();
@@ -1250,19 +1253,19 @@ mod hist_builtin_execute_tests {
   fn hist_count_outputs_entry_count() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": a".into()).unwrap();
-    h.push(": b".into()).unwrap();
-    h.push(": c".into()).unwrap();
+    h.push(": a").unwrap();
+    h.push(": b").unwrap();
+    h.push(": c").unwrap();
     test_input("hist --count").unwrap();
     let out = g.read_output();
-    assert!(out.trim_end().ends_with("3"), "got: {out:?}");
+    assert!(out.trim_end().ends_with('3'), "got: {out:?}");
   }
 
   #[test]
   fn hist_json_outputs_json_object() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": json-entry".into()).unwrap();
+    h.push(": json-entry").unwrap();
     test_input("hist --json").unwrap();
     let out = g.read_output();
     // serde_json::to_string_pretty produces newlines and a {…} wrapper.
@@ -1274,9 +1277,9 @@ mod hist_builtin_execute_tests {
   fn hist_contains_filter_narrows_results() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": git push".into()).unwrap();
-    h.push(": ls -la".into()).unwrap();
-    h.push(": git log".into()).unwrap();
+    h.push(": git push").unwrap();
+    h.push(": ls -la").unwrap();
+    h.push(": git log").unwrap();
     test_input("hist --contains git").unwrap();
     let out = g.read_output();
     assert!(out.contains(": git push"), "got: {out:?}");
@@ -1288,9 +1291,9 @@ mod hist_builtin_execute_tests {
   fn hist_specific_id_arg_filters_to_that_entry() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": one".into()).unwrap();
-    h.push(": two".into()).unwrap();
-    h.push(": three".into()).unwrap();
+    h.push(": one").unwrap();
+    h.push(": two").unwrap();
+    h.push(": three").unwrap();
     test_input("hist 2").unwrap();
     let out = g.read_output();
     assert!(out.contains(": two"), "got: {out:?}");
@@ -1302,7 +1305,7 @@ mod hist_builtin_execute_tests {
   fn hist_invalid_id_arg_errors() {
     let _g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": entry".into()).unwrap();
+    h.push(": entry").unwrap();
     // The dispatcher turns the ShErr into a non-zero status.
     test_input("hist not_a_number").ok();
     assert_ne!(Shed::get_status(), 0, "expected non-zero status");
@@ -1315,8 +1318,8 @@ mod hist_builtin_execute_tests {
     let g = TestGuard::new();
     let normal = fresh_history("shed_history");
     let ex = fresh_history("ex_history");
-    normal.push(": normal-entry".into()).unwrap();
-    ex.push(": ex-entry".into()).unwrap();
+    normal.push(": normal-entry").unwrap();
+    ex.push(": ex-entry").unwrap();
     test_input("hist --ex").unwrap();
     let out = g.read_output();
     assert!(out.contains(": ex-entry"), "got: {out:?}");
@@ -1329,8 +1332,8 @@ mod hist_builtin_execute_tests {
   fn hist_delete_by_id_removes_entry() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": kept".into()).unwrap();
-    h.push(": doomed".into()).unwrap();
+    h.push(": kept").unwrap();
+    h.push(": doomed").unwrap();
     // Delete the second entry by id.
     test_input("hist --delete 2").unwrap();
     g.read_output(); // drain --delete output
@@ -1345,8 +1348,8 @@ mod hist_builtin_execute_tests {
   fn hist_restore_brings_back_deleted_entries() {
     let g = TestGuard::new();
     let h = fresh_history("shed_history");
-    h.push(": one".into()).unwrap();
-    h.push(": two".into()).unwrap();
+    h.push(": one").unwrap();
+    h.push(": two").unwrap();
     // Delete both — creates the backup table.
     test_input("hist --delete --contains :").unwrap();
     g.read_output();

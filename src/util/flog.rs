@@ -50,7 +50,7 @@ impl log::Log for Flog {
       format!("[{level}] {args}")
     };
 
-    system_msg!("{line}")
+    system_msg!("{line}");
   }
   fn flush(&self) {}
 }

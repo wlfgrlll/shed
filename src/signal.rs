@@ -16,9 +16,14 @@ use super::{
   autocmd,
   eval::execute::exec_nonint,
   sherr,
-  state::jobs::{Job, JobData, JobID, SIG_EXIT_OFFSET, take_term},
-  state::logic::TrapTarget,
-  state::{Shed, util::with_vars, vars::Var, vars::VarFlags, vars::VarKind},
+  state::{
+    Shed,
+    jobs::{Job, JobData, JobID, SIG_EXIT_OFFSET, take_term},
+    logic::TrapTarget,
+    meta::MetaTab,
+    util::with_vars,
+    vars::{Var, VarFlags, VarKind},
+  },
   system_msg,
   util::ShResult,
 };
@@ -137,7 +142,7 @@ pub fn check_signals() -> ShResult<()> {
   if got_signal(Signal::SIGTERM) {
     // POSIX says, if we are interactive, sigterm does nothing
     // if we are not interactive, sigterm kills the shell
-    if !Shed::meta(|m| m.interactive_shell()) {
+    if !Shed::meta(MetaTab::interactive_shell) {
       SHOULD_QUIT.store(true, Ordering::SeqCst);
       QUIT_CODE.store(SIG_EXIT_OFFSET + Signal::SIGTERM as i32, Ordering::SeqCst);
     }
@@ -185,9 +190,9 @@ pub fn sig_setup(is_login: bool) {
   }
 }
 
-/// Reset signal dispositions to SIG_DFL.
+/// Reset signal dispositions to `SIG_DFL`.
 /// Called in child processes before exec so that the shell's custom
-/// handlers and SIG_IGN dispositions don't leak into child programs.
+/// handlers and `SIG_IGN` dispositions don't leak into child programs.
 pub fn reset_signals(is_fg: bool) {
   let default = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
   unsafe {
@@ -245,13 +250,13 @@ pub fn wait_child() -> ShResult<()> {
         child_exited(pid, status)?;
       }
       WtStat::Signaled(pid, signal, _) => {
-        child_signaled(pid, signal)?;
+        child_signaled(pid, signal);
       }
       WtStat::Stopped(pid, signal) => {
         child_stopped(pid, signal)?;
       }
       WtStat::Continued(pid) => {
-        child_continued(pid)?;
+        child_continued(pid);
       }
       WtStat::StillAlive => {
         break;
@@ -263,10 +268,10 @@ pub fn wait_child() -> ShResult<()> {
   Ok(())
 }
 
-pub fn child_signaled(pid: Pid, sig: Signal) -> ShResult<()> {
-  let pgid = getpgid(Some(pid)).unwrap_or(pid);
+pub fn child_signaled(pid: Pid, sig: Signal) {
+  let child_pgid = getpgid(Some(pid)).unwrap_or(pid);
   Shed::jobs_mut(|j| {
-    if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
+    if let Some(job) = j.query_mut(JobID::Pgid(child_pgid)) {
       let child = job
         .children_mut()
         .iter_mut()
@@ -277,15 +282,14 @@ pub fn child_signaled(pid: Pid, sig: Signal) -> ShResult<()> {
     }
   });
   if sig == Signal::SIGINT {
-    take_term().unwrap()
+    take_term().unwrap();
   }
-  Ok(())
 }
 
 pub fn child_stopped(pid: Pid, sig: Signal) -> ShResult<()> {
-  let pgid = getpgid(Some(pid)).unwrap_or(pid);
+  let child_pgid = getpgid(Some(pid)).unwrap_or(pid);
   Shed::jobs_mut(|j| {
-    if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
+    if let Some(job) = j.query_mut(JobID::Pgid(child_pgid)) {
       let child = job
         .children_mut()
         .iter_mut()
@@ -293,7 +297,7 @@ pub fn child_stopped(pid: Pid, sig: Signal) -> ShResult<()> {
         .unwrap();
       let status = WtStat::Stopped(pid, sig);
       child.set_stat(status);
-    } else if j.get_fg_mut().is_some_and(|fg| fg.pgid() == pgid) {
+    } else if j.get_fg_mut().is_some_and(|fg| fg.pgid() == child_pgid) {
       j.fg_to_bg(WtStat::Stopped(pid, sig)).unwrap();
     }
   });
@@ -301,14 +305,13 @@ pub fn child_stopped(pid: Pid, sig: Signal) -> ShResult<()> {
   Ok(())
 }
 
-pub fn child_continued(pid: Pid) -> ShResult<()> {
-  let pgid = getpgid(Some(pid)).unwrap_or(pid);
+pub fn child_continued(pid: Pid) {
+  let child_pgid = getpgid(Some(pid)).unwrap_or(pid);
   Shed::jobs_mut(|j| {
-    if let Some(job) = j.query_mut(JobID::Pgid(pgid)) {
+    if let Some(job) = j.query_mut(JobID::Pgid(child_pgid)) {
       job.killpg(Signal::SIGCONT).ok();
     }
   });
-  Ok(())
 }
 
 pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
@@ -322,22 +325,22 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
    */
 
   let child_data = Shed::jobs_mut(|j| {
-    let fg_pgid = j.get_fg().map(|job| job.pgid());
+    let fg_pgid = j.get_fg().map(Job::pgid);
     j.query_mut(JobID::Pid(pid)).map(|job| {
-      let pgid = job.pgid();
-      let is_fg = fg_pgid.is_some_and(|fg| fg == pgid);
-      job.update_by_id(JobID::Pid(pid), status).unwrap();
+      let child_pgid = job.pgid();
+      let is_fg = fg_pgid.is_some_and(|fg| fg == child_pgid);
+      job.update_by_id(JobID::Pid(pid), status);
       let is_finished = !job.running();
 
       if let Some(child) = job.children_mut().iter_mut().find(|chld| pid == chld.pid()) {
         child.set_stat(status);
       }
 
-      (pgid, is_fg, is_finished)
+      (child_pgid, is_fg, is_finished)
     })
   });
 
-  let Some((pgid, is_fg, is_finished)) = child_data else {
+  let Some((child_pgid, is_fg, is_finished)) = child_data else {
     return Ok(());
   };
   if !is_finished {
@@ -351,7 +354,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
   JOB_DONE.store(true, Ordering::SeqCst);
   let job_data = Shed::jobs_mut(|j| {
     let order = j.order().to_vec();
-    j.query_mut(JobID::Pgid(pgid))
+    j.query_mut(JobID::Pgid(child_pgid))
       .map(|job| job.take_job_data(&order, Some(pid)))
   });
 
@@ -420,8 +423,8 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
   }
 
   Shed::jobs(|j| {
-    if let Some(job) = j.query(JobID::Pgid(pgid)) {
-      Shed::meta_mut(|m| m.notify_job_complete(job)).ok();
+    if let Some(job) = j.query(JobID::Pgid(child_pgid)) {
+      Shed::meta_mut(|m| m.notify_job_complete(job));
     }
   });
 
@@ -436,7 +439,7 @@ mod tests {
   use crate::tests::testutil::TestGuard;
 
   /// Reset all signal-related global state so tests don't pollute each
-  /// other. Call at the top of every check_signals test.
+  /// other. Call at the top of every `check_signals` test.
   fn reset_signal_state() {
     SIGNALS.store(0, Ordering::SeqCst);
     SHOULD_QUIT.store(false, Ordering::SeqCst);

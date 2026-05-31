@@ -1,7 +1,7 @@
 mod event;
 mod map;
 
-use super::{ShResult, expand};
+use super::expand;
 
 pub(super) use event::{KeyCode, KeyEvent, ModKeys};
 

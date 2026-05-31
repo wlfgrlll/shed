@@ -4,7 +4,7 @@ use super::{ShResult, escape::unescape_str, markers, match_loop, var::expand_raw
 
 /// Expand a case pattern: performs variable/command expansion while preserving
 /// glob metacharacters that were inside quotes as literals (by backslash-escaping them).
-/// Unquoted glob chars (*, ?, [) pass through for glob_to_regex to interpret.
+/// Unquoted glob chars (*, ?, [) pass through for `glob_to_regex` to interpret.
 pub fn expand_case_pattern(raw: &str) -> ShResult<String> {
   let unescaped = unescape_str(raw);
   let expanded = expand_raw(&mut unescaped.chars().peekable())?;
@@ -37,7 +37,7 @@ pub fn expand_case_pattern(raw: &str) -> ShResult<String> {
   Ok(result)
 }
 
-pub fn is_var_name_ch(ch: &char) -> bool {
+pub fn is_var_name_ch(ch: char) -> bool {
   matches!(ch,
     '@' |
     '*' |

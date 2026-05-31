@@ -2,7 +2,11 @@ use super::*;
 use crate::{
   keys::KeyCode as C,
   readline::{Prompt, ShedLine},
-  state::{Shed, vars::VarFlags, vars::VarKind},
+  state::{
+    Shed,
+    terminal::Terminal,
+    vars::{VarFlags, VarKind},
+  },
   tests::testutil::TestGuard,
 };
 fn test_vi(initial: &str) -> (ShedLine, TestGuard) {
@@ -208,7 +212,7 @@ fn wordbreak_equals_default() {
 
   let line = "cmd --foo=bar".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(line.clone(), cursor);
+  let _ = comp.get_candidates(&line, cursor);
 
   let eq_idx = line.find('=').unwrap();
   assert_eq!(
@@ -235,7 +239,7 @@ fn wordbreak_colon_when_set() {
   let mut comp = SimpleCompleter::default();
   let line = "scp host:foo".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(line.clone(), cursor);
+  let _ = comp.get_candidates(&line, cursor);
 
   let colon_idx = line.find(':').unwrap();
   assert_eq!(
@@ -262,7 +266,7 @@ fn wordbreak_rightmost_wins() {
   let mut comp = SimpleCompleter::default();
   let line = "cmd --opt=host:val".to_string();
   let cursor = line.len();
-  let _ = comp.get_candidates(line.clone(), cursor);
+  let _ = comp.get_candidates(&line, cursor);
 
   let colon_idx = line.rfind(':').unwrap();
   assert_eq!(
@@ -278,12 +282,12 @@ fn wordbreak_rightmost_wins() {
 // Var, Tilde, Argument, Files (via redirect), Null, and the
 // empty-line fast path.
 
-/// Strip just the content list out of a CompResult for assertion.
+/// Strip just the content list out of a `CompResult` for assertion.
 fn contents(result: &CompResult) -> Vec<&str> {
   match result {
     CompResult::NoMatch => vec![],
     CompResult::CommonPrefix { result } | CompResult::Exact { result } => vec![result.content()],
-    CompResult::Many { candidates } => candidates.iter().map(|c| c.content()).collect(),
+    CompResult::Many { candidates } => candidates.iter().map(super::Candidate::content).collect(),
   }
 }
 
@@ -293,7 +297,7 @@ fn get_candidates_empty_line_routes_to_command_strategy() {
   // `Self::Command { prefix: "" }` default in CompStrat::resolve.
   let _g = TestGuard::new();
   let mut comp = SimpleCompleter::default();
-  let result = comp.get_candidates("".into(), 0).unwrap();
+  let result = comp.get_candidates("", 0).unwrap();
   // Almost certainly Many — even a minimal PATH has > 1 binary. But
   // accept Exact too in case some sandboxed env has exactly one.
   match result {
@@ -317,7 +321,7 @@ fn get_candidates_var_prefix_completes_with_shell_var() {
   let mut comp = SimpleCompleter::default();
   let line = "echo $UNIQUE_COMP_TEST".to_string();
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   let cs = contents(&result);
   assert!(
     cs.contains(&"UNIQUE_COMP_TEST_VAR_XYZZY"),
@@ -332,7 +336,7 @@ fn get_candidates_var_prefix_with_no_matches_returns_nomatch() {
   // A prefix that absolutely won't match any shell or env var.
   let line = "echo $ZZZZZZZ_NOT_A_REAL_VAR_PREFIX_QQQ".to_string();
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   assert!(matches!(result, CompResult::NoMatch));
 }
 
@@ -347,7 +351,7 @@ fn get_candidates_path_arg_lists_directory_entries() {
   let mut comp = SimpleCompleter::default();
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("apple.txt")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("banana.txt")), "got: {cs:?}");
@@ -366,7 +370,7 @@ fn get_candidates_path_arg_with_prefix_filters() {
   // Prefix "ap" should match apple + apricot but not banana.
   let line = format!("ls {}/ap", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("apple")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("apricot")), "got: {cs:?}");
@@ -382,7 +386,7 @@ fn get_candidates_redirect_uses_files_strategy() {
   let mut comp = SimpleCompleter::default();
   let line = format!("echo hi > {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("output.log")), "got: {cs:?}");
 }
@@ -405,7 +409,7 @@ fn get_candidates_dirs_only_does_not_filter_argument_path() {
 
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   let cs = contents(&result);
   assert!(cs.iter().any(|c| c.contains("file.txt")), "got: {cs:?}");
   assert!(cs.iter().any(|c| c.contains("subdir")), "got: {cs:?}");
@@ -419,7 +423,7 @@ fn get_candidates_token_span_set_for_var_prefix() {
   let mut comp = SimpleCompleter::default();
   let line = "echo $PA".to_string();
   let dollar_idx = line.find('$').unwrap();
-  let _ = comp.get_candidates(line.clone(), line.len()).unwrap();
+  let _ = comp.get_candidates(&line, line.len()).unwrap();
   // The span should cover the $ token; start should be at or just
   // after the $ depending on whether the leaf starts at $ or 'P'.
   assert!(
@@ -443,7 +447,7 @@ fn get_candidates_dedups_and_sorts_many_results() {
   let mut comp = SimpleCompleter::default();
   let line = format!("ls {}/", dir.path().display());
   let cursor = line.len();
-  let result = comp.get_candidates(line, cursor).unwrap();
+  let result = comp.get_candidates(&line, cursor).unwrap();
   if let CompResult::Many { candidates } = result {
     // Sort key is (len, content), so the two shorter names come
     // before the longer one regardless of alphabetical order.
@@ -472,7 +476,7 @@ fn cycle_wraps_forward() {
   let mut comp = SimpleCompleter {
     candidates: vec!["aaa".into(), "bbb".into(), "ccc".into()],
     selected_idx: 2,
-    original_input: "".into(),
+    original_input: String::new(),
     token_span: (0, 0),
     active: true,
     dirs_only: false,
@@ -489,7 +493,7 @@ fn cycle_wraps_backward() {
   let mut comp = SimpleCompleter {
     candidates: vec!["aaa".into(), "bbb".into(), "ccc".into()],
     selected_idx: 0,
-    original_input: "".into(),
+    original_input: String::new(),
     token_span: (0, 0),
     active: true,
     dirs_only: false,
@@ -533,7 +537,7 @@ fn escape_str_all_shell_metacharacters() {
     let input = format!("a{ch}b");
     let escaped = escape_str(&input, false);
     let expected = format!("a\\{ch}b");
-    assert_eq!(escaped, expected, "failed to escape {:?}", ch);
+    assert_eq!(escaped, expected, "failed to escape {ch:?}");
   }
 }
 
@@ -636,7 +640,7 @@ fn tab_escapes_special_in_filename() {
   std::env::set_current_dir(&tmp).unwrap();
 
   Shed::term_mut(|t| t.feed_bytes(b"echo hello\t"));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let _ = vi.process_input(keys);
 
   let line = vi.editor.joined();
@@ -659,7 +663,7 @@ fn tab_does_not_escape_user_text() {
 
   // User types "echo my\ " with the space already escaped
   Shed::term_mut(|t| t.feed_bytes(b"echo my\\ \t"));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let _ = vi.process_input(keys);
 
   let line = vi.editor.joined();
@@ -820,7 +824,7 @@ fn tab_completes_filename() {
 
   // Type "echo unique_shed_test" then press Tab
   Shed::term_mut(|t| t.feed_bytes(b"echo unique_shed_test\t"));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let _ = vi.process_input(keys);
 
   let line = vi.editor.joined();
@@ -841,7 +845,7 @@ fn tab_completes_directory_with_slash() {
   std::env::set_current_dir(&tmp).unwrap();
 
   Shed::term_mut(|t| t.feed_bytes(b"cd mysub\t"));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let _ = vi.process_input(keys);
 
   let line = vi.editor.joined();
@@ -863,7 +867,7 @@ fn tab_after_equals() {
   std::env::set_current_dir(&tmp).unwrap();
 
   Shed::term_mut(|t| t.feed_bytes(b"cmd --opt=eqf\t"));
-  let keys = Shed::term_mut(|t| t.drain_keys()).unwrap();
+  let keys = Shed::term_mut(Terminal::drain_keys);
   let _ = vi.process_input(keys);
 
   let line = vi.editor.joined();
@@ -1289,13 +1293,13 @@ mod complete_jobs_tests {
 
   fn insert_named_job(pid: i32, cmd: &str) {
     let pid = Pid::from_raw(pid);
-    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None).unwrap();
+    let mut child = ChildProc::new(pid, Some(cmd), Some(pid), None);
     child.set_stat(WaitStatus::StillAlive);
     let mut bldr = JobBldr::new();
     bldr.push_child(child);
     bldr.set_pgid(pid);
     let job = bldr.build();
-    Shed::jobs_mut(|j| j.insert_job(job, true)).unwrap();
+    Shed::jobs_mut(|j| j.insert_job(job, true));
   }
 
   #[test]
@@ -1487,15 +1491,15 @@ mod bash_comp_spec_tests {
     assert_eq!(spec.function, Some("complete_foo".to_string()));
     assert_eq!(spec.wordlist, Some(vec!["a".into(), "b".into()]));
     assert_eq!(spec.source, "complete -F complete_foo cmd");
-    assert!(spec.files);
-    assert!(spec.dirs);
-    assert!(spec.commands);
-    assert!(spec.builtins);
-    assert!(spec.users);
-    assert!(spec.vars);
-    assert!(spec.signals);
-    assert!(spec.jobs);
-    assert!(spec.aliases);
+    assert!(spec.targets.contains(CompFlags::FILES));
+    assert!(spec.targets.contains(CompFlags::DIRS));
+    assert!(spec.targets.contains(CompFlags::CMDS));
+    assert!(spec.targets.contains(CompFlags::BUILTINS));
+    assert!(spec.targets.contains(CompFlags::USERS));
+    assert!(spec.targets.contains(CompFlags::VARS));
+    assert!(spec.targets.contains(CompFlags::SIGNALS));
+    assert!(spec.targets.contains(CompFlags::JOBS));
+    assert!(spec.targets.contains(CompFlags::ALIAS));
   }
 
   #[test]
@@ -1507,7 +1511,7 @@ mod bash_comp_spec_tests {
       .files(false)
       .dirs(true)
       .dirs(false);
-    assert!(!spec.files);
-    assert!(!spec.dirs);
+    assert!(!spec.targets.contains(CompFlags::FILES));
+    assert!(!spec.targets.contains(CompFlags::DIRS));
   }
 }

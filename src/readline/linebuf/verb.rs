@@ -5,7 +5,7 @@ use super::{
   register::RegisterContent,
   status_msg,
 };
-use crate::verb;
+use crate::{keys::KeyEvent, verb};
 
 use super::{
   Grapheme, Line, Lines, MotionKind, Pos, SelectMode, killring, ordered, rot13_char,
@@ -22,19 +22,19 @@ impl super::LineBuf {
       // so motions like `w` can see into the hint text
       let result = self.eval_motion_with_hint(cmd)?;
       if let Some(motion_kind) = result {
-        self.apply_motion_with_hint(motion_kind)?;
+        self.apply_motion_with_hint(&motion_kind)?;
       }
       return Ok(());
     };
-    let count = motion.as_ref().map(|m| m.0).unwrap_or(1);
+    let count = motion.as_ref().map_or(1, |m| m.0);
 
     match verb {
       Verb::Delete |
       Verb::Change |
       Verb::Yank /*--------------------*/ => self.delete_change_yank(cmd),
       Verb::Kill /*====================*/ => self.kill(cmd),
-      Verb::KillCycle /*---------------*/ => self.kill_cycle(),
-      Verb::KillPut /*=================*/ => self.kill_put(),
+      Verb::KillCycle /*---------------*/ => Ok(self.kill_cycle()),
+      Verb::KillPut /*=================*/ => Ok(self.kill_put()),
       Verb::Rot13 /*-------------------*/ => self.rot13(cmd),
       Verb::ReplaceChar(ch) /*=========*/ => self.replace_char(cmd, *ch),
       Verb::ReplaceCharInplace(ch, count) => self.replace_char_inplace(cmd, *ch, *count),
@@ -42,23 +42,23 @@ impl super::LineBuf {
       Verb::ToLower /*=================*/ => self.make_lower(cmd),
       Verb::ToUpper /*-----------------*/ => self.make_upper(cmd),
       Verb::Capitalize /*==============*/ => self.capitalize(cmd),
-      Verb::Undo /*--------------------*/ => self.undo(),
-      Verb::Redo /*====================*/ => self.redo(),
-      Verb::Put(anchor) /*-------------*/ => self.put(cmd, anchor),
-      Verb::SwapVisualAnchor /*========*/ => self.swap_visual_anchor(),
+      Verb::Undo /*--------------------*/ => Ok(self.undo()),
+      Verb::Redo /*====================*/ => Ok(self.redo()),
+      Verb::Put(anchor) /*-------------*/ => self.put(cmd, *anchor),
+      Verb::SwapVisualAnchor /*========*/ => Ok(self.swap_visual_anchor()),
       Verb::JoinLines /*---------------*/ => self.join_lines(cmd, count),
       Verb::InsertChar(ch) /*==========*/ => self.insert_char_verb(cmd, *ch),
       Verb::Indent /*==================*/ => self.indent(cmd),
       Verb::Dedent /*------------------*/ => self.dedent(cmd),
       Verb::Equalize /*================*/ => self.equalize_verb(cmd),
-      Verb::PrintPosition /*-----------*/ => self.report_position(),
-      Verb::TransposeChar /*===========*/ => self.transpose_char(),
-      Verb::TransposeWord /*-----------*/ => self.transpose_word(),
+      Verb::PrintPosition /*-----------*/ => Ok(self.report_position()),
+      Verb::TransposeChar /*===========*/ => Ok(self.transpose_char()),
+      Verb::TransposeWord /*-----------*/ => Ok(self.transpose_word()),
       Verb::ExCmd(_) /*================*/ => self.dispatch_ex_node(cmd),
-      Verb::ToggleCaseInplace(c) /*----*/ => self.toggle_case_inplace(*c),
-      Verb::InsertModeLineBreak(a) /*==*/ => self.break_line_verb(a),
-      Verb::IncrementNumber(n) /*======*/ => Ok(self.adjust_number(*n as i64)),
-      Verb::DecrementNumber(n) /*------*/ => Ok(self.adjust_number(-(*n as i64))),
+      Verb::ToggleCaseInplace(c) /*----*/ => Ok(self.toggle_case_inplace(*c)),
+      Verb::InsertModeLineBreak(a) /*==*/ => Ok(self.break_line_verb(*a)),
+      Verb::IncrementNumber(n) /*======*/ => Ok(self.adjust_number(i64::from(*n))),
+      Verb::DecrementNumber(n) /*------*/ => Ok(self.adjust_number(-i64::from(*n))),
       Verb::Insert(s) /*---------------*/ => Ok(self.insert_str(s)),
       Verb::AcceptLineOrNewline /*-----*/ => Ok(self.insert(Grapheme::from('\n'))),
       Verb::EndOfFile /*===============*/ => Ok(self.lines.clear()),
@@ -77,7 +77,7 @@ impl super::LineBuf {
         let Some(motion_kind) = self.eval_motion_with_hint(cmd)? else {
           return Ok(());
         };
-        self.apply_motion_with_hint(motion_kind)
+        self.apply_motion_with_hint(&motion_kind)
       }
       Verb::RepeatLast
       | Verb::RecordMacro
@@ -97,7 +97,7 @@ impl super::LineBuf {
     let mut first = true;
     for _ in 0..count {
       if first {
-        first = false
+        first = false;
       } else {
         self.cursor.pos = self.offset_cursor(0, 1);
       }
@@ -206,15 +206,15 @@ impl super::LineBuf {
     self.kill_ring.merging = true;
     Ok(())
   }
-  fn kill_cycle(&mut self) -> ShResult<()> {
+  fn kill_cycle(&mut self) {
     let Some(content) = self.kill_ring.next() else {
-      return Ok(());
+      return;
     };
     let Some(span) = self.kill_ring.kill_cycle_span else {
-      return Ok(());
+      return;
     };
     let total_len: usize =
-      content.iter().map(|l| l.len()).sum::<usize>() + content.len().saturating_sub(1); // adds the newlines too
+      content.iter().map(Line::len).sum::<usize>() + content.len().saturating_sub(1); // adds the newlines too
 
     let (s, e) = ordered(span.0, span.1);
     let _old = self.extract_span((s, e), false);
@@ -223,19 +223,17 @@ impl super::LineBuf {
     self.insert_lines_at(s, content);
     self.cursor.pos = self.offset_cursor_wrapping(0, total_len as isize);
     self.kill_ring.kill_cycle_span = Some((s, self.cursor.pos));
-    Ok(())
   }
-  fn kill_put(&mut self) -> ShResult<()> {
+  fn kill_put(&mut self) {
     let Some(content) = self.kill_ring.next() else {
-      return Ok(());
+      return;
     };
     let paste_pos = self.cursor.pos;
     let total_len: usize =
-      content.iter().map(|l| l.len()).sum::<usize>() + content.len().saturating_sub(1); // adds the newlines too
+      content.iter().map(Line::len).sum::<usize>() + content.len().saturating_sub(1); // adds the newlines too
     self.insert_lines_at(paste_pos, content);
     self.cursor.pos = self.offset_cursor_wrapping(0, total_len as isize);
     self.kill_ring.kill_cycle_span = Some((paste_pos, self.cursor.pos));
-    Ok(())
   }
   fn capitalize(&mut self, cmd: &EditCmd) -> ShResult<()> {
     // Emacs Alt+C capitalization
@@ -254,17 +252,15 @@ impl super::LineBuf {
       if capitalized {
         gr.as_char()
           .map(|c| c.to_ascii_lowercase())
-          .map(Grapheme::from)
-          .unwrap_or_else(|| gr.clone())
+          .map_or_else(|| gr.clone(), Grapheme::from)
       } else {
         capitalized = true;
         gr.as_char()
           .map(|c| c.to_ascii_uppercase())
-          .map(Grapheme::from)
-          .unwrap_or_else(|| gr.clone())
+          .map_or_else(|| gr.clone(), Grapheme::from)
       }
     });
-    self.apply_motion(motion)?;
+    self.apply_motion(&motion)?;
     self.cursor.pos = self.cursor.pos.col_add(1);
     Ok(())
   }
@@ -273,13 +269,13 @@ impl super::LineBuf {
       return Ok(());
     };
     self.motion_mutation(&motion, |_| Grapheme::from(ch));
-    self.move_to_start(motion);
+    self.move_to_start(&motion);
     Ok(())
   }
   fn replace_char_inplace(&mut self, cmd: &EditCmd, ch: char, count: u16) -> ShResult<()> {
     self.inplace_mutation(count, |_| Grapheme::from(ch));
     if let Some(motion) = self.eval_motion_with_hint(cmd)? {
-      self.apply_motion_with_hint(motion)?;
+      self.apply_motion_with_hint(&motion)?;
     }
     Ok(())
   }
@@ -302,32 +298,29 @@ impl super::LineBuf {
     self.motion_mutation(&motion, |gr| {
       gr.as_char()
         .map(map)
-        .map(Grapheme::from)
-        .unwrap_or_else(|| gr.clone())
+        .map_or_else(|| gr.clone(), Grapheme::from)
     });
-    self.move_to_start(motion);
+    self.move_to_start(&motion);
     Ok(())
   }
-  fn toggle_case_inplace(&mut self, count: u16) -> ShResult<()> {
-    self.eval_map_inplace(count, toggle_case_char)
+  fn toggle_case_inplace(&mut self, count: u16) {
+    self.eval_map_inplace(count, toggle_case_char);
   }
-  fn eval_map_inplace(&mut self, count: u16, map: fn(char) -> char) -> ShResult<()> {
+  fn eval_map_inplace(&mut self, count: u16, map: fn(char) -> char) {
     self.inplace_mutation(count, |gr| {
       gr.as_char()
         .map(map)
-        .map(Grapheme::from)
-        .unwrap_or_else(|| gr.clone())
+        .map_or_else(|| gr.clone(), Grapheme::from)
     });
     self.cursor.pos = self.cursor.pos.col_add(1);
-    Ok(())
   }
-  fn undo(&mut self) -> ShResult<()> {
-    self.edit_stack_op(true)
+  fn undo(&mut self) {
+    self.edit_stack_op(true);
   }
-  fn redo(&mut self) -> ShResult<()> {
-    self.edit_stack_op(false)
+  fn redo(&mut self) {
+    self.edit_stack_op(false);
   }
-  fn edit_stack_op(&mut self, is_undo: bool) -> ShResult<()> {
+  fn edit_stack_op(&mut self, is_undo: bool) {
     let (from, to) = if is_undo {
       (&mut self.undo_stack, &mut self.redo_stack)
     } else {
@@ -339,7 +332,7 @@ impl super::LineBuf {
         if let Some(next) = from.pop() {
           edit = next;
         } else {
-          return Ok(());
+          return;
         }
       }
       let (lines, cursor) = if is_undo {
@@ -351,14 +344,13 @@ impl super::LineBuf {
       self.cursor.pos = cursor;
       to.push(edit);
     }
-    Ok(())
   }
-  fn put(&mut self, cmd: &EditCmd, anchor: &Anchor) -> ShResult<()> {
+  fn put(&mut self, cmd: &EditCmd, anchor: Anchor) -> ShResult<()> {
     let EditCmd { register, .. } = cmd;
     let Some(content) = register.read_from_register() else {
       return Ok(());
     };
-    let mut effective_anchor = *anchor;
+    let mut effective_anchor = anchor;
     let mut selection_start: Option<Pos> = None;
 
     if let Some(motion) = self.select_range() {
@@ -376,12 +368,10 @@ impl super::LineBuf {
     match content {
       RegisterContent::Span(lines) => {
         let move_cursor = lines.len() == 1 && lines[0].len() > 1;
-        let content_len: usize = lines.iter().map(|l| l.len()).sum();
-        let row = selection_start.map(|p| p.row).unwrap_or_else(|| self.row());
+        let content_len: usize = lines.iter().map(Line::len).sum();
+        let row = selection_start.map_or_else(|| self.row(), |p| p.row);
         let col = if let Some(start) = selection_start {
-          start
-            .col
-            .min(self.lines.get(row).map(|l| l.len()).unwrap_or(0))
+          start.col.min(self.lines.get(row).map_or(0, Line::len))
         } else {
           match effective_anchor {
             Anchor::After => (self.col() + 1).min(self.cur_line().len()),
@@ -427,7 +417,7 @@ impl super::LineBuf {
         // Pasting a macro: render to vim-style text and paste as a single
         // span line. Mirrors vim, where macros and text registers are
         // string-equivalent on paste.
-        let rendered: String = keys.iter().filter_map(|k| k.as_vim_seq().ok()).collect();
+        let rendered: String = keys.iter().map(KeyEvent::as_vim_seq).collect();
         let mut line = Line::default();
         line.push_str(&rendered);
         let pos = Pos {
@@ -443,7 +433,7 @@ impl super::LineBuf {
     }
     Ok(())
   }
-  fn break_line_verb(&mut self, anchor: &Anchor) -> ShResult<()> {
+  fn break_line_verb(&mut self, anchor: Anchor) {
     match anchor {
       Anchor::After => {
         let row = self.row();
@@ -475,14 +465,13 @@ impl super::LineBuf {
         self.cursor.pos = Pos { row, col };
       }
     }
-    Ok(())
   }
-  fn swap_visual_anchor(&mut self) -> ShResult<()> {
+  fn swap_visual_anchor(&mut self) {
     let cur_pos = self.cursor.pos;
     let new_anchor;
     {
       let Some(select) = self.select_mode.as_mut() else {
-        return Ok(());
+        return;
       };
       match select {
         SelectMode::Block(select_anchor)
@@ -495,7 +484,6 @@ impl super::LineBuf {
     }
 
     self.set_cursor(new_anchor);
-    Ok(())
   }
   fn join_lines(&mut self, cmd: &EditCmd, count: usize) -> ShResult<()> {
     let old_exclusive = self.cursor.exclusive;
@@ -511,7 +499,6 @@ impl super::LineBuf {
         Some(MotionKind::Char { start, end, .. }) => (start.row, end.row),
         Some(MotionKind::Block { .. }) => return Ok(()),
         None => match self.select_range() {
-          Some(Motion::CharRange(s, e)) => (s.row, e.row),
           Some(Motion::LineRange(s_addr, e_addr)) => {
             let s = self
               .resolve_line_addr(&s_addr)
@@ -525,7 +512,7 @@ impl super::LineBuf {
               .unwrap_or(self.row());
             (s, e)
           }
-          Some(Motion::BlockRange(s, e)) => (s.row, e.row),
+          Some(Motion::CharRange(s, e) | Motion::BlockRange(s, e)) => (s.row, e.row),
           _ => return Ok(()),
         },
       };
@@ -545,7 +532,7 @@ impl super::LineBuf {
 
       let mut next_line = self.lines.remove(row + 1).trim_start();
       let this_line = self.line_mut(row);
-      let this_has_ws = this_line.0.last().is_some_and(|g| g.is_ws());
+      let this_has_ws = this_line.0.last().is_some_and(Grapheme::is_ws);
       let join_with_space = !this_has_ws && !this_line.is_empty() && !next_line.is_empty();
 
       if join_with_space {
@@ -562,7 +549,7 @@ impl super::LineBuf {
   fn insert_char_verb(&mut self, cmd: &EditCmd, ch: char) -> ShResult<()> {
     self.insert(Grapheme::from(ch));
     if let Some(motion) = self.eval_motion(cmd)? {
-      self.apply_motion(motion)?;
+      self.apply_motion(&motion)?;
     }
     Ok(())
   }
@@ -586,11 +573,9 @@ impl super::LineBuf {
       if is_indent {
         line.insert(0, Grapheme::from('\t'));
         col_offset += 1;
-      } else {
-        if line.0.first().is_some_and(|c| c.as_char() == Some('\t')) {
-          line.0.remove(0);
-          col_offset -= 1;
-        }
+      } else if line.0.first().is_some_and(|c| c.as_char() == Some('\t')) {
+        line.0.remove(0);
+        col_offset -= 1;
       }
     }
     self.cursor.pos = self.cursor.pos.col_add_signed(col_offset);
@@ -615,13 +600,13 @@ impl super::LineBuf {
     self.equalize_rows(line_nums);
     Ok(())
   }
-  fn report_position(&mut self) -> ShResult<()> {
+  fn report_position(&mut self) {
     let num_lines = self.lines.len();
     let row = self.row() + 1;
     let col = self.col() + 1;
     let total_graphemes = self.count_graphemes();
     let (left, _) = self.lines.clone().split_lines(self.cursor.pos);
-    let total_in_left = left.iter().map(|l| l.len()).sum::<usize>();
+    let total_in_left = left.iter().map(Line::len).sum::<usize>();
     let percentage = if total_graphemes > 0 {
       (total_in_left as f64 / total_graphemes as f64) * 100.0
     } else {
@@ -630,9 +615,8 @@ impl super::LineBuf {
     .round() as usize;
 
     status_msg!("line: {row}/{num_lines}, col: {col} --{percentage}%--");
-    Ok(())
   }
-  fn transpose_char(&mut self) -> ShResult<()> {
+  fn transpose_char(&mut self) {
     let Pos { row, col: c_col } = self.cursor.pos;
     let prev_char = Pos {
       row,
@@ -640,26 +624,16 @@ impl super::LineBuf {
     };
 
     let Some(gr) = self.remove_at(prev_char) else {
-      return Ok(());
+      return;
     };
 
     self.insert_at(self.cursor.pos, gr);
     self.cursor.pos = self.cursor.pos.col_add(1);
-    Ok(())
   }
-  fn transpose_word(&mut self) -> ShResult<()> {
+  fn transpose_word(&mut self) {
     // Find the word at/after cursor
     let this_word = if self.cursor_on_ws() {
-      let Some(pos) = self.eval_word_motion(
-        1,
-        &To::Start,
-        &Word::Normal,
-        &Direction::Forward,
-        false,
-        false,
-      ) else {
-        return Ok(());
-      };
+      let pos = self.eval_word_motion(1, To::Start, Word::Normal, Direction::Forward, false, false);
       let MotionKind::Char { end, .. } = pos else {
         unreachable!()
       };
@@ -673,43 +647,38 @@ impl super::LineBuf {
       inclusive,
     }) = self.text_obj_word(this_word, Word::Normal, Bound::Inside)
     else {
-      return Ok(());
+      return;
     };
     let end = if inclusive { end.col_add(1) } else { end };
     let this_word_span = (start, end);
 
     let back_count = if self.cursor_on_ws() { 1 } else { 2 };
 
-    // Find the previous word
-    let prev_word = if let Some(pos) = self.eval_word_motion(
+    let MotionKind::Char { end, .. } = self.eval_word_motion(
       back_count,
-      &To::Start,
-      &Word::Normal,
-      &Direction::Backward,
+      To::Start,
+      Word::Normal,
+      Direction::Backward,
       false,
       false,
-    ) {
-      let MotionKind::Char { end, .. } = pos else {
-        unreachable!()
-      };
-      end
-    } else {
-      return Ok(());
+    ) else {
+      return;
     };
+
     let Some(MotionKind::Char {
       start,
       end,
       inclusive,
-    }) = self.text_obj_word(prev_word, Word::Normal, Bound::Inside)
+    }) = self.text_obj_word(end, Word::Normal, Bound::Inside)
     else {
-      return Ok(());
+      return;
     };
     let end = if inclusive { end.col_add(1) } else { end };
     let prev_word_span = (start, end);
 
     // Bail if the spans overlap or are the same word
     if prev_word_span.0 >= this_word_span.0 {
-      return Ok(());
+      return;
     }
 
     // Yank both words non-destructively
@@ -718,9 +687,9 @@ impl super::LineBuf {
 
     // Compute lengths before we move the content vecs
     let this_content_len: usize =
-      this_content.iter().map(|l| l.len()).sum::<usize>() + this_content.len().saturating_sub(1);
+      this_content.iter().map(Line::len).sum::<usize>() + this_content.len().saturating_sub(1);
     let prev_content_len: usize =
-      prev_content.iter().map(|l| l.len()).sum::<usize>() + prev_content.len().saturating_sub(1);
+      prev_content.iter().map(Line::len).sum::<usize>() + prev_content.len().saturating_sub(1);
 
     // Remove later word first so earlier positions stay valid
     self.extract_span(this_word_span, false);
@@ -740,7 +709,6 @@ impl super::LineBuf {
     };
     self.set_cursor(new_later_start);
     self.cursor.pos = self.offset_cursor_wrapping(0, prev_content_len as isize);
-    Ok(())
   }
   fn format_adjusted(word: &str, inc: i64) -> Option<String> {
     if word.starts_with("0x") {

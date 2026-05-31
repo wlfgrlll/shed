@@ -20,7 +20,7 @@ use super::{
   util::get_separator,
 };
 
-/// a `std::sync::Once` that makes sure we only call VarTab::init_env() once.
+/// a `std::sync::Once` that makes sure we only call `VarTab::init_env()` once.
 static ENV_INIT: std::sync::Once = std::sync::Once::new();
 
 /// Display key/value pairs as '{key}={value}\n'
@@ -36,6 +36,7 @@ pub(crate) fn display_as_vars(
   vars.join("\n")
 }
 
+#[expect(clippy::needless_pass_by_value)]
 pub(crate) fn display_as_var(name: impl ToString, value: impl ToString) -> String {
   format!(
     "{}={}",
@@ -89,7 +90,7 @@ impl ShellParam {
     )
   }
 
-  pub fn from_char(c: &char) -> Option<Self> {
+  pub fn from_char(c: char) -> Option<Self> {
     match c {
       '?' => Some(Self::Status),
       '$' => Some(Self::ShPid),
@@ -110,7 +111,7 @@ impl Display for ShellParam {
       Self::ShPid => write!(f, "$"),
       Self::LastJob => write!(f, "!"),
       Self::ShellName => write!(f, "0"),
-      Self::Pos(n) => write!(f, "{}", n),
+      Self::Pos(n) => write!(f, "{n}"),
       Self::AllArgs => write!(f, "@"),
       Self::AllArgsStr => write!(f, "*"),
       Self::ArgCount => write!(f, "#"),
@@ -161,7 +162,7 @@ pub(crate) enum ArrIndex {
 impl ArrIndex {
   /// Parse an array index expression.
   ///
-  /// the allow_side_effects parameter controls whether or not mutating parameter
+  /// the `allow_side_effects` parameter controls whether or not mutating parameter
   /// expansions and command substitutions will be evaluated.
   pub fn parse(s: &str, allow_side_effects: bool) -> ShResult<Self> {
     let s = crate::expand::expand_raw_inner(&mut s.chars().peekable(), allow_side_effects)?;
@@ -318,7 +319,7 @@ impl VarName {
   }
   /// Replace the parsed index. Used to substitute a pre-resolved index
   /// (e.g. one whose `expand_arithmetic` was performed outside a borrow
-  /// to avoid forking under a held RefCell guard).
+  /// to avoid forking under a held `RefCell` guard).
   pub fn set_index(&mut self, idx: ArrIndex) {
     self.index = Some(idx);
   }
@@ -345,7 +346,7 @@ impl Default for VarKind {
 }
 
 impl VarKind {
-  pub fn arr_from_tk(tk: Tk) -> ShResult<Self> {
+  pub fn arr_from_tk(tk: &Tk) -> ShResult<Self> {
     let raw = tk.as_str();
     Self::arr_from_raw(raw)
   }
@@ -357,7 +358,7 @@ impl VarKind {
     let raw = raw[1..raw.len() - 1].to_string();
 
     let tokens: VecDeque<String> = LexStream::new(raw.into(), LexFlags::empty())
-      .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
+      .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
       .try_fold(String::new(), |mut acc, wrds| {
         match wrds {
           Ok(wrds) => {
@@ -374,7 +375,7 @@ impl VarKind {
       })?
       .split(markers::ARG_SEP)
       .filter(|s| !s.is_empty())
-      .map(|s| s.to_string())
+      .map(ToString::to_string)
       .collect();
 
     Ok(Self::Arr(tokens))
@@ -399,7 +400,7 @@ impl VarKind {
     let raw = raw[1..raw.len() - 1].to_string();
 
     let tokens: Vec<String> = LexStream::new(raw.into(), LexFlags::empty())
-      .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
+      .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
       .try_fold(String::new(), |mut acc, wrds| {
         match wrds {
           Ok(wrds) => {
@@ -416,7 +417,7 @@ impl VarKind {
       })?
       .split(markers::ARG_SEP)
       .filter(|s| !s.is_empty())
-      .map(|s| s.to_string())
+      .map(ToString::to_string)
       .collect();
 
     let mut pairs = Vec::new();
@@ -586,7 +587,7 @@ impl VarTab {
     let mut params = HashMap::new();
     params.insert(ShellParam::ArgCount, "0".into()); // Number of positional parameters
     params.insert(ShellParam::ShPid, Pid::this().to_string()); // PID of the shell
-    params.insert(ShellParam::LastJob, "".into()); // PID of the last background job (if any)
+    params.insert(ShellParam::LastJob, String::new()); // PID of the last background job (if any)
     params
   }
   fn init_sh_vars() -> HashMap<String, Var> {
@@ -642,17 +643,17 @@ impl VarTab {
       let resolved_home = resolve("HOME", &home_fallback);
       let resolved_user = resolve("USER", &username_fallback);
 
-      let mut data_dir = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.local/share")));
+      let mut data_dir = std::env::var("XDG_DATA_HOME").ok().map_or_else(
+        || PathBuf::from(format!("{resolved_home}/.local/share")),
+        PathBuf::from,
+      );
       data_dir.push("shed");
 
       let shed_db = data_dir.join("shed_hist.db");
-      let shed_rc = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .map(|c| PathBuf::from(c).join("shed").join("shedrc"))
-        .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.config/shed/shedrc")));
+      let shed_rc = std::env::var("XDG_CONFIG_HOME").ok().map_or_else(
+        || PathBuf::from(format!("{resolved_home}/.config/shed/shedrc")),
+        |c| PathBuf::from(c).join("shed").join("shedrc"),
+      );
 
       resolve("TMPDIR", "/tmp");
       resolve("TERM", &term);
@@ -756,7 +757,7 @@ impl VarTab {
     }
   }
   pub fn try_get_local(&self, var_name: &str) -> Option<String> {
-    self.vars.get(var_name).map(|v| v.to_string())
+    self.vars.get(var_name).map(ToString::to_string)
   }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {
     self.vars.get(var).cloned()
@@ -878,27 +879,22 @@ impl VarTab {
       ShellParam::Pos(n) => self
         .sh_argv()
         .get(n)
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .unwrap_or_default(),
       ShellParam::Status => self
         .params
         .get(&ShellParam::Status)
-        .map(|s| s.to_string())
-        .unwrap_or("0".into()),
+        .map_or("0".into(), &String::clone),
       ShellParam::AllArgsStr => {
         let ifs = get_separator();
         self
           .params
           .get(&ShellParam::AllArgs)
-          .map(|s| s.replace(markers::ARG_SEP, &ifs).to_string())
+          .map(|s| s.replace(markers::ARG_SEP, &ifs).clone())
           .unwrap_or_default()
       }
 
-      _ => self
-        .params
-        .get(&param)
-        .map(|s| s.to_string())
-        .unwrap_or_default(),
+      _ => self.params.get(&param).cloned().unwrap_or_default(),
     }
   }
 }
@@ -1055,14 +1051,14 @@ mod set_index_tests {
   }
 
   fn arr_items(tab: &VarTab, name: &str) -> Vec<String> {
-    match tab.vars.get(name).map(|v| v.kind()) {
+    match tab.vars.get(name).map(super::Var::kind) {
       Some(VarKind::Arr(items)) => items.iter().cloned().collect(),
       other => panic!("expected Arr for {name}, got {other:?}"),
     }
   }
 
   fn assoc_items(tab: &VarTab, name: &str) -> Vec<(String, String)> {
-    match tab.vars.get(name).map(|v| v.kind()) {
+    match tab.vars.get(name).map(super::Var::kind) {
       Some(VarKind::AssocArr(items)) => items.clone(),
       other => panic!("expected AssocArr for {name}, got {other:?}"),
     }

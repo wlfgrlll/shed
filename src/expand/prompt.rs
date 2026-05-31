@@ -33,6 +33,7 @@ pub enum PromptTk {
   JobCount,
 }
 
+#[expect(clippy::too_many_lines)]
 fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
   let mut chars = raw.chars().peekable();
   let mut tk_text = String::new();
@@ -200,7 +201,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
     PromptTk::AnsiSeq(params) => result.push_str(&params),
     PromptTk::Color(c) => {
       match ansi_from_description(&c) {
-        Ok(esc_seq) => result.push_str(&esc_seq.to_string()),
+        Ok(esc_seq) => result.push_str(esc_seq.as_str()),
         Err(e) => status_msg!("{e}")
       }
     }
@@ -275,7 +276,7 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
       result.push_str(&count.to_string());
     }
     PromptTk::AsciiOct(n) => {
-      if let Some(ch) = std::char::from_u32(n as u32) {
+      if let Some(ch) = std::char::from_u32(n.cast_unsigned()) {
         result.push(ch);
       }
     }

@@ -39,10 +39,10 @@ impl EditCmd {
     Self::default()
   }
   pub fn set_motion(&mut self, motion: Cmd<Motion>) {
-    self.motion = Some(motion)
+    self.motion = Some(motion);
   }
   pub fn set_verb(&mut self, verb: Cmd<Verb>) {
-    self.verb = Some(verb)
+    self.verb = Some(verb);
   }
   pub fn new_with_verb(&self, verb: Option<Cmd<Verb>>) -> Self {
     Self {
@@ -50,11 +50,11 @@ impl EditCmd {
       ..self.clone()
     }
   }
-  pub fn verb_is(&self, verb: Verb) -> bool {
-    self.verb().is_some_and(|v| v.1 == verb)
+  pub fn verb_is(&self, verb: &Verb) -> bool {
+    self.verb().is_some_and(|v| v.1 == *verb)
   }
-  pub fn motion_is(&self, motion: Motion) -> bool {
-    self.motion().is_some_and(|m| m.1 == motion)
+  pub fn motion_is(&self, motion: &Motion) -> bool {
+    self.motion().is_some_and(|m| m.1 == *motion)
   }
   pub fn new_with_motion(&self, motion: Option<Cmd<Motion>>) -> Self {
     Self {
@@ -67,7 +67,7 @@ impl EditCmd {
       self.verb().map(|v| &v.1),
       Some(Verb::HistoryUp | Verb::HistoryDown)
     ) {
-      let count = self.verb().map(|v| v.0).unwrap_or(1);
+      let count = self.verb().map_or(1, |v| v.0);
       let offset = match self.verb().map(|v| &v.1) {
         Some(Verb::HistoryUp) => -(count as isize),
         Some(Verb::HistoryDown) => count as isize,
@@ -78,7 +78,7 @@ impl EditCmd {
       self.motion().map(|m| &m.1),
       Some(Motion::LineUp | Motion::LineDown)
     ) {
-      let count = self.motion().map(|m| m.0).unwrap_or(1);
+      let count = self.motion().map_or(1, |m| m.0);
       let offset = match self.motion().map(|m| &m.1) {
         Some(Motion::LineUp) => -(count as isize),
         Some(Motion::LineDown) => count as isize,
@@ -99,7 +99,7 @@ impl EditCmd {
     self.motion.as_ref()
   }
   pub fn verb_count(&self) -> usize {
-    self.verb.as_ref().map(|v| v.0).unwrap_or(1)
+    self.verb.as_ref().map_or(1, |v| v.0)
   }
   pub fn normalize_counts(&mut self) {
     let Some(verb) = self.verb.as_mut() else {
@@ -168,7 +168,7 @@ impl EditCmd {
   }
 }
 
-/// Walks an ExNode tree, descending through any nesting Global wrappers,
+/// Walks an `ExNode` tree, descending through any nesting Global wrappers,
 /// looking for a Normal leaf. Returns the seq if found.
 fn find_normal_seq(node: &ExNode) -> Option<&str> {
   match &node.kind {
@@ -224,7 +224,7 @@ impl EditCmd {
       .as_ref()
       .is_some_and(|m| matches!(m.1, Motion::LineUp | Motion::LineDown))
   }
-  /// If a EditCmd has a linewise motion, but no verb, we change it to charwise
+  /// If a `EditCmd` has a linewise motion, but no verb, we change it to charwise
   pub fn is_mode_transition(&self) -> bool {
     self.verb.as_ref().is_some_and(|v| {
       matches!(
@@ -453,7 +453,7 @@ pub enum Motion {
 }
 
 impl Motion {
-  /// Builds a Motion::WordMotion from the given characters
+  /// Builds a `Motion::WordMotion` from the given characters
   /// takes a slice because of the 'ge' case.
   /// Only works for w, W, b, B, e, and E, and 'ge'
   pub fn word_motion(chars: &[char]) -> Option<Self> {
@@ -502,7 +502,7 @@ pub enum Anchor {
   After,
   Before,
 }
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum TextObj {
   /// `iw`, `aw` - inner word, around word
   Word(Word, Bound),
@@ -520,7 +520,6 @@ pub enum TextObj {
   DoubleQuote(Bound),
   /// `i'`, `a'`
   SingleQuote(Bound),
-  /// `i\``, `a\``
   BacktickQuote(Bound),
 
   /// `i)`, `a)` - round parens

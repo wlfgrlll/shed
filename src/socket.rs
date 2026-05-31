@@ -105,13 +105,13 @@ pub(crate) enum SocketRequest {
   /// Useful for quick notifications.
   PostStatusMessage(String),
 
-  /// Requests information from the shell. The shell will respond with a SocketResponse containing the requested information, or an error if the query was invalid.
+  /// Requests information from the shell. The shell will respond with a `SocketResponse` containing the requested information, or an error if the query was invalid.
   Query(QueryHeader),
 
-  /// Opens a subscription to the shell's event stream. The shell will send a SocketResponse for each event that occurs, until the socket or connnection is closed.
+  /// Opens a subscription to the shell's event stream. The shell will send a `SocketResponse` for each event that occurs, until the socket or connnection is closed.
   Subscribe,
 
-  /// Requests the shell to redraw the prompt. The shell will respond by redrawing the prompt, and sending a SocketResponse confirming the redraw.
+  /// Requests the shell to redraw the prompt. The shell will respond by redrawing the prompt, and sending a `SocketResponse` confirming the redraw.
   RefreshPrompt,
 
   LineGet(LineHeader),
@@ -166,6 +166,7 @@ impl SocketRequest {
 
 impl FromStr for SocketRequest {
   type Err = ShErr;
+  #[expect(clippy::too_many_lines)]
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     if let Some(stripped) = s.strip_prefix("PRIVATE ") {
       return Self::parse_private_request(stripped);
@@ -173,7 +174,7 @@ impl FromStr for SocketRequest {
 
     let request_kind = s
       .chars()
-      .peeking_take_while(|c| c.is_ascii_alphabetic())
+      .peeking_take_while(char::is_ascii_alphabetic)
       .collect::<String>()
       .to_lowercase();
 
@@ -491,6 +492,7 @@ impl Drop for ShedSocket {
   }
 }
 
+#[expect(clippy::too_many_lines)]
 pub(super) fn handle_socket_request(
   conn: UnixStream,
   request: SocketRequest,
@@ -542,7 +544,7 @@ pub(super) fn handle_socket_request(
           write(&conn, b"\n").ok();
         }
         LineHeader::Mode => {
-          write(&conn, mode.to_string().as_bytes()).ok();
+          write(&conn, mode.clone().as_bytes()).ok();
           write(&conn, b"\n").ok();
         }
       }
@@ -553,7 +555,7 @@ pub(super) fn handle_socket_request(
         let pos = readline.editor().cursor_to_flat();
 
         readline.editor_mut().edit(|this| {
-          this.set_buffer(value.clone());
+          this.set_buffer(&value);
         });
 
         readline.history_mut().update_pending_cmd((&joined, pos));
@@ -577,7 +579,7 @@ pub(super) fn handle_socket_request(
       LineHeader::Hint => {
         readline
           .editor_mut()
-          .set_hint(Some(Hint::Override(Lines::to_lines(value))));
+          .set_hint(Some(Hint::Override(Lines::to_lines(&value))));
       }
       LineHeader::Mode => {
         if !readline.try_swap_mode_from_str(&value) {
@@ -622,17 +624,17 @@ pub(super) fn handle_socket_request(
             StatusHeader::ExitCode => responses.push(Shed::get_status().to_string()),
             StatusHeader::CommandName => {
               let Some(name) =
-                Shed::meta(|m| m.last_job().and_then(|j| j.name()).map(|n| n.to_string()))
+                Shed::meta(|m| m.last_job().and_then(|j| j.name()).map(ToString::to_string))
               else {
-                responses.push("".to_string());
+                responses.push(String::new());
                 continue;
               };
 
-              responses.push(name.to_string());
+              responses.push(name.clone());
             }
             StatusHeader::Runtime => {
               let Some(dur) = Shed::meta_mut(|m| m.get_time()) else {
-                responses.push("".to_string());
+                responses.push(String::new());
                 continue;
               };
               responses.push(format!("{}", dur.as_millis()));
@@ -642,19 +644,19 @@ pub(super) fn handle_socket_request(
                 m.last_job().map(|j| {
                   j.get_pids()
                     .first()
-                    .map(|p| p.to_string())
+                    .map(ToString::to_string)
                     .unwrap_or_default()
                 })
               });
               let Some(job) = job else {
-                responses.push("".to_string());
+                responses.push(String::new());
                 continue;
               };
               responses.push(job);
             }
             StatusHeader::Pgid => {
               let Some(job) = Shed::meta_mut(|m| m.last_job().map(|j| j.pgid().to_string())) else {
-                responses.push("".to_string());
+                responses.push(String::new());
                 continue;
               };
               responses.push(job);
@@ -672,7 +674,7 @@ pub(super) fn handle_socket_request(
         let cur_gen = readline.worker_req_gen();
         if cur_gen == req_gen && !hint.is_empty() {
           readline.editor_mut().set_hint(Some(Hint::Completion {
-            lines: Lines::to_lines(hint),
+            lines: Lines::to_lines(&hint),
             token_start,
           }));
           readline.set_needs_redraw(true);
@@ -1064,7 +1066,7 @@ mod tests {
   use crate::Prompt;
   use crate::tests::testutil::TestGuard;
 
-  /// Run a request against a fresh ShedLine and return the bytes the
+  /// Run a request against a fresh `ShedLine` and return the bytes the
   /// handler wrote to its end of the socket. For requests that don't
   /// store the conn (everything except Subscribe), tx is dropped on
   /// function return so the read terminates cleanly on EOF.
@@ -1127,7 +1129,7 @@ mod tests {
   fn handler_line_get_buffer_returns_current_buffer() {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("hello world".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("hello world"));
     let (resp, _) = run_handler(SocketRequest::LineGet(LineHeader::Buffer), &mut rl);
     assert_eq!(resp, b"hello world\n");
   }
@@ -1264,7 +1266,7 @@ mod tests {
   fn handler_line_get_cursor_returns_flat_position() {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("abcdef".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("abcdef"));
     rl.editor_mut().set_cursor_from_flat(3);
     let (resp, _) = run_handler(SocketRequest::LineGet(LineHeader::Cursor), &mut rl);
     assert_eq!(resp, b"3\n");
@@ -1283,7 +1285,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
     rl.editor_mut().edit(|e| {
-      e.set_buffer("abcdef".into());
+      e.set_buffer("abcdef");
       e.start_char_select(); // anchor requires an active select mode
     });
     rl.editor_mut().set_anchor_from_flat(2);
@@ -1304,9 +1306,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
     rl.editor_mut()
-      .set_hint(Some(Hint::Override(Lines::to_lines(
-        "suggestion".to_string(),
-      ))));
+      .set_hint(Some(Hint::Override(Lines::to_lines("suggestion"))));
     let (resp, _) = run_handler(SocketRequest::LineGet(LineHeader::Hint), &mut rl);
     assert_eq!(resp, b"suggestion\n");
   }
@@ -1332,7 +1332,7 @@ mod tests {
     let _g = TestGuard::new();
     Shed::shopts_mut(|o| o.line.auto_suggest = false);
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("ab".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("ab"));
     let _ = run_handler(
       SocketRequest::LineSet(LineHeader::Hint, "external".into()),
       &mut rl,
@@ -1347,7 +1347,7 @@ mod tests {
   fn handler_line_set_cursor_flat_position() {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("abcdef".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("abcdef"));
     let _ = run_handler(
       SocketRequest::LineSet(LineHeader::Cursor, "4".into()),
       &mut rl,
@@ -1359,7 +1359,7 @@ mod tests {
   fn handler_line_set_cursor_row_col() {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("ab\ncd\nef".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("ab\ncd\nef"));
     let _ = run_handler(
       SocketRequest::LineSet(LineHeader::Cursor, "1:1".into()),
       &mut rl,
@@ -1373,7 +1373,7 @@ mod tests {
   fn handler_line_set_cursor_garbage_value_is_noop() {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
-    rl.editor_mut().edit(|e| e.set_buffer("abcdef".into()));
+    rl.editor_mut().edit(|e| e.set_buffer("abcdef"));
     rl.editor_mut().set_cursor_from_flat(2);
     let _ = run_handler(
       SocketRequest::LineSet(LineHeader::Cursor, "not-a-number".into()),
@@ -1387,7 +1387,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut rl = fresh_readline();
     rl.editor_mut().edit(|e| {
-      e.set_buffer("abcdef".into());
+      e.set_buffer("abcdef");
       e.start_char_select(); // anchor requires an active select mode
     });
     let _ = run_handler(
@@ -1451,7 +1451,7 @@ mod tests {
     use nix::unistd::Pid;
     let mut bldr = JobBldr::new();
     bldr.set_pgid(Pid::this());
-    let child = ChildProc::new(Pid::this(), Some(cmd), Some(Pid::this()), None).unwrap();
+    let child = ChildProc::new(Pid::this(), Some(cmd), Some(Pid::this()), None);
     bldr.push_child(child);
     bldr.build()
   }

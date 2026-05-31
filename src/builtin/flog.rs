@@ -19,9 +19,9 @@ impl super::Builtin for Flog {
     let source = span.span_source().name();
     let (line, col) = span.line_and_col();
 
-    let mut argv = args.argv.into_iter();
+    let mut arg_vec = args.argv.into_iter();
 
-    let Some((first, span)) = argv.next() else {
+    let Some((first, span)) = arg_vec.next() else {
       return Err(sherr!(ExecFail, "Usage: flog <LEVEL> <MESSAGE>"));
     };
     let level = first.to_ascii_uppercase();
@@ -41,16 +41,16 @@ impl super::Builtin for Flog {
     for opt in args.opts {
       match &opt {
         Opt::ShortWithArg('p', arg) => {
-          prefix_fmt = arg.to_string();
+          prefix_fmt.clone_from(arg);
         }
         Opt::LongWithArg(flag, arg) if flag.as_str() == "prefix" => {
-          prefix_fmt = arg.to_string();
+          prefix_fmt.clone_from(arg);
         }
         _ => {}
       }
     }
 
-    let (rest, _) = join_raw_arg_iter(argv);
+    let (rest, _) = join_raw_arg_iter(arg_vec);
     let formatted = Self::expand_prefix_fmt(&prefix_fmt, &level, source, line, col);
 
     let out = format!("{formatted} {rest}");
@@ -115,7 +115,7 @@ mod flog_execute_tests {
   use crate::state::vars::{VarFlags, VarKind};
   use crate::tests::testutil::{TestGuard, test_input};
 
-  /// Empty the system_msg queue so each test sees a clean slate.
+  /// Empty the `system_msg` queue so each test sees a clean slate.
   fn drain_system_msgs() {
     while state::Shed::pop_system_msg().is_some() {}
   }

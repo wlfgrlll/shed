@@ -69,7 +69,7 @@ mod msg_tests {
   use crate::tests::testutil::{TestGuard, test_input};
 
   /// Drain both queues so we have a clean slate; prior tests in this
-  /// thread may have left messages behind (TestGuard restores Shed
+  /// thread may have left messages behind (`TestGuard` restores Shed
   /// state but the message queues are not part of that save/restore).
   fn drain_all() {
     while Shed::pop_status_msg().is_some() {}

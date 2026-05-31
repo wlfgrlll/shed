@@ -124,7 +124,7 @@ pub(crate) struct TestGuard {
   // exits, and then closing the master returns cleanly. Field declaration
   // order is drop order, so this ordering is load-bearing.
   pty_slave: OwnedFd,
-  _pty_master: Option<OwnedFd>,
+  pty_master: Option<OwnedFd>,
   stdin_write_pipe: Option<OwnedFd>,
   output: Arc<(Mutex<Vec<u8>>, Condvar)>,
   _read_handle: JoinHandle<()>,
@@ -150,13 +150,13 @@ impl TestGuard {
     // we can't read if we're blocked on writing to a full pty buffer.
     let output = Arc::new((Mutex::new(vec![]), Condvar::new()));
     let output_clone = Arc::clone(&output);
-    let _read_handle = std::thread::spawn(move || {
+    let read_handle = std::thread::spawn(move || {
       let mut buf = [0u8; 4096];
       loop {
         let n = unsafe {
           nix::libc::read(
             master_raw,
-            buf.as_mut_ptr() as *mut nix::libc::c_void,
+            buf.as_mut_ptr().cast::<nix::libc::c_void>(),
             buf.len(),
           )
         };
@@ -181,7 +181,7 @@ impl TestGuard {
     ]
     .into();
 
-    let _redir_guard = redirs.apply().ok().flatten().unwrap();
+    let redir_guard = redirs.apply().ok().flatten().unwrap();
 
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();
@@ -197,15 +197,15 @@ impl TestGuard {
       let _ = conn.execute_batch("DROP TABLE IF EXISTS stash");
     }
     Self {
-      _redir_guard,
+      _redir_guard: redir_guard,
       old_cwd,
       saved_env,
-      _pty_master: Some(pty_master),
+      pty_master: Some(pty_master),
       pty_slave,
       stdin_write_pipe: Some(stdin_write),
 
       output,
-      _read_handle,
+      _read_handle: read_handle,
 
       cleanups: vec![],
     }
@@ -246,7 +246,7 @@ impl TestGuard {
   /// the pty slave that Shed's Terminal reads from. Use this to drive
   /// poll/read paths in tests.
   pub fn feed_tty(&self, data: &[u8]) {
-    if let Some(master) = self._pty_master.as_ref() {
+    if let Some(master) = self.pty_master.as_ref() {
       nix::unistd::write(master.as_fd(), data).unwrap();
     }
   }
@@ -255,7 +255,7 @@ impl TestGuard {
   /// on the next poll, exercising the disconnect-cleanup branch in
   /// `shed_loop_iter`.
   pub fn close_tty_master(&mut self) {
-    self._pty_master.take(); // drops, closes
+    self.pty_master.take(); // drops, closes
   }
 
   pub fn read_output(&self) -> String {
@@ -379,12 +379,9 @@ impl crate::eval::Node {
 
       let output = [
         "Structure assertion failed!\n".into(),
-        format!(
-          "Expected node type '{:?}', found '{:?}'",
-          expected_rule, nd_kind
-        ),
-        format!("Before offender: {:?}", before),
-        format!("After offender: {:?}\n", after),
+        format!("Expected node type '{expected_rule:?}', found '{nd_kind:?}'"),
+        format!("Before offender: {before:?}"),
+        format!("After offender: {after:?}\n"),
         format!("hint: here is the full structure as an array\n {full_structure_hint}"),
       ]
       .join("\n");

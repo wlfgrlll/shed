@@ -31,6 +31,8 @@ use layout::{Layout, clear_rows, move_cursor_to_end, redraw};
 use linebuf::LineBuf;
 use register::{RegisterContent, RegisterName};
 
+use super::state::meta::MetaTab;
+use super::state::terminal::Terminal;
 use super::{
   autocmd, builtin, eval,
   expand::{self, expand_keymap, expand_prompt},
@@ -109,7 +111,7 @@ impl SimpleEditor {
     let entry = history.scroll(count);
     if let Some(entry) = entry {
       let buf = std::mem::take(&mut self.buf);
-      self.buf.set_buffer(entry.command().to_string());
+      self.buf.set_buffer(entry.command());
       if history.pending.is_none() {
         history.pending = Some(buf);
       }
@@ -140,9 +142,9 @@ impl SimpleEditor {
       } else {
         cmd.verb_mut().unwrap().1 = Verb::Delete;
       }
-    };
+    }
 
-    self.buf.exec_cmd(cmd)
+    self.buf.exec_cmd(&cmd)
   }
 }
 
@@ -254,6 +256,7 @@ pub(super) struct Prompt {
   dirty: bool,
 }
 
+#[expect(clippy::similar_names)]
 impl Prompt {
   pub fn new() -> Self {
     autocmd!(PrePrompt);
@@ -333,7 +336,7 @@ enum LineCmd {
 impl LineCmd {
   pub fn switch_to_normal() -> Self {
     Self::Execute(EditCmd {
-      register: Default::default(),
+      register: RegisterName::default(),
       verb: Some(verb!(Verb::NormalMode)),
       motion: None,
       raw_seq: String::new(),
@@ -355,7 +358,7 @@ impl MacroRecord {
   }
   pub fn feed_key_event(&mut self, event: KeyEvent) {
     if let MacroRecord::Recording(_, keys) = self {
-      keys.push(event)
+      keys.push(event);
     }
   }
   pub fn commit_recording(&mut self) -> Option<RegisterName> {
@@ -368,7 +371,7 @@ impl MacroRecord {
     }
   }
   pub fn start_recording(&mut self, reg: RegisterName) {
-    *self = MacroRecord::Recording(reg, vec![])
+    *self = MacroRecord::Recording(reg, vec![]);
   }
   pub fn status(&self) -> Option<String> {
     match self {
@@ -396,7 +399,7 @@ struct HintWorker {
 impl HintWorker {
   pub fn new() -> Self {
     let (channel, receiver) = mpsc::channel::<CompHintRequest>();
-    std::thread::spawn(move || Self::main(receiver));
+    std::thread::spawn(move || Self::main(&receiver));
     Self {
       channel: Some(channel),
       req_gen: 0,
@@ -422,7 +425,7 @@ impl HintWorker {
       channel.send(req).ok();
     }
   }
-  fn main(receiver: mpsc::Receiver<CompHintRequest>) {
+  fn main(receiver: &mpsc::Receiver<CompHintRequest>) {
     let mut completer = SimpleCompleter::default();
     let token = &*socket::PRIVATE_TOKEN;
     while let Ok(mut req) = receiver.recv() {
@@ -555,7 +558,7 @@ impl ShedLine {
   }
 
   /// A mutable reference to the currently focused editor
-  /// This includes the main LineBuf, and sub-editors for modes like Ex mode.
+  /// This includes the main `LineBuf`, and sub-editors for modes like Ex mode.
   fn focused_editor(&mut self) -> &mut LineBuf {
     self.mode.editor().unwrap_or(&mut self.editor)
   }
@@ -601,7 +604,7 @@ impl ShedLine {
     if let Some(line) = self.statline.as_mut() {
       line.refresh();
     }
-    self.editor = Default::default();
+    self.editor = LineBuf::default();
     let mut mode = if shopt!(set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
@@ -620,8 +623,7 @@ impl ShedLine {
           .get_cursor_pos()
           .ok()
           .flatten()
-          .map(|(r, _)| r.0 as u16)
-          .unwrap_or(new_bottom);
+          .map_or(new_bottom, |(r, _)| r.0 as u16);
         if cursor_row > new_bottom {
           let scroll_amount = (cursor_row - new_bottom) as usize;
           t.scroll_up(scroll_amount).ok();
@@ -629,7 +631,7 @@ impl ShedLine {
           // change. Move it up so it tracks the prompt's new row.
           t.write_direct(&format!("\x1b[{scroll_amount}A")).ok();
         }
-        t.set_scroll_region(1, new_bottom)?;
+        t.set_scroll_region(1, new_bottom);
         Ok(())
       })?;
       self.old_layout = None;
@@ -679,9 +681,9 @@ impl ShedLine {
     !self.focused_editor().cursor_in_leading_ws()
   }
 
-  fn should_submit(&mut self) -> ShResult<bool> {
+  fn should_submit(&mut self) -> bool {
     if self.mode.report_mode() == ModeReport::Normal {
-      return Ok(true);
+      return true;
     }
     if self.editor.cursor_is_escaped()
       && matches!(
@@ -689,10 +691,10 @@ impl ShedLine {
         ModeReport::Emacs | ModeReport::Insert
       )
     {
-      return Ok(false);
+      return false;
     }
     let (depth, failed) = self.editor.cursor_indent_level();
-    Ok(depth == 0 && !failed)
+    depth == 0 && !failed
   }
 
   fn handle_hist_search_key(&mut self, key: KeyEvent) -> ShResult<()> {
@@ -702,12 +704,12 @@ impl ShedLine {
         let entry_idx = cmd.id().unwrap(); // history entries having an id to unwrap is an invariant.
         self.scroll_history_to(entry_idx);
         if let Some(finder) = self.history_fzf() {
-          finder.clear()?;
+          finder.clear();
         }
         self.focused_history().stop_search();
 
         with_vars([("HIST_ENTRY".into(), cmd.content().to_string())], || {
-          autocmd!(OnHistorySelect)
+          autocmd!(OnHistorySelect);
         });
 
         Shed::vars_mut(|v| {
@@ -729,7 +731,7 @@ impl ShedLine {
 
         self.editor.clear_hint();
         if let Some(finder) = self.history_fzf() {
-          finder.clear()?;
+          finder.clear();
         }
         self.focused_history().stop_search();
         Shed::vars_mut(|v| {
@@ -759,7 +761,7 @@ impl ShedLine {
 
       this.update_editor_hint();
       if let Some(comp) = this.completer.as_mut() {
-        comp.clear()?;
+        comp.clear();
       }
       this.completer = None;
       Shed::vars_mut(|v| {
@@ -785,7 +787,7 @@ impl ShedLine {
         let span_start = comp.token_span().0;
         let new_cursor = span_start + candidate.len();
         let line = comp.get_completed_line(&candidate);
-        self.focused_editor().set_buffer(line);
+        self.focused_editor().set_buffer(&line);
         self.focused_editor().set_cursor_from_flat(new_cursor);
 
         if !self.focused_history().at_pending() {
@@ -794,7 +796,7 @@ impl ShedLine {
         self.update_editor_hint();
         // clear() needs old_layout to erase the selector, so clear before dropping
         if let Some(comp) = self.completer.as_mut() {
-          comp.clear()?;
+          comp.clear();
         }
         self.completer = None;
         self.needs_redraw = true;
@@ -826,7 +828,7 @@ impl ShedLine {
         let span_start = comp.token_span().0;
         let new_cursor = span_start + candidate.len();
         let line = comp.get_completed_line(&candidate);
-        self.focused_editor().set_buffer(line);
+        self.focused_editor().set_buffer(&line);
         self.focused_editor().set_cursor_from_flat(new_cursor);
         self.update_editor_hint();
         self.needs_redraw = true;
@@ -849,7 +851,7 @@ impl ShedLine {
     }
   }
 
-  fn handle_keymap(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
+  fn handle_keymap(&mut self, key: &KeyEvent) -> ShResult<Option<ReadlineEvent>> {
     let keymap_flags = self.curr_keymap_flags();
     self.pending_keymap.push(key.clone());
 
@@ -860,7 +862,7 @@ impl ShedLine {
     if matches.is_empty() {
       // No matches. Drain the buffered keys and execute them.
       for key in std::mem::take(&mut self.pending_keymap) {
-        if let Some(event) = self.handle_key(key)? {
+        if let Some(event) = self.handle_key(&key)? {
           return Ok(Some(event));
         }
       }
@@ -871,7 +873,7 @@ impl ShedLine {
       self.pending_keymap.clear();
       let action = keymap.action_expanded();
       for key in action {
-        if let Some(event) = self.handle_key(key)? {
+        if let Some(event) = self.handle_key(&key)? {
           return Ok(Some(event));
         }
       }
@@ -921,7 +923,7 @@ impl ShedLine {
       self.needs_redraw = false;
     }
     let line_data = self.get_line_data();
-    Shed::meta_mut(|m| m.notify_line_edit(line_data)).ok();
+    Shed::meta_mut(|m| m.notify_line_edit(line_data));
 
     self.try_comp_hint();
 
@@ -956,13 +958,13 @@ impl ShedLine {
     {
       // Vi mode is waiting for more input (e.g. after 'f', 'd', etc.)
       // Bypass keymap matching and send directly to the mode handler
-      let ev = self.handle_key(key)?;
+      let ev = self.handle_key(&key)?;
       self.update_editor_search();
       self.editor.set_cursor_clamp(self.mode.clamp_cursor());
 
       Ok(ev)
     } else {
-      self.handle_keymap(key)
+      self.handle_keymap(&key)
     }
   }
 
@@ -976,7 +978,7 @@ impl ShedLine {
       let ev = if with_keymaps {
         self.dispatch_key(key)?
       } else {
-        self.handle_key(key)?
+        self.handle_key(&key)?
       };
       if let Some(ev) = ev {
         return Ok(Some(ev));
@@ -985,7 +987,7 @@ impl ShedLine {
     Ok(None)
   }
 
-  fn accept_hint(&mut self) -> ShResult<Option<ReadlineEvent>> {
+  fn accept_hint(&mut self) -> Option<ReadlineEvent> {
     self.editor.edit(|e| {
       e.accept_hint();
     });
@@ -997,12 +999,12 @@ impl ShedLine {
       .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
     self.needs_redraw = true;
 
-    Ok(None)
+    None
   }
 
-  fn handle_tab(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
+  fn handle_tab(&mut self, key: &KeyEvent) -> Option<ReadlineEvent> {
     let KeyEvent(KeyCode::Tab, mod_keys) = key else {
-      return Ok(None);
+      return None;
     };
 
     if self.mode.report_mode() != ModeReport::Ex
@@ -1012,10 +1014,10 @@ impl ShedLine {
     {
       // If history expansion occurred, don't attempt completion yet
       self.update_editor_hint();
-      return Ok(None);
+      return None;
     }
 
-    let direction = match mod_keys {
+    let direction = match *mod_keys {
       ModKeys::SHIFT => -1,
       _ => 1,
     };
@@ -1051,7 +1053,7 @@ impl ShedLine {
             .map(|c| c.len())
             .unwrap_or_default();
 
-        self.focused_editor().set_buffer(line);
+        self.focused_editor().set_buffer(&line);
         self.focused_editor().set_cursor_from_flat(new_cursor);
 
         if !self.focused_history().at_pending() {
@@ -1098,70 +1100,67 @@ impl ShedLine {
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
-          Shed::term_mut(|t| t.send_bell()).ok();
+          Shed::term_mut(Terminal::send_bell).ok();
         }
       }
     }
 
     self.needs_redraw = true;
-    Ok(None)
+    None
   }
 
   fn start_hist_search(&mut self) {
     let initial = self.focused_editor().joined();
-    match self.focused_history().start_search(&initial) {
-      Some(entry) => {
-        with_vars([("HIST_ENTRY".into(), entry.clone())], || {
-          autocmd!(OnHistorySelect)
-        });
+    if let Some(entry) = self.focused_history().start_search(&initial) {
+      with_vars([("HIST_ENTRY".into(), entry.clone())], || {
+        autocmd!(OnHistorySelect);
+      });
 
-        self.focused_editor().set_buffer(entry);
-        self.focused_editor().move_cursor_to_end();
-        self
-          .history
-          .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
-        self.editor.clear_hint();
-      }
-      None => {
-        let finder = self.history_fzf().unwrap();
-        let entries = finder.candidates().to_vec();
-        let matches = finder
-          .filtered()
-          .iter()
-          .map(|sc| sc.candidate.content().to_string())
-          .collect::<Vec<_>>();
+      self.focused_editor().set_buffer(&entry);
+      self.focused_editor().move_cursor_to_end();
+      self
+        .history
+        .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
+      self.editor.clear_hint();
+    } else {
+      let finder = self.history_fzf().unwrap();
+      let entries = finder.candidates().to_vec();
+      let matches = finder
+        .filtered()
+        .iter()
+        .map(|sc| sc.candidate.content().to_string())
+        .collect::<Vec<_>>();
 
-        let num_entries = entries.len();
-        let num_matches = matches.len();
-        with_vars(
-          [
-            ("ENTRIES".into(), Into::<Var>::into(entries)),
-            ("NUM_ENTRIES".into(), Into::<Var>::into(num_entries)),
-            ("MATCHES".into(), Into::<Var>::into(matches)),
-            ("NUM_MATCHES".into(), Into::<Var>::into(num_matches)),
-            ("SEARCH_STR".into(), Into::<Var>::into(initial)),
-          ],
-          || autocmd!(OnHistoryOpen),
-        );
+      let num_entries = entries.len();
+      let num_matches = matches.len();
+      with_vars(
+        [
+          ("ENTRIES".into(), Into::<Var>::into(entries)),
+          ("NUM_ENTRIES".into(), Into::<Var>::into(num_entries)),
+          ("MATCHES".into(), Into::<Var>::into(matches)),
+          ("NUM_MATCHES".into(), Into::<Var>::into(num_matches)),
+          ("SEARCH_STR".into(), Into::<Var>::into(initial)),
+        ],
+        || autocmd!(OnHistoryOpen),
+      );
 
-        if self.history_fzf().is_some() {
-          Shed::vars_mut(|v| {
-            v.set_var(
-              "SHED_EDIT_MODE",
-              VarKind::Str("SEARCH".to_string()),
-              VarFlags::empty(),
-            )
-          })
-          .ok();
-          self.prompt.refresh();
-          if let Some(line) = self.statline.as_mut() {
-            line.refresh();
-          }
-          self.needs_redraw = true;
-          self.editor.clear_hint();
-        } else {
-          Shed::term_mut(|t| t.send_bell()).ok();
+      if self.history_fzf().is_some() {
+        Shed::vars_mut(|v| {
+          v.set_var(
+            "SHED_EDIT_MODE",
+            VarKind::Str("SEARCH".to_string()),
+            VarFlags::empty(),
+          )
+        })
+        .ok();
+        self.prompt.refresh();
+        if let Some(line) = self.statline.as_mut() {
+          line.refresh();
         }
+        self.needs_redraw = true;
+        self.editor.clear_hint();
+      } else {
+        Shed::term_mut(Terminal::send_bell).ok();
       }
     }
   }
@@ -1182,7 +1181,7 @@ impl ShedLine {
     self.editor.set_cursor_from_flat(self.editor.cursor_max());
     self.print_line(true)?;
     if let Some(layout) = &self.old_layout {
-      move_cursor_to_end(layout)?;
+      move_cursor_to_end(layout);
     }
     if shopt!(line.trim_on_submit) {
       self.editor.trim();
@@ -1243,9 +1242,8 @@ impl ShedLine {
           .intersects(CmdFlags::HAS_SHIFT | CmdFlags::HAS_CTRL)
       {
         return Ok(Some(LineCmd::ScrollHistVirtual(cmd)));
-      } else {
-        return Ok(Some(LineCmd::ScrollHist(offset)));
       }
+      return Ok(Some(LineCmd::ScrollHist(offset)));
     }
 
     if cmd.is_submit_action() {
@@ -1257,19 +1255,18 @@ impl ShedLine {
       // we've gotta resolve this into either Delete or EndOfFile here
       if self.focused_editor().is_empty() {
         return Ok(Some(LineCmd::EndOfFile));
-      } else {
-        cmd.verb_mut().unwrap().1 = Verb::Delete;
       }
+      cmd.verb_mut().unwrap().1 = Verb::Delete;
       return Ok(Some(LineCmd::Execute(cmd)));
     } else if let Some(Cmd(_, Verb::ClearScreen)) = cmd.verb() {
       return Ok(Some(LineCmd::ClearScreen));
     }
 
-    if cmd.verb_is(Verb::EndOfFile) && self.focused_editor().is_empty() {
+    if cmd.verb_is(&Verb::EndOfFile) && self.focused_editor().is_empty() {
       return Ok(Some(LineCmd::EndOfFile));
     } else if cmd.is_quit() {
       return Ok(Some(LineCmd::Quit));
-    } else if cmd.verb_is(Verb::AcceptHint) {
+    } else if cmd.verb_is(&Verb::AcceptHint) {
       return Ok(Some(LineCmd::AppendHint));
     }
 
@@ -1285,16 +1282,16 @@ impl ShedLine {
       .verb()
       .is_some_and(|v| v.1.is_edit() && v.1 != Verb::Change);
 
-    let is_ctrl_d_motion = cmd.motion_is(Motion::HalfScreenDown);
+    let is_ctrl_d_motion = cmd.motion_is(&Motion::HalfScreenDown);
 
     let is_ex_cmd = cmd.flags.contains(CmdFlags::IS_EX_CMD);
     if is_ex_cmd {
-      self.ex_history.push(cmd.raw_seq.clone()).ok();
+      self.ex_history.push(&cmd.raw_seq).ok();
       self.ex_history.reset();
     }
 
-    if cmd.verb_is(Verb::RecordMacro) {
-      log::debug!("starting macro recording with cmd: {:?}", cmd);
+    if cmd.verb_is(&Verb::RecordMacro) {
+      log::debug!("starting macro recording with cmd: {cmd:?}");
       if cmd.register.name().is_none() {
         return Ok(None);
       }
@@ -1304,7 +1301,7 @@ impl ShedLine {
       return Ok(None);
     }
 
-    if cmd.verb_is(Verb::PlayMacro) {
+    if cmd.verb_is(&Verb::PlayMacro) {
       let target = if cmd.register.name().is_some() {
         cmd.register
       } else if let Some(reg) = self.repeat_macro {
@@ -1339,7 +1336,7 @@ impl ShedLine {
 
     self.exec_cmd(cmd, false)?;
 
-    if let Some(keys) = Shed::meta_mut(|m| m.take_pending_widget_keys()) {
+    if let Some(keys) = Shed::meta_mut(MetaTab::take_pending_widget_keys) {
       self.replay_keys(keys, false)?;
     }
     let after = self.editor.joined();
@@ -1348,7 +1345,7 @@ impl ShedLine {
     if before != after {
       self.history.mark_mask_stale();
     } else if before == after && has_edit_verb {
-      Shed::term_mut(|t| t.send_bell()).ok();
+      Shed::term_mut(Terminal::send_bell).ok();
     } else if before_cursor == after_cursor && is_ctrl_d_motion {
       if self.ctrl_d_warning_counter == 3 || self.editor.is_empty() {
         // our silly user is spamming ctrl+d for some reason
@@ -1375,8 +1372,8 @@ impl ShedLine {
     }
   }
 
-  pub fn handle_key(&mut self, key: KeyEvent) -> ShResult<Option<ReadlineEvent>> {
-    let Some(linecmd) = self.resolve_key(&key)? else {
+  pub fn handle_key(&mut self, key: &KeyEvent) -> ShResult<Option<ReadlineEvent>> {
+    let Some(linecmd) = self.resolve_key(key)? else {
       self.update_editor_search();
       self.needs_redraw = true;
       return Ok(None);
@@ -1410,7 +1407,7 @@ impl ShedLine {
       LineCmd::ClearScreen => {
         // if the status line is enabled, park the cursor at the bottom.
         if shopt!(statline.enable)
-          && let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region())
+          && let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region()).dims()
         {
           let region_height = (bottom.saturating_sub(top) + 1) as usize;
           Shed::term_mut(|t| t.scroll_up(region_height)).ok();
@@ -1421,13 +1418,12 @@ impl ShedLine {
         }
 
         // Original behavior: scroll just enough to put the prompt at row 1.
-        let cursor_row = Shed::term_mut(|t| t.get_cursor_pos())
+        let cursor_row = Shed::term_mut(Terminal::get_cursor_pos)
           .ok()
           .flatten()
-          .map(|(r, _)| r.0)
-          .unwrap_or(1);
+          .map_or(1, |(r, _)| r.0);
 
-        let prompt_cursor_offset = self.old_layout.as_ref().map(|l| l.cursor.row).unwrap_or(0);
+        let prompt_cursor_offset = self.old_layout.as_ref().map_or(0, |l| l.cursor.row);
 
         let prompt_top = cursor_row.saturating_sub(prompt_cursor_offset);
         let scroll_amount = prompt_top.saturating_sub(1);
@@ -1464,7 +1460,7 @@ impl ShedLine {
 
         Ok(None)
       }
-      LineCmd::TriggerCompletion => self.handle_tab(key),
+      LineCmd::TriggerCompletion => Ok(self.handle_tab(key)),
       LineCmd::TriggerHistSearch => {
         self.start_hist_search();
         Ok(None)
@@ -1478,19 +1474,19 @@ impl ShedLine {
           self.update_editor_hint();
 
           Ok(None)
-        } else if self.should_submit()? || !shopt!(line.linebreak_on_incomplete) {
+        } else if self.should_submit() || !shopt!(line.linebreak_on_incomplete) {
           self.submit()
         } else {
           self.run_cmd(cmd)
         }
       }
-      LineCmd::AppendHint => self.accept_hint(),
+      LineCmd::AppendHint => Ok(self.accept_hint()),
     }
   }
 
   fn get_layout(&mut self, line: &str) -> Layout {
-    let to_cursor = self.editor.window_slice_to_cursor().unwrap_or_default();
-    let cols = Shed::term(|t| t.t_cols());
+    let to_cursor = self.editor.window_slice_to_cursor();
+    let cols = Shed::term(Terminal::t_cols);
     let prompt = layout::pad_prompt_for_gutter(
       self.prompt.get_ps1(),
       line,
@@ -1522,7 +1518,7 @@ impl ShedLine {
                   e.clear_buffer();
                   self.history.stop_virtual_scroll();
                   break;
-                };
+                }
                 self.history.virt_scroll(-1);
               }
             }
@@ -1548,7 +1544,7 @@ impl ShedLine {
                   e.clear_buffer();
                   self.history.stop_virtual_scroll();
                   break;
-                };
+                }
                 self.history.virt_scroll(1);
               }
             }
@@ -1584,7 +1580,7 @@ impl ShedLine {
         // if count >= 0, we are scrolling down
         // but if we are here, it means we are already at the pending command,
         // so return and bell
-        Shed::term_mut(|t| t.send_bell()).ok();
+        Shed::term_mut(Terminal::send_bell).ok();
         return;
       }
       // We are scrolling up from a pending command
@@ -1599,9 +1595,7 @@ impl ShedLine {
   fn swap_history_editor(&mut self, entry: Option<HistEntry>) {
     if let Some(entry) = entry {
       let editor = std::mem::take(self.focused_editor());
-      self
-        .focused_editor()
-        .set_buffer(entry.command().to_string());
+      self.focused_editor().set_buffer(entry.command());
       if self.focused_history().pending.is_none() {
         self.focused_history().pending = Some(editor);
       }
@@ -1613,7 +1607,7 @@ impl ShedLine {
       // If we are here it should mean we are on our pending command
       // And the user tried to scroll history down
       // Since there is no "future" history, we should just bell and do nothing
-      Shed::term_mut(|t| t.send_bell()).ok();
+      Shed::term_mut(Terminal::send_bell).ok();
       return;
     }
     let clamp = self.mode.clamp_cursor();
@@ -1659,6 +1653,7 @@ impl ShedLine {
     self.needs_redraw
   }
 
+  #[expect(clippy::too_many_lines)]
   pub fn print_line(&mut self, final_draw: bool) -> ShResult<()> {
     let _sync = SyncOutputGuard::begin();
     if self.statline.is_some() && !shopt!(statline.enable) {
@@ -1667,7 +1662,7 @@ impl ShedLine {
         let total_rows = t.t_rows() as u16;
         let new_bottom = total_rows.saturating_sub(1).max(1);
         t.with_saved_cursor(|t| t.write_direct(format!("\x1b[{total_rows};1H\x1b[2K").as_str()))?;
-        t.set_scroll_region(1, new_bottom)?;
+        t.set_scroll_region(1, new_bottom);
         Ok(())
       })?;
     }
@@ -1676,13 +1671,12 @@ impl ShedLine {
     // we have to rescue it.
     if !final_draw
       && !shopt!(statline.enable)
-      && let Some((_, bottom)) = Shed::term(|t| t.scroll_region())
+      && let Some((_, bottom)) = Shed::term(Terminal::scroll_region).dims()
     {
-      let cursor_row = Shed::term_mut(|t| t.get_cursor_pos())
+      let cursor_row = Shed::term_mut(Terminal::get_cursor_pos)
         .ok()
         .flatten()
-        .map(|(r, _)| r.0 as u16)
-        .unwrap_or(bottom);
+        .map_or(bottom, |(r, _)| r.0 as u16);
       if cursor_row > bottom {
         Shed::term_mut(|t| {
           t.move_cursor_abs(bottom, 1);
@@ -1715,7 +1709,7 @@ impl ShedLine {
         prompt_string_right.map(|psr| psr.lines().next().unwrap_or_default().to_string());
     }
 
-    let t_cols = Shed::term(|t| t.t_cols());
+    let t_cols = Shed::term(Terminal::t_cols);
     let row0_used = self
       .prompt
       .get_ps1()
@@ -1727,10 +1721,10 @@ impl ShedLine {
     let one_line = new_layout.end.row == 0;
 
     if let Some(comp) = self.completer.as_mut() {
-      comp.clear()?;
+      comp.clear();
     }
     if let Some(finder) = self.history_fzf() {
-      finder.clear()?;
+      finder.clear();
     }
 
     let predicted_overlay_rows: u16 = self
@@ -1743,8 +1737,7 @@ impl ShedLine {
           .focused_history()
           .fuzzy_finder
           .as_ref()
-          .map(|f| f.predicted_rows())
-          .unwrap_or(0),
+          .map_or(0, FuzzySelector::predicted_rows),
       )
       .try_into()
       .unwrap_or(u16::MAX);
@@ -1764,9 +1757,9 @@ impl ShedLine {
       let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
 
       if shopt!(statline.enable) {
-        let old_h = layout.end.row as i32 + prev_overlay_rows as i32;
+        let old_h = layout.end.row as i32 + i32::from(prev_overlay_rows);
         let mut new_h = new_layout.end.row as i32
-          + predicted_overlay_rows as i32
+          + i32::from(predicted_overlay_rows)
           + system_msg_layout.end.row as i32;
         if has_sub_editor {
           new_h += 1;
@@ -1798,7 +1791,7 @@ impl ShedLine {
     }
 
     if !system_msg.is_empty() {
-      Shed::term_mut(|t| t.clear_under_cursor()).ok();
+      Shed::term_mut(Terminal::clear_under_cursor);
       write_term!("{system_msg}")?;
     }
 
@@ -1808,7 +1801,7 @@ impl ShedLine {
       &new_layout,
       self.editor.scroll_offset(),
       self.editor.lines().len(),
-    )?;
+    );
 
     let seq_fits = pending_seq
       .as_ref()
@@ -1884,19 +1877,19 @@ impl ShedLine {
     let mut overlay_rows: usize = 0;
     if let Some(comp) = self.completer.as_mut() {
       comp.set_prompt_line_context(preceding_width, new_layout.end.col);
-      overlay_rows += comp.draw()?;
+      overlay_rows += comp.draw();
     }
 
     if let Some(finder) = self.history_fzf() {
       finder.set_prompt_line_context(preceding_width, new_layout.end.col);
-      overlay_rows += finder.draw()?;
+      overlay_rows += finder.draw();
     }
     self.overlay_displacement = overlay_rows.try_into().unwrap_or(u16::MAX);
 
     if let Some(statline) = self.statline.as_mut()
       && !final_draw
     {
-      let cols = Shed::term(|t| t.t_cols());
+      let cols = Shed::term(Terminal::t_cols);
       let rendered = statline.render(cols);
       Shed::term_mut(|t| t.draw_status_line(&rendered));
     }
@@ -1920,7 +1913,7 @@ impl ShedLine {
         && shopt!(highlight.enable)
       {
         let cursor_pos = self.focused_editor().cursor_to_flat();
-        pending_seq = highlight::highlight_ex(&pending_seq, &highlight::Palette::new(), cursor_pos)
+        pending_seq = highlight::highlight_ex(&pending_seq, &highlight::Palette::new(), cursor_pos);
       }
 
       write_term!("{move_down}\x1b[1G\n{prefix_seq}{pending_seq}").unwrap();
@@ -2007,6 +2000,7 @@ impl ShedLine {
     }
   }
 
+  #[expect(clippy::too_many_lines)]
   fn exec_mode_transition(&mut self, mut cmd: EditCmd, from_replay: bool) -> ShResult<()> {
     let mut is_insert_mode = false;
     let count = cmd.verb_count();
@@ -2056,7 +2050,7 @@ impl ShedLine {
           let mut mode: Box<dyn EditMode> = Box::new(ViVisual::new());
           self.swap_mode(&mut mode);
 
-          return self.fire_editor_command(cmd);
+          return self.fire_editor_command(&cmd);
         }
         Verb::VisualMode => {
           self.editor.start_char_select();
@@ -2115,13 +2109,13 @@ impl ShedLine {
         .verb()
         .is_some_and(|v| !matches!(v.1, Verb::VisualMode | Verb::VisualModeLine))
     {
-      cmd.motion = Some(motion!(range))
+      cmd.motion = Some(motion!(range));
     }
 
     // Set cursor clamp BEFORE executing the command so that motions
     // (like EndOfLine for 'A') can reach positions valid in the new mode
     self.editor.set_cursor_clamp(self.mode.clamp_cursor());
-    self.fire_editor_command(cmd)?;
+    self.fire_editor_command(&cmd)?;
 
     if mode.report_mode() == ModeReport::Visual && self.editor.select_range().is_some() {
       self.editor.stop_selecting();
@@ -2195,17 +2189,17 @@ impl ShedLine {
           // Override the counts with the one passed to the '.' command
           if cmd.verb.is_some() {
             if let Some(v_mut) = cmd.verb.as_mut() {
-              v_mut.0 = count
+              v_mut.0 = count;
             }
             if let Some(m_mut) = cmd.motion.as_mut() {
-              m_mut.0 = 1
+              m_mut.0 = 1;
             }
           } else {
             return Ok(()); // it has to have a verb to be repeatable,
             // something weird happened
           }
         }
-        self.fire_editor_command(*cmd)?;
+        self.fire_editor_command(&cmd)?;
       }
     }
     Ok(())
@@ -2224,7 +2218,7 @@ impl ShedLine {
           raw_seq: format!("{count};"),
           flags: CmdFlags::empty(),
         };
-        self.fire_editor_command(repeat_cmd)
+        self.fire_editor_command(&repeat_cmd)
       }
       Cmd(count, Motion::RepeatMotionRev) => {
         let Some(motion) = self.repeat_motion.clone() else {
@@ -2239,7 +2233,7 @@ impl ShedLine {
           raw_seq: format!("{count},"),
           flags: CmdFlags::empty(),
         };
-        self.fire_editor_command(repeat_cmd)
+        self.fire_editor_command(&repeat_cmd)
       }
       _ => unreachable!(),
     }
@@ -2248,8 +2242,8 @@ impl ShedLine {
     if cmd.verb().is_some()
       && let Some(range) = self.editor.select_range()
     {
-      cmd.motion = Some(motion!(range))
-    };
+      cmd.motion = Some(motion!(range));
+    }
 
     if cmd.flags.contains(CmdFlags::IS_CANCEL) {
       self.editor.clear_pending_search();
@@ -2275,16 +2269,16 @@ impl ShedLine {
             replay_cmd.motion = Some(motion!(shape_motion));
           } else {
             log::warn!("You're in visual mode with no select range??");
-          };
+          }
         }
         self.repeat_action = Some(CmdReplay::Single(Box::new(replay_cmd)));
       }
 
       if cmd.is_char_search() {
-        self.repeat_motion = cmd.motion.clone()
+        self.repeat_motion.clone_from(&cmd.motion);
       }
 
-      self.fire_editor_command(cmd.clone())?;
+      self.fire_editor_command(&cmd)?;
 
       self.update_editor_hint();
 
@@ -2330,7 +2324,7 @@ impl ShedLine {
     self.editor.set_hint(hint);
   }
 
-  fn fire_editor_command(&mut self, cmd: EditCmd) -> ShResult<()> {
+  fn fire_editor_command(&mut self, cmd: &EditCmd) -> ShResult<()> {
     let is_shell_cmd = cmd.is_shell_cmd();
     let res = self.editor.exec_cmd(cmd);
 

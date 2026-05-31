@@ -50,9 +50,9 @@ pub(crate) struct SemVer {
 impl Display for SemVer {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match (self.major, self.minor, self.patch) {
-      (Some(major), Some(minor), Some(patch)) => write!(f, "{}.{}.{}", major, minor, patch),
-      (Some(major), Some(minor), None) => write!(f, "{}.{}", major, minor),
-      (Some(major), None, None) => write!(f, "{}", major),
+      (Some(major), Some(minor), Some(patch)) => write!(f, "{major}.{minor}.{patch}"),
+      (Some(major), Some(minor), None) => write!(f, "{major}.{minor}"),
+      (Some(major), None, None) => write!(f, "{major}"),
       _ => write!(f, "unknown"),
     }
   }
@@ -208,9 +208,12 @@ impl EventParser {
     let Some(name) = Self::decode_hex(name_hex) else {
       return;
     };
-    let _value = value_hex.and_then(Self::decode_hex);
+    let value = value_hex.and_then(Self::decode_hex);
 
-    self.push(TermEvent::Capabilities { name, _value });
+    self.push(TermEvent::Capabilities {
+      name,
+      _value: value,
+    });
   }
 
   pub fn parse_xtversion(&mut self) {
@@ -364,6 +367,7 @@ impl vte::Perform for EventParser {
     self.push(event);
   }
 
+  #[expect(clippy::too_many_lines)]
   fn csi_dispatch(
     &mut self,
     params: &vte::Params,
@@ -384,28 +388,28 @@ impl vte::Perform for EventParser {
         TermEvent::CursorPos(Rows(row), Cols(col))
       }
       ([], 'A') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::Up, mods))
       }
       ([], 'B') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::Down, mods))
       }
       ([], 'C') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::Right, mods))
       }
       ([], 'D') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::Left, mods))
       }
       // Home/End: CSI H/F or CSI 1;mod H/F
       ([], 'H') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::Home, mods))
       }
       ([], 'F') => {
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         TermEvent::Key(KeyEvent(KeyCode::End, mods))
       }
       // Shift+Tab: CSI Z
@@ -417,7 +421,7 @@ impl vte::Perform for EventParser {
       // Special keys with tilde: CSI num ~ or CSI num;mod ~
       ([], '~') => {
         let key_num = params.first().copied().unwrap_or(0);
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         let key = match key_num {
           1 | 7 => KeyCode::Home,
           2 => KeyCode::Insert,
@@ -453,7 +457,7 @@ impl vte::Perform for EventParser {
       ([], 'u') => {
         // kitty keyboard protocol: CSI code;mod;text u
         let codepoint = params.first().copied().unwrap_or(0);
-        let mods = params.get(1).map(ModKeys::from).unwrap_or(ModKeys::empty());
+        let mods = params.get(1).map_or(ModKeys::empty(), ModKeys::from);
         let text = params.get(2).copied().unwrap_or(codepoint);
 
         let (ch, mods) = if text != codepoint && mods.contains(ModKeys::SHIFT) {
@@ -471,7 +475,7 @@ impl vte::Perform for EventParser {
           27 => KeyCode::Esc,
           127 => KeyCode::Backspace,
           _ => {
-            if let Some(c) = char::from_u32(ch as u32) {
+            if let Some(c) = char::from_u32(u32::from(ch)) {
               KeyCode::Char(c)
             } else {
               return;
@@ -552,7 +556,7 @@ impl Debug for PollReader {
       .field("byte_buf", &self.byte_buf)
       .field("verbatim_single", &self.verbatim_single)
       .field("pending_events", &self.pending_events)
-      .finish()
+      .finish_non_exhaustive()
   }
 }
 
@@ -602,16 +606,16 @@ impl PollReader {
     }
   }
 
-  pub fn readkey(&mut self) -> Result<Option<KeyEvent>, ShErr> {
-    match_loop!(self.read_event()? => ev, {
-      TermEvent::Key(event) => return Ok(Some(event)),
+  pub fn readkey(&mut self) -> Option<KeyEvent> {
+    match_loop!(self.read_event() => ev, {
+      TermEvent::Key(event) => return Some(event),
       TermEvent::FocusGained => {
         log::debug!("Focus gained");
         crate::signal::FOCUS_GAINED.store(true, Ordering::SeqCst);
       }
       _ => {}
     });
-    Ok(None)
+    None
   }
 
   pub(super) fn push_event(&mut self, event: TermEvent) {
@@ -622,31 +626,28 @@ impl PollReader {
     !self.pending_events.is_empty() || !self.byte_buf.is_empty()
   }
 
-  pub(super) fn read_event(&mut self) -> ShResult<Option<TermEvent>> {
+  pub(super) fn read_event(&mut self) -> Option<TermEvent> {
     if let Some(ev) = self.pending_events.pop_front() {
-      return Ok(Some(ev));
+      return Some(ev);
     }
     self.read_event_from_bytes()
   }
-  pub(super) fn read_event_from_bytes(&mut self) -> ShResult<Option<TermEvent>> {
+  pub(super) fn read_event_from_bytes(&mut self) -> Option<TermEvent> {
     if self.verbatim_single {
       if let Some(key) = self.read_one_verbatim() {
         self.verbatim_single = false;
-        return Ok(Some(TermEvent::Key(key)));
+        return Some(TermEvent::Key(key));
       }
-      return Ok(None);
+      return None;
     }
     if self.byte_buf.front() == Some(&b'\x1b') {
       if self.byte_buf.len() == 1 {
         // ESC is the only byte - emit standalone Escape
         self.byte_buf.pop_front();
-        return Ok(Some(TermEvent::Key(KeyEvent(
-          KeyCode::Esc,
-          ModKeys::empty(),
-        ))));
+        return Some(TermEvent::Key(KeyEvent(KeyCode::Esc, ModKeys::empty())));
       }
       match self.byte_buf.get(1) {
-        Some(b'[') | Some(b'O') | Some(b'P') | Some(b']') | Some(b'_') => {
+        Some(b'[' | b'O' | b'P' | b']' | b'_') => {
           // Valid CSI/SS3/DCS/OSC/APC prefix - fall through to the parser below
         }
         Some(&b) if b >= 0x20 && b != 0x7f => {
@@ -654,28 +655,25 @@ impl PollReader {
           self.byte_buf.pop_front(); // consume ESC
           self.byte_buf.pop_front(); // consume the char
           let ch = b as char;
-          return Ok(Some(TermEvent::Key(KeyEvent(
+          return Some(TermEvent::Key(KeyEvent(
             KeyCode::Char(ch.to_ascii_uppercase()),
             ModKeys::ALT,
-          ))));
+          )));
         }
         _ => {
           // ESC + non-printable/unknown - emit standalone Escape
           self.byte_buf.pop_front();
-          return Ok(Some(TermEvent::Key(KeyEvent(
-            KeyCode::Esc,
-            ModKeys::empty(),
-          ))));
+          return Some(TermEvent::Key(KeyEvent(KeyCode::Esc, ModKeys::empty())));
         }
       }
     }
     while let Some(byte) = self.byte_buf.pop_front() {
       self.parser.advance(&mut self.collector, &[byte]);
       if let Some(event) = self.collector.pop() {
-        return Ok(Some(event));
+        return Some(event);
       }
     }
-    Ok(None)
+    None
   }
 }
 
@@ -690,7 +688,7 @@ mod tests {
   use super::*;
   use crate::keys::{KeyCode, KeyEvent, ModKeys};
 
-  /// Feed bytes through a fresh vte parser into an EventParser and
+  /// Feed bytes through a fresh vte parser into an `EventParser` and
   /// return every event produced.
   fn feed(bytes: &[u8]) -> Vec<TermEvent> {
     let mut parser = vte::Parser::new();
@@ -704,7 +702,7 @@ mod tests {
   }
 
   /// Convenience: expect exactly one Key event with the given code and mods.
-  fn expect_key(bytes: &[u8], code: KeyCode, mods: ModKeys) {
+  fn expect_key(bytes: &[u8], code: &KeyCode, mods: ModKeys) {
     let events = feed(bytes);
     assert_eq!(
       events.len(),
@@ -713,7 +711,7 @@ mod tests {
     );
     match &events[0] {
       TermEvent::Key(KeyEvent(c, m)) => {
-        assert_eq!(c, &code, "key code mismatch for {bytes:?}");
+        assert_eq!(c, code, "key code mismatch for {bytes:?}");
         assert_eq!(m, &mods, "mod mismatch for {bytes:?}");
       }
       other => panic!("expected Key event for {bytes:?}, got {other:?}"),
@@ -746,117 +744,117 @@ mod tests {
 
   #[test]
   fn csi_arrow_up_plain() {
-    expect_key(b"\x1b[A", KeyCode::Up, ModKeys::empty());
+    expect_key(b"\x1b[A", &KeyCode::Up, ModKeys::empty());
   }
 
   #[test]
   fn csi_arrow_down_plain() {
-    expect_key(b"\x1b[B", KeyCode::Down, ModKeys::empty());
+    expect_key(b"\x1b[B", &KeyCode::Down, ModKeys::empty());
   }
 
   #[test]
   fn csi_arrow_right_plain() {
-    expect_key(b"\x1b[C", KeyCode::Right, ModKeys::empty());
+    expect_key(b"\x1b[C", &KeyCode::Right, ModKeys::empty());
   }
 
   #[test]
   fn csi_arrow_left_plain() {
-    expect_key(b"\x1b[D", KeyCode::Left, ModKeys::empty());
+    expect_key(b"\x1b[D", &KeyCode::Left, ModKeys::empty());
   }
 
   #[test]
   fn csi_arrow_up_with_shift() {
     // CSI 1;2 A — mod 2 = Shift
-    expect_key(b"\x1b[1;2A", KeyCode::Up, ModKeys::SHIFT);
+    expect_key(b"\x1b[1;2A", &KeyCode::Up, ModKeys::SHIFT);
   }
 
   #[test]
   fn csi_arrow_down_with_ctrl() {
     // mod 5 = Ctrl
-    expect_key(b"\x1b[1;5B", KeyCode::Down, ModKeys::CTRL);
+    expect_key(b"\x1b[1;5B", &KeyCode::Down, ModKeys::CTRL);
   }
 
   // ─── Home/End: CSI H/F ──────────────────────────────────────────────
 
   #[test]
   fn csi_home_plain() {
-    expect_key(b"\x1b[H", KeyCode::Home, ModKeys::empty());
+    expect_key(b"\x1b[H", &KeyCode::Home, ModKeys::empty());
   }
 
   #[test]
   fn csi_end_plain() {
-    expect_key(b"\x1b[F", KeyCode::End, ModKeys::empty());
+    expect_key(b"\x1b[F", &KeyCode::End, ModKeys::empty());
   }
 
   #[test]
   fn csi_home_with_mods() {
-    expect_key(b"\x1b[1;5H", KeyCode::Home, ModKeys::CTRL);
+    expect_key(b"\x1b[1;5H", &KeyCode::Home, ModKeys::CTRL);
   }
 
   // ─── Shift+Tab: CSI Z ───────────────────────────────────────────────
 
   #[test]
   fn csi_shift_tab() {
-    expect_key(b"\x1b[Z", KeyCode::Tab, ModKeys::SHIFT);
+    expect_key(b"\x1b[Z", &KeyCode::Tab, ModKeys::SHIFT);
   }
 
   // ─── Tilde sequences: CSI <num>~ ────────────────────────────────────
 
   #[test]
   fn csi_tilde_home_via_1() {
-    expect_key(b"\x1b[1~", KeyCode::Home, ModKeys::empty());
+    expect_key(b"\x1b[1~", &KeyCode::Home, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_home_via_7() {
-    expect_key(b"\x1b[7~", KeyCode::Home, ModKeys::empty());
+    expect_key(b"\x1b[7~", &KeyCode::Home, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_insert() {
-    expect_key(b"\x1b[2~", KeyCode::Insert, ModKeys::empty());
+    expect_key(b"\x1b[2~", &KeyCode::Insert, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_delete() {
-    expect_key(b"\x1b[3~", KeyCode::Delete, ModKeys::empty());
+    expect_key(b"\x1b[3~", &KeyCode::Delete, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_end_via_4() {
-    expect_key(b"\x1b[4~", KeyCode::End, ModKeys::empty());
+    expect_key(b"\x1b[4~", &KeyCode::End, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_end_via_8() {
-    expect_key(b"\x1b[8~", KeyCode::End, ModKeys::empty());
+    expect_key(b"\x1b[8~", &KeyCode::End, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_pageup() {
-    expect_key(b"\x1b[5~", KeyCode::PageUp, ModKeys::empty());
+    expect_key(b"\x1b[5~", &KeyCode::PageUp, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_pagedown() {
-    expect_key(b"\x1b[6~", KeyCode::PageDown, ModKeys::empty());
+    expect_key(b"\x1b[6~", &KeyCode::PageDown, ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_f5_through_f12() {
-    expect_key(b"\x1b[15~", KeyCode::F(5), ModKeys::empty());
-    expect_key(b"\x1b[17~", KeyCode::F(6), ModKeys::empty());
-    expect_key(b"\x1b[18~", KeyCode::F(7), ModKeys::empty());
-    expect_key(b"\x1b[19~", KeyCode::F(8), ModKeys::empty());
-    expect_key(b"\x1b[20~", KeyCode::F(9), ModKeys::empty());
-    expect_key(b"\x1b[21~", KeyCode::F(10), ModKeys::empty());
-    expect_key(b"\x1b[23~", KeyCode::F(11), ModKeys::empty());
-    expect_key(b"\x1b[24~", KeyCode::F(12), ModKeys::empty());
+    expect_key(b"\x1b[15~", &KeyCode::F(5), ModKeys::empty());
+    expect_key(b"\x1b[17~", &KeyCode::F(6), ModKeys::empty());
+    expect_key(b"\x1b[18~", &KeyCode::F(7), ModKeys::empty());
+    expect_key(b"\x1b[19~", &KeyCode::F(8), ModKeys::empty());
+    expect_key(b"\x1b[20~", &KeyCode::F(9), ModKeys::empty());
+    expect_key(b"\x1b[21~", &KeyCode::F(10), ModKeys::empty());
+    expect_key(b"\x1b[23~", &KeyCode::F(11), ModKeys::empty());
+    expect_key(b"\x1b[24~", &KeyCode::F(12), ModKeys::empty());
   }
 
   #[test]
   fn csi_tilde_with_mods() {
-    expect_key(b"\x1b[5;5~", KeyCode::PageUp, ModKeys::CTRL);
+    expect_key(b"\x1b[5;5~", &KeyCode::PageUp, ModKeys::CTRL);
   }
 
   #[test]
@@ -872,40 +870,40 @@ mod tests {
 
   #[test]
   fn csi_kitty_tab() {
-    expect_key(b"\x1b[9u", KeyCode::Tab, ModKeys::empty());
+    expect_key(b"\x1b[9u", &KeyCode::Tab, ModKeys::empty());
   }
 
   #[test]
   fn csi_kitty_enter() {
-    expect_key(b"\x1b[13u", KeyCode::Enter, ModKeys::empty());
+    expect_key(b"\x1b[13u", &KeyCode::Enter, ModKeys::empty());
   }
 
   #[test]
   fn csi_kitty_esc() {
-    expect_key(b"\x1b[27u", KeyCode::Esc, ModKeys::empty());
+    expect_key(b"\x1b[27u", &KeyCode::Esc, ModKeys::empty());
   }
 
   #[test]
   fn csi_kitty_backspace() {
-    expect_key(b"\x1b[127u", KeyCode::Backspace, ModKeys::empty());
+    expect_key(b"\x1b[127u", &KeyCode::Backspace, ModKeys::empty());
   }
 
   #[test]
   fn csi_kitty_plain_char() {
     // 'a' = 97
-    expect_key(b"\x1b[97u", KeyCode::Char('a'), ModKeys::empty());
+    expect_key(b"\x1b[97u", &KeyCode::Char('a'), ModKeys::empty());
   }
 
   #[test]
   fn csi_kitty_char_with_ctrl() {
-    expect_key(b"\x1b[97;5u", KeyCode::Char('a'), ModKeys::CTRL);
+    expect_key(b"\x1b[97;5u", &KeyCode::Char('a'), ModKeys::CTRL);
   }
 
   #[test]
   fn csi_kitty_shift_disambiguation_uses_text() {
     // codepoint=55 ('7'), mod=2 (SHIFT), text=38 ('&').
     // Handler should drop the SHIFT modifier and report the actual char.
-    expect_key(b"\x1b[55;2;38u", KeyCode::Char('&'), ModKeys::empty());
+    expect_key(b"\x1b[55;2;38u", &KeyCode::Char('&'), ModKeys::empty());
   }
 
   // ─── Private-mode replies: CSI ? <num> c/u ───────────────────────────
@@ -935,29 +933,29 @@ mod tests {
 
   #[test]
   fn csi_mouse_scroll_up() {
-    expect_key(b"\x1b[<64;0;0M", KeyCode::ScrollUp, ModKeys::empty());
+    expect_key(b"\x1b[<64;0;0M", &KeyCode::ScrollUp, ModKeys::empty());
   }
 
   #[test]
   fn csi_mouse_scroll_down() {
-    expect_key(b"\x1b[<65;0;0M", KeyCode::ScrollDown, ModKeys::empty());
+    expect_key(b"\x1b[<65;0;0M", &KeyCode::ScrollDown, ModKeys::empty());
   }
 
   #[test]
   fn csi_mouse_back_button() {
-    expect_key(b"\x1b[<128;0;0M", KeyCode::Back, ModKeys::empty());
+    expect_key(b"\x1b[<128;0;0M", &KeyCode::Back, ModKeys::empty());
   }
 
   #[test]
   fn csi_mouse_forward_button() {
-    expect_key(b"\x1b[<129;0;0M", KeyCode::Forward, ModKeys::empty());
+    expect_key(b"\x1b[<129;0;0M", &KeyCode::Forward, ModKeys::empty());
   }
 
   #[test]
   fn csi_mouse_left_click_carries_position() {
     expect_key(
       b"\x1b[<0;12;7M",
-      KeyCode::LeftClick(7, 12),
+      &KeyCode::LeftClick(7, 12),
       ModKeys::empty(),
     );
   }
@@ -966,7 +964,7 @@ mod tests {
   fn csi_mouse_middle_click() {
     expect_key(
       b"\x1b[<1;3;9M",
-      KeyCode::MiddleClick(9, 3),
+      &KeyCode::MiddleClick(9, 3),
       ModKeys::empty(),
     );
   }
@@ -975,14 +973,14 @@ mod tests {
   fn csi_mouse_right_click() {
     expect_key(
       b"\x1b[<2;15;20M",
-      KeyCode::RightClick(20, 15),
+      &KeyCode::RightClick(20, 15),
       ModKeys::empty(),
     );
   }
 
   #[test]
   fn csi_mouse_position_report() {
-    expect_key(b"\x1b[<35;4;2M", KeyCode::MousePos(2, 4), ModKeys::empty());
+    expect_key(b"\x1b[<35;4;2M", &KeyCode::MousePos(2, 4), ModKeys::empty());
   }
 
   #[test]
@@ -1089,7 +1087,7 @@ mod tests {
   #[test]
   fn read_event_empty_buf_returns_none() {
     let mut r = PollReader::new();
-    let ev = r.read_event().unwrap();
+    let ev = r.read_event();
     assert!(ev.is_none());
   }
 
@@ -1098,7 +1096,7 @@ mod tests {
     let mut r = pr_with_bytes(b"\x1b");
     let ev = r.read_event().unwrap();
     match ev {
-      Some(TermEvent::Key(KeyEvent(KeyCode::Esc, m))) => {
+      TermEvent::Key(KeyEvent(KeyCode::Esc, m)) => {
         assert_eq!(m, ModKeys::empty());
       }
       other => panic!("expected Esc key, got {other:?}"),
@@ -1111,7 +1109,7 @@ mod tests {
     let mut r = pr_with_bytes(b"\x1ba");
     let ev = r.read_event().unwrap();
     match ev {
-      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), m))) => {
+      TermEvent::Key(KeyEvent(KeyCode::Char(c), m)) => {
         assert_eq!(c, 'A');
         assert_eq!(m, ModKeys::ALT);
       }
@@ -1124,10 +1122,7 @@ mod tests {
     // ESC + 0x7f (DEL) — falls into the "unknown" arm → standalone Esc.
     let mut r = pr_with_bytes(b"\x1b\x7f");
     let ev = r.read_event().unwrap();
-    assert!(matches!(
-      ev,
-      Some(TermEvent::Key(KeyEvent(KeyCode::Esc, _)))
-    ));
+    assert!(matches!(ev, TermEvent::Key(KeyEvent(KeyCode::Esc, _))));
   }
 
   #[test]
@@ -1136,7 +1131,7 @@ mod tests {
     let mut r = pr_with_bytes(b"\x1b[5;10R");
     let ev = r.read_event().unwrap();
     match ev {
-      Some(TermEvent::CursorPos(Rows(r), Cols(c))) => {
+      TermEvent::CursorPos(Rows(r), Cols(c)) => {
         assert_eq!(r, 5);
         assert_eq!(c, 10);
       }
@@ -1149,7 +1144,7 @@ mod tests {
     let mut r = pr_with_bytes(b"x");
     let ev = r.read_event().unwrap();
     match ev {
-      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), m))) => {
+      TermEvent::Key(KeyEvent(KeyCode::Char(c), m)) => {
         assert_eq!(c, 'x');
         assert_eq!(m, ModKeys::empty());
       }
@@ -1164,7 +1159,7 @@ mod tests {
     // After consuming 'a', the buf still has 'b'.
     let ev = r.read_event().unwrap();
     match ev {
-      Some(TermEvent::Key(KeyEvent(KeyCode::Char(c), _))) => {
+      TermEvent::Key(KeyEvent(KeyCode::Char(c), _)) => {
         assert_eq!(c, 'b');
       }
       other => panic!("expected 'b', got {other:?}"),
@@ -1177,50 +1172,50 @@ mod tests {
 
   #[test]
   fn print_plain_char_emits_key() {
-    expect_key(b"a", KeyCode::Char('a'), ModKeys::empty());
+    expect_key(b"a", &KeyCode::Char('a'), ModKeys::empty());
   }
 
   #[test]
   fn print_del_byte_emits_backspace() {
-    expect_key(b"\x7f", KeyCode::Backspace, ModKeys::empty());
+    expect_key(b"\x7f", &KeyCode::Backspace, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_a_is_up() {
-    expect_key(b"\x1bOA", KeyCode::Up, ModKeys::empty());
+    expect_key(b"\x1bOA", &KeyCode::Up, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_b_is_down() {
-    expect_key(b"\x1bOB", KeyCode::Down, ModKeys::empty());
+    expect_key(b"\x1bOB", &KeyCode::Down, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_c_is_right() {
-    expect_key(b"\x1bOC", KeyCode::Right, ModKeys::empty());
+    expect_key(b"\x1bOC", &KeyCode::Right, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_d_is_left() {
-    expect_key(b"\x1bOD", KeyCode::Left, ModKeys::empty());
+    expect_key(b"\x1bOD", &KeyCode::Left, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_h_is_home() {
-    expect_key(b"\x1bOH", KeyCode::Home, ModKeys::empty());
+    expect_key(b"\x1bOH", &KeyCode::Home, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_capital_f_is_end() {
-    expect_key(b"\x1bOF", KeyCode::End, ModKeys::empty());
+    expect_key(b"\x1bOF", &KeyCode::End, ModKeys::empty());
   }
 
   #[test]
   fn print_ss3_p_q_r_s_are_f1_f4() {
-    expect_key(b"\x1bOP", KeyCode::F(1), ModKeys::empty());
-    expect_key(b"\x1bOQ", KeyCode::F(2), ModKeys::empty());
-    expect_key(b"\x1bOR", KeyCode::F(3), ModKeys::empty());
-    expect_key(b"\x1bOS", KeyCode::F(4), ModKeys::empty());
+    expect_key(b"\x1bOP", &KeyCode::F(1), ModKeys::empty());
+    expect_key(b"\x1bOQ", &KeyCode::F(2), ModKeys::empty());
+    expect_key(b"\x1bOR", &KeyCode::F(3), ModKeys::empty());
+    expect_key(b"\x1bOS", &KeyCode::F(4), ModKeys::empty());
   }
 
   #[test]

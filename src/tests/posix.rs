@@ -200,7 +200,7 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     exec_dash_c(
       "echo $#:$1:$2:$3".into(),
-      vec!["s".into(), "first".into(), "".into(), "third".into()],
+      vec!["s".into(), "first".into(), String::new(), "third".into()],
     )
     .unwrap();
     assert_output!(g, "3:first::third\n");
@@ -279,7 +279,11 @@ mod shell_intro_2_1 {
     let g = TestGuard::new();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "echo $#:$1:$2:$3").unwrap();
-    input::run_script(file.path(), vec!["first".into(), "".into(), "third".into()]).unwrap();
+    input::run_script(
+      file.path(),
+      vec!["first".into(), String::new(), "third".into()],
+    )
+    .unwrap();
     assert_output!(g, "3:first::third\n");
   }
 
@@ -328,7 +332,7 @@ mod shell_intro_2_1 {
   #[test]
   fn dash_c_empty_input_is_ok() {
     let _g = TestGuard::new();
-    exec_dash_c("".into(), vec!["s".into()]).unwrap();
+    exec_dash_c(String::new(), vec!["s".into()]).unwrap();
   }
 }
 
@@ -360,21 +364,21 @@ mod quoting_2_2 {
      * by any whitespace, it cannot serve as a token separator.
      */
     test_input! {
-      backslash_pipe        : r#"echo a\|b"#   => "a|b\n";
-      backslash_amp         : r#"echo a\&b"#   => "a&b\n";
-      backslash_semi        : r#"echo a\;b"#   => "a;b\n";
-      backslash_lt          : r#"echo a\<b"#   => "a<b\n";
-      backslash_gt          : r#"echo a\>b"#   => "a>b\n";
-      backslash_paren       : r#"echo a\(b\)"# => "a(b)\n";
-      backslash_dollar      : r#"echo a\$b"#   => "a$b\n";
-      backslash_backtick    : r#"echo a\`b\`"# => "a`b`\n";
-      backslash_backslash   : r#"echo a\\b"#   => "a\\b\n";
+      backslash_pipe        : r"echo a\|b"   => "a|b\n";
+      backslash_amp         : r"echo a\&b"   => "a&b\n";
+      backslash_semi        : r"echo a\;b"   => "a;b\n";
+      backslash_lt          : r"echo a\<b"   => "a<b\n";
+      backslash_gt          : r"echo a\>b"   => "a>b\n";
+      backslash_paren       : r"echo a\(b\)" => "a(b)\n";
+      backslash_dollar      : r"echo a\$b"   => "a$b\n";
+      backslash_backtick    : r"echo a\`b\`" => "a`b`\n";
+      backslash_backslash   : r"echo a\\b"   => "a\\b\n";
       backslash_double_quote: r#"echo a\"b\""# => "a\"b\"\n";
-      backslash_single_quote: r#"echo a\'b\'"# => "a'b'\n";
-      backslash_space       : r#"echo a\ b"#   => "a b\n";
-      backslash_tab         : r#"echo a\ b"#   => "a b\n";
+      backslash_single_quote: r"echo a\'b\'" => "a'b'\n";
+      backslash_space       : r"echo a\ b"   => "a b\n";
+      backslash_tab         : r"echo a\ b"   => "a b\n";
       backslash_newline     : "echo a\\\nb"    => "ab\n";
-      backslash_glob        : r#"echo a\*b"#   => "a*b\n";
+      backslash_glob        : r"echo a\*b"   => "a*b\n";
     }
   }
 
@@ -386,25 +390,25 @@ mod quoting_2_2 {
      */
 
     test_input! {
-      squote_pipe             : r#"echo 'a|b'"#        => "a|b\n";
-      squote_idiom            : r#"echo 'foo'\''bar'"# => "foo'bar\n";
-      squote_backslash        : r#"echo 'a\b'"#        => "a\\b\n";
-      squote_double_backslash : r#"echo 'a\\b'"#       => "a\\\\b\n";
+      squote_pipe             : r"echo 'a|b'"        => "a|b\n";
+      squote_idiom            : r"echo 'foo'\''bar'" => "foo'bar\n";
+      squote_backslash        : r"echo 'a\b'"        => "a\\b\n";
+      squote_double_backslash : r"echo 'a\\b'"       => "a\\\\b\n";
       squote_backslash_does_not_escape_quote :
-                                 r#"echo 'foo\' bar"#  => "foo\\ bar\n";
-      squote_amp              : r#"echo 'a&b'"#        => "a&b\n";
-      squote_semi             : r#"echo 'a;b'"#        => "a;b\n";
-      squote_lt               : r#"echo 'a<b'"#        => "a<b\n";
-      squote_gt               : r#"echo 'a>b'"#        => "a>b\n";
-      squote_paren            : r#"echo 'a(b)'"#       => "a(b)\n";
-      squote_dollar           : r#"echo 'a$b'"#        => "a$b\n";
-      squote_backtick         : r#"echo 'a`b`'"#       => "a`b`\n";
+                                 r"echo 'foo\' bar"  => "foo\\ bar\n";
+      squote_amp              : r"echo 'a&b'"        => "a&b\n";
+      squote_semi             : r"echo 'a;b'"        => "a;b\n";
+      squote_lt               : r"echo 'a<b'"        => "a<b\n";
+      squote_gt               : r"echo 'a>b'"        => "a>b\n";
+      squote_paren            : r"echo 'a(b)'"       => "a(b)\n";
+      squote_dollar           : r"echo 'a$b'"        => "a$b\n";
+      squote_backtick         : r"echo 'a`b`'"       => "a`b`\n";
       squote_double_quote     : r#"echo 'a"b'"#        => "a\"b\n";
-      squote_space            : r#"echo 'a b'"#        => "a b\n";
-      squote_tab              : r#"echo 'a	b'"#       => "a	b\n";
+      squote_space            : r"echo 'a b'"        => "a b\n";
+      squote_tab              : r"echo 'a	b'"       => "a	b\n";
       squote_newline          :   "echo 'a\nb'"        => "a\nb\n";
       squote_backslash_newline:   "echo 'a\\\nb'"      => "a\\\nb\n";
-      squote_glob             : r#"echo 'a*b'"#        => "a*b\n";
+      squote_glob             : r"echo 'a*b'"        => "a*b\n";
     }
   }
 
@@ -509,35 +513,35 @@ mod quoting_2_2 {
 
     test_input! {
       dollar_squote_double_quote     : r#"echo $'a\"b'"#   => "a\"b\n";
-      dollar_squote_single_quote     : r#"echo $'a\'b'"#   => "a'b\n";
-      dollar_squote_backslash        : r#"echo $'a\\b'"#   => "a\\b\n";
-      dollar_squote_alert            : r#"echo $'a\ab'"#   => "a\x07b\n";
-      dollar_squote_backspace        : r#"echo $'a\bb'"#   => "a\x08b\n";
-      dollar_squote_escape           : r#"echo $'a\eb'"#   => "a\x1bb\n";
-      dollar_squote_formfeed         : r#"echo $'a\fb'"#   => "a\x0cb\n";
-      dollar_squote_newline          : r#"echo $'a\nb'"#   => "a\nb\n";
-      dollar_squote_carriage_return  : r#"echo $'a\rb'"#   => "a\rb\n";
-      dollar_squote_tab              : r#"echo $'a\tb'"#   => "a\tb\n";
-      dollar_squote_vertical_tab     : r#"echo $'a\vb'"#   => "a\x0bb\n";
+      dollar_squote_single_quote     : r"echo $'a\'b'"   => "a'b\n";
+      dollar_squote_backslash        : r"echo $'a\\b'"   => "a\\b\n";
+      dollar_squote_alert            : r"echo $'a\ab'"   => "a\x07b\n";
+      dollar_squote_backspace        : r"echo $'a\bb'"   => "a\x08b\n";
+      dollar_squote_escape           : r"echo $'a\eb'"   => "a\x1bb\n";
+      dollar_squote_formfeed         : r"echo $'a\fb'"   => "a\x0cb\n";
+      dollar_squote_newline          : r"echo $'a\nb'"   => "a\nb\n";
+      dollar_squote_carriage_return  : r"echo $'a\rb'"   => "a\rb\n";
+      dollar_squote_tab              : r"echo $'a\tb'"   => "a\tb\n";
+      dollar_squote_vertical_tab     : r"echo $'a\vb'"   => "a\x0bb\n";
 
-      dollar_squote_c_a              : r#"echo $'a\ca'"#   => "a\x01\n";
-      dollar_squote_c_z              : r#"echo $'a\cz'"#   => "a\x1a\n";
-      dollar_squote_c_uppercase      : r#"echo $'a\cA'"#   => "a\x01\n";
-      dollar_squote_c_underscore     : r#"echo $'a\c_'"#   => "a\x1f\n";
-      dollar_squote_c_at             : r#"echo $'a\c@b'"#  => "a\x00b\n";
-      dollar_squote_c_question       : r#"echo $'a\c?b'"#  => "a\x7fb\n";
-      dollar_squote_c_lbracket       : r#"echo $'a\c[b'"#  => "a\x1bb\n";
-      dollar_squote_c_backslash      : r#"echo $'a\c\\'"#  => "a\x1c\n";
+      dollar_squote_c_a              : r"echo $'a\ca'"   => "a\x01\n";
+      dollar_squote_c_z              : r"echo $'a\cz'"   => "a\x1a\n";
+      dollar_squote_c_uppercase      : r"echo $'a\cA'"   => "a\x01\n";
+      dollar_squote_c_underscore     : r"echo $'a\c_'"   => "a\x1f\n";
+      dollar_squote_c_at             : r"echo $'a\c@b'"  => "a\x00b\n";
+      dollar_squote_c_question       : r"echo $'a\c?b'"  => "a\x7fb\n";
+      dollar_squote_c_lbracket       : r"echo $'a\c[b'"  => "a\x1bb\n";
+      dollar_squote_c_backslash      : r"echo $'a\c\\'"  => "a\x1c\n";
 
-      dollar_squote_c_backslash_other: r#"echo $'a\c\b'"#  => "a\\c\x08\n";
-      dollar_squote_c_backslash_n    : r#"echo $'a\c\nb'"# => "a\\c\nb\n";
-      dollar_squote_c_at_eof         : r#"echo $'a\c'"#    => "a\\c\n";
-      dollar_squote_c_invalid_letter : r#"echo $'a\c1b'"#  => "a\\c1b\n";
+      dollar_squote_c_backslash_other: r"echo $'a\c\b'"  => "a\\c\x08\n";
+      dollar_squote_c_backslash_n    : r"echo $'a\c\nb'" => "a\\c\nb\n";
+      dollar_squote_c_at_eof         : r"echo $'a\c'"    => "a\\c\n";
+      dollar_squote_c_invalid_letter : r"echo $'a\c1b'"  => "a\\c1b\n";
 
-      dollar_squote_hex              : r#"echo $'a\x41b'"# => "aAb\n";
-      dollar_squote_octal            : r#"echo $'a\101b'"# => "aAb\n";
+      dollar_squote_hex              : r"echo $'a\x41b'" => "aAb\n";
+      dollar_squote_octal            : r"echo $'a\101b'" => "aAb\n";
 
-      dollar_squote_escape_other     : r#"echo $'a\z'"#    => "a\\z\n";
+      dollar_squote_escape_other     : r"echo $'a\z'"    => "a\\z\n";
     }
   }
 }
@@ -602,12 +606,12 @@ mod reserved_words_2_4 {
   }
 
   test_input! {
-    sup_backslash_arg : r#"echo \if"#                 => "if\n";
-    sup_squote_arg    : r#"echo 'if'"#                => "if\n";
+    sup_backslash_arg : r"echo \if"                 => "if\n";
+    sup_squote_arg    : r"echo 'if'"                => "if\n";
     sup_dquote_arg    : r#"echo "then""#              => "then\n";
 
-    sup_quoted_bang   : r#"'!' 2>/dev/null; echo $?"# => "127\n";
-    sup_escaped_if    : r#"\if 2>/dev/null; echo $?"# => "127\n";
+    sup_quoted_bang   : r"'!' 2>/dev/null; echo $?" => "127\n";
+    sup_escaped_if    : r"\if 2>/dev/null; echo $?" => "127\n";
   }
 
   // Positional rules specific to `case` and `for`.
@@ -753,9 +757,9 @@ mod params_and_vars_2_5 {
     }
 
     test_input! {
-      dash_after_set_e        : r#"set -e; case $- in *e*) echo has_e ;; *) echo no_e ;; esac"#       => "has_e\n";
-      dash_after_set_u        : r#"set -u; case $- in *u*) echo has_u ;; *) echo no_u ;; esac"#       => "has_u\n";
-      dash_after_set_plus_e   : r#"set -e; set +e; case $- in *e*) echo has_e ;; *) echo no_e ;; esac"# => "no_e\n";
+      dash_after_set_e        : r"set -e; case $- in *e*) echo has_e ;; *) echo no_e ;; esac"       => "has_e\n";
+      dash_after_set_u        : r"set -u; case $- in *u*) echo has_u ;; *) echo no_u ;; esac"       => "has_u\n";
+      dash_after_set_plus_e   : r"set -e; set +e; case $- in *e*) echo has_e ;; *) echo no_e ;; esac" => "no_e\n";
     }
 
     test_input! {
@@ -820,8 +824,8 @@ mod word_expansions_2_6 {
 
       tilde_squoted        : "echo '~'"       => "~\n";
       tilde_dquoted        : r#"echo "~""#    => "~\n";
-      tilde_escaped        : r#"echo \~"#     => "~\n";
-      tilde_quoted_user_sq : r#"echo ~'foo'"# => "~foo\n";
+      tilde_escaped        : r"echo \~"     => "~\n";
+      tilde_quoted_user_sq : r"echo ~'foo'" => "~foo\n";
       tilde_quoted_user_dq : r#"echo ~"foo""# => "~foo\n";
     }
 
@@ -876,9 +880,9 @@ mod word_expansions_2_6 {
           "spaces" => "has spaces",
         ]);
       },
-      trim_brace_backslash: r#"echo ${foo%\}}"#  => "bar\n";
+      trim_brace_backslash: r"echo ${foo%\}}"  => "bar\n";
       trim_brace_quoted   : r#"echo ${foo%"}"}"# => "bar\n";
-      trim_brace_glob     : r#"echo ${boo%\}*}"# => "foo\n";
+      trim_brace_glob     : r"echo ${boo%\}*}" => "foo\n";
     }
 
     /*
@@ -944,7 +948,7 @@ mod word_expansions_2_6 {
         ]);
         crate::__test_setup_params!(["2"]);
       },
-      param_exp_example_1: r#"echo ${a}b-$ab-${1}0-${10}-$10"# => "1b--20--20\n";
+      param_exp_example_1: r"echo ${a}b-$ab-${1}0-${10}-$10" => "1b--20--20\n";
     }
     test_input! {
       /*
@@ -969,9 +973,9 @@ mod word_expansions_2_6 {
           "foo" => "asdf",
         ]);
       },
-      param_exp_example_2: r#"echo ${foo-bar}xyz}"# => "asdfxyz}}\n";
-      param_exp_example_3: r#"foo=; echo ${foo-bar}xyz}"# => "xyz}}\n";
-      param_exp_example_4: r#"unset foo; echo ${foo-bar}xyz}"# => "barxyz}}\n";
+      param_exp_example_2: r"echo ${foo-bar}xyz}" => "asdfxyz}}\n";
+      param_exp_example_3: r"foo=; echo ${foo-bar}xyz}" => "xyz}}\n";
+      param_exp_example_4: r"unset foo; echo ${foo-bar}xyz}" => "barxyz}}\n";
     }
 
     test_input! {
@@ -986,7 +990,7 @@ mod word_expansions_2_6 {
           "x" => "",
         ]);
       },
-      param_exp_example_5: r#"echo ${x:-$(echo foo)}"# => "foo\n";
+      param_exp_example_5: r"echo ${x:-$(echo foo)}" => "foo\n";
     }
 
     test_input! {
@@ -998,7 +1002,7 @@ mod word_expansions_2_6 {
           "x" => "foo",
         ]);
       },
-      param_exp_example_6: r#"unset x; echo ${x:=bar}; echo $x"# => "bar\nbar\n";
+      param_exp_example_6: r"unset x; echo ${x:=bar}; echo $x" => "bar\nbar\n";
     }
 
     test_input! {
@@ -1008,7 +1012,7 @@ mod word_expansions_2_6 {
       setup: {
         crate::__test_setup_params!([ "a", "b", "c" ]);
       },
-      param_exp_example_7: r#"echo ${3:+posix}"# => "posix\n";
+      param_exp_example_7: r"echo ${3:+posix}" => "posix\n";
     }
 
     test_input! {
@@ -1020,7 +1024,7 @@ mod word_expansions_2_6 {
           "HOME" => "/usr/posix",
         ]);
       },
-      param_exp_example_8: r#"echo ${#HOME}"# => "10\n";
+      param_exp_example_8: r"echo ${#HOME}" => "10\n";
     }
 
     test_input! {
@@ -1032,7 +1036,7 @@ mod word_expansions_2_6 {
           "x" => "file.c"
         ]);
       },
-      param_exp_example_9: r#"echo ${x%.c}.o"# => "file.o\n";
+      param_exp_example_9: r"echo ${x%.c}.o" => "file.o\n";
     }
 
     test_input! {
@@ -1044,7 +1048,7 @@ mod word_expansions_2_6 {
           "x" => "posix/src/std"
         ]);
       },
-      param_exp_example_10: r#"echo ${x%%/*}"# => "posix\n";
+      param_exp_example_10: r"echo ${x%%/*}" => "posix\n";
     }
 
     test_input! {
@@ -1056,7 +1060,7 @@ mod word_expansions_2_6 {
           "x" => "posix/src/cmd"
         ]);
       },
-      param_exp_example_11: r#"echo ${x#posix}"# => "/src/cmd\n";
+      param_exp_example_11: r"echo ${x#posix}" => "/src/cmd\n";
     }
 
     test_input! {
@@ -1068,7 +1072,7 @@ mod word_expansions_2_6 {
           "x" => "/one/two/three"
         ]);
       },
-      param_exp_example_12: r#"echo ${x##*/}"# => "three\n";
+      param_exp_example_12: r"echo ${x##*/}" => "three\n";
     }
 
     test_input! {
@@ -1084,7 +1088,7 @@ mod word_expansions_2_6 {
           "x" => "file.txt",
         ]);
       },
-      param_exp_example_13: r#"echo ${x#*.}"# => "txt\n";
+      param_exp_example_13: r"echo ${x#*.}" => "txt\n";
       param_exp_example_14: r#"echo ${x#"*".}"# => "file.txt\n";
     }
   }
@@ -1120,7 +1124,7 @@ mod word_expansions_2_6 {
     }
 
     test_input! {
-      cmdsub_unquoted_splits        : r#"for x in $(printf 'a\nb\nc'); do echo $x; done"# => "a\nb\nc\n";
+      cmdsub_unquoted_splits        : r"for x in $(printf 'a\nb\nc'); do echo $x; done" => "a\nb\nc\n";
       cmdsub_quoted_one_field       : r#"for x in "$(printf 'a\nb\nc')"; do echo "[$x]"; done"# => "[a\nb\nc]\n";
       cmdsub_unquoted_splits_spaces : "echo $(echo a b c)"                                => "a b c\n";
     }
@@ -1328,7 +1332,7 @@ mod word_expansions_2_6 {
     test_input! {
       qrm_squote_removed     : "echo 'foo'"             => "foo\n";
       qrm_dquote_removed     : r#"echo "foo""#          => "foo\n";
-      qrm_dollar_squote_remov: r#"echo $'foo'"#         => "foo\n";
+      qrm_dollar_squote_remov: r"echo $'foo'"         => "foo\n";
       qrm_concat_quotes      : r#"echo a'b'c"d"e"#      => "abcde\n";
       qrm_empty_quotes_join  : "echo a''b"              => "ab\n";
       qrm_empty_dquotes_join : r#"echo a""b"#           => "ab\n";
@@ -1337,19 +1341,19 @@ mod word_expansions_2_6 {
     test_input! {
       qrm_dquote_in_squote   : r#"echo '"'"#            => "\"\n";
       qrm_squote_in_dquote   : r#"echo "'""#            => "'\n";
-      qrm_backslash_escape   : r#"echo \\"#             => "\\\n";
+      qrm_backslash_escape   : r"echo \\"             => "\\\n";
       qrm_backslash_in_dq    : r#"echo "\\""#           => "\\\n";
-      qrm_dollar_in_squote   : r#"echo '$foo'"#         => "$foo\n";
+      qrm_dollar_in_squote   : r"echo '$foo'"         => "$foo\n";
     }
 
     // The shell "remembers" which characters were quoted: glob/case meta-chars
     // in a quoted pattern are treated as literal at match time.
     test_input! {
-      qrm_quoted_pattern_literal_star : r#"case foo in '*') echo glob ;; foo) echo lit ;; esac"# => "lit\n";
-      qrm_unquoted_pattern_star       : r#"case foo in *) echo glob ;; esac"#                    => "glob\n";
-      qrm_quoted_pattern_matches_lit  : r#"case '*' in '*') echo lit ;; *) echo any ;; esac"#    => "lit\n";
+      qrm_quoted_pattern_literal_star : r"case foo in '*') echo glob ;; foo) echo lit ;; esac" => "lit\n";
+      qrm_unquoted_pattern_star       : r"case foo in *) echo glob ;; esac"                    => "glob\n";
+      qrm_quoted_pattern_matches_lit  : r"case '*' in '*') echo lit ;; *) echo any ;; esac"    => "lit\n";
       qrm_dquote_pattern_literal      : r#"case foo in "*") echo glob ;; foo) echo lit ;; esac"# => "lit\n";
-      qrm_escaped_pattern_meta        : r#"case foo in \*) echo glob ;; foo) echo lit ;; esac"#  => "lit\n";
+      qrm_escaped_pattern_meta        : r"case foo in \*) echo glob ;; foo) echo lit ;; esac"  => "lit\n";
     }
   }
 }

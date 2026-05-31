@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use crate::readline::linebuf::Line;
+
 use super::{Lines, Pos, shopt};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -20,8 +22,7 @@ pub(crate) enum Hint {
 impl Hint {
   pub fn lines(&self) -> &Lines {
     match self {
-      Self::Override(lines) | Self::History(lines) => lines,
-      Self::Completion { lines, .. } => lines,
+      Self::Override(lines) | Self::History(lines) | Self::Completion { lines, .. } => lines,
     }
   }
   pub fn raw(&self) -> String {
@@ -29,8 +30,9 @@ impl Hint {
   }
   pub fn take_lines(&mut self) -> Lines {
     match self {
-      Self::Override(lines) | Self::History(lines) => std::mem::take(lines),
-      Self::Completion { lines, .. } => std::mem::take(lines),
+      Self::Override(lines) | Self::History(lines) | Self::Completion { lines, .. } => {
+        std::mem::take(lines)
+      }
     }
   }
   pub fn display(&self, prefix: Option<&str>) -> String {
@@ -41,7 +43,7 @@ impl Hint {
       text = rest.to_string();
     }
 
-    format!("\x1b[90m{text}\x1b[0m").replace("\n", "\n\x1b[90m")
+    format!("\x1b[90m{text}\x1b[0m").replace('\n', "\n\x1b[90m")
   }
   pub fn is_empty(&self) -> bool {
     self.lines().is_empty() || (self.lines().len() == 1 && self.lines()[0].is_empty())
@@ -106,10 +108,7 @@ impl super::LineBuf {
     let last_row = self.lines.len().saturating_sub(1);
 
     // find end of the buffer, start of the hint
-    let first_hint_pos = Pos::new(
-      last_row,
-      self.lines.get(last_row).map(|l| l.len()).unwrap_or(0),
-    );
+    let first_hint_pos = Pos::new(last_row, self.lines.get(last_row).map_or(0, Line::len));
 
     // replace our buffer with the full hint
     self.lines = hint.lines().clone();
@@ -232,7 +231,7 @@ impl super::LineBuf {
   }
 
   pub fn try_join_hint(&self) -> Option<String> {
-    self.hint.as_ref().map(|h| h.raw())
+    self.hint.as_ref().map(Hint::raw)
   }
 
   pub fn accept_hint(&mut self) {

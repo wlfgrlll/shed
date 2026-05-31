@@ -3,8 +3,11 @@ use std::{
   time::{Duration, Instant},
 };
 
+use crate::state::meta::MetaTab;
+
 use super::{
   ShResult, Shed, sherr,
+  terminal::Terminal,
   vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab},
 };
 
@@ -111,7 +114,7 @@ impl ScopeStack {
   }
   pub fn flatten_vars(&self) -> HashMap<String, Var> {
     let mut flat_vars = HashMap::new();
-    for scope in self.scopes.iter() {
+    for scope in &self.scopes {
       for (var_name, var) in scope.vars() {
         flat_vars.insert(var_name.clone(), var.clone());
       }
@@ -206,10 +209,10 @@ impl ScopeStack {
     };
     scope.set_var(var_name, val, flags)
   }
-  pub fn get_magic_var(&self, var_name: &str) -> Option<String> {
+  pub fn get_magic_var(var_name: &str) -> Option<String> {
     match var_name {
       "SECONDS" => {
-        let shell_time = Shed::meta(|m| m.shell_time());
+        let shell_time = Shed::meta(MetaTab::shell_time);
         let secs = Instant::now().duration_since(shell_time).as_secs();
         Some(secs.to_string())
       }
@@ -253,7 +256,7 @@ impl ScopeStack {
           if o.set.hashall {
             set_string.push('h');
           }
-          if Shed::term(|t| t.interactive()) {
+          if Shed::term(Terminal::interactive) {
             set_string.push('i');
           }
           if o.set.monitor {
@@ -312,14 +315,15 @@ impl ScopeStack {
     }
     Err(sherr!(ExecFail, "Variable '{var_name}' not found"))
   }
-  pub fn index_var(&self, var_name: &str, idx: ArrIndex) -> ShResult<String> {
+  pub fn index_var(&self, var_name: &str, idx: &ArrIndex) -> ShResult<String> {
     self.index_var_sliced(var_name, idx, None, None)
   }
 
+  #[expect(clippy::too_many_lines)]
   pub fn index_var_sliced(
     &self,
     var_name: &str,
-    idx: ArrIndex,
+    idx: &ArrIndex,
     slice_start: Option<usize>,
     slice_len: Option<usize>,
   ) -> ShResult<String> {
@@ -391,14 +395,12 @@ impl ScopeStack {
 
             if let Some(item) = items.get(idx) {
               return Ok(item.clone());
-            } else {
-              return Err(sherr!(
-                ExecFail,
-                "Index {} out of bounds for array '{}'",
-                idx,
-                var_name,
-              ));
             }
+            return Err(sherr!(
+              ExecFail,
+              "Index {idx} out of bounds for array '{}'",
+              var_name,
+            ));
           }
           VarKind::AssocArr(items) => match idx {
             ArrIndex::AllSplit => {
@@ -436,7 +438,7 @@ impl ScopeStack {
         }
       }
     }
-    Ok("".into())
+    Ok(String::new())
   }
 
   pub fn get_array_keys(&self, var_name: &str, joined: bool) -> ShResult<String> {
@@ -481,11 +483,11 @@ impl ScopeStack {
         }
       }
     }
-    Ok("".into())
+    Ok(String::new())
   }
 
   pub fn try_get_var(&self, var_name: &str) -> Option<String> {
-    if let Some(magic) = self.get_magic_var(var_name) {
+    if let Some(magic) = Self::get_magic_var(var_name) {
       return Some(magic);
     }
     if let Ok(param) = var_name.parse::<ShellParam>() {
@@ -499,11 +501,11 @@ impl ScopeStack {
     }
     None
   }
-  /// Resolve a pre-parsed VarName, handling array indexes and slicing if present.
+  /// Resolve a pre-parsed `VarName`, handling array indexes and slicing if present.
   pub fn resolve_var(&self, var: &VarName) -> Option<String> {
     if let Some(idx) = var.index() {
       self
-        .index_var_sliced(var.name(), idx.clone(), var.slice_start(), var.slice_len())
+        .index_var_sliced(var.name(), idx, var.slice_start(), var.slice_len())
         .ok()
     } else {
       self.try_get_var(var.name())
@@ -541,9 +543,9 @@ impl ScopeStack {
   }
   pub fn all_vars(&self) -> HashMap<String, Var> {
     let mut vars = HashMap::new();
-    for scope in self.scopes.iter() {
+    for scope in &self.scopes {
       for (k, v) in scope.vars() {
-        vars.insert(k.to_string(), v.clone());
+        vars.insert(k.clone(), v.clone());
       }
     }
     vars
@@ -578,7 +580,7 @@ impl ScopeStack {
       }
     }
     // Fallback to empty string
-    "".into()
+    String::new()
   }
   /// Set a shell parameter
   pub fn set_param(&mut self, param: ShellParam, val: &str) {
@@ -603,7 +605,7 @@ mod index_var_sliced_tests {
   use std::collections::VecDeque;
 
   fn set_arr(name: &str, items: &[&str]) {
-    let vec: VecDeque<String> = items.iter().map(|s| s.to_string()).collect();
+    let vec: VecDeque<String> = items.iter().map(ToString::to_string).collect();
     Shed::vars_mut(|v| {
       v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
         .unwrap();
@@ -630,7 +632,7 @@ mod index_var_sliced_tests {
 
   fn index(
     name: &str,
-    idx: ArrIndex,
+    idx: &ArrIndex,
     slice_start: Option<usize>,
     slice_len: Option<usize>,
   ) -> ShResult<String> {
@@ -643,14 +645,17 @@ mod index_var_sliced_tests {
   fn arr_literal_index() {
     let _g = TestGuard::new();
     set_arr("arr", &["a", "b", "c"]);
-    assert_eq!(index("arr", ArrIndex::Literal(1), None, None).unwrap(), "b");
+    assert_eq!(
+      index("arr", &ArrIndex::Literal(1), None, None).unwrap(),
+      "b"
+    );
   }
 
   #[test]
   fn arr_literal_out_of_bounds_errors() {
     let _g = TestGuard::new();
     set_arr("arr", &["a", "b"]);
-    assert!(index("arr", ArrIndex::Literal(99), None, None).is_err());
+    assert!(index("arr", &ArrIndex::Literal(99), None, None).is_err());
   }
 
   #[test]
@@ -659,7 +664,7 @@ mod index_var_sliced_tests {
     set_arr("arr", &["a", "b", "c", "d"]);
     // FromBack(1) → items.len() - 1 = 3 → last element "d"
     assert_eq!(
-      index("arr", ArrIndex::FromBack(1), None, None).unwrap(),
+      index("arr", &ArrIndex::FromBack(1), None, None).unwrap(),
       "d"
     );
   }
@@ -669,7 +674,7 @@ mod index_var_sliced_tests {
     let _g = TestGuard::new();
     set_arr("arr", &["a", "b"]);
     // FromBack(99) — items.len() (2) < 99 → ExecFail.
-    assert!(index("arr", ArrIndex::FromBack(99), None, None).is_err());
+    assert!(index("arr", &ArrIndex::FromBack(99), None, None).is_err());
   }
 
   // ─── Arr: ArgCount ────────────────────────────────────────────────
@@ -678,14 +683,14 @@ mod index_var_sliced_tests {
   fn arr_arg_count_returns_length() {
     let _g = TestGuard::new();
     set_arr("arr", &["x", "y", "z", "w"]);
-    assert_eq!(index("arr", ArrIndex::ArgCount, None, None).unwrap(), "4");
+    assert_eq!(index("arr", &ArrIndex::ArgCount, None, None).unwrap(), "4");
   }
 
   #[test]
   fn arr_arg_count_on_empty_array() {
     let _g = TestGuard::new();
     set_arr("arr", &[]);
-    assert_eq!(index("arr", ArrIndex::ArgCount, None, None).unwrap(), "0");
+    assert_eq!(index("arr", &ArrIndex::ArgCount, None, None).unwrap(), "0");
   }
 
   // ─── Arr: AllSplit / AllJoined ────────────────────────────────────
@@ -696,7 +701,7 @@ mod index_var_sliced_tests {
     set_arr("arr", &["a", "b", "c"]);
     // ARG_SEP is the marker char that splits later. We just check that
     // all values appear.
-    let result = index("arr", ArrIndex::AllSplit, None, None).unwrap();
+    let result = index("arr", &ArrIndex::AllSplit, None, None).unwrap();
     assert!(result.contains('a'));
     assert!(result.contains('b'));
     assert!(result.contains('c'));
@@ -709,7 +714,7 @@ mod index_var_sliced_tests {
     set_arr("arr", &["a", "b", "c"]);
     // First char of IFS is ',', so values join with ','.
     assert_eq!(
-      index("arr", ArrIndex::AllJoined, None, None).unwrap(),
+      index("arr", &ArrIndex::AllJoined, None, None).unwrap(),
       "a,b,c"
     );
   }
@@ -723,7 +728,7 @@ mod index_var_sliced_tests {
     // Looking at code: `.chars().next().unwrap_or(' ')`. An empty string
     // yields None from next() so we get ' '.
     assert_eq!(
-      index("arr", ArrIndex::AllJoined, None, None).unwrap(),
+      index("arr", &ArrIndex::AllJoined, None, None).unwrap(),
       "a b c"
     );
   }
@@ -735,7 +740,7 @@ mod index_var_sliced_tests {
     let _g = TestGuard::new();
     set_arr("arr", &["a", "b", "c", "d", "e"]);
     // start=1, len=2 → ["b","c"]
-    let result = index("arr", ArrIndex::AllSplit, Some(1), Some(2)).unwrap();
+    let result = index("arr", &ArrIndex::AllSplit, Some(1), Some(2)).unwrap();
     assert!(result.contains('b'));
     assert!(result.contains('c'));
     assert!(!result.contains('a'));
@@ -748,7 +753,7 @@ mod index_var_sliced_tests {
     set_str("IFS", "-");
     set_arr("arr", &["a", "b", "c", "d", "e"]);
     assert_eq!(
-      index("arr", ArrIndex::AllJoined, Some(2), Some(2)).unwrap(),
+      index("arr", &ArrIndex::AllJoined, Some(2), Some(2)).unwrap(),
       "c-d"
     );
   }
@@ -760,7 +765,7 @@ mod index_var_sliced_tests {
     set_arr("arr", &["a", "b", "c", "d"]);
     // start=1, no len → take rest
     assert_eq!(
-      index("arr", ArrIndex::AllJoined, Some(1), None).unwrap(),
+      index("arr", &ArrIndex::AllJoined, Some(1), None).unwrap(),
       "b-c-d"
     );
   }
@@ -772,7 +777,7 @@ mod index_var_sliced_tests {
     let _g = TestGuard::new();
     set_assoc("amap", &[("apple", "red"), ("banana", "yellow")]);
     assert_eq!(
-      index("amap", ArrIndex::Key("apple".into()), None, None).unwrap(),
+      index("amap", &ArrIndex::Key("apple".into()), None, None).unwrap(),
       "red"
     );
   }
@@ -782,7 +787,7 @@ mod index_var_sliced_tests {
     let _g = TestGuard::new();
     set_assoc("amap", &[("a", "1")]);
     assert_eq!(
-      index("amap", ArrIndex::Key("missing".into()), None, None).unwrap(),
+      index("amap", &ArrIndex::Key("missing".into()), None, None).unwrap(),
       ""
     );
   }
@@ -791,7 +796,7 @@ mod index_var_sliced_tests {
   fn assoc_arr_arg_count() {
     let _g = TestGuard::new();
     set_assoc("amap", &[("a", "1"), ("b", "2"), ("c", "3")]);
-    assert_eq!(index("amap", ArrIndex::ArgCount, None, None).unwrap(), "3");
+    assert_eq!(index("amap", &ArrIndex::ArgCount, None, None).unwrap(), "3");
   }
 
   #[test]
@@ -799,7 +804,7 @@ mod index_var_sliced_tests {
     let _g = TestGuard::new();
     set_str("IFS", "+");
     set_assoc("amap", &[("a", "1"), ("b", "2")]);
-    let result = index("amap", ArrIndex::AllJoined, None, None).unwrap();
+    let result = index("amap", &ArrIndex::AllJoined, None, None).unwrap();
     // Iteration order is preserved, values joined by '+'.
     assert_eq!(result, "1+2");
   }
@@ -808,7 +813,7 @@ mod index_var_sliced_tests {
   fn assoc_arr_all_split() {
     let _g = TestGuard::new();
     set_assoc("amap", &[("a", "1"), ("b", "2")]);
-    let result = index("amap", ArrIndex::AllSplit, None, None).unwrap();
+    let result = index("amap", &ArrIndex::AllSplit, None, None).unwrap();
     assert!(result.contains('1'));
     assert!(result.contains('2'));
   }
@@ -819,7 +824,7 @@ mod index_var_sliced_tests {
   fn scalar_var_is_not_indexable_errors() {
     let _g = TestGuard::new();
     set_str("scalar", "hello");
-    assert!(index("scalar", ArrIndex::Literal(0), None, None).is_err());
+    assert!(index("scalar", &ArrIndex::Literal(0), None, None).is_err());
   }
 
   // ─── Missing var returns empty string ────────────────────────────
@@ -828,7 +833,7 @@ mod index_var_sliced_tests {
   fn missing_var_returns_empty_string() {
     let _g = TestGuard::new();
     assert_eq!(
-      index("no_such_var_xyz_qqq", ArrIndex::Literal(0), None, None).unwrap(),
+      index("no_such_var_xyz_qqq", &ArrIndex::Literal(0), None, None).unwrap(),
       ""
     );
   }
@@ -843,7 +848,7 @@ mod get_array_keys_tests {
   use std::collections::VecDeque;
 
   fn set_arr(name: &str, items: &[&str]) {
-    let vec: VecDeque<String> = items.iter().map(|s| s.to_string()).collect();
+    let vec: VecDeque<String> = items.iter().map(ToString::to_string).collect();
     Shed::vars_mut(|v| {
       v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
         .unwrap();

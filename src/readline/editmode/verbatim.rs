@@ -28,7 +28,7 @@ impl EditMode for ViVerbatim {
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     match key {
       E(K::Verbatim(seq), _mods) => {
-        log::debug!("Received verbatim key sequence: {:?}", seq);
+        log::debug!("Received verbatim key sequence: {seq:?}");
         let cmd = EditCmd {
           register: RegisterName::default(),
           verb: Some(verb!(Verb::Insert(seq.to_string()))),
@@ -39,7 +39,7 @@ impl EditMode for ViVerbatim {
         self.sent_cmd.push(cmd.clone());
         Some(cmd)
       }
-      _ => common_cmds(key),
+      _ => common_cmds(&key),
     }
   }
 

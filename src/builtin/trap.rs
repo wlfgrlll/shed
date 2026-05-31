@@ -28,20 +28,20 @@ impl super::Builtin for Trap {
       return with_status(1);
     }
 
-    let mut argv = args.argv.into_iter();
-    let command = argv.next().unwrap().0;
+    let mut arg_vec = args.argv.into_iter();
+    let command = arg_vec.next().unwrap().0;
     let mut targets = vec![];
 
-    for (arg, span) in argv {
+    for (arg, span) in arg_vec {
       let target = arg.parse::<TrapTarget>().promote_err(span)?;
       targets.push(target);
     }
 
     for target in targets {
       if &command == "-" {
-        Shed::logic_mut(|l| l.remove_trap(target))
+        Shed::logic_mut(|l| l.remove_trap(target));
       } else {
-        Shed::logic_mut(|l| l.insert_trap(target, command.clone()))
+        Shed::logic_mut(|l| l.insert_trap(target, command.clone()));
       }
     }
 

@@ -57,6 +57,7 @@ unicode-width = "0.2.2"
 uuid = { version = "1.23.1", features = ["v4"] }
 vte = "0.15"
 yansi = "1.0.1"
+bytecount = "0.6.9"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

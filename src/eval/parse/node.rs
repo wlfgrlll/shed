@@ -81,17 +81,11 @@ impl Node {
         cond.walk_tree(f);
         body.walk_tree(f);
       }
-      NdRule::ForNode {
-        vars: _,
-        arr: _,
-        ref mut body,
-      } => {
-        body.walk_tree(f);
-      }
-      NdRule::TryNode {
-        ref mut body,
-        err: _,
-      } => {
+      NdRule::ForNode { ref mut body, .. }
+      | NdRule::TryNode { ref mut body, .. }
+      | NdRule::Subshell { ref mut body }
+      | NdRule::BraceGrp { ref mut body }
+      | NdRule::FuncDef { ref mut body, .. } => {
         body.walk_tree(f);
       }
       NdRule::ForArith {
@@ -139,22 +133,13 @@ impl Node {
           cmd.walk_tree(f);
         }
       }
-      NdRule::Subshell { ref mut body } | NdRule::BraceGrp { ref mut body } => {
-        body.walk_tree(f);
-      }
-      NdRule::FuncDef {
-        name: _,
-        ref mut body,
-      } => {
-        body.walk_tree(f);
-      }
       NdRule::Timed { ref mut cmd } | NdRule::Negate { ref mut cmd } => {
         cmd.walk_tree(f);
       }
       NdRule::Arithmetic { .. } | NdRule::Assignment { .. } => (), // No nodes to check
     }
   }
-  pub fn propagate_context(&mut self, ctx: (Span, Label<Span>)) {
+  pub fn propagate_context(&mut self, ctx: &(Span, Label<Span>)) {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
   }
   pub fn get_span(&self) -> Span {
@@ -235,7 +220,7 @@ pub(crate) enum AssignKind {
   DivEq,
 }
 
-/// Flat NdRule names used mainly for debugging
+/// Flat `NdRule` names used mainly for debugging
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum NdKind {
   List,

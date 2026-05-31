@@ -1,3 +1,5 @@
+use crate::readline::{RegisterName, editcmd::CmdFlags};
+
 use super::{
   CmdReplay, EditMode, ModeReport, common_cmds,
   editcmd::{Cmd, Direction, EditCmd, Motion, To, Verb, Word},
@@ -25,11 +27,11 @@ impl Emacs {
       cmd.verb = Some(verb);
     } else {
       self.pending_cmd = Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: Some(verb),
         motion: None,
         raw_seq: String::new(),
-        flags: Default::default(),
+        flags: CmdFlags::default(),
       });
     }
   }
@@ -38,11 +40,11 @@ impl Emacs {
       cmd.motion = Some(motion);
     } else {
       self.pending_cmd = Some(EditCmd {
-        register: Default::default(),
+        register: RegisterName::default(),
         verb: None,
         motion: Some(motion),
         raw_seq: String::new(),
-        flags: Default::default(),
+        flags: CmdFlags::default(),
       });
     }
   }
@@ -52,6 +54,7 @@ impl Emacs {
 }
 
 impl EditMode for Emacs {
+  #[expect(clippy::too_many_lines, clippy::unnested_or_patterns)]
   fn handle_key(&mut self, key: E) -> Option<EditCmd> {
     match key {
       E(K::Char(ch), M::NONE) => {
@@ -213,7 +216,7 @@ impl EditMode for Emacs {
         self.take_cmd()
       }
 
-      _ => common_cmds(key),
+      _ => common_cmds(&key),
     }
   }
 

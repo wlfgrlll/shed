@@ -231,7 +231,7 @@ fn fc_edit(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
     exec_input(new_cmd.clone(), Some("fc re-exec".into()))?;
 
     if should_push {
-      hist.push(new_cmd)?;
+      hist.push(&new_cmd)?;
     }
   }
 
@@ -257,7 +257,7 @@ fn fc_reexec(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
 
     exec_input(command.clone(), Some("fc re-exec".into()))?;
     if should_push {
-      hist.push(command)?;
+      hist.push(&command)?;
     }
   }
 
@@ -627,7 +627,7 @@ mod fc_edit_tests {
     let _g = TestGuard::new();
     unset_editor_vars();
     let hist = fresh_history();
-    hist.push("true".into()).unwrap();
+    hist.push("true").unwrap();
     let result = fc_edit(&hist, fc_opts(None, None, None));
     assert!(result.is_err(), "expected error when no editor is set");
   }
@@ -637,7 +637,7 @@ mod fc_edit_tests {
     let _g = TestGuard::new();
     unset_editor_vars();
     let hist = fresh_history();
-    hist.push("true".into()).unwrap();
+    hist.push("true").unwrap();
     fc_edit(&hist, fc_opts(Some("true".into()), None, None))
       .expect("fc_edit should succeed with 'true' as opts.editor");
   }
@@ -648,7 +648,7 @@ mod fc_edit_tests {
     unset_editor_vars();
     set_shell_var("FCEDIT", "true");
     let hist = fresh_history();
-    hist.push("true".into()).unwrap();
+    hist.push("true").unwrap();
     fc_edit(&hist, fc_opts(None, None, None)).expect("FCEDIT should be picked up");
   }
 
@@ -658,7 +658,7 @@ mod fc_edit_tests {
     unset_editor_vars();
     set_shell_var("EDITOR", "true");
     let hist = fresh_history();
-    hist.push("true".into()).unwrap();
+    hist.push("true").unwrap();
     fc_edit(&hist, fc_opts(None, None, None)).expect("EDITOR should be picked up");
   }
 
@@ -674,7 +674,7 @@ mod fc_edit_tests {
     set_shell_var("FCEDIT", &fcedit_path.to_string_lossy());
     set_shell_var("EDITOR", &fcedit_path.to_string_lossy());
     let hist = fresh_history();
-    hist.push(": original".into()).unwrap();
+    hist.push(": original").unwrap();
     fc_edit(
       &hist,
       fc_opts(Some(opts_path.to_string_lossy().to_string()), None, None),
@@ -696,7 +696,7 @@ mod fc_edit_tests {
     set_shell_var("FCEDIT", &fcedit_path.to_string_lossy());
     set_shell_var("EDITOR", &editor_path.to_string_lossy());
     let hist = fresh_history();
-    hist.push(": original".into()).unwrap();
+    hist.push(": original").unwrap();
     fc_edit(&hist, fc_opts(None, None, None)).unwrap();
     let cmds: Vec<String> = hist_view()
       .query_range(1, 100)
@@ -739,9 +739,9 @@ mod fc_edit_tests {
     let log_path = log_dir.path().join("invocations.log");
     let (_d, editor_path) = tally_editor(&log_path);
     let hist = fresh_history();
-    hist.push(": one".into()).unwrap();
-    hist.push(": two".into()).unwrap();
-    hist.push(": three".into()).unwrap();
+    hist.push(": one").unwrap();
+    hist.push(": two").unwrap();
+    hist.push(": three").unwrap();
     fc_edit(
       &hist,
       fc_opts(
@@ -767,9 +767,9 @@ mod fc_edit_tests {
     // off-by-one in get_entry_range. Now -1 correctly maps to last_id.
     let _g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": first".into()).unwrap();
-    hist.push(": second".into()).unwrap();
-    hist.push(": third".into()).unwrap();
+    hist.push(": first").unwrap();
+    hist.push(": second").unwrap();
+    hist.push(": third").unwrap();
     let entries = get_entry_range(
       &hist,
       Some(RangeArg::Number(-1)),
@@ -785,10 +785,10 @@ mod fc_edit_tests {
   fn get_entry_range_negative_n_back_from_end() {
     let _g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": a".into()).unwrap();
-    hist.push(": b".into()).unwrap();
-    hist.push(": c".into()).unwrap();
-    hist.push(": d".into()).unwrap();
+    hist.push(": a").unwrap();
+    hist.push(": b").unwrap();
+    hist.push(": c").unwrap();
+    hist.push(": d").unwrap();
     // -3 to -1 → 3 entries before the end → b, c, d.
     let entries = get_entry_range(
       &hist,
@@ -824,8 +824,8 @@ mod fc_run_builtin_tests {
   fn fc_dash_l_dispatches_to_fc_list() {
     let g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": entry_one".into()).unwrap();
-    hist.push(": entry_two".into()).unwrap();
+    hist.push(": entry_one").unwrap();
+    hist.push(": entry_two").unwrap();
     test_input("fc -l").unwrap();
     let out = g.read_output();
     assert!(out.contains(": entry_one"), "got: {out:?}");
@@ -839,7 +839,7 @@ mod fc_run_builtin_tests {
   fn fc_dash_s_dispatches_to_fc_reexec() {
     let _g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": prev_cmd".into()).unwrap();
+    hist.push(": prev_cmd").unwrap();
     // `fc -s` re-executes the previous command. With ":" it's harmless.
     test_input("fc -s").unwrap();
     assert_eq!(state::Shed::get_status(), 0);
@@ -853,7 +853,7 @@ mod fc_run_builtin_tests {
     // unchanged and re-executes the original.
     let _g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": prev".into()).unwrap();
+    hist.push(": prev").unwrap();
     // Force FCEDIT to "true" so fc_edit picks a no-op editor.
     Shed::vars_mut(|v| {
       v.set_var(
@@ -892,7 +892,7 @@ mod fc_reexec_tests {
   fn fc_s_reexecutes_previous_command() {
     let g = TestGuard::new();
     let hist = fresh_history();
-    hist.push("echo prev_output".into()).unwrap();
+    hist.push("echo prev_output").unwrap();
     test_input("fc -s").unwrap();
     let out = g.read_output();
     assert!(out.contains("prev_output"), "got: {out:?}");
@@ -905,7 +905,7 @@ mod fc_reexec_tests {
   fn fc_s_with_substitution_replaces_and_pushes() {
     let g = TestGuard::new();
     let hist = fresh_history();
-    hist.push("echo original_marker".into()).unwrap();
+    hist.push("echo original_marker").unwrap();
     let before = hist.last_id();
     test_input("fc -s original_marker=replaced_marker").unwrap();
     let out = g.read_output();
@@ -928,7 +928,7 @@ mod fc_reexec_tests {
   fn fc_s_with_substitution_no_match_does_not_push() {
     let _g = TestGuard::new();
     let hist = fresh_history();
-    hist.push(": something".into()).unwrap();
+    hist.push(": something").unwrap();
     let before = hist.last_id();
     // Pattern doesn't match → command unchanged → should_push stays false.
     test_input("fc -s zzz_no_match=replacement").unwrap();
@@ -942,9 +942,9 @@ mod fc_reexec_tests {
   fn fc_s_with_range_reexecutes_each() {
     let g = TestGuard::new();
     let hist = fresh_history();
-    hist.push("echo one".into()).unwrap();
-    hist.push("echo two".into()).unwrap();
-    hist.push("echo three".into()).unwrap();
+    hist.push("echo one").unwrap();
+    hist.push("echo two").unwrap();
+    hist.push("echo three").unwrap();
     // Re-execute entries 1..=3 (all three).
     test_input("fc -s 1 3").unwrap();
     let out = g.read_output();

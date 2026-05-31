@@ -57,6 +57,7 @@ fn extract_group_name(attrs: &[Attribute]) -> String {
   panic!("group_name attribute is required for ShOptGroup")
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
   let input = parse_macro_input!(input as DeriveInput);
   let name = &input.ident;

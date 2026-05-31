@@ -10,19 +10,16 @@ impl super::Builtin for Shift {
   }
 
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let mut argv = args.argv.into_iter();
+    let mut arg_vec = args.argv.into_iter();
 
-    let count = argv
-      .next()
-      .map(|(st, sp)| {
-        st.parse::<usize>().map_err(|_| {
-          sherr!(
-            ExecFail @ sp,
-            "Expected a number in shift args",
-          )
-        })
+    let count = arg_vec.next().map_or(Ok(1), |(st, sp)| {
+      st.parse::<usize>().map_err(|_| {
+        sherr!(
+          ExecFail @ sp,
+          "Expected a number in shift args",
+        )
       })
-      .unwrap_or(Ok(1))?;
+    })?;
 
     for _ in 0..count {
       Shed::vars_mut(|v| v.sh_argv_scope_mut().fpop_arg());
