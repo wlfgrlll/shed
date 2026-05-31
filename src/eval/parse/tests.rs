@@ -1064,7 +1064,7 @@ fn heredoc_two_on_one_line() {
 
 #[test]
 fn parse_try_basic() {
-  let input = r#"try false; catch "msg"; done"#;
+  let input = r#"try false; catch "msg""#;
   let expected = &mut [
     NdKind::List,
     NdKind::Conjunction,
@@ -1085,7 +1085,7 @@ fn parse_try_basic() {
 
 #[test]
 fn parse_try_multiple_body_commands() {
-  let input = r#"try false; true; catch "msg"; done"#;
+  let input = r#"try false; true; catch "msg""#;
   let expected = &mut [
     NdKind::List,
     NdKind::Conjunction,
@@ -1109,7 +1109,7 @@ fn parse_try_multiple_body_commands() {
 
 #[test]
 fn parse_try_multi_line() {
-  let input = "try\n  false\ncatch \"msg\"\ndone";
+  let input = "try\n  false\ncatch \"msg\"";
   let expected = &mut [
     NdKind::List,
     NdKind::Conjunction,
@@ -1135,8 +1135,11 @@ fn parse_try_missing_catch() {
 }
 
 #[test]
-fn parse_try_missing_done() {
-  let input = r#"try false; catch "msg""#;
+fn parse_try_missing_done_after_do() {
+  // When `do` opens a catch body, `done` is required to close it.
+  // The terminator-less form (`try X; catch "msg"`) is now valid and
+  // tested elsewhere.
+  let input = r#"try false; catch "msg"; do echo x"#;
   assert!(get_ast(input).is_err());
 }
 
@@ -1149,7 +1152,7 @@ fn parse_try_empty_body() {
 #[test]
 fn try_block_success_no_error() {
   let guard = TestGuard::new();
-  test_input(r#"try true; catch "should not appear"; done; echo after"#).unwrap();
+  test_input(r#"try true; catch "should not appear"; echo after"#).unwrap();
   let out = guard.read_output();
   assert!(out.contains("after\n"), "got: {out:?}");
   assert!(!out.contains("should not appear"), "got: {out:?}");
@@ -1158,7 +1161,7 @@ fn try_block_success_no_error() {
 #[test]
 fn try_block_failure_prints_catch() {
   let guard = TestGuard::new();
-  test_input(r#"try false; catch "body failed"; done"#).unwrap();
+  test_input(r#"try false; catch "body failed""#).unwrap();
   let out = guard.read_output();
   assert!(
     out.contains("Try Failed"),
@@ -1171,9 +1174,9 @@ fn try_block_failure_prints_catch() {
 }
 
 #[test]
-fn try_block_continues_after_done() {
+fn try_block_continues_after_catch() {
   let guard = TestGuard::new();
-  test_input(r#"try false; catch "err"; done; echo survived"#).unwrap();
+  test_input(r#"try false; catch "err"; echo survived"#).unwrap();
   let out = guard.read_output();
   assert!(
     out.contains("survived\n"),
@@ -1185,7 +1188,7 @@ fn try_block_continues_after_done() {
 fn try_block_catch_message_expansion() {
   let guard = TestGuard::new();
   Shed::vars_mut(|v| v.set_var("name", VarKind::Str("world".into()), VarFlags::empty())).unwrap();
-  test_input(r#"try false; catch "hello $name"; done"#).unwrap();
+  test_input(r#"try false; catch "hello $name""#).unwrap();
   let out = guard.read_output();
   assert!(
     out.contains("hello world"),
@@ -1196,7 +1199,7 @@ fn try_block_catch_message_expansion() {
 #[test]
 fn try_block_multi_arg_catch_joined_with_space() {
   let guard = TestGuard::new();
-  test_input(r#"try false; catch "alpha" "beta" "gamma"; done"#).unwrap();
+  test_input(r#"try false; catch "alpha" "beta" "gamma""#).unwrap();
   let out = guard.read_output();
   assert!(out.contains("alpha beta gamma"), "got: {out:?}");
 }
@@ -1207,7 +1210,7 @@ fn try_block_forces_errexit_on_body() {
   // execution. Inside the try block, errexit is forced on, so a failing
   // command should fire the catch arm even when set +e is otherwise active.
   let guard = TestGuard::new();
-  test_input(r#"set +e; try false; echo body-continued; catch "caught"; done"#).unwrap();
+  test_input(r#"set +e; try false; echo body-continued; catch "caught""#).unwrap();
   let out = guard.read_output();
   assert!(out.contains("caught"), "catch should fire; got: {out:?}");
   assert!(
@@ -1217,11 +1220,11 @@ fn try_block_forces_errexit_on_body() {
 }
 
 #[test]
-fn try_block_restores_errexit_after_done() {
+fn try_block_restores_errexit_after_catch() {
   // After the try block exits, the prior errexit state should be restored.
   // With set +e active before the block, set +e should still be active after.
   let guard = TestGuard::new();
-  test_input(r#"set +e; try false; catch "x"; done; false; echo post"#).unwrap();
+  test_input(r#"set +e; try false; catch "x"; false; echo post"#).unwrap();
   let out = guard.read_output();
   assert!(
     out.contains("post\n"),
@@ -1415,7 +1418,7 @@ fn try_forces_pipefail_on_inside_body() {
   // stage that would normally be swallowed by POSIX pipeline semantics
   // should fire the catch arm here.
   let guard = TestGuard::new();
-  test_input(r#"try echo foo | false | cat; catch "caught"; done; echo after"#).unwrap();
+  test_input(r#"try echo foo | false | cat; catch "caught"; echo after"#).unwrap();
   let out = guard.read_output();
   assert!(
     out.contains("caught"),
@@ -1423,17 +1426,17 @@ fn try_forces_pipefail_on_inside_body() {
   );
   assert!(
     out.contains("after\n"),
-    "shell should continue past done; got: {out:?}"
+    "shell should continue past catch; got: {out:?}"
   );
 }
 
 #[test]
-fn try_restores_pipefail_after_done() {
+fn try_restores_pipefail_after_catch() {
   // The forced-on pipefail inside try must be restored to its prior
   // (off) state once the block exits, otherwise the outer shell would
   // see surprising behavior change.
   let guard = TestGuard::new();
-  test_input(r#"try true; catch "x"; done; false | true; echo $?"#).unwrap();
+  test_input(r#"try true; catch "x"; false | true; echo $?"#).unwrap();
   let out = guard.read_output();
   // After try exits, pipefail should be off again, so `false | true`
   // takes the last stage's status (0).
@@ -1654,7 +1657,7 @@ fn defer_failure_does_not_fire_try_catch() {
   // block's scope should NOT propagate into the try's catch arm,
   // because defer failures are absorbed at the scope boundary.
   let guard = TestGuard::new();
-  test_input(r#"{ try { defer false; }; catch "should not fire"; done; echo after; }"#).unwrap();
+  test_input(r#"{ try { defer false; }; catch "should not fire"; echo after; }"#).unwrap();
   let out = guard.read_output();
   assert!(
     !out.contains("should not fire"),
