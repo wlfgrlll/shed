@@ -1,5 +1,5 @@
 _cd_comp() {
-	defer "shopt core.nullglob=$(shopt core.nullglob)"
+	defer "$(shopt core.nullglob)"
 	shopt core.nullglob=true
 	local word=${COMP_WORDS[$COMP_CWORD]}
 
