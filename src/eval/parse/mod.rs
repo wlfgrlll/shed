@@ -231,7 +231,7 @@ impl ParseStream {
       };
 
       if conjunct_op != ConjunctOp::Null {
-        block.walk_tree(&mut |nd| nd.flags |= NdFlags::NOT_ERR);
+        block.walk_tree(&mut Node::not_err);
       }
 
       let conjunction = ConjunctNode {

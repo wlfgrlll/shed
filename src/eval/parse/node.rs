@@ -165,6 +165,25 @@ impl Node {
 
     Ok(())
   }
+  /// Mark this node as exempt from `set -e`
+  ///
+  /// Unless it is already marked as `IS_ERR`, in which case do nothing
+  pub fn not_err(&mut self) {
+    if !self.flags.contains(NdFlags::IS_ERR) {
+      self.flags.insert(NdFlags::NOT_ERR);
+    }
+  }
+  /// Mark this node as exempt from `set -e` exemptions.
+  ///
+  /// Unless it is already marked as `NOT_ERR`, in which case do nothing
+  ///
+  /// This is used for `try` blocks to force `set -e` to propagate their errors
+  /// even when `try` is used in a context that is exempt from them, like a `catch` block.
+  pub fn is_err(&mut self) {
+    if !self.flags.contains(NdFlags::NOT_ERR) {
+      self.flags.insert(NdFlags::IS_ERR);
+    }
+  }
   pub fn propagate_context(&mut self, ctx: &(Span, Label<Span>)) {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
   }
@@ -195,9 +214,10 @@ bitflags! {
     const NO_FORK       = 1 << 2;
     const ARR_ASSIGN    = 1 << 3;
     const PIPE_ERR      = 1 << 4; // whether to include stderr in a pipe
-    const NOT_ERR       = 1 << 5; // whether an error triggers ERR traps and set -e
-    const PIPE_CMD      = 1 << 6; // is not the last command in a pipeline
-    const NO_SPLIT      = 1 << 7; // don't split words, used in double bracket tests ('[[')
+    const NOT_ERR       = 1 << 5; // don't trigger ERR traps and set -e
+    const IS_ERR        = 1 << 6; // force trigger ERR traps and set -e
+    const PIPE_CMD      = 1 << 7; // is not the last command in a pipeline
+    const NO_SPLIT      = 1 << 8; // don't split words, used in double bracket tests ('[[')
   }
 }
 

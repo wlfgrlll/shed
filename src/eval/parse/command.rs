@@ -111,7 +111,8 @@ impl ParseStream {
         cmd.flags |= NdFlags::PIPE_ERR;
       }
       if matches!(next_class, TkRule::Pipe | TkRule::ErrPipe) {
-        cmd.walk_tree(&mut |n| n.flags |= NdFlags::PIPE_CMD | NdFlags::NOT_ERR);
+        cmd.walk_tree(&mut |n| n.flags |= NdFlags::PIPE_CMD);
+        cmd.walk_tree(&mut Node::not_err);
       }
 
       cmds.push(cmd);

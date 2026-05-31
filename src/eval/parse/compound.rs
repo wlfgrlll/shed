@@ -5,7 +5,7 @@ use shed_macros::styled_format;
 use crate::util::error::get_context;
 
 use super::{
-  CaseNode, CondNode, LoopKind, NdFlags, NdRule, Node, ParseStream, ShResult, Tk, TkFlags, TkRule,
+  CaseNode, CondNode, LoopKind, NdRule, Node, ParseStream, ShResult, Tk, TkFlags, TkRule,
   util::split_for_arith_tk,
 };
 
@@ -354,7 +354,7 @@ impl ParseStream {
       bail!(self, node_tks, "Expected a command after 'time'");
     };
 
-    cmd.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR);
+    cmd.walk_tree(&mut Node::not_err);
 
     node_tks.extend(cmd.tokens.clone());
     self.catch_separator(&mut node_tks);
@@ -411,7 +411,7 @@ impl ParseStream {
     let Some(mut cmd) = self.parse_block(true)? else {
       bail!(self, node_tks, "Expected a command after '{display}'");
     };
-    cmd.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for negated commands
+    cmd.walk_tree(&mut Node::not_err); // disable set -e for negated commands
 
     node_tks.extend(cmd.tokens.clone());
     self.catch_separator(&mut node_tks);
@@ -444,7 +444,7 @@ impl ParseStream {
         bail!(self, node_tks, "Expected a command after '{prefix_keywrd}'");
       };
       node_tks.extend(cond.tokens.clone());
-      cond.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for condition commands
+      cond.walk_tree(&mut Node::not_err); // disable set -e for condition commands
 
       if !self.check_keyword("then") {
         bail!(
@@ -656,7 +656,7 @@ impl ParseStream {
       bail!(self, node_tks, "Expected a command after '{loop_kind}'");
     };
     node_tks.extend(cond.tokens.clone());
-    cond.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR); // disable set -e for condition commands
+    cond.walk_tree(&mut Node::not_err); // disable set -e for condition commands
 
     if !self.check_keyword("do") {
       bail!(
@@ -765,6 +765,8 @@ impl ParseStream {
       NdRule::List { commands: body },
       vec![]
     ));
+    body.walk_tree(&mut Node::is_err);
+
     let try_span = body.get_span().merge_with(&try_tk_span).unwrap();
     let try_span = if try_span.as_str().contains('\n') {
       try_span
@@ -828,7 +830,7 @@ impl ParseStream {
     };
     node_tks.extend(catch_body.tokens.clone());
 
-    catch_body.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR);
+    catch_body.walk_tree(&mut |n| n.not_err());
 
     if !self.check_keyword("done") {
       bail!(

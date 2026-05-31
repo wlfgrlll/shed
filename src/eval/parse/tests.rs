@@ -1342,6 +1342,71 @@ fn parse_try_empty_do_body_errors() {
   assert!(get_ast(input).is_err());
 }
 
+#[test]
+fn try_nested_in_catch_body_catches_its_own_failures() {
+  // Regression: NOT_ERR propagation on the outer catch body must NOT
+  // reach into a nested try's body, or the inner try silently swallows
+  // its own body's failure (errexit never fires, inner catch never
+  // runs). The IS_ERR claim on the inner try body blocks the outer
+  // NOT_ERR propagation.
+  let guard = TestGuard::new();
+  test_input("try false; catch; do\n  try false; catch; do echo inner; done\n  echo outer\ndone")
+    .unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("inner\n"),
+    "inner catch should fire on inner try's failure; got: {out:?}"
+  );
+  assert!(
+    out.contains("outer\n"),
+    "outer catch body should continue past inner try; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_inside_negation_catches_its_own_failures() {
+  // Same IS_ERR claim should protect against `parse_negate`'s NOT_ERR
+  // walk reaching into a nested try's body.
+  let guard = TestGuard::new();
+  test_input("! try false; catch; do echo caught; done").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("caught\n"),
+    "inner catch should fire even when the try is negated; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_inside_pipeline_catches_its_own_failures() {
+  // Same IS_ERR claim should protect against `parse_pipeln`'s NOT_ERR
+  // walk on non-final pipeline stages reaching into a nested try's body.
+  let guard = TestGuard::new();
+  test_input("try false; catch; do echo caught; done | cat").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("caught\n"),
+    "inner catch should fire even when piped to another command; got: {out:?}"
+  );
+}
+
+#[test]
+fn try_inside_conjunction_catches_its_own_failures() {
+  // Same IS_ERR claim should protect against `parse_conjunction`'s
+  // NOT_ERR walk on `&&`/`||` chained commands reaching into a nested
+  // try's body.
+  let guard = TestGuard::new();
+  test_input("try false; catch; do echo caught; done && echo after").unwrap();
+  let out = guard.read_output();
+  assert!(
+    out.contains("caught\n"),
+    "inner catch should fire even when joined with &&; got: {out:?}"
+  );
+  assert!(
+    out.contains("after\n"),
+    "chain should continue past the caught try; got: {out:?}"
+  );
+}
+
 // ===================== `not` keyword =====================
 
 #[test]
