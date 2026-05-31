@@ -697,10 +697,13 @@ impl ParseStream {
       redirs
     )))
   }
+  #[expect(clippy::too_many_lines)]
   pub(super) fn parse_try(&mut self) -> ShResult<Option<Node>> {
     if !self.check_keyword("try") {
       return Ok(None);
     }
+
+    self.block_depth += 1;
 
     let mut node_tks = vec![];
     let mut redirs = vec![];
@@ -717,6 +720,7 @@ impl ParseStream {
     loop {
       if self.check_keyword("catch") {
         if body.is_empty() {
+          self.block_depth -= 1;
           bail!(
             self,
             node_tks,
@@ -753,6 +757,8 @@ impl ParseStream {
       }
     }
 
+    self.block_depth -= 1;
+
     let mut body = Box::new(node!(
       self,
       body_tks,
@@ -771,7 +777,6 @@ impl ParseStream {
     ));
 
     node_tks.push(self.next_tk().unwrap()); // consume 'catch'
-    self.catch_separator(&mut node_tks); // absorb newlines after 'catch'
 
     let mut err = vec![];
 
@@ -787,7 +792,43 @@ impl ParseStream {
       err.push(tk);
     }
 
-    self.catch_separator(&mut node_tks); // absorb newlines before 'done'
+    self.catch_separator(&mut node_tks);
+
+    if !self.check_keyword("do") {
+      self.parse_redir(&mut redirs, &mut node_tks)?;
+
+      let node = node!(
+        self,
+        node_tks,
+        NdRule::TryNode {
+          body,
+          err,
+          catch: None
+        },
+        redirs
+      );
+
+      return Ok(Some(node));
+    }
+
+    self.block_depth += 1;
+
+    node_tks.push(self.next_tk().unwrap()); // consume 'do'
+
+    self.catch_separator(&mut node_tks);
+
+    let Some(mut catch_body) = self.parse_cmd_list()? else {
+      bail!(
+        self,
+        node_tks,
+        "Expected a command after '{}' in this '{}' clause",
+        "do",
+        "catch"
+      );
+    };
+    node_tks.extend(catch_body.tokens.clone());
+
+    catch_body.walk_tree(&mut |n| n.flags |= NdFlags::NOT_ERR);
 
     if !self.check_keyword("done") {
       bail!(
@@ -802,8 +843,57 @@ impl ParseStream {
     node_tks.push(self.next_tk().unwrap());
 
     self.parse_redir(&mut redirs, &mut node_tks)?;
+    let catch = Some(Box::new(catch_body));
 
-    let node = node!(self, node_tks, NdRule::TryNode { body, err }, redirs);
+    let node = node!(self, node_tks, NdRule::TryNode { body, err, catch }, redirs);
+
+    Ok(Some(node))
+  }
+  pub(super) fn parse_defer(&mut self) -> ShResult<Option<Node>> {
+    if !self.check_keyword("defer") {
+      return Ok(None);
+    }
+    let mut node_tks = vec![];
+
+    let defer_tk = self.next_tk().unwrap();
+    let defer_tk_span = defer_tk.span.clone();
+
+    node_tks.push(defer_tk);
+
+    self.catch_separator(&mut node_tks);
+
+    let Some(mut body) = self.parse_block(true)? else {
+      bail!(
+        self,
+        node_tks,
+        "Expected a command after '{}' keyword",
+        "defer"
+      );
+    };
+
+    let body_span = body.get_span();
+    let defer_span = if body_span.as_str().contains('\n') {
+      body_span.merge_with(&defer_tk_span).unwrap()
+    } else {
+      defer_tk_span
+    };
+
+    node_tks.extend(body.tokens.clone());
+
+    body.propagate_context(&get_context(
+      styled_format!("in '{}' block defined here", "defer"),
+      defer_span,
+    ));
+
+    self.catch_separator(&mut node_tks);
+
+    let node = node!(
+      self,
+      node_tks,
+      NdRule::DeferNode {
+        body: Box::new(body)
+      }
+    );
 
     Ok(Some(node))
   }

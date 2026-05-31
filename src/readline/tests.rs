@@ -403,6 +403,21 @@ fn vi_auto_indent_funcdef() {
 }
 
 #[test]
+fn vi_auto_indent_empty_body() {
+  let (mut vi, _g) = test_vi("");
+
+  let bytes = b"if true; then";
+  Shed::term_mut(|t| t.feed_bytes(bytes));
+  let keys = Shed::term_mut(Terminal::drain_keys);
+  vi.process_input(keys).unwrap();
+  vi.process_input(vec![key!(Enter)]).unwrap();
+  vi.process_input(vec![key!('f')]).unwrap();
+  vi.process_input(vec![key!('i')]).unwrap();
+
+  assert_eq!(vi.editor.joined(), "if true; then\nfi");
+}
+
+#[test]
 fn vi_func_def_is_finished() {
   let (mut vi, _g) = test_vi("");
 

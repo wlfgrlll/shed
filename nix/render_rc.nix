@@ -62,6 +62,9 @@ lib.concatLines [
         "shopt line.linebreak_on_incomplete=${boolToString cfg.shopts.line.linebreak_on_incomplete}"
         "shopt line.line_numbers=${boolToString cfg.shopts.line.line_numbers}"
         "shopt line.auto_indent=${boolToString cfg.shopts.line.auto_indent}"
+        "shopt line.trim_on_submit=${boolToString cfg.shopts.line.trim_on_submit}"
+        "shopt line.auto_suggest=${boolToString cfg.shopts.line.auto_suggest}"
+        "shopt line.clipboard_cmd='${cfg.shopts.line.clipboard_cmd}'"
 
         "shopt core.dotglob=${boolToString cfg.shopts.core.dotglob}"
         "shopt core.nullglob=${boolToString cfg.shopts.core.nullglob}"
@@ -73,6 +76,7 @@ lib.concatLines [
         "shopt core.bell_enabled=${boolToString cfg.shopts.core.bell_enabled}"
         "shopt core.max_recurse_depth=${toString cfg.shopts.core.max_recurse_depth}"
         "shopt core.xpg_echo=${boolToString cfg.shopts.core.xpg_echo}"
+        "shopt core.bell_style='${cfg.shopts.core.bell_style}'"
 
         "shopt set.hashall=${boolToString cfg.shopts.set.hashall}"
         "shopt set.vi=${boolToString cfg.shopts.set.vi}"

@@ -14,12 +14,12 @@ use super::{
   util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
 };
 
-pub const KEYWORDS: [&str; 20] = [
+pub const KEYWORDS: [&str; 21] = [
   "if", "then", "elif", "else", "fi", "while", "until", "select", "for", "in", "do", "done",
-  "case", "esac", "!", "not", "time", "function", "try", "catch",
+  "case", "esac", "!", "not", "time", "function", "try", "catch", "defer",
 ];
 
-pub const MIDDLES: [&str; 2] = ["elif", "else"];
+pub const MIDDLES: [&str; 3] = ["elif", "else", "catch"];
 
 pub const CLOSERS: [&str; 6] = ["fi", "done", "esac", "}", ")", ";;"];
 

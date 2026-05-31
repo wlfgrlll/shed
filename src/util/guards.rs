@@ -5,7 +5,7 @@ use scopeguard::guard;
 use super::{
   super::state::scopes::ScopeStack,
   Shed,
-  eval::{execute::exec_nonint, lex::Span},
+  eval::{execute::Dispatcher, lex::Span},
 };
 
 // ============================================================================
@@ -16,13 +16,16 @@ use super::{
 /// Drop variables registered by `local`
 fn guard_drop(_: ()) {
   let mut deferred = Shed::vars_mut(|v| v.cur_scope_mut().take_deferred_cmds());
+  let saved_status = Shed::get_status();
 
   while let Some(cmd) = deferred.pop() {
-    if let Err(e) = exec_nonint(cmd, Some("defer".into())) {
+    let mut dispatcher = Dispatcher::new(vec![cmd], "defer".into());
+    if let Err(e) = dispatcher.begin_dispatch() {
       e.print_error();
     }
   }
 
+  Shed::set_status(saved_status);
   Shed::vars_mut(ScopeStack::ascend);
 }
 

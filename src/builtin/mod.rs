@@ -27,7 +27,6 @@ mod arrops;
 mod autocmd;
 mod cd;
 mod complete;
-mod defer;
 mod dirstack;
 mod echo;
 mod evaluate;
@@ -177,7 +176,6 @@ register_builtins! {
   "complete" => complete::Complete,
   "continue" => flowctl::Continue,
   "declare"  => varcmds::Declare,
-  "defer"    => defer::Defer,
   "dirs"     => dirstack::Dirs,
   "disown"   => jobctl::Disown,
   "echo"     => echo::Echo,

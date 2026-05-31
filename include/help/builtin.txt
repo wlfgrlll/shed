@@ -16,7 +16,6 @@ The following builtins are available:
   `compgen`     emit completion candidates                  |builtin-compgen|
   `complete`    define custom tab completion rules          |builtin-complete|
   `declare`     declare variables with type and attributes  |builtin-declare|
-  `defer`       register cleanup tied to scope exit         |builtin-defer|
   `dirs`        display the directory stack                 |builtin-dirs|
   `disown`      remove a job from the job table             |builtin-disown|
   `echo`        print arguments to stdout                   |builtin-echo|
@@ -565,44 +564,6 @@ DECLARE                                          *builtin-declare* *declare*
 
   See also: |builtin-local|, |builtin-export|, |builtin-readonly|,
   |builtin-unset|.
-
-==============================================================================
-DEFER                                            *builtin-defer* *defer*
-
-  `defer [-c] {command} ...`
-
-  Register {command} to run when the current scope exits. Multiple
-  arguments are joined into a single command string. Deferred commands
-  run in LIFO order (most recently registered first) regardless of
-  whether the scope exits normally, via `return`, `break`/`continue`,
-  or by falling out of a brace group.
-
-  Scopes that fire defers ~
-
-    Function bodies                    fires on function return
-    Brace groups `{ ... }`             fires on block exit
-    Compond commands (`if`, `for`,...) fires on exiting the body
-    The shell itself (top level)       fires on shell exit
-
-  Options ~
-
-    `-c`         clear all currently-registered defers in the current
-                 scope before registering the new one
-
-  With no arguments, lists the deferred commands registered in the
-  current scope, one per line.
-
-  Defer pairs naturally with |builtin-local| for scope-bound RAII
-  patterns: declare a `local` to hold a saved value, then `defer` the
-  restoration command. Both die together when the scope ends.
-
-  Examples:
-
-      `defer 'echo bye'`                              run on scope exit
-      `defer "rm -rf '$tmpdir'"`                      cleanup
-      `defer "shopt core.nullglob=$(shopt core.nullglob)"`  snapshot+restore
-      `defer -c 'replacement'`                        drop all, register one
-      `defer`                                         list current defers
 
 ==============================================================================
 DISOWN                                           *builtin-disown* *disown*
@@ -1170,7 +1131,7 @@ LOCAL                                            *builtin-local* *local*
 
   With no arguments, lists all variables in the current scope.
 
-  Combine with |builtin-defer| for save-and-restore patterns: `local`
+  Combine with |script-defer| for save-and-restore patterns: `local`
   captures the value, `defer` registers the restore, and both vanish
   together when the scope ends.
 

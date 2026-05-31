@@ -195,6 +195,21 @@
                 default = true;
                 description = "Whether to automatically indent new lines in multiline commands";
               };
+              trim_on_submit = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "If enabled, trims leading/trailing whitespace on submitting a command";
+              };
+              auto_suggest = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Whether to suggest commands from history as commands are typed";
+              };
+              clipboard_cmd = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "A command to use when text is yanked into the '+' register";
+              };
             };
           };
           default = {};
@@ -252,6 +267,11 @@
                 type = lib.types.bool;
                 default = false;
                 description = "Whether to have the 'echo' builtin expand escape sequences like \\n and \\t (if false, it will print them verbatim)";
+              };
+              bell_style = lib.mkOption {
+                type = lib.types.enum [ "audible" "visible" "both" ];
+                default = "audible";
+                description = "Whether the terminal bell is audible, visible, or both";
               };
             };
           };

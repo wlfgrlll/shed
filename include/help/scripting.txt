@@ -809,39 +809,105 @@ executable with a shebang line:
 ==============================================================================
 10. The `try` Block                              *try* *script-try*
 
-  `try {body}; catch {message}; done`
+  `try {body}; catch [{message}] [; do {recovery}; done]`
 
-  The `try` block runs {body} with `set -e` temporarily forced on.
-  If any command in {body} fails, the block stops and {message} is
-  printed as a styled error report with the failing command
-  underlined. Execution continues after `done` with `$?` set to the
-  status of the failing command.
+  The `try` block runs {body} with `set -e` and `set -o pipefail`
+  temporarily forced on. If any command in {body} fails, control
+  transfers to the catch arm. Both clauses on the catch arm are
+  optional, which gives the block four distinct shapes - see
+  |script-try-matrix| below for the full breakdown.
 
   This is a shed extension: standard POSIX shells do not have a
   `try` block.
 
   10.1 Basic Usage                               *script-try-basic*
 
-      The body can be a single command or a sequence of commands:
+      The body can be a single command or a sequence of commands.
+      The simplest useful form is body + message:
 
           `try`
           `  curl -fsSL "$url" > artifact.tar.gz`
           `  tar xf artifact.tar.gz`
           `catch "failed to fetch and unpack $url"`
-          `done`
 
       If `curl` fails, `tar` never runs. The catch message is
-      printed, the report points at the failing `curl` line, and
-      `$?` becomes the status of the failing command.
+      printed as a styled error report with the failing command
+      underlined. After the block, `$?` is 0 - a try block that
+      caught a failure is structurally a success, and the failure
+      will not retrigger outer errexit.
 
   10.2 Single-Line Form                          *script-try-inline*
 
       Like other compound commands, the clauses can be put on one
       line by separating them with `;`:
 
-          `try cd "$build_dir"; catch "build dir missing"; done`
+          `try cd "$build_dir"; catch "build dir missing"`
 
-  10.3 Catch Message Expansion                   *script-try-expand*
+  10.3 The Four Forms of `catch`                 *script-try-catch*
+
+      `catch` independently accepts an optional message and an
+      optional `do ... done` recovery body. The four combinations
+      give four different behaviors:
+
+      +-------------------------------------------------------------+
+      |                 |  no recovery     |  with recovery body    |
+      +-----------------+------------------+------------------------+
+      | no message      |  `silent swallow`  |  `body only (override)`  |
+      +-----------------+------------------+------------------------+
+      | with message    |  `default report`  |  `report + post-hook`    |
+      +-------------------------------------------------------------+
+
+      Each cell:
+
+      Silent swallow ~
+
+          `try`
+          `  expensive_op`
+          `catch`
+
+          No report, no recovery code. The failure is absorbed and
+          `$?` becomes 0. Cleaner than `expensive_op || true` because
+          it announces intent: "I'm aware this may fail and I'm
+          choosing not to surface it."
+
+      Default report ~
+
+          `try`
+          `  expensive_op`
+          `catch "op failed: $reason"`
+
+          The styled error report prints with the message, and
+          execution continues. The canonical "show me what went
+          wrong, then keep going" pattern.
+
+      Body only / override ~
+
+          `try`
+          `  expensive_op`
+          `catch; do`
+          `  log "operation failed, falling back to default"`
+          `  use_default_value`
+          `done`
+
+          No default report - the body takes full responsibility
+          for surfacing or logging the failure. Useful when shed's
+          styled report isn't what you want (e.g., shipping a
+          one-line warning to a structured logger).
+
+      Report + post-hook ~
+
+          `try`
+          `  mount "$device" "$target"`
+          `catch "could not mount $device on $target"; do`
+          `  umount -f "$target" 2>/dev/null`
+          `  rmdir "$target"`
+          `done`
+
+          The styled report prints first, then the recovery body
+          runs as a post-hook. Most useful for "tell the user what
+          happened, then clean up after the failure."
+
+  10.4 Catch Message Expansion                   *script-try-expand*
 
       The catch message is subject to the usual expansions
       (variables, command substitution, arithmetic). Multiple
@@ -849,45 +915,182 @@ executable with a shebang line:
 
           `try mount "$device" "$target"`
           `catch "could not mount" "$device" "on $target"`
-          `done`
 
       Expanded values are visually distinguished from literal text
       in the printed report, making it easy to see what came from
       the script versus what came from the environment.
 
-  10.4 Interaction with `set -e` and `pipefail`  *script-try-errexit*
+  10.5 Catch Body Semantics                      *script-try-body*
 
-      Inside the block, both `set -e` (errexit) and `set -o pipefail`
-      are forced on regardless of their current settings. When the
-      block exits, the prior states of both options are restored.
+      Commands in the catch body are exempt from `set -e`. A
+      failure in recovery code does not retrigger outer errexit
+      and does not propagate out of the block.
 
-      Forcing errexit means commands that would normally only set
-      `$?` on failure (builtins, simple commands without `&&`/`||`,
-      etc.) will trigger the catch arm.
+      `set -o pipefail` is not special-cased. If it's on in the
+      surrounding shell, pipelines inside the body still take the
+      last non-zero stage's status.
 
-      Forcing pipefail means a failure in any stage of a pipeline
-      fires the catch arm, not just the last one. Without this, a
-      pipeline like `curl ... | grep foo` would silently swallow a
-      `curl` failure because `grep`'s success becomes the pipeline's
-      status. See |script-pipe-status|.
+      The body runs in the same scope as the surrounding code.
+
+      To make a body failure fatal, do it explicitly:
+
+          `catch "primary failed"; do`
+          `  fallback || exit 1`
+          `done`
+
+  10.6 Interaction with `set -e` and `pipefail`  *script-try-errexit*
+
+      Inside the try body, both `set -e` (errexit) and `set -o
+      pipefail` are forced on regardless of their current settings.
+      When the block exits, the prior states of both options are
+      restored.
+
+      After a try block completes (whether the body succeeded or
+      its failure was caught), `$?` is 0. This prevents a caught
+      failure from immediately retriggering outer errexit on the
+      next command.
 
       See also: |set|(builtin-set)
 
-  10.5 Flow Control                              *script-try-flow*
+  10.7 Flow Control                              *script-try-flow*
 
       `return`, `break`, `continue`, and `exit` are not intercepted
-      by the catch arm. They propagate as in any other compound, so
-      a `try` block inside a function or loop behaves predictably
-      with respect to control flow.
+      by either the catch message or the catch body. They propagate
+      as in any other compound, so a `try` block inside a function
+      or loop behaves predictably with respect to control flow.
 
 ==============================================================================
-11. File Descriptor Manipulation with exec       *script-exec-redirect*
+11. The `defer` Block                            *defer* *script-defer*
+
+  `defer {command}`
+
+  Register {command} to run when the current scope exits. Deferred
+  commands fire in LIFO order (most recently registered first)
+  regardless of whether the scope exits normally, via `return`,
+  `break`/`continue`, `exit` or by leaving a brace group.
+
+  This is a shed extension: standard POSIX shells do not have a
+  `defer` construct.
+
+  11.1 Basic Usage                               *script-defer-basic*
+
+      The body is a single command. For simple cleanup, that command
+      is usually all that's needed:
+
+          `tmpdir=$(mktemp -d)`
+          `defer rm -rf "$tmpdir"`
+          `# ... use $tmpdir ...`
+
+      For multi-statement cleanup, wrap the body in a brace group:
+
+          `defer {`
+          `  umount "$mountpoint"`
+          `  rmdir "$mountpoint"`
+          `}`
+
+  11.2 Scopes That Fire Defers                   *script-defer-scopes*
+
+      Function bodies                     fires on function return
+      Brace groups `{ ... }`              fires on block exit
+      Compound commands (`if`, `for`...)  fires on body exit
+      The shell itself (top level)        fires on shell exit
+
+  11.3 LIFO Ordering                             *script-defer-lifo*
+
+      Multiple defers in the same scope fire in reverse registration
+      order:
+
+          `defer echo first`
+          `defer echo second`
+          `defer echo third`
+          `# scope exit prints: third, second, first`
+
+      This mirrors how cleanup typically works - the last resource
+      acquired is the first to be released.
+
+  11.4 Capture Semantics                         *script-defer-capture*
+
+      The body is captured at parse time and all expansion - variables,
+      command substitution, arithmetic - is performed eagerly at
+      registration time. This means the deferred body holds the values
+      that were live when `defer` ran, not the values at scope exit:
+
+          `foo() {`
+          `  x=before`
+          `  defer echo "$x"`
+          `  x=after`
+          `}`
+          `foo                              # prints "before"`
+
+      The same applies to `$()` and `$(())`:
+
+          `defer echo "$(date +%s)"`
+
+      The timestamp above is captured at registration time, not at
+      scope exit. This eager-by-default semantics matches the canonical
+      defer use case: snapshot something now, restore or report on it
+      when the scope unwinds.
+
+      For lazy capture (resolve at trigger time instead), wrap the body
+      in `eval` with a single-quoted string. Single quotes survive the
+      freeze pass intact, and `eval` parses+expands its argument at
+      execution time:
+
+          `foo() {`
+          `  x=before`
+          `  defer eval 'echo "$x"'`
+          `  x=after`
+          `}`
+          `foo                              # prints "after"`
+
+  11.5 Error Handling                            *script-defer-errors*
+
+      The deferred command runs in its own execution context. Failures
+      within the body respect `set -e` at trigger time, but a failed
+      defer body does NOT propagate out of the scope. Errors are
+      reported to stderr but do not abort the surrounding execution.
+
+      This matches the principle other languages converge on for
+      cleanup primitives (Go's `defer`, Zig's `defer`, Rust's `Drop`):
+      destructors absorb errors at the boundary so that one failing
+      cleanup doesn't prevent the rest from running.
+
+      For loud-and-fatal cleanup failure, be explicit:
+
+          `defer { cleanup || exit 1; }`
+
+  11.6 Pairing with `local`                      *script-defer-local*
+
+      Defer pairs naturally with the `local` builtin for scope-bound
+      save-and-restore patterns. `local` captures the value, `defer`
+      registers the restoration, and both vanish together when the
+      scope ends:
+
+          `foo() {`
+          `  local saved_pwd=$PWD`
+          `  defer cd "$saved_pwd"`
+          `  cd /some/other/path`
+          `  # ... work in /some/other/path ...`
+          `}`
+
+      The shopt save-and-restore idiom uses the same pattern:
+
+          `defer eval "$(shopt core.nullglob)"`
+          `shopt core.nullglob=true`
+          `# ... globs expand to empty when no match ...`
+          `# on scope exit, the prior value is restored`
+
+      Because shed's `shopt` produces source-able output, the saved
+      value can be re-applied by deferring a call to `eval` on the output.
+
+==============================================================================
+12. File Descriptor Manipulation with exec       *script-exec-redirect*
 
   `exec` with no command argument applies redirections to the
   current shell session. This lets you permanently redirect
   file descriptors for the rest of the script.
 
-  11.1 Redirecting stdout/stderr                 *script-exec-redir-std*
+  12.1 Redirecting stdout/stderr                 *script-exec-redir-std*
 
       Redirect all subsequent output to a file:
 
@@ -905,7 +1108,7 @@ executable with a shebang line:
 
           `exec > /dev/tty 2>&1`
 
-  11.2 Opening custom file descriptors           *script-exec-custom-fd*
+  12.2 Opening custom file descriptors           *script-exec-custom-fd*
 
       Open a file on a numbered descriptor for later use:
 
@@ -920,7 +1123,7 @@ executable with a shebang line:
           `read -r line <&4`         # read a line from fd 4
           `exec 4<&-`                # close fd 4
 
-  11.3 Saving and restoring descriptors          *script-exec-save-fd*
+  12.3 Saving and restoring descriptors          *script-exec-save-fd*
 
       Save a descriptor before redirecting, then restore it later:
 
@@ -930,7 +1133,7 @@ executable with a shebang line:
           `exec 1>&3 3>&-`           # restore stdout, close fd 3
           `echo "this goes to the terminal"`
 
-  11.4 Read/write descriptors                    *script-exec-readwrite*
+  12.4 Read/write descriptors                    *script-exec-readwrite*
 
       Open a file for both reading and writing:
 

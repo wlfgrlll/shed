@@ -234,8 +234,16 @@ impl super::LineBuf {
 
     if is_closer {
       let (start, end) = self.indent_levels_for_row(pos.row);
-      if start > end {
-        let delta = start.saturating_sub(end);
+      let parse_failed = self.parse_status;
+      let delta = if start > end {
+        start - end
+      } else {
+        // if the parse failed and we are in a block, dedent.
+        // meant to dedent closers like 'fi' if typed after an empty body.
+        // FIXME: this is a hack. a parser-level solution would be cleaner.
+        usize::from(parse_failed && start > 0)
+      };
+      if delta > 0 {
         let line = self.cur_line_mut();
         for _ in 0..delta {
           if line.0.first().is_some_and(|c| c.as_char() == Some('\t')) {

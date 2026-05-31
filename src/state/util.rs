@@ -865,6 +865,7 @@ pub fn get_exec_wrappers() -> Vec<String> {
     "builtin".into(),
     "env".into(),
     "exec".into(),
+    "defer".into(),
   ];
 
   // lets users define their own exec wrappers for the highlighter if they want
