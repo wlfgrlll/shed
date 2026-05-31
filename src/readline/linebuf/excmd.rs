@@ -618,7 +618,7 @@ impl super::LineBuf {
     if let Ok(pos) = self.parse_pos(&cursor) {
       self.set_cursor(pos);
     } else {
-      log::warn!("Invalid cursor position returned from shell command: '{cursor}'",);
+      log::warn!("Invalid cursor position returned from shell command: '{cursor}'");
       self.set_cursor_from_flat(cursor_raw);
     }
 

@@ -2,7 +2,7 @@ use std::{
   collections::VecDeque,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
-  sync::atomic::Ordering,
+  sync::{OnceLock, atomic::Ordering},
   time::Instant,
 };
 
@@ -10,6 +10,7 @@ use nix::{
   errno::Errno,
   poll::{PollFd, PollFlags, PollTimeout, poll},
   sys::stat::{FchmodatFlags, Mode, fchmodat},
+  unistd::{Pid, getppid},
 };
 use scopeguard::defer;
 use smallvec::SmallVec;
@@ -35,6 +36,16 @@ use super::{
   },
   try_var, util,
 };
+
+static PARENT_PROCESS_ID: OnceLock<Pid> = OnceLock::new();
+
+fn was_reparented() -> bool {
+  let Some(&ppid) = PARENT_PROCESS_ID.get() else {
+    return false;
+  };
+  let now = getppid();
+  now != ppid
+}
 
 fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
   // Handle any pending signals
@@ -158,6 +169,7 @@ pub(super) fn shed_interactive(
   let _raw_mode = interactive_setup(args)?;
   state::util::try_hash();
   Shed::meta_mut(|m| m.set_interactive_shell(true));
+  let _ = PARENT_PROCESS_ID.set(getppid());
 
   let mut readline = match ShedLine::new(Prompt::new()) {
     Ok(rl) => rl,
@@ -226,6 +238,13 @@ fn shed_loop_iter(
   vi_mode: &mut bool,
   socket_mode: &mut Mode,
 ) -> ShResult<LoopAction> {
+  if was_reparented() {
+    // our parent is dead. tragic.
+    // we should also die.
+    QUIT_CODE.store(0, Ordering::SeqCst);
+    return Ok(LoopAction::Break);
+  }
+
   // make absolutely sure we are in raw mode here.
   // we did enable raw mode above, but there do exist extreme corner cases where
   // raw mode can be disabled in such a way that it is still turned off once we get back here.
@@ -326,16 +345,16 @@ fn shed_loop_iter(
       return Ok(LoopAction::Break);
     }
     if revents.contains(PollFlags::POLLIN) {
-      match Shed::term_mut(Terminal::read) {
-        Ok(_) => { /* data read, will be processed below */ }
-        Err(e) => match e.kind() {
+      // read data here, process it below
+      if let Err(e) = Shed::term_mut(Terminal::read) {
+        match e.kind() {
           ShErrKind::LoopBreak(_) => return Ok(LoopAction::Break),
           ShErrKind::LoopContinue(_) => return Ok(LoopAction::Continue),
           _ => {
             e.print_error();
             return Ok(LoopAction::Break);
           }
-        },
+        }
       }
     }
   }
