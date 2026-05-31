@@ -881,13 +881,137 @@ executable with a shebang line:
       with respect to control flow.
 
 ==============================================================================
-11. File Descriptor Manipulation with exec       *script-exec-redirect*
+11. The `defer` Block                            *defer* *script-defer*
+
+  `defer {command}`
+
+  Register {command} to run when the current scope exits. Deferred
+  commands fire in LIFO order (most recently registered first)
+  regardless of whether the scope exits normally, via `return`,
+  `break`/`continue`, `exit` or by leaving a brace group.
+
+  This is a shed extension: standard POSIX shells do not have a
+  `defer` construct.
+
+  11.1 Basic Usage                               *script-defer-basic*
+
+      The body is a single command. For simple cleanup, that command
+      is usually all that's needed:
+
+          `tmpdir=$(mktemp -d)`
+          `defer rm -rf "$tmpdir"`
+          `# ... use $tmpdir ...`
+
+      For multi-statement cleanup, wrap the body in a brace group:
+
+          `defer {`
+          `  umount "$mountpoint"`
+          `  rmdir "$mountpoint"`
+          `}`
+
+  11.2 Scopes That Fire Defers                   *script-defer-scopes*
+
+      Function bodies                     fires on function return
+      Brace groups `{ ... }`              fires on block exit
+      Compound commands (`if`, `for`...)  fires on body exit
+      The shell itself (top level)        fires on shell exit
+
+  11.3 LIFO Ordering                             *script-defer-lifo*
+
+      Multiple defers in the same scope fire in reverse registration
+      order:
+
+          `defer echo first`
+          `defer echo second`
+          `defer echo third`
+          `# scope exit prints: third, second, first`
+
+      This mirrors how cleanup typically works - the last resource
+      acquired is the first to be released.
+
+  11.4 Capture Semantics                         *script-defer-capture*
+
+      The body is captured at parse time and all expansion - variables,
+      command substitution, arithmetic - is performed eagerly at
+      registration time. This means the deferred body holds the values
+      that were live when `defer` ran, not the values at scope exit:
+
+          `foo() {`
+          `  x=before`
+          `  defer echo "$x"`
+          `  x=after`
+          `}`
+          `foo                              # prints "before"`
+
+      The same applies to `$()` and `$(())`:
+
+          `defer echo "$(date +%s)"`
+
+      The timestamp above is captured at registration time, not at
+      scope exit. This eager-by-default semantics matches the canonical
+      defer use case: snapshot something now, restore or report on it
+      when the scope unwinds.
+
+      For lazy capture (resolve at trigger time instead), wrap the body
+      in `eval` with a single-quoted string. Single quotes survive the
+      freeze pass intact, and `eval` parses+expands its argument at
+      execution time:
+
+          `foo() {`
+          `  x=before`
+          `  defer eval 'echo "$x"'`
+          `  x=after`
+          `}`
+          `foo                              # prints "after"`
+
+  11.5 Error Handling                            *script-defer-errors*
+
+      The deferred command runs in its own execution context. Failures
+      within the body respect `set -e` at trigger time, but a failed
+      defer body does NOT propagate out of the scope. Errors are
+      reported to stderr but do not abort the surrounding execution.
+
+      This matches the principle other languages converge on for
+      cleanup primitives (Go's `defer`, Zig's `defer`, Rust's `Drop`):
+      destructors absorb errors at the boundary so that one failing
+      cleanup doesn't prevent the rest from running.
+
+      For loud-and-fatal cleanup failure, be explicit:
+
+          `defer { cleanup || exit 1; }`
+
+  11.6 Pairing with `local`                      *script-defer-local*
+
+      Defer pairs naturally with the `local` builtin for scope-bound
+      save-and-restore patterns. `local` captures the value, `defer`
+      registers the restoration, and both vanish together when the
+      scope ends:
+
+          `foo() {`
+          `  local saved_pwd=$PWD`
+          `  defer cd "$saved_pwd"`
+          `  cd /some/other/path`
+          `  # ... work in /some/other/path ...`
+          `}`
+
+      The shopt save-and-restore idiom uses the same pattern:
+
+          `defer eval "$(shopt core.nullglob)"`
+          `shopt core.nullglob=true`
+          `# ... globs expand to empty when no match ...`
+          `# on scope exit, the prior value is restored`
+
+      Because shed's `shopt` produces source-able output, the saved
+      value can be re-applied by deferring a call to `eval` on the output.
+
+==============================================================================
+12. File Descriptor Manipulation with exec       *script-exec-redirect*
 
   `exec` with no command argument applies redirections to the
   current shell session. This lets you permanently redirect
   file descriptors for the rest of the script.
 
-  11.1 Redirecting stdout/stderr                 *script-exec-redir-std*
+  12.1 Redirecting stdout/stderr                 *script-exec-redir-std*
 
       Redirect all subsequent output to a file:
 
@@ -905,7 +1029,7 @@ executable with a shebang line:
 
           `exec > /dev/tty 2>&1`
 
-  11.2 Opening custom file descriptors           *script-exec-custom-fd*
+  12.2 Opening custom file descriptors           *script-exec-custom-fd*
 
       Open a file on a numbered descriptor for later use:
 
@@ -920,7 +1044,7 @@ executable with a shebang line:
           `read -r line <&4`         # read a line from fd 4
           `exec 4<&-`                # close fd 4
 
-  11.3 Saving and restoring descriptors          *script-exec-save-fd*
+  12.3 Saving and restoring descriptors          *script-exec-save-fd*
 
       Save a descriptor before redirecting, then restore it later:
 
@@ -930,7 +1054,7 @@ executable with a shebang line:
           `exec 1>&3 3>&-`           # restore stdout, close fd 3
           `echo "this goes to the terminal"`
 
-  11.4 Read/write descriptors                    *script-exec-readwrite*
+  12.4 Read/write descriptors                    *script-exec-readwrite*
 
       Open a file for both reading and writing:
 
