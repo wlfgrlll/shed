@@ -1,5 +1,3 @@
-use glob::Pattern;
-
 use crate::eval::lex::TkFlags;
 use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
@@ -8,7 +6,7 @@ use crate::match_loop;
 use crate::state::{
   Shed, scopes::ScopeStack, vars::ArrIndex, vars::VarFlags, vars::VarKind, vars::VarName,
 };
-use crate::util::ShResult;
+use crate::util::{ShResult, compile_glob};
 use crate::{sherr, shopt, var};
 
 #[derive(Debug)]
@@ -393,7 +391,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded = Expander::from_raw(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let pattern = Pattern::new(&expanded).unwrap();
+        let pattern = compile_glob(&expanded).unwrap();
         for i in 0..=value.len() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
@@ -409,7 +407,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded = Expander::from_raw(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let pattern = Pattern::new(&expanded).unwrap();
+        let pattern = compile_glob(&expanded).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
@@ -425,7 +423,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded = Expander::from_raw(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let pattern = Pattern::new(&expanded).unwrap();
+        let pattern = compile_glob(&expanded).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
@@ -441,7 +439,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
-        let pattern = Pattern::new(&expanded_suffix).unwrap();
+        let pattern = compile_glob(&expanded_suffix).unwrap();
         for i in 0..=value.len() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {
@@ -504,7 +502,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
-        let pattern = Pattern::new(&expanded_search).unwrap();
+        let pattern = compile_glob(&expanded_search).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[..i];
           if pattern.matches(sliced) {
@@ -523,7 +521,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let expanded_replace = Expander::from_raw(&replace, TkFlags::empty())
           .no_glob()
           .expand_no_split()?;
-        let pattern = Pattern::new(&expanded_search).unwrap();
+        let pattern = compile_glob(&expanded_search).unwrap();
         for i in (0..=value.len()).rev() {
           let sliced = &value[i..];
           if pattern.matches(sliced) {

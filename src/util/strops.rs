@@ -47,6 +47,79 @@ impl QuoteState {
   }
 }
 
+pub(crate) fn compile_glob(s: &str) -> Result<glob::Pattern, glob::PatternError> {
+  glob::Pattern::new(&replace_posix_classes(s))
+}
+
+pub(crate) fn replace_posix_classes(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut chars = s.chars().peekable();
+  let mut in_bracket = false;
+
+  match_loop!(chars.next() => ch, {
+    '\\' => {
+      out.push(ch);
+      if let Some(next_ch) = chars.next() {
+        out.push(next_ch);
+      }
+    }
+    '[' if !in_bracket => {
+      in_bracket = true;
+      out.push(ch);
+    }
+    ']' if in_bracket => {
+      in_bracket = false;
+      out.push(ch);
+    }
+    '[' if in_bracket && chars.peek() == Some(&':') => {
+      chars.next();
+      let mut name = String::new();
+      match_loop!(chars.peek() => &ch => ch, {
+        ':' => {
+          chars.next();
+          break
+        }
+        _ => {
+          name.push(ch);
+          chars.next();
+        }
+      });
+
+      if chars.peek() == Some(&']')
+      && let Some(posix_chars) = posix_class_chars(&name) {
+        chars.next();
+        out.push_str(posix_chars);
+      } else {
+        out.push('[');
+        out.push(':');
+        out.push_str(&name);
+      }
+
+    }
+    _ => out.push(ch),
+  });
+
+  out
+}
+
+fn posix_class_chars(name: &str) -> Option<&'static str> {
+  match name {
+    "alnum" => Some("a-zA-Z0-9"),
+    "alpha" => Some("a-zA-Z"),
+    "blank" => Some(" \t"),
+    "cntrl" => Some("\x00-\x1F\x7F"),
+    "digit" => Some("0-9"),
+    "graph" => Some("!-~"),
+    "lower" => Some("a-z"),
+    "print" => Some(" -~"),
+    "punct" => Some("!-/:-@\\[-`{-~"),
+    "space" => Some(" \t\r\n\x0b\x0c"),
+    "upper" => Some("A-Z"),
+    "xdigit" => Some("A-Fa-f0-9"),
+    _ => None,
+  }
+}
+
 /* - splitting functions
  * the splitting functions in std are fine, but don't cut it when quoting rules and escaping are involved
  * so we have to roll our own stuff. we can take a functional approach to to this that generalizes quite well
@@ -207,7 +280,7 @@ pub(crate) fn format_time(dur: std::time::Duration) -> String {
   let mut millennia = 0;
   let mut epochs = 0;
   let mut aeons = 0;
-  let mut eternities = 0;
+  let mut eternities = 0; // just in case, you know?
 
   if micros >= 1000 {
     millis = micros / 1000;

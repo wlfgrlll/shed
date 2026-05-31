@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf, str::FromStr};
 
+use crate::util::replace_posix_classes;
+
 use super::{
   Shed,
   eval::{
@@ -99,21 +101,6 @@ impl FromStr for BinaryOp {
       _ => Err(sherr!(SyntaxErr, "Invalid binary test operator '{s}'")),
     }
   }
-}
-
-fn replace_posix_classes(pat: &str) -> String {
-  pat
-    .replace("[[:alnum:]]", r"[A-Za-z0-9]")
-    .replace("[[:alpha:]]", r"[A-Za-z]")
-    .replace("[[:blank:]]", r"[ \t]")
-    .replace("[[:cntrl:]]", r"[\x00-\x1F\x7F]")
-    .replace("[[:digit:]]", r"[0-9]")
-    .replace("[[:graph:]]", r"[!-~]")
-    .replace("[[:lower:]]", r"[a-z]")
-    .replace("[[:print:]]", r"[\x20-\x7E]")
-    .replace("[[:space:]]", r"[ \t\r\n\x0B\x0C]")
-    .replace("[[:upper:]]", r"[A-Z]")
-    .replace("[[:xdigit:]]", r"[0-9A-Fa-f]")
 }
 
 /// Evaluate a single unary test (`-OP OPERAND`).

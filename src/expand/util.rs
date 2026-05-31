@@ -1,5 +1,7 @@
 use regex::Regex;
 
+use crate::util::replace_posix_classes;
+
 use super::{ShResult, escape::unescape_str, markers, match_loop, var::expand_raw};
 
 /// Expand a case pattern: performs variable/command expansion while preserving
@@ -54,6 +56,7 @@ pub fn is_var_name_ch(ch: char) -> bool {
 }
 
 pub fn glob_to_regex(glob: &str, anchored: bool) -> Regex {
+  let glob = &replace_posix_classes(glob);
   // fnmatch_regex always produces ^...$, so get the pattern string and strip if unanchored
   let pattern = fnmatch_regex::glob_to_regex_pattern(glob).unwrap_or_else(|_| regex::escape(glob));
   let pattern = if anchored {
