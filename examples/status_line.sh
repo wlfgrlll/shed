@@ -192,7 +192,7 @@ git_stat_line() {
 }
 # now we set an autocmd to update the cache after every command
 # this prevents the line from trying to update it on every redraw
-autocmd post-cmd 'if [ "${STATLINE_GIT:=0}" -eq 1]; then git_stat_line_update; else export GIT_STAT_LINE=""; fi'
+autocmd post-cmd 'if [ "${STATLINE_GIT:=0}" -eq 1 ]; then git_stat_line_update; else export GIT_STAT_LINE=""; fi'
 
 
 # I hope you like parameter expansion c:
