@@ -612,7 +612,7 @@ fn complete_dirs(start: &str, cursor_pos: usize) -> Vec<Candidate> {
 
 fn unescape_for_completion(raw: &str) -> String {
   let unescaped = unescape_str(raw);
-  expand_raw_inner(&mut unescaped.chars().peekable(), true)
+  expand_raw_inner(&mut unescaped.chars().peekable(), false)
     .map_or_else(|_| raw.to_string(), |s| strip_markers(&s))
 }
 
