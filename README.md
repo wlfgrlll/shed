@@ -262,7 +262,12 @@ shopt core.max_hist=5000                      # history size
 shopt highlight.valid_command="bold green"    # customize highlight colors
 ```
 
-The rc file is loaded from `~/.shedrc` on startup.
+Shed searches for an rc file in these paths, in decreasing order of priority:
+
+1. $SHED_RC
+2. $XDG_CONFIG_HOME/shedrc
+3. $HOME/.config/shed/shedrc
+4. $HOME/.shedr
 
 ---
 
