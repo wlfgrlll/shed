@@ -157,7 +157,7 @@ fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
     errln!("\n{welcome}\n\n");
   }
 
-  Shed::term_mut(Terminal::reserve_status_rows);
+  Shed::term_mut(Terminal::reserve_status_rows).ok();
 
   Ok(raw_mode)
 }

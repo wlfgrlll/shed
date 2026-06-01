@@ -1064,7 +1064,7 @@ impl Dispatcher {
     let interactive = Shed::term(Terminal::interactive);
     let mut result = Ok(());
 
-    let saved_region = Shed::term_mut(|t| t.scroll_region());
+    let saved_region = Shed::term_mut(|t| t.scroll_region().dims());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
     let mut spans = vec![];
 
@@ -1131,21 +1131,13 @@ impl Dispatcher {
     result?;
     dispatch_result?;
 
-    if !is_bg
-      && Shed::term(Terminal::interactive)
-      && let Some((_, bottom)) = saved_region.dims()
-    {
+    if !is_bg && let Some((_, bottom)) = saved_region {
       Shed::term_mut(|t| {
-        use std::io::Write;
-        if shopt!(statline.enable) {
-          let cursor_row = t.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
-
-          if cursor_row.is_none_or(|r| r >= bottom as usize) {
-            write!(t, "\n\n").ok();
-            t.move_cursor_abs(bottom, 1);
-          }
+        if t.interactive() {
+          return t.fix_cursor_row(bottom);
         }
-      });
+        Ok(())
+      })?;
     }
 
     let blame_span = if shopt!(set.pipefail) {

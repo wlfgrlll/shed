@@ -548,6 +548,17 @@ impl Terminal {
     }
     Ok(None)
   }
+  pub fn fix_cursor_row(&mut self, bottom: u16) -> ShResult<()> {
+    if shopt!(statline.enable) {
+      let cursor_row = self.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
+
+      if cursor_row.is_none_or(|r| r >= bottom as usize) {
+        write!(self, "\n\n")?;
+        self.move_cursor_abs(bottom, 1);
+      }
+    }
+    Ok(())
+  }
 
   /// Called before the prompt is drawn. If we are not on column 1, push a vid-inverted '%' and then a '\n\r'.
   ///
@@ -944,10 +955,6 @@ impl Terminal {
     }
   }
 
-  pub fn scroll_region(&self) -> ScrollRegionState {
-    self.scroll_region
-  }
-
   /// Buffer an `\x1b7` cursor-save. Pairs with `restore_cursor`.
   pub fn save_cursor(&mut self) {
     self.input_buf.push_str(Self::CURSOR_SAVE);
@@ -965,13 +972,15 @@ impl Terminal {
     write!(self, "\x1b[{row};{col}H").ok();
   }
 
-  pub fn reserve_status_rows(&mut self) {
+  pub fn reserve_status_rows(&mut self) -> ShResult<()> {
     let reserved: u16 = Self::reserved_rows();
     let bottom = (self.t_rows() as u16).saturating_sub(reserved).max(1);
     self.set_scroll_region(1, bottom);
-    if shopt!(statline.enable) {
-      self.move_cursor_abs(bottom, 1);
-    }
+    self.fix_cursor_row(bottom)
+  }
+
+  pub fn scroll_region(&mut self) -> ScrollRegionState {
+    self.scroll_region
   }
 
   /// Render the status line at the bottom row of the terminal.
@@ -1322,7 +1331,7 @@ mod terminal_method_tests {
   fn set_scroll_region_updates_state() {
     let _g = TestGuard::new();
     Shed::term_mut(|t| t.set_scroll_region(3, 15));
-    let region = Shed::term(super::Terminal::scroll_region);
+    let region = Shed::term(|t| t.scroll_region);
     assert!(matches!(region, ScrollRegionState::Set(3, 15)));
   }
 
@@ -1338,7 +1347,7 @@ mod terminal_method_tests {
     // SCROLL_REGION_RESET is `\x1b[r`.
     assert!(out.contains("\x1b[r"), "got: {out:?}");
     assert!(matches!(
-      Shed::term(super::Terminal::scroll_region),
+      Shed::term(|t| t.scroll_region),
       ScrollRegionState::Unset
     ));
   }
