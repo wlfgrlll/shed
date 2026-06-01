@@ -150,6 +150,18 @@ impl Span {
     self.range = range;
   }
 
+  pub fn shift_by(&mut self, delta: isize) {
+    let new_start = self.range.start as isize + delta;
+    let new_end = self.range.end as isize + delta;
+    debug_assert!(new_start >= 0 && new_end >= 0, "shift_by underflow");
+    self.range = (new_start as usize)..(new_end as usize);
+  }
+
+  pub fn rebase_into(&mut self, outer_span: &Span, offset: usize) {
+    self.range = (self.range.start + offset)..(self.range.end + offset);
+    self.source = outer_span.source.clone();
+  }
+
   pub(crate) fn pos(&self) -> Pos {
     self.pos
   }
@@ -225,7 +237,6 @@ impl Default for TkRule {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Default)]
 /// A single input token. Wraps three things:
 /// * A `TkRule` which identifies what kind of token it is
 /// * A `Span` which represents the slice of the original input the token refers to
@@ -238,6 +249,7 @@ impl Default for TkRule {
 /// Therefore, you can generally consider cloning a token to be effectively as cheap as cloning an Rc<T>.
 ///
 /// `TkRule::Expanded` is only created during token expansion, which generally happens much later in an execution cycle.
+#[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct Tk {
   pub class: TkRule,
   pub span: Span,
@@ -280,9 +292,7 @@ impl Tk {
 
   /// used when lexing recursively, to replace the token's span with the original source
   pub fn rebase_into(mut self, outer_span: &Span, offset: usize) -> Self {
-    let start = self.span.range.start + offset;
-    let end = self.span.range.end + offset;
-    self.span = Span::new(start..end, outer_span.get_source());
+    self.span.rebase_into(outer_span, offset);
     self
   }
 }

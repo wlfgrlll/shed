@@ -3,6 +3,8 @@ use std::{collections::VecDeque, ops::Range};
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::readline::context;
+
 use super::{
   Shed, autocmd,
   context::{CtxTkRule, get_context_tokens},
@@ -99,6 +101,16 @@ pub struct LineBuf {
   concat_points: VecDeque<Pos>,
   indent_cache: Option<Vec<(usize, usize)>>,
   parse_status: bool,
+
+  /// Cached highlight info
+  highlight_cache: Option<HighlightCache>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct HighlightCache {
+  pub joined: String,
+  pub hash: u64,
+  pub tokens: Vec<context::CtxTk>,
 }
 
 impl Default for LineBuf {
@@ -127,6 +139,7 @@ impl Default for LineBuf {
       concat_points: VecDeque::new(),
       indent_cache: None,
       parse_status: true,
+      highlight_cache: None,
     }
   }
 }

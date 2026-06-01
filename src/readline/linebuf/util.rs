@@ -2,6 +2,7 @@ use nix::{libc::STDIN_FILENO, unistd::isatty};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
+use crate::readline::linebuf::HighlightCache;
 use crate::readline::linebuf::edit::check_levels_per_row;
 
 use super::{
@@ -32,6 +33,12 @@ pub fn toggle_case_char(c: char) -> char {
   } else {
     c
   }
+}
+
+pub(super) struct Diff {
+  start: usize,
+  end_old: usize,
+  end_new: usize,
 }
 
 impl super::LineBuf {
@@ -100,6 +107,134 @@ impl super::LineBuf {
     let max_offset = self.lines.len().saturating_sub(height);
     self.scroll_offset = self.scroll_offset.min(max_offset);
   }
+
+  fn refresh_highlight_cache(&mut self, joined: &str) {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    joined.hash(&mut h);
+    let new_hash = h.finish();
+
+    // Cache hit. buffer unchanged since last lex.
+    if self
+      .highlight_cache
+      .as_ref()
+      .is_some_and(|c| c.hash == new_hash)
+    {
+      return;
+    }
+
+    // Cold start or post-bailout. full lex
+    let Some(_existing) = self.highlight_cache.as_ref() else {
+      let tokens = crate::readline::context::get_context_tokens(joined);
+      self.highlight_cache = Some(super::HighlightCache {
+        joined: joined.to_string(),
+        hash: new_hash,
+        tokens,
+      });
+      return;
+    };
+
+    // Existing cache + buffer changed. try the incremental path.
+    if let Some(cache) = self.try_incremental_relex(joined, new_hash) {
+      self.highlight_cache = Some(cache);
+      return;
+    }
+
+    // Incremental bailed out — fall back to a full relex.
+    let tokens = crate::readline::context::get_context_tokens(joined);
+    self.highlight_cache = Some(super::HighlightCache {
+      joined: joined.to_string(),
+      hash: new_hash,
+      tokens,
+    });
+  }
+
+  /// Try a partial relex of the input
+  ///
+  /// Attempts to lex only the content between the two closest separators (`;`, `\n`, etc)
+  fn try_incremental_relex(&mut self, new_joined: &str, new_hash: u64) -> Option<HighlightCache> {
+    use crate::eval::lex::Span;
+    use crate::readline::context::{CtxTkRule, get_context_tokens};
+    use std::rc::Rc;
+
+    let cache = self.highlight_cache.as_ref()?;
+
+    // Diff old vs new to localize the edit. Bail if the change covers
+    // basically the whole buffer.
+    let Diff {
+      start,
+      end_old,
+      end_new,
+    } = find_diff_range(&cache.joined, new_joined);
+    let delta = end_new as isize - end_old as isize;
+    if start == 0 && end_old == cache.joined.len() {
+      return None;
+    }
+
+    // find the byte indexes of any surrounding separators
+    let left = cache
+      .tokens
+      .iter()
+      .filter(|t| matches!(t.class(), CtxTkRule::Separator) && t.range().end <= start)
+      .map(|t| t.range().end)
+      .next_back()
+      .unwrap_or(0);
+
+    let right_old = cache
+      .tokens
+      .iter()
+      .find(|t| matches!(t.class(), CtxTkRule::Separator) && t.range().start >= end_old)
+      .map_or(cache.joined.len(), |t| t.range().start);
+
+    // new separator position
+    let right_new = (right_old as isize + delta) as usize;
+
+    if right_new > new_joined.len() || left > right_new {
+      return None;
+    }
+
+    // "master span", other spans are rebased into this one
+    let outer_span = Span::new(0..new_joined.len(), Rc::from(new_joined));
+
+    // lex the chunk; rebase its tokens into the full-buffer coord
+    // space (offset by `left`) AND onto the outer source.
+    let chunk = new_joined.get(left..right_new)?;
+    let mut chunk_tokens = get_context_tokens(chunk);
+    for t in &mut chunk_tokens {
+      t.rebase_into(&outer_span, left);
+    } // now we have the new tokens, time to replace the old ones
+
+    let mut cache = self.highlight_cache.take()?;
+
+    // find top-level tokens to replace
+    let first = cache
+      .tokens
+      .iter()
+      .position(|t| t.range().start >= left)
+      .unwrap_or(cache.tokens.len());
+    let last = cache
+      .tokens
+      .iter()
+      .position(|t| t.range().start >= right_old)
+      .unwrap_or(cache.tokens.len());
+
+    // shift the spans of each trailing token by the edit delta
+    // and then rebase them into the new buffer
+    for t in &mut cache.tokens[last..] {
+      t.shift_by(delta);
+      t.rebase_into(&outer_span, 0);
+    }
+
+    // replace the old tokens with the new chunk
+    cache.tokens.splice(first..last, chunk_tokens);
+
+    cache.joined = new_joined.to_string();
+    cache.hash = new_hash;
+
+    // done
+    Some(cache)
+  }
+
   pub fn display_window_joined(&mut self) -> String {
     let joined = self.joined();
     let do_hl = shopt!(highlight.enable);
@@ -111,7 +246,17 @@ impl super::LineBuf {
     let mut select_spans = self.search_match_spans();
     select_spans.extend(self.select_range_byte_pos());
 
-    let highlighted = highlight::highlight(&joined, &palette, self.cursor_to_flat(), &select_spans);
+    self.refresh_highlight_cache(&joined);
+    let Some(cache) = self.highlight_cache.as_ref() else {
+      return joined;
+    };
+    let highlighted = highlight::highlight(
+      &joined,
+      &cache.tokens,
+      &palette,
+      self.cursor_to_flat(),
+      &select_spans,
+    );
     let hint = self.get_hint_text();
     let lines = Lines::to_lines(&format!("{highlighted}{hint}"));
 
@@ -1272,5 +1417,26 @@ impl super::LineBuf {
   pub fn update_pending_search(&mut self, new: Option<String>) {
     let Some(new) = new else { return };
     self.pending_search = (!new.is_empty()).then_some(new);
+  }
+}
+
+/// Classic diff algorithm
+pub(super) fn find_diff_range(old: &str, new: &str) -> Diff {
+  let (oa, na) = (old.as_bytes(), new.as_bytes());
+  let mut left = 0;
+  let max_left = oa.len().min(na.len());
+  while left < max_left && oa[left] == na[left] {
+    left += 1;
+  }
+  let mut right_old = oa.len();
+  let mut right_new = na.len();
+  while right_old > left && right_new > left && oa[right_old - 1] == na[right_new - 1] {
+    right_old -= 1;
+    right_new -= 1;
+  }
+  Diff {
+    start: left,
+    end_old: right_old,
+    end_new: right_new,
   }
 }

@@ -361,6 +361,20 @@ impl CtxTk {
     r.start..=r.end
   }
 
+  pub fn shift_by(&mut self, delta: isize) {
+    self.span.shift_by(delta);
+    for sub in &mut self.sub_tokens {
+      sub.shift_by(delta);
+    }
+  }
+
+  pub fn rebase_into(&mut self, outer_span: &Span, offset: usize) {
+    self.span.rebase_into(outer_span, offset);
+    for sub in &mut self.sub_tokens {
+      sub.rebase_into(outer_span, offset);
+    }
+  }
+
   pub fn rule_for(class: &TkRule) -> Option<CtxTkRule> {
     match class {
       TkRule::Pipe

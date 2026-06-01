@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{borrow::Cow, fmt::Display};
 
 // Starting to look an awful lot like crossterm around here...

@@ -17,7 +17,7 @@ use super::{
   state::vars::{VarFlags, VarKind},
   system_msg, try_var, two_way_display, util as crate_util,
   util::{Pos, ShErr, ShErrKind, ShResult},
-  var, write_term, writefd,
+  var, writefd,
 };
 
 pub mod jobs;

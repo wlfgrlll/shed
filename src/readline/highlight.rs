@@ -4,7 +4,7 @@ use yansi::Paint;
 
 use super::{
   Shed,
-  context::{CmdKind, CtxTk, CtxTkRule, get_context_tokens, get_ex_context_tokens},
+  context::{CmdKind, CtxTk, CtxTkRule, get_ex_context_tokens},
   state::shopt::ShOptHighlight,
   util::{PaletteEntry, style_from_description},
 };
@@ -166,21 +166,10 @@ impl Default for Palette {
 
 pub fn highlight_ex(input: &str, palette: &Palette, editor_cursor_pos: usize) -> String {
   let tks: Vec<CtxTk> = get_ex_context_tokens(input);
-  highlight_inner(input, &tks, palette, editor_cursor_pos, &[])
+  highlight(input, &tks, palette, editor_cursor_pos, &[])
 }
 
-/// entry point for the highlighter
 pub fn highlight(
-  input: &str,
-  palette: &Palette,
-  editor_cursor_pos: usize,
-  selections: &[Range<usize>],
-) -> String {
-  let tks = get_context_tokens(input);
-  highlight_inner(input, &tks, palette, editor_cursor_pos, selections)
-}
-
-fn highlight_inner(
   input: &str,
   tks: &[CtxTk],
   palette: &Palette,
@@ -359,6 +348,8 @@ fn emit_with_selection(
 
 #[cfg(test)]
 mod tests {
+  use crate::readline::context::get_context_tokens;
+
   use super::*;
 
   /// A palette with distinct, easy-to-spot codes for assertions.
@@ -419,7 +410,8 @@ mod tests {
       "ls αβγ",
     ];
     for input in cases {
-      let out = highlight(input, &p, 0, &[]);
+      let tks = get_context_tokens(input);
+      let out = highlight(input, &tks, &p, 0, &[]);
       assert_eq!(
         strip_ansi(&out),
         input,
@@ -436,7 +428,8 @@ mod tests {
   #[test]
   fn paints_var_sub_with_variable_style() {
     let p = test_palette();
-    let out = highlight("ls $foo", &p, 0, &[]);
+    let tks = get_context_tokens("ls $foo");
+    let out = highlight("ls $foo", &tks, &p, 0, &[]);
     // Cyan = ANSI 36 - the variable style for $foo should appear in output.
     assert!(
       contains_sgr_param(&out, "36"),
@@ -453,7 +446,8 @@ mod tests {
   #[test]
   fn paints_double_string_with_string_style() {
     let p = test_palette();
-    let out = highlight(r#""hello""#, &p, 0, &[]);
+    let tks = get_context_tokens(r#""hello""#);
+    let out = highlight(r#""hello""#, &tks, &p, 0, &[]);
     // Yellow = ANSI 33.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -464,7 +458,8 @@ mod tests {
   #[test]
   fn nested_var_in_string_paints_both() {
     let p = test_palette();
-    let out = highlight(r#""hi $foo""#, &p, 0, &[]);
+    let tks = get_context_tokens(r#""hi $foo""#);
+    let out = highlight(r#""hi $foo""#, &tks, &p, 0, &[]);
     // Both yellow (string) and cyan (var) should appear.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -480,7 +475,8 @@ mod tests {
   fn cmd_sub_round_trips() {
     let p = test_palette();
     let input = "echo $(date)";
-    let out = highlight(input, &p, 0, &[]);
+    let tks = get_context_tokens(input);
+    let out = highlight(input, &tks, &p, 0, &[]);
     assert_eq!(strip_ansi(&out), input, "cmd sub round-trip: {out:?}");
   }
 
@@ -489,13 +485,15 @@ mod tests {
     // yansi may emit empty SGR pairs around zero-width spans; that's fine
     // visually. We just want no actual characters to come through.
     let p = test_palette();
-    assert_eq!(strip_ansi(&highlight("", &p, 0, &[])), "");
+    let tks = &get_context_tokens("");
+    assert_eq!(strip_ansi(&highlight("", tks, &p, 0, &[])), "");
   }
 
   #[test]
   fn trailing_whitespace_preserved() {
     let p = test_palette();
-    let out = highlight("ls   ", &p, 0, &[]);
+    let tks = get_context_tokens("ls   ");
+    let out = highlight("ls   ", &tks, &p, 0, &[]);
     assert_eq!(strip_ansi(&out), "ls   ");
   }
 
@@ -504,7 +502,8 @@ mod tests {
   #[test]
   fn esc_renders_as_caret_bracket() {
     let p = test_palette();
-    let out = highlight("a\x1bb", &p, 0, &[]);
+    let tks = get_context_tokens("a\x1bb");
+    let out = highlight("a\x1bb", &tks, &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("a^[b"), "got {visible:?}");
   }
@@ -512,7 +511,8 @@ mod tests {
   #[test]
   fn cr_renders_as_caret_m() {
     let p = test_palette();
-    let out = highlight("before\rafter", &p, 0, &[]);
+    let tks = get_context_tokens("before\rafter");
+    let out = highlight("before\rafter", &tks, &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("before^Mafter"), "got {visible:?}");
   }
@@ -520,7 +520,8 @@ mod tests {
   #[test]
   fn del_renders_as_caret_question() {
     let p = test_palette();
-    let out = highlight("x\x7fy", &p, 0, &[]);
+    let tks = get_context_tokens("x\x7fy");
+    let out = highlight("x\x7fy", &tks, &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("x^?y"), "got {visible:?}");
   }
@@ -530,7 +531,8 @@ mod tests {
     // \n and \t are structural for multi-line buffers and indented commands;
     // visualizing them would break layout.
     let p = test_palette();
-    let out = highlight("a\nb\tc", &p, 0, &[]);
+    let tks = get_context_tokens("a\nb\tc");
+    let out = highlight("a\nb\tc", &tks, &p, 0, &[]);
     let visible = strip_ansi(&out);
     assert!(visible.contains("a\nb\tc"), "got {visible:?}");
     assert!(!visible.contains("^J"));
@@ -542,7 +544,8 @@ mod tests {
     // The whole point: raw \x1b should never appear in the rendered output
     // (or it would let the terminal interpret embedded escape sequences).
     let p = test_palette();
-    let out = highlight("\x1b]0;PWNED\x07", &p, 0, &[]);
+    let tks = get_context_tokens("\x1b]0;PWNED\x07");
+    let out = highlight("\x1b]0;PWNED\x07", &tks, &p, 0, &[]);
     assert!(
       !out.contains('\x1b') || {
         // shed's own styling escapes are allowed; check by stripping CSI runs
@@ -559,7 +562,8 @@ mod tests {
     // Smoke test: input without control bytes should still round-trip
     // identically (we have a fast path that skips visualization).
     let p = test_palette();
-    let out = highlight("echo hello world", &p, 0, &[]);
+    let tks = get_context_tokens("echo hello world");
+    let out = highlight("echo hello world", &tks, &p, 0, &[]);
     assert_eq!(strip_ansi(&out), "echo hello world");
   }
 
@@ -570,8 +574,10 @@ mod tests {
     // contains at least one extra SGR sequence introduced around the
     // visualized char.
     let p = test_palette();
-    let plain = highlight("ab", &p, 0, &[]);
-    let with_ctrl = highlight("a\x1bb", &p, 0, &[]);
+    let tks = get_context_tokens("ab");
+    let plain = highlight("ab", &tks, &p, 0, &[]);
+    let tks = get_context_tokens("a\x1bb");
+    let with_ctrl = highlight("a\x1bb", &tks, &p, 0, &[]);
     // The control variant should contain "^[" (visualization) and have
     // more bytes than the plain version (extra SGR codes).
     assert!(
