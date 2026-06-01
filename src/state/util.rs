@@ -310,8 +310,12 @@ pub fn try_hash() {
 }
 
 pub fn rc_file_path() -> Option<PathBuf> {
-  if let Some(p) = try_var!("SHED_RC") {
-    return Some(PathBuf::from(p));
+  let shed_rc = try_var!("SHED_RC").map(|p| PathBuf::from(p));
+  if let Some(p) = shed_rc.as_ref().cloned() && p.is_file() {
+    return shed_rc;
+  }
+  else if let Some(p) = shed_rc.as_ref().cloned() {
+    log::warn!("SHED_RC is set to a non-existent file: {}", p.display());
   }
   let xdg = xdg_config_home().map(|c| c.join("shed").join("shedrc"));
   let home = get_home().map(|h| h.join(".shedrc"));
@@ -321,6 +325,7 @@ pub fn rc_file_path() -> Option<PathBuf> {
     .filter(|p| p.is_file())
     .cloned()
     .or_else(|| home.as_ref().filter(|p| p.is_file()).cloned())
+    .or_else(|| shed_rc)
     .or(xdg)
 }
 
