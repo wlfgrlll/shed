@@ -18,8 +18,8 @@ impl EditMode for RemoteMode {
     None
   }
 
-  fn cursor_style(&self) -> String {
-    CursorStyle::Beam(false).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Beam(false)
   }
 
   fn pending_seq(&self) -> Option<String> {

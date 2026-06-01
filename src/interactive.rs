@@ -15,7 +15,7 @@ use nix::{
 use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::signal::FOCUS_GAINED;
+use crate::{exec_term, signal::FOCUS_GAINED};
 
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
@@ -31,7 +31,7 @@ use super::{
   state::{
     self,
     meta::MetaTab,
-    terminal::{AttrToggle, TermGuard, Terminal, Toggle},
+    terminal::{TermGuard, Terminal},
     util::{rc_file_path, source_login, source_rc},
   },
   try_var, util,
@@ -257,9 +257,12 @@ fn shed_loop_iter(
   // 5. shell is softlocked
   Shed::term_mut(|t| {
     let _ = t.enforce_raw_mode();
-    t.toggle_bracketed_paste(AttrToggle::Try(Toggle::On));
-    t.toggle_report_focus(AttrToggle::Try(Toggle::On));
   });
+  exec_term!(
+    TermCtl::SetAttr(BracketPaste(On)),
+    TermCtl::SetAttr(FocusReport(On))
+  )
+  .ok();
 
   state::util::try_hash();
   util::flog::update_log_level();
@@ -436,12 +439,11 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       Shed::meta_mut(MetaTab::start_timer);
 
-      Shed::term_mut(Terminal::emit_osc_exec_start).ok();
-      Shed::term_mut(std::io::Write::flush).ok();
+      exec_term!(TermCtl::Osc(ExecStart)).ok();
 
       let res = exec_int(input.clone(), Some("<stdin>".into()));
 
-      Shed::term_mut(|t| t.emit_osc_exec_end(Shed::get_status())).ok();
+      exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 
       if let Err(e) = res {
         match e.kind() {

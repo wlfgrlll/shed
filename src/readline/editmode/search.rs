@@ -169,8 +169,8 @@ impl<S: SearchMode> EditMode for S {
   fn history(&mut self) -> Option<&mut History> {
     self.query_history()
   }
-  fn cursor_style(&self) -> String {
-    CursorStyle::Beam(false).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Beam(false)
   }
   fn editor(&mut self) -> Option<&mut LineBuf> {
     Some(&mut self.query_mut().buf)

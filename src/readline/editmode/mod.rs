@@ -1,6 +1,8 @@
 use std::fmt::{self, Display};
 use std::str::FromStr;
 
+use crate::state::terminal::CursorStyle;
+
 use super::{
   KeyCode as K, KeyEvent as E, ModKeys as M, ShResult, Shed, SimpleEditor,
   editcmd::{self, CmdFlags, Direction, EditCmd, Motion, To, Verb, Word},
@@ -128,7 +130,7 @@ pub(super) trait EditMode {
   fn handle_key(&mut self, key: E) -> Option<EditCmd>;
   fn is_repeatable(&self) -> bool;
   fn as_replay(&self) -> Option<CmdReplay>;
-  fn cursor_style(&self) -> String;
+  fn cursor_style(&self) -> CursorStyle;
   fn pending_seq(&self) -> Option<String>;
   fn pending_cursor(&self) -> Option<usize> {
     None

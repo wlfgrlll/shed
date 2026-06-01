@@ -51,8 +51,8 @@ impl EditMode for ViVerbatim {
     Some(CmdReplay::mode(self.sent_cmd.clone(), self.repeat_count))
   }
 
-  fn cursor_style(&self) -> String {
-    CursorStyle::Underline(true).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Underline(true)
   }
   fn pending_seq(&self) -> Option<String> {
     None

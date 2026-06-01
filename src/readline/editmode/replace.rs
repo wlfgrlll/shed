@@ -80,8 +80,8 @@ impl EditMode for ViReplace {
   fn is_repeatable(&self) -> bool {
     true
   }
-  fn cursor_style(&self) -> String {
-    CursorStyle::Underline(false).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Underline(false)
   }
   fn pending_seq(&self) -> Option<String> {
     None

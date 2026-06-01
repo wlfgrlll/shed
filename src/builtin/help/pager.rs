@@ -5,7 +5,7 @@ use regex::Regex;
 
 use yansi::Style;
 
-use crate::state::terminal::Terminal;
+use crate::{queue_term, state::terminal::Terminal, write_term};
 
 use super::{
   Direction, ShResult, Shed, StyledHelp, key,
@@ -15,7 +15,6 @@ use super::{
   readline::SimpleEditor,
   render::{self, Overlay},
   state::terminal::calc_str_width,
-  write_term,
 };
 
 pub(super) enum PagerEvent {
@@ -156,7 +155,7 @@ impl HelpPager {
   }
 
   pub fn display(&mut self) -> ShResult<()> {
-    write_term!("\x1b[H")?;
+    queue_term!(TermCtl::Cursor(Home))?;
     let height = Shed::term(Terminal::t_rows).saturating_sub(1);
 
     // Build click map for cross-references in viewport
@@ -234,14 +233,16 @@ impl HelpPager {
       .collect();
 
     for line in &content_lines {
-      write_term!("{line}\x1b[K\n").ok();
+      write_term!("{line}").ok();
+      queue_term!(TermCtl::Clear(WholeLine), TermCtl::PrintChar('\n')).ok();
     }
 
     for _ in content_lines.len()..height {
-      write_term!("\x1b[1;34m~\x1b[0m\x1b[K\n").ok(); // draw tildes on empty lines
+      write_term!("\x1b[1;34m~\x1b[0m").ok(); // draw tildes on empty lines
+      queue_term!(TermCtl::Clear(WholeLine), TermCtl::PrintChar('\n')).ok();
     }
 
-    write_term!("\r").ok();
+    queue_term!(TermCtl::PrintChar('\n')).ok();
 
     if let Some(name) = &self.filename {
       write_term!("\x1b[1;7;4m {name} \x1b[0m ",).ok();
@@ -255,7 +256,7 @@ impl HelpPager {
       };
       write_term!("\x1b[1;7;4m {prefix}{query} \x1b[0m",).ok();
     } else {
-      write_term!("\x1b[K").ok();
+      queue_term!(TermCtl::Clear(WholeLine),).ok();
     }
 
     Shed::term_mut(io::Write::flush)?;

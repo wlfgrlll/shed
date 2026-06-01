@@ -1,4 +1,6 @@
-use super::{CursorStyle, Shed, write_term};
+use crate::queue_term;
+
+use super::{CursorStyle, Shed};
 
 /*
  * These two structs get their own module because the public API is the only way
@@ -207,7 +209,7 @@ impl SyncOutputGuard {
     let supported = Shed::term(|t| t.term_caps().contains(super::TermCap::SYNC_OUTPUT));
 
     supported.then(|| {
-      let _ = write_term!("{}", super::Terminal::SYNC_START);
+      queue_term!(TermCtl::SyncStart).ok();
       Self
     })
   }
@@ -215,7 +217,7 @@ impl SyncOutputGuard {
 
 impl Drop for SyncOutputGuard {
   fn drop(&mut self) {
-    let _ = write_term!("{}", super::Terminal::SYNC_END);
+    queue_term!(TermCtl::SyncEnd).ok();
   }
 }
 

@@ -25,16 +25,19 @@ use editmode::{
   CmdReplay, EditMode, Emacs, RemoteMode, ViEx, ViInsert, ViNormal, ViReplace, ViSearch,
   ViSearchRev, ViVerbatim, ViVisual,
 };
-use layout::{Layout, clear_rows, move_cursor_to_end, redraw};
+use layout::{Layout, move_cursor_to_end, redraw};
 use linebuf::LineBuf;
 use register::{RegisterContent, RegisterName};
+
+use crate::state::terminal::{Scroll, TermCtl};
+use crate::{exec_term, queue_term};
 
 use super::state::meta::MetaTab;
 use super::state::terminal::Terminal;
 use super::{
   autocmd, builtin, eval,
   expand::{self, expand_keymap, expand_prompt},
-  flush_term, key, keys,
+  key, keys,
   keys::{KeyCode, KeyEvent, KeyMapFlags, KeyMapMatch, ModKeys},
   match_loop, motion, procio, sherr, shopt, socket,
   state::{
@@ -544,7 +547,7 @@ impl ShedLine {
     if let Some(line) = new.statline.as_mut() {
       line.refresh();
     }
-    write_term!("\n").ok();
+    queue_term!(TermCtl::PrintChar('\n')).ok();
     new.print_line(false)?;
     Ok(new)
   }
@@ -618,7 +621,7 @@ impl ShedLine {
       self.old_layout = None;
     }
     if self.statline.is_none() && shopt!(statline.enable) {
-      Shed::term_mut(|t| -> ShResult<()> {
+      let new_bot = Shed::term_mut(|t| -> ShResult<u16> {
         let total_rows = t.t_rows() as u16;
         let new_bottom = total_rows.saturating_sub(2).max(1);
         let cursor_row = t
@@ -628,14 +631,16 @@ impl ShedLine {
           .map_or(new_bottom, |(r, _)| r.0 as u16);
         if cursor_row > new_bottom {
           let scroll_amount = (cursor_row - new_bottom) as usize;
-          t.scroll_up(scroll_amount).ok();
+          t.execute_control(&TermCtl::Scroll(Scroll::Up(scroll_amount as u16)))
+            .ok();
+
           // scroll_up shifts content; the visual cursor row doesn't
           // change. Move it up so it tracks the prompt's new row.
           t.write_direct(&format!("\x1b[{scroll_amount}A")).ok();
         }
-        t.set_scroll_region(1, new_bottom);
-        Ok(())
+        Ok(new_bottom)
       })?;
+      queue_term!(TermCtl::Scroll(Scroll::SetRegion(1, new_bot))).ok();
       self.old_layout = None;
       self.statline = Some(StatusLine::new());
     }
@@ -1193,7 +1198,10 @@ impl ShedLine {
     if shopt!(line.trim_on_submit) {
       self.editor.trim();
     }
-    write_term!("\r\n").ok();
+
+    queue_term!(TermCtl::PrintChar('\r')).ok();
+    queue_term!(TermCtl::PrintChar('\n')).ok();
+
     // Command output fills the region from below the prompt; tracked
     // blank rows above will scroll into scrollback as it does, and any
     // overlay displacement is moot once the prompt is gone.
@@ -1423,9 +1431,9 @@ impl ShedLine {
         let scroll_amount = prompt_top.saturating_sub(1);
 
         if scroll_amount > 0 {
-          Shed::term_mut(|t| t.scroll_up(scroll_amount)).ok();
+          queue_term!(TermCtl::Scroll(Scroll::Up(scroll_amount as u16))).ok();
           // Move cursor up to track the prompt's new position
-          flush_term!("\x1b[{scroll_amount}A")?;
+          exec_term!(TermCtl::Cursor(Up(scroll_amount as u16)))?;
         }
         self.needs_redraw = true;
         Ok(None)
@@ -1652,13 +1660,20 @@ impl ShedLine {
     let _sync = SyncOutputGuard::begin();
     if self.statline.is_some() && !shopt!(statline.enable) {
       self.statline = None;
-      Shed::term_mut(|t| -> ShResult<()> {
+      let (row, new_bot) = Shed::term(|t| -> (u16, u16) {
         let total_rows = t.t_rows() as u16;
         let new_bottom = total_rows.saturating_sub(1).max(1);
-        t.with_saved_cursor(|t| t.write_direct(format!("\x1b[{total_rows};1H\x1b[2K").as_str()))?;
-        t.set_scroll_region(1, new_bottom);
-        Ok(())
-      })?;
+        (total_rows, new_bottom)
+      });
+
+      queue_term!(
+        TermCtl::Cursor(SavePos),
+        TermCtl::Cursor(Absolute { row, col: 1 }),
+        TermCtl::Clear(WholeLine),
+        TermCtl::Cursor(RestorePos),
+        TermCtl::Scroll(Scroll::SetRegion(1, new_bot)),
+      )
+      .ok();
     }
 
     let line = self.editor.display_window_joined();
@@ -1726,7 +1741,7 @@ impl ShedLine {
     let system_msg_layout = Layout::from_parts(t_cols, "", &system_msg, &system_msg);
 
     if let Some(layout) = self.old_layout.as_ref() {
-      clear_rows(layout)?;
+      layout::clear_rows(layout);
 
       let prev_overlay_rows = std::mem::take(&mut self.overlay_displacement);
 
@@ -1758,8 +1773,8 @@ impl ShedLine {
     }
 
     if !system_msg.is_empty() {
-      Shed::term_mut(Terminal::clear_under_cursor);
-      write_term!("{system_msg}")?;
+      queue_term!(TermCtl::Clear(ScreenFromCursor)).ok();
+      write_term!("{system_msg}").ok();
     }
 
     redraw(
@@ -1785,50 +1800,53 @@ impl ShedLine {
       && !self.mode.is_input_mode()
     {
       // write our pending sequence
-      let to_col = t_cols - calc_str_width(&seq);
-      let up = new_layout.cursor.row; // rows to move up from cursor to top line of prompt
-
-      let move_up = if up > 0 {
-        format!("\x1b[{up}A")
-      } else {
-        String::new()
-      };
+      let to_col = (t_cols - calc_str_width(&seq)) as u16;
+      let up = new_layout.cursor.row as u16; // rows to move up from cursor to top line of prompt
 
       // Save cursor, move up to top row, move right to column, write sequence,
       // restore cursor
-      write_term!("\x1b7{move_up}\x1b[{to_col}G{seq}\x1b8").unwrap();
+      queue_term!(
+        TermCtl::Cursor(SavePos),
+        TermCtl::Cursor(Up(up)),
+        TermCtl::Cursor(Col(to_col)),
+      )
+      .ok();
+      write_term!("{seq}").unwrap();
+      queue_term!(TermCtl::Cursor(RestorePos)).ok();
     } else if !final_draw
       && let Some(psr) = prompt_string_right
       && psr_fits
     {
       // write PSR
-      let to_col = t_cols - calc_str_width(&psr);
-      let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
-      let move_down = if down > 0 {
-        format!("\x1b[{down}B")
-      } else {
-        String::new()
-      };
+      let to_col = (t_cols - calc_str_width(&psr)) as u16;
+      let down = new_layout.end.row.saturating_sub(new_layout.cursor.row) as u16;
 
-      write_term!("\x1b7{move_down}\x1b[{to_col}G{psr}\x1b8").unwrap();
+      queue_term!(
+        TermCtl::Cursor(SavePos),
+        TermCtl::Cursor(Down(down)),
+        TermCtl::Cursor(Col(to_col)),
+      )
+      .ok();
+      write_term!("{psr}").unwrap();
+      queue_term!(TermCtl::Cursor(RestorePos)).ok();
 
       // Record where the PSR ends so clear_rows can account for wrapping
       // if the terminal shrinks.
       let psr_start = Pos {
         row: new_layout.end.row,
-        col: to_col,
+        col: to_col as usize,
       };
       new_layout.psr_end = Some(Layout::calc_pos(t_cols, &psr, psr_start, 0, false));
     }
 
-    write_term!("{}", &self.mode.cursor_style()).unwrap();
+    queue_term!(TermCtl::Cursor(SetStyle(self.mode.cursor_style()),)).ok();
 
     // Move to end of layout for overlay draws (completer, history search)
     let has_overlays = self.completer.is_some() || self.history_fzf().is_some();
 
     let down = new_layout.end.row.saturating_sub(new_layout.cursor.row);
     if has_overlays && down > 0 {
-      write_term!("\x1b[{down}B")?;
+      queue_term!(TermCtl::Cursor(Down(down as u16))).ok();
       new_layout.cursor.row = new_layout.end.row;
     }
 
@@ -1842,11 +1860,6 @@ impl ShedLine {
         _ => unreachable!(),
       };
       let down = new_layout.end.row - new_layout.cursor.row;
-      let move_down = if down > 0 {
-        format!("\x1b[{down}B")
-      } else {
-        String::new()
-      };
       if let ModeReport::Ex = self.mode.report_mode()
         && shopt!(highlight.enable)
       {
@@ -1854,7 +1867,14 @@ impl ShedLine {
         pending_seq = highlight::highlight_ex(&pending_seq, &highlight::Palette::new(), cursor_pos);
       }
 
-      write_term!("{move_down}\x1b[1G\n{prefix_seq}{pending_seq}").unwrap();
+      queue_term!(
+        TermCtl::Cursor(Down(down as u16)),
+        TermCtl::Cursor(Col(1)),
+        TermCtl::PrintChar('\n')
+      )
+      .ok();
+      write_term!("{prefix_seq}{pending_seq}").ok();
+
       new_layout.end.row += 1;
       new_layout.cursor.row = new_layout.end.row;
       new_layout.cursor.col = {
@@ -1867,7 +1887,7 @@ impl ShedLine {
         prefix_seq.width() + before_cursor.width()
       };
 
-      write_term!("\x1b[{}G", new_layout.cursor.col + 1).unwrap();
+      queue_term!(TermCtl::Cursor(Col(new_layout.cursor.col as u16 + 1))).ok();
     }
 
     // Tell the completer the width of the prompt line above its \n so it can
@@ -1963,18 +1983,24 @@ impl ShedLine {
     // status line reserves two rows
     let gap = (term_rows.saturating_sub(2)).saturating_sub(bottom_row);
     if gap > 0 {
-      Shed::term_mut(|t| {
-        t.with_saved_cursor(|term| {
-          for _ in 0..from_cursor_to_end {
-            write!(term, "\x1b[1B").ok();
-          }
-          write!(term, "\x1b[1G").ok();
-          for _ in 0..gap {
-            // move down, move to start of line, clear line, write gray tilde
-            write!(term, "\x1b[1B\x1b[1G\x1b[2K\x1b[90m~\x1b[0m").ok();
-          }
-        });
-      });
+      queue_term!(
+        TermCtl::Cursor(SavePos),
+        TermCtl::Cursor(Down(from_cursor_to_end)),
+        TermCtl::Cursor(Col(1)),
+      )
+      .ok();
+
+      for _ in 0..gap {
+        queue_term!(
+          TermCtl::Cursor(Down(1)),
+          TermCtl::Cursor(Col(1)),
+          TermCtl::Clear(WholeLine),
+        )
+        .ok();
+        write_term!("\x1b[90m~\x1b[0m").ok();
+      }
+
+      queue_term!(TermCtl::Cursor(RestorePos),).ok();
     }
 
     finish(self)
