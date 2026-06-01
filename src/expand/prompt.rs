@@ -282,10 +282,16 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
     }
     PromptTk::Function(f) => {
       let errexit = shopt!(set.errexit);
+      let noexec = shopt!(set.noexec);
+      let xtrace = shopt!(set.xtrace);
 
       shopt_mut!(set.errexit = false);
+      shopt_mut!(set.noexec = false);
+      shopt_mut!(set.xtrace = false);
       let res = expand_cmd_sub(&f);
       shopt_mut!(set.errexit = errexit);
+      shopt_mut!(set.noexec = noexec);
+      shopt_mut!(set.xtrace = xtrace);
 
       let output = res?;
       result.push_str(&output);
