@@ -1036,7 +1036,6 @@ impl Dispatcher {
     };
 
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
-    let interactive = Shed::term(Terminal::interactive);
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
@@ -1062,21 +1061,22 @@ impl Dispatcher {
     let redirs = RedirSet::from(pipeline.redirs);
 
     let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
-    let mut pipes = PipeGenerator::new(num_cmds);
+    let interactive = Shed::term(Terminal::interactive);
     let mut result = Ok(());
 
     let saved_region = Shed::term_mut(|t| t.scroll_region());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
-    let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
     let mut spans = vec![];
 
-    for (i, mut cmd) in cmds.into_iter().enumerate() {
+    let pipes = PipeGenerator::new(num_cmds);
+    let cmds_and_pipes = cmds.into_iter().enumerate().zip(pipes);
+
+    for ((i, mut cmd), (r, w)) in cmds_and_pipes {
       if num_cmds > 1 {
         // builtins must fork in multi-command pipelines
         cmd.flags |= NdFlags::FORK_BUILTINS;
       }
 
-      let Some((r, w)) = pipes.next() else { break };
       let _guard = RedirGuard::stdio();
 
       if i == 0 {
@@ -1096,19 +1096,24 @@ impl Dispatcher {
 
       spans.push(cmd.get_span());
 
-      result = if should_fork_segment(&cmd) {
-        let name = cmd
-          .get_command()
-          .map(ToString::to_string)
-          .unwrap_or_default();
+      result = {
+        let _cooked_guard =
+          (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
 
-        self.run_fork(&name, |s| {
-          if let Err(e) = s.dispatch_node(cmd) {
-            e.print_error();
-          }
-        })
-      } else {
-        self.dispatch_node(cmd)
+        if should_fork_segment(&cmd) {
+          let name = cmd
+            .get_command()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+
+          self.run_fork(&name, |s| {
+            if let Err(e) = s.dispatch_node(cmd) {
+              e.print_error();
+            }
+          })
+        } else {
+          self.dispatch_node(cmd)
+        }
       };
 
       if !tty_attached && let Some(pgid) = tty_controller(self) {
@@ -1133,8 +1138,12 @@ impl Dispatcher {
       Shed::term_mut(|t| {
         use std::io::Write;
         if shopt!(statline.enable) {
-          write!(t, "\n\n").ok();
-          t.move_cursor_abs(bottom, 1);
+          let cursor_row = t.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
+
+          if cursor_row.is_none_or(|r| r >= bottom as usize) {
+            write!(t, "\n\n").ok();
+            t.move_cursor_abs(bottom, 1);
+          }
         }
       });
     }
