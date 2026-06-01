@@ -492,6 +492,7 @@ fn handle_readline_event(
           .set_status(token, runtime, state::Shed::get_status());
       }
 
+      Shed::term_mut(Terminal::fix_cursor_row)?;
       Shed::term_mut(Terminal::fix_cursor_column)?;
 
       // Reset for next command with fresh prompt

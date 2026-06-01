@@ -1064,7 +1064,6 @@ impl Dispatcher {
     let interactive = Shed::term(Terminal::interactive);
     let mut result = Ok(());
 
-    let saved_region = Shed::term_mut(|t| t.scroll_region().dims());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
     let mut spans = vec![];
 
@@ -1130,15 +1129,6 @@ impl Dispatcher {
     let dispatch_result = dispatch_job(job, is_bg, Shed::term(Terminal::interactive));
     result?;
     dispatch_result?;
-
-    if !is_bg && let Some((_, bottom)) = saved_region {
-      Shed::term_mut(|t| {
-        if t.interactive() {
-          return t.fix_cursor_row(bottom);
-        }
-        Ok(())
-      })?;
-    }
 
     let blame_span = if shopt!(set.pipefail) {
       pipefail_span(&spans).or(Some(pipeline_span))

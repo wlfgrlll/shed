@@ -548,7 +548,10 @@ impl Terminal {
     }
     Ok(None)
   }
-  pub fn fix_cursor_row(&mut self, bottom: u16) -> ShResult<()> {
+  pub fn fix_cursor_row(&mut self) -> ShResult<()> {
+    let Some((_, bottom)) = self.scroll_region.dims() else {
+      return Ok(());
+    };
     if shopt!(statline.enable) {
       let cursor_row = self.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
 
@@ -976,11 +979,7 @@ impl Terminal {
     let reserved: u16 = Self::reserved_rows();
     let bottom = (self.t_rows() as u16).saturating_sub(reserved).max(1);
     self.set_scroll_region(1, bottom);
-    self.fix_cursor_row(bottom)
-  }
-
-  pub fn scroll_region(&mut self) -> ScrollRegionState {
-    self.scroll_region
+    self.fix_cursor_row()
   }
 
   /// Render the status line at the bottom row of the terminal.
