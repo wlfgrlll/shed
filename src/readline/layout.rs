@@ -219,6 +219,9 @@ pub fn redraw(
 
   queue_term!(TermCtl::Osc(PromptStart)).ok();
 
+  // Reset SGR
+  write_term!("\x1b[0m").ok();
+
   if let Some(prefix) = try_var!("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
@@ -230,6 +233,9 @@ pub fn redraw(
   }
 
   queue_term!(TermCtl::Osc(PromptEnd)).ok();
+
+  // Reset SGR again
+  write_term!("\x1b[0m").ok();
 
   let tab_width = shopt!(line.tab_width);
   let prompt_end = Layout::calc_pos(t_cols, &padded_prompt, Pos { col: 0, row: 0 }, 0, false);
