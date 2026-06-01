@@ -2,9 +2,11 @@ use std::{fmt::Debug, fmt::Write as FmtWrite};
 
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::queue_term;
+
 use super::{
   super::state::terminal::Terminal, Shed, linebuf::Pos, shopt, state::terminal::width, try_var,
-  util::ShResult, write_term,
+  write_term,
 };
 
 fn gutter_width(offset: usize, line_count: usize) -> usize {
@@ -207,7 +209,7 @@ pub fn redraw(
   offset: usize,
   total_buf_lines: usize,
 ) {
-  write_term!("\x1b[J").ok(); // Clear from cursor to end of screen to erase any remnants of the old line after the prompt
+  queue_term!(TermCtl::Clear(ScreenFromCursor)).ok();
 
   let end = new_layout.end;
   let cursor = new_layout.cursor;
@@ -215,15 +217,19 @@ pub fn redraw(
   let t_cols = Shed::term(Terminal::t_cols);
   let padded_prompt = pad_prompt_for_gutter(prompt, line, offset, t_cols);
 
-  Shed::term_mut(Terminal::emit_osc_prompt_start).ok();
+  queue_term!(TermCtl::Osc(PromptStart)).ok();
+
   if let Some(prefix) = try_var!("SHELL_PROMPT_PREFIX") {
     write_term!("{prefix}").ok();
   }
+
   write_term!("{padded_prompt}").ok();
+
   if let Some(suffix) = try_var!("SHELL_PROMPT_SUFFIX") {
     write_term!("{suffix}").ok();
   }
-  Shed::term_mut(Terminal::emit_osc_prompt_end).ok();
+
+  queue_term!(TermCtl::Osc(PromptEnd)).ok();
 
   let tab_width = shopt!(line.tab_width);
   let prompt_end = Layout::calc_pos(t_cols, &padded_prompt, Pos { col: 0, row: 0 }, 0, false);
@@ -245,7 +251,7 @@ pub fn redraw(
 
   if end.col == 0 && end.row > prompt_end.row && !Shed::term(Terminal::buf_ends_with_newline) {
     // The line has wrapped. We need to use our own line break.
-    write_term!("\n").ok();
+    queue_term!(TermCtl::PrintChar('\n')).ok();
   }
 
   Shed::term_mut(|t| t.calc_cursor_movement(end, cursor)).ok();
@@ -261,12 +267,10 @@ pub fn move_cursor_to_end(layout: &Layout) {
   let cursor_row = layout.cursor.row;
 
   let cursor_motion = end.saturating_sub(cursor_row);
-  if cursor_motion > 0 {
-    write_term!("\x1b[{cursor_motion}B").ok();
-  }
+  queue_term!(TermCtl::Cursor(Down(cursor_motion as u16))).ok();
 }
 
-pub fn clear_rows(layout: &Layout) -> ShResult<()> {
+pub fn clear_rows(layout: &Layout) {
   // Account for lines that may have wrapped due to terminal resize.
   // If a PSR was drawn, the last row extended to the old terminal width.
   // When the terminal shrinks, that row wraps into extra physical rows.
@@ -279,13 +283,10 @@ pub fn clear_rows(layout: &Layout) -> ShResult<()> {
   let cursor_row = layout.cursor.row;
 
   let cursor_motion = rows_to_clear.saturating_sub(cursor_row);
-  if cursor_motion > 0 {
-    write_term!("\x1b[{cursor_motion}B")?;
-  }
+  queue_term!(TermCtl::Cursor(Down(cursor_motion as u16))).ok();
 
   for _ in 0..rows_to_clear {
-    write_term!("\x1b[2K\x1b[A")?; // Clear line and move up
+    queue_term!(TermCtl::Clear(WholeLine), TermCtl::Cursor(Up(1))).ok();
   }
-  write_term!("\x1b[2K\r")?; // Clear line and return to column 0
-  Ok(())
+  queue_term!(TermCtl::Clear(WholeLine), TermCtl::PrintChar('\r')).ok();
 }

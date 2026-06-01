@@ -22,7 +22,7 @@ use super::{
   readline::{self, ScoredCandidate},
   sherr, state,
   util::{self, Direction, ShResult, with_status},
-  var, write_term,
+  var,
 };
 
 use markup::TAG_SEQ;

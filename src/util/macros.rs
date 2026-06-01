@@ -20,13 +20,53 @@ macro_rules! flush_term {
     use std::io::Write;
     $crate::state::Shed::term_mut(|t| t.flush())
   };
-  ($($arg:tt)*) => {{
-    use std::io::Write;
-    $crate::state::Shed::term_mut(|t| -> $crate::util::ShResult<()> {
-      write!(t, $($arg)*)?;
-      t.flush()?;
-      Ok(())
-    })
+}
+
+/// Directly execute terminal control sequences
+///
+/// similar to crossterm's `execute!` macro, this allows you to send terminal control sequences directly to the terminal without queuing them in the buffer first.
+#[macro_export]
+macro_rules! exec_term {
+  ($($ctl:expr),* $(,)?) => {'exec_term: {
+    use ::std::io::Write;
+    $crate::queue_term!($($ctl),*)?;
+
+    if let Err(e) = Shed::term_mut(|t| t.flush()) {
+      break 'exec_term Err($crate::util::ShErr::from(e));
+    }
+
+    Ok(())
+  }};
+}
+
+/// Queue terminal control sequences
+///
+/// Similar to crossterm's `queue!` macro, this allows you to push terminal control sequences directly to the terminal buffer without flushing immediately.
+#[macro_export]
+macro_rules! queue_term {
+  ($($ctl:expr),* $(,)?) => {'queue_term: {
+    #[allow(unused_imports)]
+    use $crate::state::terminal::{
+      CursorStyle::*,
+      Toggle::*,
+      TermCtl,
+      CursorCtl::*,
+      ClearCtl::*,
+      Attr::*,
+      Scroll,
+      OscCtl::*,
+      TermQuery::*
+    };
+
+    $(
+      if let Err(e) = Shed::term_mut(|t| {
+        t.execute_control(&$ctl)
+      }) {
+        break 'queue_term Err(e);
+      };
+    )*
+
+    Ok(())
   }};
 }
 

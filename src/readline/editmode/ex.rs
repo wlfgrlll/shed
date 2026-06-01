@@ -154,8 +154,8 @@ impl EditMode for ViEx {
     self.pending_cmd.editor.history.as_mut()
   }
 
-  fn cursor_style(&self) -> String {
-    CursorStyle::Underline(false).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Underline(false)
   }
 
   fn is_input_mode(&self) -> bool {

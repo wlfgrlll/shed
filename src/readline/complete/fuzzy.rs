@@ -283,7 +283,7 @@ impl FuzzySelector {
       prompt_cursor_col: 0,
       hovered: None,
       title: title.into(),
-      _mouse_guard: Some(Shed::term_mut(|t| t.mouse_support_guard(true))),
+      _mouse_guard: Some(Shed::term_mut(|t| t.mouse_support_guard(true.into()))),
     }
   }
 

@@ -19,7 +19,7 @@ use super::{
   state::{self, Shed, jobs::ChildProc, meta::MetaTab, shopt as shopt_internal},
   status_msg, system_msg, try_var,
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
-  var, write_term,
+  var,
 };
 
 mod alias;

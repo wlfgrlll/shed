@@ -180,11 +180,11 @@ impl EditMode for ViInsert {
     Some(CmdReplay::mode(self.cmds.clone(), self.repeat_count))
   }
 
-  fn cursor_style(&self) -> String {
-    self.normal.as_ref().map_or_else(
-      || CursorStyle::Beam(false).to_string(),
-      super::EditMode::cursor_style,
-    )
+  fn cursor_style(&self) -> CursorStyle {
+    self
+      .normal
+      .as_ref()
+      .map_or_else(|| CursorStyle::Beam(false), super::EditMode::cursor_style)
   }
   fn pending_seq(&self) -> Option<String> {
     self.normal.as_ref().and_then(super::EditMode::pending_seq)

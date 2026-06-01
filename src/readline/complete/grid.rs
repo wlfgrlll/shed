@@ -1,4 +1,4 @@
-use crate::state::terminal::Terminal;
+use crate::{queue_term, state::terminal::Terminal};
 
 use super::{
   Candidate, CompMatch, CompResponse, Completer, K as KeyEvent, ShResult, Shed, SimpleCompleter,
@@ -199,12 +199,12 @@ impl GridSelector {
     if let Some(layout) = self.old_layout.take() {
       // cursor is in the editor b
       for _ in 0..layout.rows {
-        write_term!("\n\x1b[2K").ok();
+        queue_term!(TermCtl::Cursor(Down(1)), TermCtl::Clear(WholeLine)).ok();
       }
       // Move back up to the prompt row and right to the original column.
-      write_term!("\x1b[{}A\r", layout.rows).ok();
+      queue_term!(TermCtl::Cursor(Up(layout.rows as u16))).ok();
       if self.prompt_cursor_col > 0 {
-        write_term!("\x1b[{}C", self.prompt_cursor_col).ok();
+        queue_term!(TermCtl::Cursor(Forward(self.prompt_cursor_col as u16))).ok();
       }
     }
   }
@@ -390,9 +390,13 @@ impl GridSelector {
 
     // Walk back up to the prompt row. Restore the column with \r +
     // horizontal move.
-    write_term!("\x1b[{}A\r", rows_drawn).ok();
+    queue_term!(
+      TermCtl::Cursor(Up(rows_drawn as u16)),
+      TermCtl::PrintChar('\r')
+    )
+    .ok();
     if self.prompt_cursor_col > 0 {
-      write_term!("\x1b[{}C", self.prompt_cursor_col).ok();
+      queue_term!(TermCtl::Cursor(Forward(self.prompt_cursor_col as u16))).ok();
     }
 
     layout.top_left = 0;

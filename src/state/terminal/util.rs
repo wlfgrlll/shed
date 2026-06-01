@@ -1,4 +1,4 @@
-use std::{fmt::Display, os::fd::RawFd};
+use std::os::fd::RawFd;
 
 use nix::{
   libc,
@@ -154,26 +154,6 @@ pub(crate) enum ColorMode {
   Truecolor,
   Palette256,
   Palette16,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) enum CursorStyle {
-  #[default]
-  Default,
-  Block(bool),
-  Underline(bool),
-  Beam(bool),
-}
-
-impl Display for CursorStyle {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      CursorStyle::Default => write!(f, "\x1b[0 q"),
-      CursorStyle::Block(blink) => write!(f, "\x1b[{} q", if *blink { 1 } else { 2 }),
-      CursorStyle::Underline(blink) => write!(f, "\x1b[{} q", if *blink { 3 } else { 4 }),
-      CursorStyle::Beam(blink) => write!(f, "\x1b[{} q", if *blink { 5 } else { 6 }),
-    }
-  }
 }
 
 // I'd like to thank rustyline for this idea

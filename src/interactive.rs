@@ -15,7 +15,7 @@ use nix::{
 use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::signal::FOCUS_GAINED;
+use crate::{exec_term, signal::FOCUS_GAINED};
 
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
@@ -257,9 +257,12 @@ fn shed_loop_iter(
   // 5. shell is softlocked
   Shed::term_mut(|t| {
     let _ = t.enforce_raw_mode();
-    t.toggle_bracketed_paste(true);
-    t.toggle_report_focus(true);
   });
+  exec_term!(
+    TermCtl::SetAttr(BracketPaste(On)),
+    TermCtl::SetAttr(FocusReport(On))
+  )
+  .ok();
 
   state::util::try_hash();
   util::flog::update_log_level();
@@ -436,12 +439,11 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       Shed::meta_mut(MetaTab::start_timer);
 
-      Shed::term_mut(Terminal::emit_osc_exec_start).ok();
-      Shed::term_mut(std::io::Write::flush).ok();
+      exec_term!(TermCtl::Osc(ExecStart)).ok();
 
       let res = exec_int(input.clone(), Some("<stdin>".into()));
 
-      Shed::term_mut(|t| t.emit_osc_exec_end(Shed::get_status())).ok();
+      exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 
       if let Err(e) = res {
         match e.kind() {
@@ -466,7 +468,10 @@ fn handle_readline_event(
       log::info!("Command executed in {command_run_time:.2?}");
       let runtime = Shed::meta_mut(MetaTab::stop_timer);
 
+      let autocmd_start = Instant::now();
+
       autocmd!(PostCmd);
+      log::trace!("PostCmd autocmds done in {autocmd_start:.2?}");
 
       let no_hist_save = Shed::meta_mut(MetaTab::no_hist_save);
 
@@ -474,6 +479,8 @@ fn handle_readline_event(
       let nolog = was_func_def && shopt!(set.nolog);
 
       let should_write = shopt!(core.auto_hist) && !nolog && !no_hist_save && !input.is_empty();
+
+      let hist_update_start = Instant::now();
 
       if let Some(token) = token
         && !should_write
@@ -491,12 +498,18 @@ fn handle_readline_event(
           .history_mut()
           .set_status(token, runtime, state::Shed::get_status());
       }
+      log::trace!("History update done in {:.2?}", hist_update_start.elapsed());
 
-      Shed::term_mut(Terminal::fix_cursor_row)?;
+      let term_start = Instant::now();
+
       Shed::term_mut(Terminal::fix_cursor_column)?;
+
+      log::trace!("Terminal adjustments done in {:.2?}", term_start.elapsed());
 
       // Reset for next command with fresh prompt
       readline.reset(true)?;
+
+      log::trace!("Readline event handled in {:.2?}", cmd_start.elapsed());
       Ok(false)
     }
     Ok(ReadlineEvent::Eof) => {

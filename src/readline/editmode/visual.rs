@@ -402,8 +402,8 @@ impl EditMode for ViVisual {
     }
   }
 
-  fn cursor_style(&self) -> String {
-    CursorStyle::Block(false).to_string()
+  fn cursor_style(&self) -> CursorStyle {
+    CursorStyle::Block(false)
   }
 
   fn pending_seq(&self) -> Option<String> {
