@@ -234,6 +234,14 @@ impl ScopeStack {
         let random = rand::random_range(0..32768);
         Some(random.to_string())
       }
+      "LINES" => {
+        let rows = Shed::term(Terminal::t_rows);
+        Some(rows.to_string())
+      }
+      "COLUMNS" => {
+        let cols = Shed::term(Terminal::t_cols);
+        Some(cols.to_string())
+      }
       "?" => Some(Shed::get_status().to_string()),
       "-" => {
         let mut set_string = String::new();
