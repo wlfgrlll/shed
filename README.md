@@ -267,7 +267,7 @@ Shed searches for an rc file in these paths, in decreasing order of priority:
 1. $SHED_RC
 2. $XDG_CONFIG_HOME/shedrc
 3. $HOME/.config/shed/shedrc
-4. $HOME/.shedr
+4. $HOME/.shedrc
 
 ---
 
