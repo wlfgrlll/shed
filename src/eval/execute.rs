@@ -1066,6 +1066,7 @@ impl Dispatcher {
 
     let saved_region = Shed::term(|t| t.scroll_region().dims());
     let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
+    let cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
     let mut spans = vec![];
 
     let pipes = PipeGenerator::new(num_cmds);
@@ -1096,24 +1097,19 @@ impl Dispatcher {
 
       spans.push(cmd.get_span());
 
-      result = {
-        let _cooked_guard =
-          (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
+      result = if should_fork_segment(&cmd) {
+        let name = cmd
+          .get_command()
+          .map(ToString::to_string)
+          .unwrap_or_default();
 
-        if should_fork_segment(&cmd) {
-          let name = cmd
-            .get_command()
-            .map(ToString::to_string)
-            .unwrap_or_default();
-
-          self.run_fork(&name, |s| {
-            if let Err(e) = s.dispatch_node(cmd) {
-              e.print_error();
-            }
-          })
-        } else {
-          self.dispatch_node(cmd)
-        }
+        self.run_fork(&name, |s| {
+          if let Err(e) = s.dispatch_node(cmd) {
+            e.print_error();
+          }
+        })
+      } else {
+        self.dispatch_node(cmd)
       };
 
       if !tty_attached && let Some(pgid) = tty_controller(self) {
@@ -1137,8 +1133,9 @@ impl Dispatcher {
       Some(pipeline_span)
     };
 
+    drop(cooked_guard); // exit cooked mode
     if !is_bg && let Some((_, bottom)) = saved_region {
-      Shed::term_mut(|t| t.fix_cursor_row(bottom))?;
+      Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
     }
 
     check_err(pipeline_flags, None, blame_span, pipeline_context)?;
