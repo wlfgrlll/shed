@@ -86,6 +86,35 @@ bitflags! {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Toggle {
+  On,
+  Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttrToggle {
+  Try(Toggle),
+  Force(Toggle),
+}
+
+impl AttrToggle {
+  fn parts(self) -> (bool, bool) {
+    match self {
+      AttrToggle::Try(Toggle::On) => (true, false),
+      AttrToggle::Try(Toggle::Off) => (false, false),
+      AttrToggle::Force(Toggle::On) => (true, true),
+      AttrToggle::Force(Toggle::Off) => (false, true),
+    }
+  }
+}
+
+impl From<bool> for Toggle {
+  fn from(b: bool) -> Self {
+    if b { Toggle::On } else { Toggle::Off }
+  }
+}
+
 /// An abstraction over the terminal that manages terminal attributes, and I/O.
 #[derive(Debug)]
 #[expect(clippy::struct_excessive_bools)]
@@ -150,7 +179,7 @@ impl Terminal {
   pub const BRACKET_PASTE_ON: &str = "\x1b[?2004h";
   pub const BRACKET_PASTE_OFF: &str = "\x1b[?2004l";
   pub const KITTY_PROTO_ON: &str = "\x1b[>17u";
-  pub const KITTY_PROTO_OFF: &str = "\x1b[<u";
+  pub const KITTY_PROTO_OFF: &str = "\x1b[=0u";
   pub const ALT_BUFFER_ENTER: &str = "\x1b[?1049h";
   pub const ALT_BUFFER_EXIT: &str = "\x1b[?1049l";
   pub const CURSOR_HIDE: &str = "\x1b[?25l";
@@ -226,17 +255,19 @@ impl Terminal {
     Some(ColorMode::Palette16)
   }
 
-  fn toggle_attr(buf: &mut String, switch: &mut bool, on_ctl: &str, off_ctl: &str, on: bool) {
-    let control = if on && !*switch {
-      on_ctl
-    } else if !on && *switch {
-      off_ctl
-    } else {
+  fn toggle_attr(
+    buf: &mut String,
+    switch: &mut bool,
+    on_ctl: &str,
+    off_ctl: &str,
+    attr: AttrToggle,
+  ) {
+    let (on, force) = attr.parts();
+    if !force && on == *switch {
       return;
-    };
+    }
 
-    buf.push_str(control);
-
+    buf.push_str(if on { on_ctl } else { off_ctl });
     *switch = on;
   }
 
@@ -308,7 +339,7 @@ impl Terminal {
 
   pub fn mouse_support_guard(&mut self, on: bool) -> TermGuard {
     let guard = TermGuard::new().with_mouse_support(self.mouse_enabled);
-    self.toggle_mouse_support(on);
+    self.toggle_mouse_support(AttrToggle::Try(if on { Toggle::On } else { Toggle::Off }));
     guard.activate()
   }
 
@@ -323,7 +354,7 @@ impl Terminal {
         .as_ref()
         .is_none_or(|v| !v.has_broken_kitty_kbd())
     {
-      self.toggle_kitty_proto(true);
+      self.toggle_kitty_proto(AttrToggle::Try(Toggle::On));
     } else if self
       .xt_version
       .as_ref()
@@ -443,23 +474,23 @@ impl Terminal {
 
     let mut wrote_seq = false;
     if let Some(bracketed_paste) = guard.bracketed_paste() {
-      self.toggle_bracketed_paste(bracketed_paste);
+      self.toggle_bracketed_paste(AttrToggle::Try(bracketed_paste.into()));
       wrote_seq = true;
     }
     if let Some(kitty_proto) = guard.kitty_proto() {
-      self.toggle_kitty_proto(kitty_proto);
+      self.toggle_kitty_proto(AttrToggle::Try(kitty_proto.into()));
       wrote_seq = true;
     }
     if let Some(report_focus) = guard.report_focus() {
-      self.toggle_report_focus(report_focus);
+      self.toggle_report_focus(AttrToggle::Try(report_focus.into()));
       wrote_seq = true;
     }
     if let Some(alt_buffer) = guard.alt_buffer() {
-      self.toggle_alt_buffer(alt_buffer);
+      self.toggle_alt_buffer(AttrToggle::Try(alt_buffer.into()));
       wrote_seq = true;
     }
     if let Some(cursor_visible) = guard.cursor_visible() {
-      self.toggle_cursor_visibility(cursor_visible);
+      self.toggle_cursor_visibility(AttrToggle::Try(cursor_visible.into()));
       wrote_seq = true;
     }
     if let Some(cursor_style) = guard.cursor_style() {
@@ -467,7 +498,7 @@ impl Terminal {
       wrote_seq = true;
     }
     if let Some(mouse_mode) = guard.mouse_support() {
-      self.toggle_mouse_support(mouse_mode);
+      self.toggle_mouse_support(AttrToggle::Try(mouse_mode.into()));
       wrote_seq = true;
     }
     if let Some(interactive) = guard.interactive() {
@@ -722,14 +753,14 @@ impl Terminal {
 
   pub fn cooked_mode_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false);
+    self.toggle_bracketed_paste(AttrToggle::Try(Toggle::Off));
     self.edit_termios(enable_cooked_mode)?;
     Ok(guard.activate())
   }
 
   pub fn cooked_no_echo_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false);
+    self.toggle_bracketed_paste(AttrToggle::Try(Toggle::Off));
     self.edit_termios(|t| {
       enable_cooked_mode(t);
       t.local_flags.remove(termios::LocalFlags::ECHO);
@@ -740,26 +771,27 @@ impl Terminal {
   pub fn prepare_for_pager(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
     self.edit_termios(enable_raw_mode)?;
-    self.toggle_bracketed_paste(false);
-    self.toggle_report_focus(false);
-    self.toggle_alt_buffer(true);
+    self.toggle_bracketed_paste(AttrToggle::Try(Toggle::Off));
+    self.toggle_report_focus(AttrToggle::Try(Toggle::Off));
+    self.toggle_alt_buffer(AttrToggle::Try(Toggle::On));
     self.reset_scroll_region();
-    self.toggle_mouse_support(true);
+    self.toggle_mouse_support(AttrToggle::Try(Toggle::On));
     self.set_cursor_style(CursorStyle::Default)?;
-    self.toggle_cursor_visibility(false);
+    self.toggle_cursor_visibility(AttrToggle::Try(Toggle::Off));
     self.flush()?;
     Ok(guard.activate())
   }
 
   pub fn prepare_for_exec(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.toggle_bracketed_paste(false);
-    self.toggle_report_focus(false);
-    self.toggle_alt_buffer(false);
-    self.edit_termios(enable_cooked_mode)?;
+    self.toggle_bracketed_paste(AttrToggle::Try(Toggle::Off));
+    self.toggle_report_focus(AttrToggle::Try(Toggle::Off));
+    self.toggle_alt_buffer(AttrToggle::Try(Toggle::Off));
     self.set_cursor_style(CursorStyle::Default)?;
-    self.toggle_kitty_proto(false);
+    self.toggle_kitty_proto(AttrToggle::Force(Toggle::Off));
     self.flush()?; // flush escape sequences before switching to cooked mode
+
+    self.edit_termios(enable_cooked_mode)?;
     Ok(guard.activate())
   }
 
@@ -859,38 +891,39 @@ impl Terminal {
     Ok(())
   }
 
-  pub fn toggle_report_focus(&mut self, on: bool) {
+  pub fn toggle_report_focus(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.report_focus,
       Self::FOCUS_REPORT_ON,
       Self::FOCUS_REPORT_OFF,
-      on,
+      attr,
     );
   }
 
-  pub fn toggle_cursor_visibility(&mut self, visible: bool) {
+  pub fn toggle_cursor_visibility(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.cursor_visible,
       Self::CURSOR_SHOW,
       Self::CURSOR_HIDE,
-      visible,
+      attr,
     );
   }
 
-  pub fn toggle_alt_buffer(&mut self, on: bool) {
+  pub fn toggle_alt_buffer(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.alt_buffer,
       Self::ALT_BUFFER_ENTER,
       Self::ALT_BUFFER_EXIT,
-      on,
+      attr,
     );
     // Most xterm-class terminals save/restore the scroll region across
     // alt-screen transitions. Re-assert ours on exit defensively in case
     // the terminal didn't. Bracket with cursor save/restore so DECSTBM
     // doesn't home the cursor as a side effect.
+    let (on, _) = attr.parts();
     if !on && let ScrollRegionState::Set(top, bottom) = self.scroll_region {
       self.with_saved_cursor(|this| {
         write!(this, "\x1b[{top};{bottom}r").ok();
@@ -898,33 +931,33 @@ impl Terminal {
     }
   }
 
-  pub fn toggle_bracketed_paste(&mut self, on: bool) {
+  pub fn toggle_bracketed_paste(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.bracketed_paste,
       Self::BRACKET_PASTE_ON,
       Self::BRACKET_PASTE_OFF,
-      on,
+      attr,
     );
   }
 
-  pub fn toggle_mouse_support(&mut self, on: bool) {
+  pub fn toggle_mouse_support(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.mouse_enabled,
       Self::MOUSE_ON,
       Self::MOUSE_OFF,
-      on,
+      attr,
     );
   }
 
-  pub fn toggle_kitty_proto(&mut self, on: bool) {
+  pub fn toggle_kitty_proto(&mut self, attr: AttrToggle) {
     Self::toggle_attr(
       &mut self.input_buf,
       &mut self.kitty_kbd_proto,
       Self::KITTY_PROTO_ON,
       Self::KITTY_PROTO_OFF,
-      on,
+      attr,
     );
   }
 
@@ -1035,10 +1068,10 @@ impl Terminal {
     let Some(_tty) = self.tty() else { return };
 
     self.reset_scroll_region();
-    self.toggle_bracketed_paste(false);
-    self.toggle_kitty_proto(false);
-    self.toggle_cursor_visibility(true);
-    self.toggle_alt_buffer(false);
+    self.toggle_bracketed_paste(AttrToggle::Force(Toggle::Off));
+    self.toggle_kitty_proto(AttrToggle::Force(Toggle::Off));
+    self.toggle_cursor_visibility(AttrToggle::Force(Toggle::On));
+    self.toggle_alt_buffer(AttrToggle::Force(Toggle::Off));
     if self.cursor_style != CursorStyle::Default {
       self.set_cursor_style(CursorStyle::Default).ok();
     }

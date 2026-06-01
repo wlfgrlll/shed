@@ -500,7 +500,6 @@ fn handle_readline_event(
 
       let term_start = Instant::now();
 
-      Shed::term_mut(Terminal::fix_cursor_row)?;
       Shed::term_mut(Terminal::fix_cursor_column)?;
 
       log::trace!("Terminal adjustments done in {:.2?}", term_start.elapsed());

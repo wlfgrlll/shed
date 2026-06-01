@@ -1258,7 +1258,6 @@ impl super::LineBuf {
     &mut self.lines[self.cursor.pos.row]
   }
   pub(super) fn cur_line(&self) -> &Line {
-    let caller = std::panic::Location::caller();
     &self.lines[self.cursor.pos.row]
   }
   pub fn count_graphemes(&self) -> usize {
