@@ -89,6 +89,7 @@ pub struct LineBuf {
 
   insert_mode_start_pos: Option<Pos>,
   saved_col: Option<usize>,
+  viewport_cap: Option<usize>,
 
   scroll_offset: usize,
 
@@ -131,6 +132,7 @@ impl Default for LineBuf {
       pending_search: None,
       insert_mode_start_pos: None,
       saved_col: None,
+      viewport_cap: None,
       scroll_offset: 0,
       undo_stack: vec![],
       redo_stack: vec![],

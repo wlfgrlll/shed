@@ -1676,6 +1676,21 @@ impl ShedLine {
       .ok();
     }
 
+    // Cap the viewport so a tall buffer can't push the prompt off-screen.
+    let t_rows = Shed::term(Terminal::t_rows);
+    let t_cols = Shed::term(Terminal::t_cols);
+    let prompt_end = Layout::calc_pos(
+      t_cols,
+      self.prompt.get_ps1(),
+      Pos { col: 0, row: 0 },
+      0,
+      false,
+    );
+    let prompt_lines = prompt_end.row;
+    let reserved = if shopt!(statline.enable) { 2 } else { 0 };
+    let viewport_cap = t_rows.saturating_sub(prompt_lines + reserved).max(1);
+    self.editor.set_viewport_cap(Some(viewport_cap));
+
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
@@ -1698,7 +1713,6 @@ impl ShedLine {
         prompt_string_right.map(|psr| psr.lines().next().unwrap_or_default().to_string());
     }
 
-    let t_cols = Shed::term(Terminal::t_cols);
     let row0_used = self
       .prompt
       .get_ps1()

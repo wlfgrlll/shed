@@ -65,6 +65,10 @@ impl super::LineBuf {
     self.insert_str(new);
     content
   }
+  pub fn set_viewport_cap(&mut self, cap: Option<usize>) {
+    self.viewport_cap = cap;
+  }
+
   pub fn get_viewport_height(&self) -> usize {
     let raw = Shed::shopts(|o| {
       let height = o.line.viewport_height.as_str();
@@ -92,7 +96,11 @@ impl super::LineBuf {
     let mut hint_lines = self.hint_lines();
     let mut buf_lines = self.lines.clone();
     buf_lines.attach_lines(&mut hint_lines);
-    (raw.min(100)).min(buf_lines.len())
+    let mut out = (raw.min(100)).min(buf_lines.len());
+    if let Some(cap) = self.viewport_cap {
+      out = out.min(cap);
+    }
+    out
   }
   pub fn update_scroll_offset(&mut self) {
     let height = self.get_viewport_height();
