@@ -653,10 +653,6 @@ impl VarTab {
       data_dir.push("shed");
 
       let shed_db = data_dir.join("shed_hist.db");
-      let shed_rc = std::env::var("XDG_CONFIG_HOME").ok().map_or_else(
-        || PathBuf::from(format!("{resolved_home}/.config/shed/shedrc")),
-        |c| PathBuf::from(c).join("shed").join("shedrc"),
-      );
 
       resolve("TMPDIR", "/tmp");
       resolve("TERM", &term);
@@ -664,7 +660,6 @@ impl VarTab {
       resolve("LOGNAME", &resolved_user);
       resolve("SHELL", &pathbuf_to_string(std::env::current_exe()));
       resolve("SHED_HISTDB", &shed_db.display().to_string());
-      resolve("SHED_RC", &shed_rc.display().to_string());
 
       let set_var = |var: &str, val: &str| {
         unsafe { std::env::set_var(var, val) };
