@@ -1,8 +1,6 @@
 use nix::poll::PollTimeout;
 use scopeguard::defer;
-use std::collections::VecDeque;
-use std::time::Instant;
-use std::{cmp::Ordering, sync::mpsc};
+use std::{collections::VecDeque, io::Write, sync::mpsc, time::Instant};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -1414,19 +1412,6 @@ impl ShedLine {
       }
       LineCmd::Quit => Ok(Some(ReadlineEvent::Eof)),
       LineCmd::ClearScreen => {
-        // if the status line is enabled, park the cursor at the bottom.
-        if shopt!(statline.enable)
-          && let Some((top, bottom)) = Shed::term_mut(|t| t.scroll_region()).dims()
-        {
-          let region_height = (bottom.saturating_sub(top) + 1) as usize;
-          Shed::term_mut(|t| t.scroll_up(region_height)).ok();
-          Shed::term_mut(|t| t.move_cursor_abs(bottom, 1));
-          self.old_layout = None; // stale after manual cursor move
-          self.needs_redraw = true;
-          return Ok(None);
-        }
-
-        // Original behavior: scroll just enough to put the prompt at row 1.
         let cursor_row = Shed::term_mut(Terminal::get_cursor_pos)
           .ok()
           .flatten()
@@ -1676,26 +1661,6 @@ impl ShedLine {
       })?;
     }
 
-    // if the cursor ended up in the status message area
-    // we have to rescue it.
-    if !final_draw
-      && !shopt!(statline.enable)
-      && let Some((_, bottom)) = Shed::term(Terminal::scroll_region).dims()
-    {
-      let cursor_row = Shed::term_mut(Terminal::get_cursor_pos)
-        .ok()
-        .flatten()
-        .map_or(bottom, |(r, _)| r.0 as u16);
-      if cursor_row > bottom {
-        Shed::term_mut(|t| {
-          t.move_cursor_abs(bottom, 1);
-          t.scroll_up(1)
-        })?;
-
-        self.old_layout = None; // stale after manual cursor move
-      }
-    }
-
     let line = self.editor.display_window_joined();
     let mut new_layout = self.get_layout(&line);
 
@@ -1774,27 +1739,20 @@ impl ShedLine {
           new_h += 1;
         }
         let diff = new_h - old_h;
-        match diff.cmp(&0) {
-          Ordering::Less => {
-            // the prompt shrank
-            let delta = (-diff) as u16;
-            write_term!("\x1b[{delta}L")?; // insert empty rows at cursor
-            write_term!("\x1b[{delta}B")?; // move down
-            self.blank_rows_above = self.blank_rows_above.saturating_add(delta);
-          }
-          Ordering::Greater => {
-            let diff_u = diff as u16;
-            let consume = self.blank_rows_above.min(diff_u);
-            let scroll_needed = diff_u.saturating_sub(consume);
-            if scroll_needed > 0 {
-              // pushes existing content upward
-              Shed::term_mut(|t| t.scroll_up(scroll_needed as usize)).ok();
-            }
-            // take needed space
-            write_term!("\x1b[{diff_u}A")?;
-            self.blank_rows_above = self.blank_rows_above.saturating_sub(consume);
-          }
-          Ordering::Equal => { /* nothing to do */ }
+
+        if diff < 0 {
+          // Prompt shrank. Freed rows are now BELOW the prompt;
+          // clear them so the fill-below pass at the end of print_line
+          // can populate them with tildes.
+          let delta = (-diff) as u16;
+          Shed::term_mut(|t| {
+            t.with_saved_cursor(|term| {
+              for _ in 0..delta {
+                write!(term, "\x1b[1B\x1b[2K").ok();
+              }
+            });
+          });
+          self.blank_rows_above = self.blank_rows_above.saturating_add(delta);
         }
       }
     }
@@ -1974,9 +1932,52 @@ impl ShedLine {
       }
     }
 
-    self.old_layout = Some(new_layout);
-    self.needs_redraw = false;
-    Ok(())
+    let finish = |this: &mut Self| {
+      this.old_layout = Some(new_layout);
+      this.needs_redraw = false;
+      Ok(())
+    };
+
+    if !shopt!(statline.enable) || final_draw {
+      return finish(self);
+    }
+    // if the status line is enabled, fill empty rows under the prompt with tildes
+
+    let term_rows = Shed::term(Terminal::t_rows) as u16;
+    let from_cursor_to_end =
+      new_layout.end.row.saturating_sub(new_layout.cursor.row) as u16 + overlay_rows as u16;
+
+    // Get the input cursor's absolute row so we can compute the
+    // prompt's bottom row without escape-sequence ping-pong.
+    let input_row = Shed::term_mut(Terminal::get_cursor_pos)
+      .ok()
+      .flatten()
+      .map(|(r, _)| r.0 as u16);
+
+    let Some(input_row) = input_row else {
+      return finish(self);
+    };
+
+    let bottom_row = input_row.saturating_add(from_cursor_to_end);
+
+    // status line reserves two rows
+    let gap = (term_rows.saturating_sub(2)).saturating_sub(bottom_row);
+    if gap > 0 {
+      Shed::term_mut(|t| {
+        t.with_saved_cursor(|term| {
+          for _ in 0..from_cursor_to_end {
+            write!(term, "\x1b[1B").ok();
+          }
+          write!(term, "\x1b[1G").ok();
+          for _ in 0..gap {
+            // move down, move to start of line, clear line, write gray tilde
+            write!(term, "\x1b[1B\x1b[1G\x1b[2K\x1b[90m~\x1b[0m").ok();
+          }
+        });
+      });
+    }
+
+    finish(self)
   }
 
   pub fn try_swap_mode_from_str(&mut self, name: &str) -> bool {

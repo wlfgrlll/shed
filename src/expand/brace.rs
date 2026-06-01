@@ -68,8 +68,10 @@ pub(super) fn expand_braces_full(input: &str) -> Vec<String> {
 
     for word in results {
       if has_braces(&word) {
-        any_expanded = true;
         let expanded = expand_one_brace(&word);
+        if expanded.len() > 1 || expanded.first() != Some(&word) {
+          any_expanded = true;
+        }
         new_results.extend(expanded);
       } else {
         new_results.push(word);
