@@ -808,9 +808,7 @@ FLOG                       *builtin-flog* *flog* *FLOG_FMT* *flog-fmt*
 ==============================================================================
 GENRC                                            *builtin-genrc* *genrc*
 
-  `genrc [--default] [--only {a,b,...}] [--shopt {key}]`
-  `      [--no-comments] [--no-autocmds] [--no-keymaps]`
-  `      [--no-completions]`
+  `genrc [-aAkfc] [--default] [--no-comments]`
 
   Print an rc file built from the current shell state to stdout. Useful
   for regenerating `~/.shedrc`, or for inspecting the live configuration
@@ -828,6 +826,18 @@ GENRC                                            *builtin-genrc* *genrc*
 
   Note: emitted functions will include all of the builtin completion functions.
 
+  Section flags pick which categories to emit. With no section flags,
+  every section is included. Passing any section flag restricts the
+  output to just those categories; the shopts block is always emitted
+  as the base layer regardless. Short flags pack, so `-aAkfc` is the
+  same as `-a -A -k -f -c`.
+
+  `-a`                  Include the aliases section.
+  `-A`                  Include the autocmds section.
+  `-k`                  Include the keymaps section.
+  `-f`                  Include the functions section.
+  `-c`                  Include the completions section.
+
   `--default`           Emit factory-default shopt values and the canned
                         example autocmds, keymaps, and completion lines
                         instead of the live state. Matches the rc file
@@ -835,39 +845,17 @@ GENRC                                            *builtin-genrc* *genrc*
                         functions are skipped in this mode (no canned
                         examples).
 
-  `--only {list}`       Comma-separated list of sections to include;
-                        every other section is suppressed. Valid names:
-                        `shopts`, `aliases`, `functions`, `completions`,
-                        `autocmds`, `keymaps`. Composes with `--no-X`
-                        flags as intersection.
-
-  `--shopt {key}`       Filter the shopts block to entries matching {key}.
-                        A bare group (`prompt`) matches all of `prompt.*`;
-                        a fully-qualified key (`prompt.complete_style`)
-                        matches just that one. Repeatable. Other sections
-                        are unaffected.
-
   `--no-comments`       Strip the header banner, per-section labels, and
                         trailing `# doc` annotations. Produces output
                         suitable for piping into `source` or for diffs.
-
-  `--no-autocmds`       Omit the autocmds section.
-  `--no-keymaps`        Omit the keymaps section.
-  `--no-completions`    Omit the tab-completion section.
-  `--no-functions`      Omit the functions section.
-  `--no-aliases`        Omit the aliases section.
 
   Examples:
 
       `genrc > ~/.shedrc.new`             snapshot current config
       `genrc --default > ~/.shedrc`       reset to factory defaults
-      `genrc --only autocmds,keymaps`     pull just those two sections
-      `genrc --only shopts --shopt highlight`
-                                          only the highlight.* shopts
-      `genrc --shopt prompt.complete_style --no-comments`
-                                          single key, bare output
-      `genrc --only functions,aliases > ~/.shed_funcs.sh`
-                                          export functions and aliases
+      `genrc -Ak`                         pull just autocmds and keymaps
+      `genrc -fa > ~/.shed_funcs.sh`      export functions and aliases
+      `genrc --no-comments`               bare output, no header/labels
 
 ==============================================================================
 GETOPTS                                          *builtin-getopts* *getopts*
