@@ -338,7 +338,6 @@ pub struct GenRcConfig {
   pub include_completions: bool,
   pub include_autocmds: bool,
   pub include_keymaps: bool,
-  pub shopt_filter: Option<Vec<String>>,
 }
 
 impl Default for GenRcConfig {
@@ -352,7 +351,6 @@ impl Default for GenRcConfig {
       include_completions: true,
       include_autocmds: true,
       include_keymaps: true,
-      shopt_filter: None,
     }
   }
 }
@@ -363,18 +361,6 @@ impl GenRcConfig {
       source: ShoptSource::Defaults,
       ..Self::default()
     }
-  }
-
-  fn shopt_matches(&self, key: &str) -> bool {
-    let Some(filter) = self.shopt_filter.as_ref() else {
-      return true;
-    };
-    filter.iter().any(|f| {
-      key == f.as_str()
-        || key
-          .strip_prefix(f.as_str())
-          .is_some_and(|rest| rest.starts_with('.'))
-    })
   }
 }
 
@@ -409,10 +395,7 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
     let entries = Shed::shopts(|o| o.rc_entries(config.source));
     let mut current_group: Option<&'static str> = None;
 
-    for (key, group, entry, doc) in entries {
-      if !config.shopt_matches(&key) {
-        continue;
-      }
+    for (_key, group, entry, doc) in entries {
       if config.include_comments && Some(group) != current_group {
         if current_group.is_some() {
           lines.push(String::new());
@@ -443,7 +426,10 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
       });
       aliases.sort_by(|a, b| a.0.cmp(&b.0));
       for (name, body) in aliases {
-        lines.push(crate::state::vars::display_as_var(name, body));
+        lines.push(format!(
+          "alias {}",
+          crate::state::vars::display_as_var(name, body)
+        ));
       }
     }
     lines.push(String::new());

@@ -26,10 +26,6 @@ impl ExpandFlags {
   const HEREDOC: Self = Self::VAR.union(Self::CMDSUB);
 
   const PROMPT: Self = Self::VAR.union(Self::CMDSUB);
-
-  const COMPLETION: Self = Self::all()
-    .difference(Self::CMDSUB)
-    .difference(Self::PROCSUB);
 }
 
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.

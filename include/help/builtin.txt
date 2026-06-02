@@ -808,7 +808,7 @@ FLOG                       *builtin-flog* *flog* *FLOG_FMT* *flog-fmt*
 ==============================================================================
 GENRC                                            *builtin-genrc* *genrc*
 
-  `genrc [-aAkfc] [--default] [--no-comments]`
+  `genrc [-saAkfc] [--default] [--no-comments]`
 
   Print an rc file built from the current shell state to stdout. Useful
   for regenerating `~/.shedrc`, or for inspecting the live configuration
@@ -828,10 +828,10 @@ GENRC                                            *builtin-genrc* *genrc*
 
   Section flags pick which categories to emit. With no section flags,
   every section is included. Passing any section flag restricts the
-  output to just those categories; the shopts block is always emitted
-  as the base layer regardless. Short flags pack, so `-aAkfc` is the
-  same as `-a -A -k -f -c`.
+  output to just those categories. Short flags pack, so `-saAkfc` is
+  the same as `-s -a -A -k -f -c`.
 
+  `-s`                  Include the shopts section.
   `-a`                  Include the aliases section.
   `-A`                  Include the autocmds section.
   `-k`                  Include the keymaps section.
@@ -855,7 +855,7 @@ GENRC                                            *builtin-genrc* *genrc*
       `genrc --default > ~/.shedrc`       reset to factory defaults
       `genrc -Ak`                         pull just autocmds and keymaps
       `genrc -fa > ~/.shed_funcs.sh`      export functions and aliases
-      `genrc --no-comments`               bare output, no header/labels
+      `genrc -s --no-comments`            bare shopt dump, sourceable
 
 ==============================================================================
 GETOPTS                                          *builtin-getopts* *getopts*

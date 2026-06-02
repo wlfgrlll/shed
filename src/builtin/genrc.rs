@@ -1,7 +1,7 @@
 use super::{
-  ShResult, Shed,
+  ShResult,
   getopt::{Opt, OptSpec},
-  outln, sherr,
+  outln,
   state::{
     shopt::ShoptSource,
     util::{GenRcConfig, compose_rc},
@@ -17,15 +17,14 @@ pub struct GenRc;
 impl super::Builtin for GenRc {
   fn opts(&self) -> Vec<OptSpec> {
     vec![
-      OptSpec::single_arg("only"),
+      OptSpec::flag('s'), // shopts
+      OptSpec::flag('a'), // alias
+      OptSpec::flag('k'), // keymaps
+      OptSpec::flag('A'), // autocmds
+      OptSpec::flag('f'), // functions
+      OptSpec::flag('c'), // completions
       OptSpec::flag("default"),
-      OptSpec::flag("no-autocmds"),
-      OptSpec::flag("no-keymaps"),
-      OptSpec::flag("no-completions"),
-      OptSpec::flag("no-functions"),
-      OptSpec::flag("no-aliases"),
       OptSpec::flag("no-comments"),
-      OptSpec::single_arg("shopt"),
     ]
   }
 
@@ -34,76 +33,66 @@ impl super::Builtin for GenRc {
   }
 
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
-    let span = args.span();
     let mut config = GenRcConfig::default();
-    let mut shopt_filter: Vec<String> = vec![];
-    let mut only_sections: Option<Vec<String>> = None;
+    let mut use_defaults = false;
+    let mut no_comments = false;
+
+    let mut want_shopts = false;
+    let mut want_aliases = false;
+    let mut want_keymaps = false;
+    let mut want_autocmds = false;
+    let mut want_functions = false;
+    let mut want_completions = false;
+    let mut any_section_flag = false;
 
     for opt in args.opts {
       match opt {
-        Opt::Long(name) if name == "default" => config.source = ShoptSource::Defaults,
-        Opt::Long(name) if name == "no-autocmds" => config.include_autocmds = false,
-        Opt::Long(name) if name == "no-keymaps" => config.include_keymaps = false,
-        Opt::Long(name) if name == "no-completions" => config.include_completions = false,
-        Opt::Long(name) if name == "no-functions" => config.include_functions = false,
-        Opt::Long(name) if name == "no-aliases" => config.include_aliases = false,
-        Opt::Long(name) if name == "no-comments" => config.include_comments = false,
-        Opt::LongWithArg(name, arg) if name == "shopt" => {
-          let valid = Shed::shopts(|o| o.get(&arg)).ok().flatten().is_some();
-
-          if !valid {
-            return Err(sherr!(InvalidOpt @ span, "invalid shopt name: {arg}"));
-          }
-
-          shopt_filter.push(arg);
+        Opt::Short('s') => {
+          want_shopts = true;
+          any_section_flag = true;
         }
-        Opt::LongWithArg(name, arg) if name == "only" => {
-          // Comma separated list of categories
-          let list: Vec<String> = arg
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-          only_sections = Some(list);
+        Opt::Short('a') => {
+          want_aliases = true;
+          any_section_flag = true;
         }
+        Opt::Short('k') => {
+          want_keymaps = true;
+          any_section_flag = true;
+        }
+        Opt::Short('A') => {
+          want_autocmds = true;
+          any_section_flag = true;
+        }
+        Opt::Short('f') => {
+          want_functions = true;
+          any_section_flag = true;
+        }
+        Opt::Short('c') => {
+          want_completions = true;
+          any_section_flag = true;
+        }
+        Opt::Long(name) if name == "default" => use_defaults = true,
+        Opt::Long(name) if name == "no-comments" => no_comments = true,
         _ => {}
       }
     }
 
-    if !shopt_filter.is_empty() {
-      config.shopt_filter = Some(shopt_filter);
+    if any_section_flag {
+      // Everything defaults to off and is opted back in by the section
+      // flags the user passed.
+      config.include_shopts = want_shopts;
+      config.include_aliases = want_aliases;
+      config.include_keymaps = want_keymaps;
+      config.include_autocmds = want_autocmds;
+      config.include_functions = want_functions;
+      config.include_completions = want_completions;
     }
 
-    if let Some(sections) = only_sections {
-      const VALID: &[&str] = &[
-        "shopts",
-        "aliases",
-        "functions",
-        "completions",
-        "autocmds",
-        "keymaps",
-      ];
-      for name in &sections {
-        if !VALID.contains(&name.as_str()) {
-          return Err(
-            sherr!(
-              InvalidOpt @ span,
-              "unknown section in --only: '{name}'",
-            )
-            .with_note(format!("valid sections: {}", VALID.join(", "))),
-          );
-        }
-      }
-      // `--only` acts as an intersection: anything not listed gets
-      // turned off. Any `--no-X` flags already applied above remain
-      // in force (they can subtract further but never add).
-      let want = |s: &str| sections.iter().any(|n| n == s);
-      config.include_shopts &= want("shopts");
-      config.include_aliases &= want("aliases");
-      config.include_functions &= want("functions");
-      config.include_completions &= want("completions");
-      config.include_autocmds &= want("autocmds");
-      config.include_keymaps &= want("keymaps");
+    if use_defaults {
+      config.source = ShoptSource::Defaults;
+    }
+    if no_comments {
+      config.include_comments = false;
     }
 
     for line in compose_rc(&config) {
