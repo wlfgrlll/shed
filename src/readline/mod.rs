@@ -1675,7 +1675,9 @@ impl ShedLine {
       false,
     );
     let prompt_lines = prompt_end.row;
-    let reserved = if shopt!(statline.enable) { 2 } else { 0 };
+    // Always reserve at least one row at the bottom for ephemeral status
+    // messages; reserve two when the full statline is on as well.
+    let reserved = Terminal::reserved_rows() as usize;
     let viewport_cap = t_rows.saturating_sub(prompt_lines + reserved).max(1);
     self.editor.set_viewport_cap(Some(viewport_cap));
 

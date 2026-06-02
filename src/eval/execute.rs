@@ -1134,8 +1134,11 @@ impl Dispatcher {
     };
 
     drop(cooked_guard); // exit cooked mode
-    if !is_bg && let Some((_, bottom)) = saved_region {
-      Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
+    if !is_bg {
+      Shed::term_mut(Terminal::fix_cursor_column)?;
+      if let Some((_, bottom)) = saved_region {
+        Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
+      }
     }
 
     check_err(pipeline_flags, None, blame_span, pipeline_context)?;

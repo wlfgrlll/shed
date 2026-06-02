@@ -585,18 +585,20 @@ impl Terminal {
     Ok(None)
   }
   pub fn fix_cursor_row(&mut self, bottom: u16) -> ShResult<()> {
-    if shopt!(statline.enable) {
-      let cursor_row = self.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
+    let cursor_row = self.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
 
-      if cursor_row.is_none_or(|r| r >= bottom as usize) {
+    if cursor_row.is_none_or(|r| r >= bottom as usize) {
+      if shopt!(statline.enable) {
         write!(self, "\n\n")?;
-        self
-          .execute_control(&TermCtl::Cursor(CursorCtl::Absolute {
-            row: bottom,
-            col: 1,
-          }))
-          .ok();
+      } else {
+        writeln!(self)?;
       }
+      self
+        .execute_control(&TermCtl::Cursor(CursorCtl::Absolute {
+          row: bottom,
+          col: 1,
+        }))
+        .ok();
     }
     Ok(())
   }
@@ -610,8 +612,9 @@ impl Terminal {
     };
 
     if c.0 != 1 {
-      self.input_buf.push_str("\x1b[7m%\x1b[0m\n\r");
+      write!(self, "\x1b[7m%\x1b[0m\n\r");
     }
+    self.flush()?;
     Ok(())
   }
 
