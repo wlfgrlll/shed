@@ -551,7 +551,7 @@ impl ShedLine {
 
   pub fn get_line_data(&self) -> LineData {
     LineData {
-      buffer: self.editor.joined().replace('\n', "\\n"),
+      buffer: self.editor.to_string().replace('\n', "\\n"),
       cursor: self.editor.cursor_to_flat(),
       anchor: self.editor.anchor_to_flat(),
       hint: self.editor.try_join_hint().map(|s| s.replace('\n', "\\n")),
@@ -936,7 +936,7 @@ impl ShedLine {
       return;
     }
 
-    let buf = self.editor.joined();
+    let buf = self.editor.to_string();
     let cursor_pos = self.editor.cursor_to_flat();
     if !buf.is_empty() {
       self.worker.dispatch_worker(buf, cursor_pos);
@@ -997,7 +997,7 @@ impl ShedLine {
     }
     self
       .history
-      .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
+      .update_pending_cmd((&self.editor.to_string(), self.editor.cursor_to_flat()));
     self.needs_redraw = true;
 
     None
@@ -1022,7 +1022,7 @@ impl ShedLine {
       ModKeys::SHIFT => -1,
       _ => 1,
     };
-    let line = self.focused_editor().joined();
+    let line = self.focused_editor().to_string();
     let cursor_pos = self.focused_editor().cursor_byte_pos();
 
     let mut comp = self
@@ -1113,7 +1113,7 @@ impl ShedLine {
   }
 
   fn start_hist_search(&mut self) {
-    let initial = self.focused_editor().joined();
+    let initial = self.focused_editor().to_string();
     if let Some(entry) = self.focused_history().start_search(&initial) {
       with_vars([("HIST_ENTRY".into(), entry.clone())], || {
         autocmd!(OnHistorySelect);
@@ -1123,7 +1123,7 @@ impl ShedLine {
       self.focused_editor().move_cursor_to_end();
       self
         .history
-        .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
+        .update_pending_cmd((&self.editor.to_string(), self.editor.cursor_to_flat()));
       self.editor.clear_hint();
     } else {
       let finder = self.history_fzf().unwrap();
@@ -1334,7 +1334,7 @@ impl ShedLine {
       return Ok(None);
     }
 
-    let before = self.editor.joined();
+    let before = self.editor.to_string();
     let before_cursor = self.editor.cursor();
 
     self.exec_cmd(cmd, false)?;
@@ -1342,7 +1342,7 @@ impl ShedLine {
     if let Some(keys) = Shed::meta_mut(MetaTab::take_pending_widget_keys) {
       self.replay_keys(keys, false)?;
     }
-    let after = self.editor.joined();
+    let after = self.editor.to_string();
     let after_cursor = self.editor.cursor();
 
     if before != after {
@@ -1399,7 +1399,7 @@ impl ShedLine {
         Ok(None)
       }
       LineCmd::EndOfFile => {
-        if self.focused_editor().joined().is_empty() {
+        if self.focused_editor().to_string().is_empty() {
           Ok(Some(ReadlineEvent::Eof))
         } else {
           self.reset_active_widget(false)?;
@@ -1576,7 +1576,7 @@ impl ShedLine {
       // We are scrolling up from a pending command
       // Let's refresh the search mask to make sure
       // our history is up to date
-      let joined = self.editor.joined();
+      let joined = self.editor.to_string();
       self.focused_history().update_search_mask(Some(&joined));
     }
     let entry = self.focused_history().scroll(count).cloned();
@@ -1866,7 +1866,15 @@ impl ShedLine {
         && shopt!(highlight.enable)
       {
         let cursor_pos = self.focused_editor().cursor_to_flat();
-        pending_seq = highlight::highlight_ex(&pending_seq, &highlight::Palette::new(), cursor_pos);
+        let mut highlighted = String::new();
+        highlight::highlight_ex(
+          &mut highlighted,
+          &pending_seq,
+          &highlight::Palette::new(),
+          cursor_pos,
+        )
+        .ok();
+        pending_seq = highlighted;
       }
 
       queue_term!(
@@ -2348,7 +2356,7 @@ impl ShedLine {
   fn update_editor_hint(&mut self) {
     self
       .history
-      .update_pending_cmd((&self.editor.joined(), self.editor.cursor_to_flat()));
+      .update_pending_cmd((&self.editor.to_string(), self.editor.cursor_to_flat()));
     let hint = self.history.get_hint();
     self.editor.set_hint(hint);
   }
@@ -2394,7 +2402,7 @@ impl ShedLine {
   pub fn with_initial(mut self, initial: &str) -> Self {
     self.editor = LineBuf::new().with_initial(initial, 0);
     {
-      let s = self.editor.joined();
+      let s = self.editor.to_string();
       let c = self.editor.cursor_to_flat();
       self.focused_history().update_pending_cmd((&s, c));
     }

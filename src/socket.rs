@@ -551,7 +551,7 @@ pub(super) fn handle_socket_request(
     }
     SocketRequest::LineSet(line_header, value) => match line_header {
       LineHeader::Buffer => {
-        let joined = readline.editor().joined();
+        let joined = readline.editor().to_string();
         let pos = readline.editor().cursor_to_flat();
 
         readline.editor_mut().edit(|this| {
@@ -1165,7 +1165,7 @@ mod tests {
       SocketRequest::LineSet(LineHeader::Buffer, "set-from-socket".into()),
       &mut rl,
     );
-    assert_eq!(rl.editor().joined(), "set-from-socket");
+    assert_eq!(rl.editor().to_string(), "set-from-socket");
   }
 
   #[test]
@@ -1443,7 +1443,7 @@ mod tests {
     let (_, result) = run_handler(SocketRequest::LineSendKeys(keys), &mut rl);
     // Plain chars don't emit a ReadlineEvent — they just modify the buffer.
     assert!(matches!(result, Ok(None)));
-    assert_eq!(rl.editor().joined(), "hi");
+    assert_eq!(rl.editor().to_string(), "hi");
   }
 
   // Query::Status — branches that need a last_job

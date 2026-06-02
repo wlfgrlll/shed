@@ -27,7 +27,7 @@ trait SearchMode {
     self.query_mut().handle_key(key).map(|()| None).ok()?
   }
   fn pattern(&self) -> String {
-    self.query().buf.joined()
+    self.query().buf.to_string()
   }
   fn clear(&mut self) {
     self.query_mut().buf.clear_buffer();

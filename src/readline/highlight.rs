@@ -1,4 +1,4 @@
-use std::{fmt::Write, ops::Range};
+use std::ops::Range;
 
 use yansi::Paint;
 
@@ -164,23 +164,28 @@ impl Default for Palette {
   }
 }
 
-pub fn highlight_ex(input: &str, palette: &Palette, editor_cursor_pos: usize) -> String {
+pub fn highlight_ex<W: std::fmt::Write>(
+  out: &mut W,
+  input: &str,
+  palette: &Palette,
+  editor_cursor_pos: usize,
+) -> std::fmt::Result {
   let tks: Vec<CtxTk> = get_ex_context_tokens(input);
-  highlight(input, &tks, palette, editor_cursor_pos, &[])
+  highlight(out, input, &tks, palette, editor_cursor_pos, &[])
 }
 
-pub fn highlight(
+pub fn highlight<W: std::fmt::Write>(
+  out: &mut W,
   input: &str,
   tks: &[CtxTk],
   palette: &Palette,
   editor_cursor_pos: usize,
   selections: &[Range<usize>],
-) -> String {
-  let mut out = String::with_capacity(input.len() * 2); // pre-allocate some extra space for ANSI codes
+) -> std::fmt::Result {
   let mut cursor = 0;
   for tk in tks {
     paint(
-      &mut out,
+      out,
       tk,
       PaletteEntry::new(),
       &mut cursor,
@@ -189,17 +194,17 @@ pub fn highlight(
       selections,
     );
   }
-  out.push_str("\x1b[0m"); // ensure we reset at the end
-  out.push_str(&input[cursor..]); // append any remaining text after the last token
-  out
+  out.write_str("\x1b[0m")?; // ensure we reset at the end
+  out.write_str(&input[cursor..])?; // append any remaining text after the last token
+  Ok(())
 }
 
 /// given a `CtxTk`, write highlighted output to `out`
 ///
 /// `CtxTk` already did the heavy lifting for figuring out where and what everything is.
 /// now we can just paint the spans that it put together.
-fn paint(
-  out: &mut String,
+fn paint<W: std::fmt::Write>(
+  out: &mut W,
   node: &CtxTk,
   parent: PaletteEntry,
   cursor: &mut usize,       // our position in the input
@@ -256,7 +261,11 @@ fn paint(
 /// `:r!cat file_with_escapes`) would emit those bytes straight to the
 /// terminal, letting any clipboard-injection-style sequence change the
 /// title, write to OSC 52, etc.
-fn paint_with_visualized_controls(out: &mut String, text: &str, style: PaletteEntry) {
+fn paint_with_visualized_controls<W: std::fmt::Write>(
+  out: &mut W,
+  text: &str,
+  style: PaletteEntry,
+) {
   // Hot path: nothing to visualize, single styled write.
   if !text.bytes().any(is_visualized_control) {
     write!(out, "{}", text.paint(style.style())).unwrap();
@@ -288,8 +297,8 @@ fn is_visualized_control(b: u8) -> bool {
   matches!(b, 0x00..=0x08 | 0x0b..=0x1f | 0x7f)
 }
 
-fn emit_with_selection(
-  out: &mut String,
+fn emit_with_selection<W: std::fmt::Write>(
+  out: &mut W,
   src: &str,
   range: Range<usize>,
   style: PaletteEntry,
@@ -411,7 +420,8 @@ mod tests {
     ];
     for input in cases {
       let tks = get_context_tokens(input);
-      let out = highlight(input, &tks, &p, 0, &[]);
+      let mut out = String::new();
+      highlight(&mut out, input, &tks, &p, 0, &[]).unwrap();
       assert_eq!(
         strip_ansi(&out),
         input,
@@ -429,7 +439,8 @@ mod tests {
   fn paints_var_sub_with_variable_style() {
     let p = test_palette();
     let tks = get_context_tokens("ls $foo");
-    let out = highlight("ls $foo", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "ls $foo", &tks, &p, 0, &[]).unwrap();
     // Cyan = ANSI 36 - the variable style for $foo should appear in output.
     assert!(
       contains_sgr_param(&out, "36"),
@@ -447,7 +458,8 @@ mod tests {
   fn paints_double_string_with_string_style() {
     let p = test_palette();
     let tks = get_context_tokens(r#""hello""#);
-    let out = highlight(r#""hello""#, &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, r#""hello""#, &tks, &p, 0, &[]).unwrap();
     // Yellow = ANSI 33.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -459,7 +471,8 @@ mod tests {
   fn nested_var_in_string_paints_both() {
     let p = test_palette();
     let tks = get_context_tokens(r#""hi $foo""#);
-    let out = highlight(r#""hi $foo""#, &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, r#""hi $foo""#, &tks, &p, 0, &[]).unwrap();
     // Both yellow (string) and cyan (var) should appear.
     assert!(
       contains_sgr_param(&out, "33"),
@@ -476,7 +489,8 @@ mod tests {
     let p = test_palette();
     let input = "echo $(date)";
     let tks = get_context_tokens(input);
-    let out = highlight(input, &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, input, &tks, &p, 0, &[]).unwrap();
     assert_eq!(strip_ansi(&out), input, "cmd sub round-trip: {out:?}");
   }
 
@@ -486,14 +500,17 @@ mod tests {
     // visually. We just want no actual characters to come through.
     let p = test_palette();
     let tks = &get_context_tokens("");
-    assert_eq!(strip_ansi(&highlight("", tks, &p, 0, &[])), "");
+    let mut out = String::new();
+    highlight(&mut out, "", tks, &p, 0, &[]).unwrap();
+    assert_eq!(strip_ansi(&out), "");
   }
 
   #[test]
   fn trailing_whitespace_preserved() {
     let p = test_palette();
     let tks = get_context_tokens("ls   ");
-    let out = highlight("ls   ", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "ls   ", &tks, &p, 0, &[]).unwrap();
     assert_eq!(strip_ansi(&out), "ls   ");
   }
 
@@ -503,7 +520,8 @@ mod tests {
   fn esc_renders_as_caret_bracket() {
     let p = test_palette();
     let tks = get_context_tokens("a\x1bb");
-    let out = highlight("a\x1bb", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "a\x1bb", &tks, &p, 0, &[]).unwrap();
     let visible = strip_ansi(&out);
     assert!(visible.contains("a^[b"), "got {visible:?}");
   }
@@ -512,7 +530,8 @@ mod tests {
   fn cr_renders_as_caret_m() {
     let p = test_palette();
     let tks = get_context_tokens("before\rafter");
-    let out = highlight("before\rafter", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "before\rafter", &tks, &p, 0, &[]).unwrap();
     let visible = strip_ansi(&out);
     assert!(visible.contains("before^Mafter"), "got {visible:?}");
   }
@@ -521,7 +540,8 @@ mod tests {
   fn del_renders_as_caret_question() {
     let p = test_palette();
     let tks = get_context_tokens("x\x7fy");
-    let out = highlight("x\x7fy", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "x\x7fy", &tks, &p, 0, &[]).unwrap();
     let visible = strip_ansi(&out);
     assert!(visible.contains("x^?y"), "got {visible:?}");
   }
@@ -532,7 +552,8 @@ mod tests {
     // visualizing them would break layout.
     let p = test_palette();
     let tks = get_context_tokens("a\nb\tc");
-    let out = highlight("a\nb\tc", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "a\nb\tc", &tks, &p, 0, &[]).unwrap();
     let visible = strip_ansi(&out);
     assert!(visible.contains("a\nb\tc"), "got {visible:?}");
     assert!(!visible.contains("^J"));
@@ -545,7 +566,8 @@ mod tests {
     // (or it would let the terminal interpret embedded escape sequences).
     let p = test_palette();
     let tks = get_context_tokens("\x1b]0;PWNED\x07");
-    let out = highlight("\x1b]0;PWNED\x07", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "\x1b]0;PWNED\x07", &tks, &p, 0, &[]).unwrap();
     assert!(
       !out.contains('\x1b') || {
         // shed's own styling escapes are allowed; check by stripping CSI runs
@@ -563,7 +585,8 @@ mod tests {
     // identically (we have a fast path that skips visualization).
     let p = test_palette();
     let tks = get_context_tokens("echo hello world");
-    let out = highlight("echo hello world", &tks, &p, 0, &[]);
+    let mut out = String::new();
+    highlight(&mut out, "echo hello world", &tks, &p, 0, &[]).unwrap();
     assert_eq!(strip_ansi(&out), "echo hello world");
   }
 
@@ -575,9 +598,11 @@ mod tests {
     // visualized char.
     let p = test_palette();
     let tks = get_context_tokens("ab");
-    let plain = highlight("ab", &tks, &p, 0, &[]);
+    let mut plain = String::new();
+    highlight(&mut plain, "ab", &tks, &p, 0, &[]).unwrap();
     let tks = get_context_tokens("a\x1bb");
-    let with_ctrl = highlight("a\x1bb", &tks, &p, 0, &[]);
+    let mut with_ctrl = String::new();
+    highlight(&mut with_ctrl, "a\x1bb", &tks, &p, 0, &[]).unwrap();
     // The control variant should contain "^[" (visualization) and have
     // more bytes than the plain version (extra SGR codes).
     assert!(

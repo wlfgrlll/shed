@@ -21,7 +21,7 @@ use super::{
   state::terminal::CursorStyle,
   status_msg,
 };
-use crate::verb;
+use crate::{eval::lex::TkFlags, verb};
 use bitflags::bitflags;
 
 bitflags! {
@@ -86,7 +86,7 @@ impl EditMode for ViEx {
   fn handle_key_fallible(&mut self, key: KeyEvent) -> ShResult<Option<EditCmd>> {
     match key {
       key!('\r') | key!(Enter) => {
-        let input = self.pending_cmd.editor.buf.joined();
+        let input = self.pending_cmd.editor.buf.to_string();
         let res = match parse_ex_input(&input) {
           ExParseResult::Success(node) => {
             self.pending_cmd.clear();
@@ -163,7 +163,7 @@ impl EditMode for ViEx {
   }
 
   fn pending_seq(&self) -> Option<String> {
-    Some(self.pending_cmd.editor.buf.joined())
+    Some(self.pending_cmd.editor.buf.to_string())
   }
 
   fn pending_cursor(&self) -> Option<usize> {

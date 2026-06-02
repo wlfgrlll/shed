@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use super::{ShResult, sherr, system_msg, ui, var};
 
 pub(crate) fn init() -> ShResult<()> {

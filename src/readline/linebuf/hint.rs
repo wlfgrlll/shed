@@ -175,7 +175,7 @@ impl super::LineBuf {
       let keep = self.hint.as_ref().is_some_and(|h| match h {
         Hint::Override(_) => self.lines.is_prefix_lines(h.lines()),
         Hint::Completion { lines, token_start } => {
-          self.lines.is_prefix_lines(lines) && self.joined().len() > *token_start
+          self.lines.is_prefix_lines(lines) && self.to_string().len() > *token_start
         }
         Hint::History(_) => false,
       });
@@ -227,7 +227,10 @@ impl super::LineBuf {
   }
 
   pub fn try_get_hint_text(&self) -> Option<String> {
-    self.hint.as_ref().map(|h| h.display(Some(&self.joined())))
+    self
+      .hint
+      .as_ref()
+      .map(|h| h.display(Some(&self.to_string())))
   }
 
   pub fn try_join_hint(&self) -> Option<String> {

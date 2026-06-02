@@ -249,7 +249,7 @@ impl HelpPager {
     }
 
     if self.search.active {
-      let query = self.search.editor.buf.joined();
+      let query = self.search.editor.buf.to_string();
       let prefix = match self.search.dir {
         Direction::Forward => '/',
         Direction::Backward => '?',
@@ -403,10 +403,10 @@ impl HelpPager {
   }
 
   pub fn search(&mut self, jump: bool) {
-    if self.search.editor.buf.joined().is_empty() || !self.search.active {
+    if self.search.editor.buf.to_string().is_empty() || !self.search.active {
       return;
     }
-    let pat = self.search.editor.buf.joined();
+    let pat = self.search.editor.buf.to_string();
     let re = Regex::new(&regex::escape(&pat)).unwrap();
 
     let visible = self.content.visible();
@@ -832,7 +832,7 @@ mod tests {
     p.handle_key(key(K::Char('o'))).unwrap();
     assert!(p.search.active);
     // The query editor's buffer should reflect what we typed.
-    assert_eq!(p.search.editor.buf.joined(), "foo");
+    assert_eq!(p.search.editor.buf.to_string(), "foo");
   }
 
   #[test]

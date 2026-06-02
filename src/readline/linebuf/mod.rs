@@ -302,7 +302,7 @@ impl LineBuf {
   }
 
   pub fn attempt_alias_expansion_all(&mut self) -> bool {
-    let raw = self.joined();
+    let raw = self.to_string();
     let (result, first_pos) = expand_alias_with_pos(raw);
     if first_pos.is_some() {
       self.lines = Lines::to_lines(&result);
@@ -353,7 +353,7 @@ impl LineBuf {
   }
 
   pub fn attempt_history_expansion(&mut self, history: &History) -> bool {
-    let buf = self.joined();
+    let buf = self.to_string();
     let tks = get_context_tokens(&buf);
     let mut hist_expansions = vec![];
     for tk in &tks {
@@ -403,7 +403,7 @@ impl LineBuf {
       && !pat.is_empty()
       && let Ok(re) = Shed::meta_mut(|m| m.get_regex(pat.clone()))
     {
-      let buf = self.joined();
+      let buf = self.to_string();
       let positions = self.byte_positions();
       let lookup = |b: usize| -> Option<usize> {
         positions

@@ -157,7 +157,7 @@ impl super::LineBuf {
           return Ok(());
         }
         let name = arg.clone().filter(|a| !a.trim().is_empty());
-        let buffer = self.joined();
+        let buffer = self.to_string();
         let (s, e) = (self.row(), self.col());
 
         stash.push(name.as_ref(), &buffer, (s, e))?;
@@ -341,7 +341,7 @@ impl super::LineBuf {
           return Ok(());
         };
 
-        let curr_buf = self.joined();
+        let curr_buf = self.to_string();
         let curr_cursor = (self.row(), self.col());
 
         // Write the current buffer back into the stash slot.
@@ -449,7 +449,7 @@ impl super::LineBuf {
           system_msg!("Failed to open file {}", path_buf.display());
           return Ok(());
         };
-        let joined = self.joined();
+        let joined = self.to_string();
         let bytes = joined.as_bytes();
         let lines = bytecount::count(bytes, b'\n');
         let len = bytes.len() as u64;
@@ -464,7 +464,7 @@ impl super::LineBuf {
         return Ok(());
       }
       WriteDest::Cmd(cmd) => {
-        let buf = self.joined();
+        let buf = self.to_string();
         let spec = RedirSpec::Buffer {
           fd: STDIN_FILENO,
           buf,
@@ -487,12 +487,12 @@ impl super::LineBuf {
   fn ex_read(&mut self, src: &ReadSrc) {
     let contents = match src {
       ReadSrc::File(path_buf) => {
-        if !path_buf.is_file() {
-          system_msg!("{} is not a file", path_buf.display());
-        }
-        let Ok(contents) = std::fs::read_to_string(path_buf) else {
-          system_msg!("Failed to read file {}", path_buf.display());
-          return;
+        let contents = match std::fs::read_to_string(path_buf) {
+          Ok(c) => c,
+          Err(e) => {
+            system_msg!("Failed to read '{}': {e}", path_buf.display());
+            return;
+          }
         };
         let line_count = contents.lines().count();
         let byte_count = contents.len();
@@ -568,7 +568,7 @@ impl super::LineBuf {
     vars.insert("ANCHOR".into());
     let _guard = var_ctx_guard(vars);
 
-    let mut buf = self.joined();
+    let mut buf = self.to_string();
     let cursor_raw = self.cursor_to_flat();
     let mut cursor = cursor_raw.to_string();
     let mut anchor = self.anchor_to_flat();
@@ -757,7 +757,7 @@ mod tests {
     let _g = TestGuard::new();
     let mut buf = make_buf("echo hello");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
-    assert_eq!(buf.joined(), "", "push should clear the buffer");
+    assert_eq!(buf.to_string(), "", "push should clear the buffer");
 
     let stash = Stash::new().unwrap();
     assert_eq!(stash.stack_len(), 1, "stack should have one entry");
@@ -795,10 +795,10 @@ mod tests {
     let _g = TestGuard::new();
     let mut buf = make_buf("first cmd");
     buf.ex_stash(&StashArgs::Push(None)).unwrap();
-    assert_eq!(buf.joined(), "");
+    assert_eq!(buf.to_string(), "");
 
     buf.ex_stash(&StashArgs::Pop(None)).unwrap();
-    assert_eq!(buf.joined(), "first cmd");
+    assert_eq!(buf.to_string(), "first cmd");
     let stash = Stash::new().unwrap();
     assert_eq!(stash.stack_len(), 0);
   }
@@ -809,7 +809,7 @@ mod tests {
     let mut buf = make_buf("starting content");
     buf.ex_stash(&StashArgs::Pop(None)).unwrap();
     // Buffer untouched when there's nothing to pop.
-    assert_eq!(buf.joined(), "starting content");
+    assert_eq!(buf.to_string(), "starting content");
   }
 
   #[test]
@@ -822,7 +822,7 @@ mod tests {
     // stack now: [entry one, entry two] (idx 0 oldest, idx 1 newest)
 
     buf.ex_stash(&StashArgs::Pop(Some("0".into()))).unwrap();
-    assert_eq!(buf.joined(), "entry one");
+    assert_eq!(buf.to_string(), "entry one");
     let stash = Stash::new().unwrap();
     assert_eq!(stash.stack_len(), 1, "only one left after popping idx 0");
   }
@@ -838,7 +838,7 @@ mod tests {
 
     buf.ex_stash(&StashArgs::Drop(Some("0".into()))).unwrap();
     assert_eq!(
-      buf.joined(),
+      buf.to_string(),
       "current work",
       "drop should not modify the buffer"
     );
@@ -858,7 +858,7 @@ mod tests {
     buf
       .ex_stash(&StashArgs::Apply(Some("snap".into())))
       .unwrap();
-    assert_eq!(buf.joined(), "saved cmd");
+    assert_eq!(buf.to_string(), "saved cmd");
 
     // Apply should NOT remove the named entry.
     let stash = Stash::new().unwrap();
@@ -872,7 +872,7 @@ mod tests {
     buf
       .ex_stash(&StashArgs::Apply(Some("nope_doesnt_exist".into())))
       .unwrap();
-    assert_eq!(buf.joined(), "current");
+    assert_eq!(buf.to_string(), "current");
   }
 
   // ─── Insert ──────────────────────────────────────────────────────────
@@ -892,7 +892,7 @@ mod tests {
       .unwrap();
     // The stashed content gets pasted; exact concatenation depends on
     // insert_lines_at semantics, but the result must contain both.
-    let result = buf.joined();
+    let result = buf.to_string();
     assert!(result.contains("stash content"), "got: {result:?}");
     assert!(result.contains("hello world"), "got: {result:?}");
   }
@@ -990,7 +990,7 @@ mod tests {
       // The command runs in the current shell process; assigning
       // BUFFER updates the shell var, which the function reads back.
       buf.run_shell_cmd("BUFFER=replaced", None).unwrap();
-      assert_eq!(buf.joined(), "replaced");
+      assert_eq!(buf.to_string(), "replaced");
     }
 
     // ─── CURSOR var modifications round-trip ───────────────────────
@@ -1021,7 +1021,7 @@ mod tests {
       let _g = TestGuard::new();
       let mut buf = make_buf("original");
       buf.run_shell_cmd("BUFFER=replaced;CURSOR=4", None).unwrap();
-      assert_eq!(buf.joined(), "replaced");
+      assert_eq!(buf.to_string(), "replaced");
       assert_eq!(buf.cursor_to_flat(), 4);
     }
 
@@ -1038,7 +1038,7 @@ mod tests {
       buf
         .run_shell_cmd("BUFFER=should_not_leak", Some(""))
         .unwrap();
-      assert_eq!(buf.joined(), "stays_the_same");
+      assert_eq!(buf.to_string(), "stays_the_same");
     }
   }
 
@@ -1113,7 +1113,7 @@ mod tests {
       std::fs::write(&path, "line one\nline two\n").unwrap();
       let mut buf = make_buf("");
       buf.ex_read(&ReadSrc::File(path));
-      let joined = buf.joined();
+      let joined = buf.to_string();
       assert!(joined.contains("line one"), "got: {joined:?}");
       assert!(joined.contains("line two"), "got: {joined:?}");
     }
@@ -1126,7 +1126,7 @@ mod tests {
       let mut buf = make_buf("original");
       let bad_path = std::path::PathBuf::from("/this/does/not/exist/zzz.txt");
       buf.ex_read(&ReadSrc::File(bad_path));
-      assert_eq!(buf.joined(), "original");
+      assert_eq!(buf.to_string(), "original");
     }
 
     #[test]
@@ -1137,7 +1137,7 @@ mod tests {
       let dir = tempfile::TempDir::new().unwrap();
       let mut buf = make_buf("untouched");
       buf.ex_read(&ReadSrc::File(dir.path().to_path_buf()));
-      assert_eq!(buf.joined(), "untouched");
+      assert_eq!(buf.to_string(), "untouched");
     }
 
     #[test]
@@ -1177,7 +1177,7 @@ mod tests {
       // via run_shell_cmd's read-back. Use it to confirm the command
       // ran rather than the line-range path being taken.
       buf.ex_shell_cmd(&cmd, "BUFFER=after_no_motion").unwrap();
-      assert_eq!(buf.joined(), "after_no_motion");
+      assert_eq!(buf.to_string(), "after_no_motion");
     }
 
     /// With a Line motion attached, `ex_shell_cmd` drains the indicated
@@ -1198,7 +1198,7 @@ mod tests {
       buf.ex_shell_cmd(&cmd, "cat").unwrap();
       // Buffer should still contain all three originals — cat echoes
       // back what it read, so the splice replaces with identical text.
-      let joined = buf.joined();
+      let joined = buf.to_string();
       assert!(joined.contains("alpha"), "got: {joined:?}");
       assert!(joined.contains("beta"), "got: {joined:?}");
       assert!(joined.contains("gamma"), "got: {joined:?}");

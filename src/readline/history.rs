@@ -683,7 +683,7 @@ impl History {
   /// any operation that reads the mask (history scrolling).
   pub fn ensure_mask_fresh(&mut self) {
     if self.mask_stale {
-      let prefix = self.pending.as_ref().map(LineBuf::joined);
+      let prefix = self.pending.as_ref().map(LineBuf::to_string);
       self.constrain_entries(prefix.as_deref());
       self.mask_stale = false;
     }
@@ -850,7 +850,7 @@ impl History {
     if !self.at_pending() {
       return None;
     }
-    let prefix = self.pending.as_ref()?.joined();
+    let prefix = self.pending.as_ref()?.to_string();
     if prefix.is_empty() {
       return None;
     }

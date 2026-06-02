@@ -632,7 +632,7 @@ mod tests {
     }
 
     fn editor_content(&self) -> String {
-      self.readline.editor().joined()
+      self.readline.editor().to_string()
     }
   }
 
@@ -732,7 +732,7 @@ mod tests {
     );
     // The buffer itself should still be empty — the 'j' is held pending,
     // not yet inserted as a literal.
-    assert_eq!(h.readline.editor().joined(), "");
+    assert_eq!(h.readline.editor().to_string(), "");
   }
 
   #[test]
@@ -805,7 +805,7 @@ mod tests {
       readline.pending_keymap_mut().push(k);
     }
     resolve_keymap(&mut readline).unwrap();
-    assert_eq!(readline.editor().joined(), "a");
+    assert_eq!(readline.editor().to_string(), "a");
     assert!(readline.pending_keymap().is_empty());
   }
 
@@ -826,7 +826,7 @@ mod tests {
     }
     resolve_keymap(&mut readline).unwrap();
     // The keymap action 'xy' should have been typed into the buffer.
-    assert_eq!(readline.editor().joined(), "xy");
+    assert_eq!(readline.editor().to_string(), "xy");
     assert!(readline.pending_keymap().is_empty());
   }
 
@@ -835,7 +835,7 @@ mod tests {
     let (mut readline, _g) = fresh_readline();
     assert!(readline.pending_keymap().is_empty());
     resolve_keymap(&mut readline).unwrap();
-    assert_eq!(readline.editor().joined(), "");
+    assert_eq!(readline.editor().to_string(), "");
   }
 
   // ===================== handle_readline_event =====================
@@ -896,7 +896,7 @@ mod tests {
     let (mut readline, _g) = fresh_readline();
     // Empty queue → loop body never runs, pending_keymap is empty, Ok.
     run_script_keys(&mut readline, vec![]).unwrap();
-    assert_eq!(readline.editor().joined(), "");
+    assert_eq!(readline.editor().to_string(), "");
   }
 
   #[test]
@@ -905,7 +905,7 @@ mod tests {
     // Type "abc" with no Enter — chars go into the editor buffer.
     let keys = expand_keymap("abc");
     run_script_keys(&mut readline, keys).unwrap();
-    assert_eq!(readline.editor().joined(), "abc");
+    assert_eq!(readline.editor().to_string(), "abc");
   }
 
   #[test]

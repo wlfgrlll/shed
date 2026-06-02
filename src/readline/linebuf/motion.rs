@@ -139,7 +139,7 @@ impl super::LineBuf {
         return None;
       }
     };
-    let buf = self.joined();
+    let buf = self.to_string();
     let mut offset = self.pos_to_byte(self.cursor.pos)?;
     let mut target_byte = None;
 
@@ -1410,7 +1410,7 @@ mod tests {
       },
       upper_grapheme,
     );
-    assert_eq!(b.joined(), "HELlo");
+    assert_eq!(b.to_string(), "HELlo");
   }
 
   #[test]
@@ -1426,7 +1426,7 @@ mod tests {
       upper_grapheme,
     );
     // Exclusive end: cols 0..2 → "HEllo".
-    assert_eq!(b.joined(), "HEllo");
+    assert_eq!(b.to_string(), "HEllo");
   }
 
   #[test]
@@ -1442,7 +1442,7 @@ mod tests {
       },
       upper_grapheme,
     );
-    assert_eq!(b.joined(), "ABC");
+    assert_eq!(b.to_string(), "ABC");
   }
 
   #[test]
@@ -1459,7 +1459,7 @@ mod tests {
       upper_grapheme,
     );
     // ordered → start=col 1, end=col 3 inclusive → cols 1..=3.
-    assert_eq!(b.joined(), "hELLo");
+    assert_eq!(b.to_string(), "hELLo");
   }
 
   // ─── MotionKind::Char (multi-row) ───────────────────────────────
@@ -1479,7 +1479,7 @@ mod tests {
     // Row 0: from col 2 to end of line ("hello" → "heLLO")
     // Row 1: entire line ("world" → "WORLD")
     // Row 2: cols 0..=1 ("foo" → "FOo")
-    assert_eq!(b.joined(), "heLLO\nWORLD\nFOo");
+    assert_eq!(b.to_string(), "heLLO\nWORLD\nFOo");
   }
 
   #[test]
@@ -1496,7 +1496,7 @@ mod tests {
     );
     // Row 0: cols 2..end ("hello" → "heLLO")
     // Row 1: cols 0..2 exclusive → cols 0..2 → "world" → "WOrld"
-    assert_eq!(b.joined(), "heLLO\nWOrld");
+    assert_eq!(b.to_string(), "heLLO\nWOrld");
   }
 
   // ─── MotionKind::Line ──────────────────────────────────────────
@@ -1513,7 +1513,7 @@ mod tests {
       },
       upper_grapheme,
     );
-    assert_eq!(b.joined(), "a\nB\nC\nd");
+    assert_eq!(b.to_string(), "a\nB\nC\nd");
   }
 
   #[test]
@@ -1529,7 +1529,7 @@ mod tests {
       },
       upper_grapheme,
     );
-    assert_eq!(b.joined(), "a\nB\nc\nd");
+    assert_eq!(b.to_string(), "a\nB\nc\nd");
   }
 
   #[test]
@@ -1545,6 +1545,6 @@ mod tests {
       },
       upper_grapheme,
     );
-    assert_eq!(b.joined(), "ABC\ndef");
+    assert_eq!(b.to_string(), "ABC\ndef");
   }
 }

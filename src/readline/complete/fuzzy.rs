@@ -218,7 +218,7 @@ impl QueryEditor {
   pub fn get_window(&mut self) -> String {
     let buf_len = self.linebuf.count_graphemes();
     if buf_len <= self.available_width {
-      return self.linebuf.joined();
+      return self.linebuf.to_string();
     }
     let start = self
       .scroll_offset
@@ -428,7 +428,7 @@ impl FuzzySelector {
       .into_iter()
       .filter_map(|c| {
         let mut sc = ScoredCandidate::new(c);
-        let score = sc.fuzzy_score(&self.query.linebuf.joined());
+        let score = sc.fuzzy_score(&self.query.linebuf.to_string());
         if score > i32::MIN { Some(sc) } else { None }
       })
       .collect();

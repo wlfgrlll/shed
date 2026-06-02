@@ -1,4 +1,5 @@
 use nix::{libc::STDIN_FILENO, unistd::isatty};
+use std::fmt::{Display, Write};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
@@ -244,13 +245,16 @@ impl super::LineBuf {
   }
 
   pub fn display_window_joined(&mut self) -> String {
-    let joined = self.joined();
+    use std::fmt::Write;
+    let mut joined = String::with_capacity(self.lines().byte_len());
+    write!(joined, "{self}").ok();
+
     let do_hl = shopt!(highlight.enable);
-    let palette = if do_hl {
-      highlight::Palette::new()
-    } else {
-      highlight::Palette::neutral()
-    };
+    if !do_hl {
+      return joined;
+    }
+
+    let palette = highlight::Palette::new();
     let mut select_spans = self.search_match_spans();
     select_spans.extend(self.select_range_byte_pos());
 
@@ -258,13 +262,18 @@ impl super::LineBuf {
     let Some(cache) = self.highlight_cache.as_ref() else {
       return joined;
     };
-    let highlighted = highlight::highlight(
+    let mut highlighted = String::new();
+
+    highlight::highlight(
+      &mut highlighted,
       &joined,
       &cache.tokens,
       &palette,
       self.cursor_to_flat(),
       &select_spans,
-    );
+    )
+    .ok();
+
     let hint = self.get_hint_text();
     let lines = Lines::to_lines(&format!("{highlighted}{hint}"));
 
@@ -310,13 +319,13 @@ impl super::LineBuf {
     let start_row = self.scroll_offset;
 
     for i in start_row..self.cursor.pos.row {
-      result.push_str(&self.lines[i].to_string());
+      write!(result, "{}", &self.lines[i]).ok();
       result.push('\n');
     }
     let line = &self.lines[self.cursor.pos.row];
     let col = self.cursor.pos.col.min(line.len());
     for g in &line.graphemes()[..col] {
-      result.push_str(&g.to_string());
+      write!(result, "{}", g).ok();
     }
     result
   }
@@ -447,7 +456,7 @@ impl super::LineBuf {
       self.lines = Lines::to_lines(other);
       return;
     }
-    let joined = self.joined();
+    let joined = self.to_string();
     let Some(first) = self.lines.first_mut() else {
       self.lines = Lines::to_lines(other);
       return;
@@ -485,7 +494,7 @@ impl super::LineBuf {
       self.lines = Lines::to_lines(other);
       return;
     }
-    let joined = self.joined();
+    let joined = self.to_string();
     let last_row = self.lines.len() - 1;
     let Some(last) = self.lines.last_mut() else {
       self.lines = Lines::to_lines(other);
@@ -537,7 +546,7 @@ impl super::LineBuf {
   }
 
   pub fn take_buf(&mut self) -> String {
-    let result = self.joined();
+    let result = self.to_string();
     self.lines = Lines::default();
     self.cursor.pos = Pos { row: 0, col: 0 };
     result
@@ -662,7 +671,7 @@ impl super::LineBuf {
   }
 
   pub fn slice(&self, range: std::ops::Range<usize>) -> Option<String> {
-    let joined = self.joined();
+    let joined = self.to_string();
     let graphemes: Vec<&str> = joined.graphemes(true).collect();
     if range.start > graphemes.len() || range.end > graphemes.len() {
       return None;
@@ -703,13 +712,6 @@ impl super::LineBuf {
     }
     self.clear_concats();
     self.fix_cursor();
-  }
-  pub fn joined(&self) -> String {
-    let mut lines = vec![];
-    for line in &self.lines.0 {
-      lines.push(line.to_string());
-    }
-    lines.join("\n")
   }
   pub fn fix_cursor(&mut self) {
     // we are now going to enforce some invariants and do some bookkeeping
@@ -787,7 +789,7 @@ impl super::LineBuf {
   pub fn indent_levels(&mut self) -> &[(usize, usize)] {
     let has_cache = self.indent_cache.is_some();
     if !has_cache {
-      let joined = self.joined();
+      let joined = self.to_string();
       let (levels, status) = check_levels_per_row(&joined);
       self.indent_cache = Some(levels);
       self.parse_status = status;
@@ -1425,6 +1427,12 @@ impl super::LineBuf {
   pub fn update_pending_search(&mut self, new: Option<String>) {
     let Some(new) = new else { return };
     self.pending_search = (!new.is_empty()).then_some(new);
+  }
+}
+
+impl Display for super::LineBuf {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}", self.lines())
   }
 }
 

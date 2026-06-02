@@ -324,11 +324,34 @@ impl Lines {
       Some(self)
     }
   }
+
+  pub fn byte_len(&self) -> usize {
+    self
+      .0
+      .iter()
+      .map(|line| {
+        line.0.iter().map(Grapheme::len_utf8).sum::<usize>() + 1 // +1 for '\n'
+      })
+      .sum()
+  }
 }
 
 impl Default for Lines {
   fn default() -> Self {
     Self(vec![Line::default()])
+  }
+}
+
+impl Display for Lines {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut iter = self.0.iter();
+    if let Some(first) = iter.next() {
+      write!(f, "{first}")?;
+      for line in iter {
+        write!(f, "\n{line}")?;
+      }
+    }
+    Ok(())
   }
 }
 
