@@ -1,7 +1,19 @@
 #![allow(dead_code)]
-use std::{borrow::Cow, fmt::Display};
+//! Typed terminal control sequences and their escape code formatting.
+//!
+//! [`TermCtl`] is used by [`super::Terminal::execute_control`], which
+//! writes the display implementations directly to the terminal, with
+//! zero intermediate allocations. For external consumers, the [`crate::exec_term`]
+//! and [`crate::queue_term`] macros can be used for ergonomic access
+//! to this API.
+//!
+//! The reason why these macros can only be used by external consumers,
+//! is because they call [`super::Shed::term_mut`] internally, which
+//! will panic if called inside of any of the [`super::Terminal`] methods.
+//!
+//! Starting to look an awful lot like crossterm around here...
 
-// Starting to look an awful lot like crossterm around here...
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Toggle {
@@ -10,6 +22,10 @@ pub(crate) enum Toggle {
 }
 
 impl From<Toggle> for char {
+  /// Conversion to DEC private mode "high/low" (set/reset).
+  ///
+  /// `Toggle::On` returns `h`,
+  /// `Toggle::Off` returns `l`.
   fn from(value: Toggle) -> Self {
     match value {
       Toggle::On => 'h',  // high
@@ -24,18 +40,25 @@ impl From<bool> for Toggle {
   }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TermCtl {
   Cursor(CursorCtl),
   Clear(ClearCtl),
   PrintChar(char),
-  Print(Cow<'static, str>),
   SetAttr(Attr),
   Scroll(Scroll),
   Osc(OscCtl),
   Query(TermQuery),
 
+  /// Output sync start marker
+  ///
+  /// Terminals that support output sync use these to buffer output
+  /// The terminal will buffer input until it sees the end marker,
+  /// then draw/execute everything at once.
   SyncStart,
+  /// Output sync end marker
+  ///
+  /// See [`SyncStart`]
   SyncEnd,
 
   RingBell,
@@ -59,7 +82,6 @@ impl Display for TermCtl {
       Self::Cursor(ctl) => ctl.fmt(f),
       Self::Clear(ctl) => ctl.fmt(f),
       Self::PrintChar(c) => write!(f, "{c}"),
-      Self::Print(s) => write!(f, "{s}"),
       Self::SetAttr(ctl) => ctl.fmt(f),
       Self::Scroll(ctl) => ctl.fmt(f),
       Self::Osc(ctl) => ctl.fmt(f),
@@ -71,14 +93,22 @@ impl Display for TermCtl {
   }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Scroll {
   Up(u16),
   Down(u16),
-  SetRegion(u16, u16),
-  ResetRegion,
   InsertLines(u16),
   DeleteLines(u16),
+
+  /// Set the size of the scroll region
+  ///
+  /// Any rows outside the region are unaffected by scroll operations, and the cursor is allowed to move freely in and out of the region. The top and bottom parameters are 1-indexed.
+  /// We use this for `shed`'s status line.
+  SetRegion(u16, u16),
+  /// Reset the scroll region
+  ///
+  /// See [`SetRegion`].
+  ResetRegion,
 }
 
 impl Display for Scroll {
@@ -100,9 +130,12 @@ impl Display for Scroll {
 pub enum TermQuery {
   CursorPos,
   KittyKbdFlags,
-  Capability(CapQuery),
   Version,
   DeviceAttrs,
+
+  /// `XTGETTCAP` queries. The names come from `terminfo`, and are hex-encoded
+  /// per the `XTGETTCAP` protocol.
+  Capability(CapQuery),
 }
 
 impl Display for TermQuery {
@@ -145,9 +178,23 @@ impl Display for CapQuery {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OscCtl {
+  /// Prompt start marker
+  ///
+  /// Supported by some modern terminals, used for navigation via hotkeys
+  /// For instance, `Ctrl+Shift+(Z/X)` in kitty jumps to the previous prompt.
   PromptStart,
+  /// Prompt end marker
+  ///
+  /// See [`PromptStart`]
   PromptEnd,
+
+  /// Execution start marker
+  ///
+  /// Supported by some modern terminals, used to signal the start of a command's output alongside the [`ExecEnd`] marker.
   ExecStart,
+  /// Execution end marker, with exit code.
+  ///
+  /// See [`ExecStart`].
   ExecEnd(i32), // exit code
 }
 
@@ -165,13 +212,16 @@ impl Display for OscCtl {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Attr {
   FocusReport(Toggle),
-  ModifyOtherKeys,
-  ApplicationKeypad,
   AltBuffer(Toggle),
   SyncOutput(Toggle),
   BracketPaste(Toggle),
   KittyKbdProto(Toggle),
   MouseTracking(Toggle),
+
+  /// Lets terminals distinguish Ctrl+<key> combos that otherwise collapse into a single byte
+  ModifyOtherKeys,
+  /// Swaps numpad keys into a different escape set
+  ApplicationKeypad,
 }
 
 impl Display for Attr {
@@ -179,14 +229,26 @@ impl Display for Attr {
     match self {
       Attr::ModifyOtherKeys => write!(f, "\x1b[>4;1m"),
       Attr::ApplicationKeypad => write!(f, "\x1b="),
+
+      // Kitty's flags use a stack instead of the usual 'h/l' toggles.
+      // In theory this arbitrarily nested child processes ask for what flags they want.
+      // Admittedly we don't do a good job of tracking this currently, so we just
+      // clobber the stack with `\x1b[=0`.
+      // FIXME: Actually handle this properly, somehow.
+      Attr::KittyKbdProto(Toggle::On) => write!(f, "\x1b[>17u"),
+      Attr::KittyKbdProto(Toggle::Off) => write!(f, "\x1b[=0u"),
       Attr::FocusReport(toggle) => write!(f, "\x1b[?1004{}", char::from(*toggle)),
       Attr::AltBuffer(toggle) => write!(f, "\x1b[?1049{}", char::from(*toggle)),
       Attr::SyncOutput(toggle) => write!(f, "\x1b[?2026{}", char::from(*toggle)),
       Attr::BracketPaste(toggle) => write!(f, "\x1b[?2004{}", char::from(*toggle)),
-      Attr::KittyKbdProto(Toggle::On) => write!(f, "\x1b[>17u"),
-      Attr::KittyKbdProto(Toggle::Off) => write!(f, "\x1b[=0u"),
-      Attr::MouseTracking(Toggle::On) => write!(f, "\x1b[?1000h\x1b[?1003h\x1b[?1006h"),
-      Attr::MouseTracking(Toggle::Off) => write!(f, "\x1b[?1003l\x1b[?1000l\x1b[?1006l"),
+      Attr::MouseTracking(toggle) => {
+        // Mouse tracking has three related modes that we want to toggle together:
+        // 1000: basic tracking (press/release)
+        // 1003: all events (including mouse move)
+        // 1006: SGR extended mode (coordinates in decimal, not hex)
+        let ch = char::from(*toggle);
+        write!(f, "\x1b[?1000{ch}\x1b[?1003{ch}\x1b[?1006{ch}")
+      }
     }
   }
 }
