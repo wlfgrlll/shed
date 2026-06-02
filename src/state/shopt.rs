@@ -504,6 +504,10 @@ pub(crate) struct ShOptPrompt {
   /// If set, expands aliases on the prompt instead of after submitting
   #[default(true)]
   pub expand_aliases: bool,
+
+  /// If set, performs substitution (variable, command, etc.) after expanding prompt sequences
+  #[default(true)]
+  pub substitute: bool,
 }
 
 #[derive(Clone, Debug, ShOptGroup)]

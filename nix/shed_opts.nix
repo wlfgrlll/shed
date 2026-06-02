@@ -369,6 +369,11 @@
                 default = true;
                 description = "Whether to expand aliases in the prompt (i.e. whether to apply alias substitution to the command line before executing it)";
               };
+              substitute = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Whether to perform substitution (variable, command, etc.) after expanding prompt sequences";
+              };
               trunc_prompt_path = lib.mkOption {
                 type = lib.types.int;
                 default = 4;

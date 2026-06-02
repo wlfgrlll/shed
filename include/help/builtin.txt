@@ -1510,6 +1510,7 @@ SHOPT                                            *builtin-shopt* *shopt*
     `leader`                  leader key sequence for keymap bindings
     `screensaver_cmd`         command to run as screensaver
     `screensaver_idle_time`   idle seconds before screensaver (0=off)
+    `substitute`              run var/cmd/arith expansion on PS1 after escapes
     `trunc_prompt_path`       max path segments in `\W` prompt escape
     `complete_style`          completion menu style (`grid` or `fuzzy`)
 

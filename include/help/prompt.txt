@@ -256,6 +256,17 @@ right-aligned prompt).
       When enabled, aliases expand when you press space, enter, or
       semicolon after a command-position word. Default: true.
 
+  `prompt.substitute`                          *opt-prompt-substitute*
+
+      Run substitution (variable, command, and arithmetic expansion)
+      on the prompt string *after* shed's prompt escapes (`\u`, `\h`,
+      `\@func`, etc.) have been resolved. With this enabled, you can
+      reference shell variables directly in PS1, e.g. `${branch:-no-git}`
+      to show a placeholder when a variable is unset. Brace expansion,
+      word splitting, and pathname expansion are deliberately *not*
+      part of "substitute", only the substitution stages run, so
+      `PS1="*.rs"` won't suddenly become a file listing. Default: true.
+
   The following options under `shopt highlight.*` control syntax
   highlighting colors. Values are style descriptions using the same
   format as the `\c{...}` prompt escape (see |prompt color|(prompt-color)):

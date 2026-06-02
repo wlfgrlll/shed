@@ -91,6 +91,7 @@ _shopt_comp() {
       complete_style
       hist_cat
       expand_aliases
+      substitute
     )
     local prompt_desc=(
       "maximum number of path segments in the prompt's expanded CWD"
@@ -102,6 +103,7 @@ _shopt_comp() {
       "choose how completion candidates are presented ('fuzzy' or 'grid')"
       "enables joining history entries together using Ctrl/Shift+Up/Down"
       "if enabled, aliases are expanded on the prompt instead of during execution"
+      "if enabled, performs substitution (variables, command output, etc.) after expanding prompt sequences"
     )
     local line=(
       linebreak_on_incomplete
