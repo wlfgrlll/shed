@@ -216,7 +216,8 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
 
   if shopt!(prompt.substitute) {
     let marked = super::unescape_prompt(&result);
-    result = super::expand_raw_inner(&mut marked.chars().peekable(), true)?;
+    let expanded = super::expand_raw_inner(&mut marked.chars().peekable(), true)?;
+    result = super::escape::strip_escape_markers(expanded);
   }
 
   Ok(result)
@@ -849,6 +850,23 @@ mod tests {
     with_substitute(true, || {
       let out = expand_prompt("$A-$B").unwrap();
       assert_eq!(out, "1-2");
+    });
+  }
+
+  #[test]
+  fn substitute_strips_escape_markers_from_backslashes() {
+    // Regression: `\$shed` in a prompt context used to leave a PUA ESCAPE
+    // marker glued to the `$` after the substitute pass, because the word-
+    // context strip step was never reached. The final prompt should contain
+    // just the literal `$shed`, no marker char.
+    let _g = crate::tests::testutil::TestGuard::new();
+    with_substitute(true, || {
+      let out = expand_prompt("\\\\$foo").unwrap();
+      assert_eq!(out, "$foo");
+      assert!(
+        !out.contains(crate::expand::markers::ESCAPE),
+        "escape marker leaked: {out:?}"
+      );
     });
   }
 
