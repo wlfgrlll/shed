@@ -13,7 +13,7 @@ pub(super) use alias::{expand_alias_with_pos, expand_aliases, expand_keymap};
 pub(super) use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
 pub(super) use escape::{
   as_var_val_display, escape_glob, escape_str, read_hex, read_octal, read_stty_escape,
-  unescape_heredoc, unescape_str,
+  unescape_heredoc, unescape_prompt, unescape_str,
 };
 pub(super) use prompt::expand_prompt;
 pub(super) use util::{expand_case_pattern, glob_to_regex};

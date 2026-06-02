@@ -196,109 +196,133 @@ pub fn expand_prompt(raw: &str) -> ShResult<String> {
   let mut tokens = tokenize_prompt(raw).into_iter();
   let mut result = String::new();
 
-  match_loop!(tokens.next() => token, {
-    PromptTk::Text(txt) => result.push_str(&txt),
-    PromptTk::AnsiSeq(params) => result.push_str(&params),
-    PromptTk::Color(c) => {
-      match ansi_from_description(&c) {
-        Ok(esc_seq) => result.push_str(esc_seq.as_str()),
-        Err(e) => status_msg!("{e}")
-      }
-    }
-    PromptTk::RuntimeMillis => {
-      if let Some(runtime) = Shed::meta_mut(|m| m.get_time()) {
-        let runtime_millis = runtime.as_millis().to_string();
-        result.push_str(&runtime_millis);
-      }
-    }
-    PromptTk::RuntimeFormatted => {
-      if let Some(runtime) = Shed::meta_mut(|m| m.get_time()) {
-        let runtime_fmt = format_time(runtime);
-        result.push_str(&runtime_fmt);
-      }
-    }
-    PromptTk::Pwd => {
-      let pwd = state::util::display_path(var!("PWD"));
-      result.push_str(&pwd);
-    }
-    PromptTk::PwdShort => {
-      let pwd = state::util::display_path(var!("PWD"));
-      let pathbuf = PathBuf::from(&pwd);
-
-      let mut segments = pathbuf.iter().count();
-      let mut path_iter = pathbuf.iter();
-      let max_segments = shopt!(prompt.trunc_prompt_path);
-      while segments > max_segments {
-        path_iter.next();
-        segments -= 1;
-      }
-      let path_rebuilt: PathBuf = path_iter.collect();
-      let path_rebuilt = path_rebuilt.to_str().unwrap().to_string();
-
-      result.push_str(&path_rebuilt);
-    }
-    PromptTk::Hostname => {
-      let hostname = var!("HOST");
-      result.push_str(&hostname);
-    }
-    PromptTk::ShellName => result.push_str("shed"),
-    PromptTk::Username => {
-      let username = var!("USER");
-      result.push_str(&username);
-    }
-    PromptTk::PromptSymbol => {
-      let uid = var!("UID");
-      let symbol = if &uid == "0" { '#' } else { '$' };
-      result.push(symbol);
-    }
-    PromptTk::HostnameShort => {
-      let hostname = var!("HOST");
-      let mut segments = hostname.split('.');
-      if let Some(first) = segments.next() {
-        result.push_str(first);
-      } else {
-        result.push_str(&hostname);
-      }
-    }
-    PromptTk::JobCount => {
-      let count = Shed::jobs(|j| {
-        j.jobs()
-          .iter()
-          .filter(|j| {
-            j.as_ref().is_some_and(|j| {
-              j.get_stats()
-                .iter()
-                .all(|st| matches!(st, WtStat::StillAlive))
-            })
-          })
-        .count()
-      });
-      result.push_str(&count.to_string());
-    }
-    PromptTk::AsciiOct(n) => {
-      if let Some(ch) = std::char::from_u32(n.cast_unsigned()) {
-        result.push(ch);
-      }
-    }
-    PromptTk::Function(f) => {
-      let errexit = shopt!(set.errexit);
-      let noexec = shopt!(set.noexec);
-      let xtrace = shopt!(set.xtrace);
-
-      shopt_mut!(set.errexit = false);
-      shopt_mut!(set.noexec = false);
-      shopt_mut!(set.xtrace = false);
-      let res = expand_cmd_sub(&f);
-      shopt_mut!(set.errexit = errexit);
-      shopt_mut!(set.noexec = noexec);
-      shopt_mut!(set.xtrace = xtrace);
-
-      let output = res?;
-      result.push_str(&output);
-    }
+  match_loop!(tokens.next()    => token, {
+    PromptTk::Text(txt)        => result.push_str(&txt),
+    PromptTk::AnsiSeq(params)  => result.push_str(&params),
+    PromptTk::ShellName        => result.push_str("shed"),
+    PromptTk::Color(c)         => ansi_color(&c, &mut result),
+    PromptTk::RuntimeMillis    => runtime(false, &mut result),
+    PromptTk::RuntimeFormatted => runtime(true, &mut result),
+    PromptTk::Pwd              => prompt_pwd(false, &mut result),
+    PromptTk::PwdShort         => prompt_pwd(true, &mut result),
+    PromptTk::Username         => username(&mut result),
+    PromptTk::PromptSymbol     => prompt_symbol(&mut result),
+    PromptTk::Hostname         => hostname(false, &mut result),
+    PromptTk::HostnameShort    => hostname(true, &mut result),
+    PromptTk::JobCount         => job_count(&mut result),
+    PromptTk::AsciiOct(n)      => ascii_oct(n, &mut result),
+    PromptTk::Function(f)      => func_expand(&f, &mut result)?,
   });
 
+  if shopt!(prompt.substitute) {
+    let marked = super::unescape_prompt(&result);
+    result = super::expand_raw_inner(&mut marked.chars().peekable(), true)?;
+  }
+
   Ok(result)
+}
+
+fn ansi_color(c: &str, out: &mut String) {
+  match ansi_from_description(c) {
+    Ok(esc_seq) => out.push_str(esc_seq.as_str()),
+    Err(e) => status_msg!("{e}"),
+  }
+}
+
+fn runtime(formatted: bool, out: &mut String) {
+  let Some(runtime) = Shed::meta_mut(|m| m.get_time()) else {
+    return;
+  };
+  if formatted {
+    let runtime_fmt = format_time(runtime);
+    out.push_str(&runtime_fmt);
+  } else {
+    let runtime_millis = runtime.as_millis().to_string();
+    out.push_str(&runtime_millis);
+  }
+}
+
+fn prompt_pwd(short: bool, out: &mut String) {
+  let pwd = state::util::display_path(var!("PWD"));
+
+  if !short {
+    out.push_str(&pwd);
+    return;
+  }
+
+  let pathbuf = PathBuf::from(&pwd);
+
+  let mut segments = pathbuf.iter().count();
+  let mut path_iter = pathbuf.iter();
+  let max_segments = shopt!(prompt.trunc_prompt_path);
+  while segments > max_segments {
+    path_iter.next();
+    segments -= 1;
+  }
+  let path_rebuilt: PathBuf = path_iter.collect();
+  let path_rebuilt = path_rebuilt.to_str().unwrap().to_string();
+
+  out.push_str(&path_rebuilt);
+}
+
+fn username(out: &mut String) {
+  let username = var!("USER");
+  out.push_str(&username);
+}
+
+fn prompt_symbol(out: &mut String) {
+  let uid = var!("UID");
+  let symbol = if &uid == "0" { '#' } else { '$' };
+  out.push(symbol);
+}
+
+fn job_count(out: &mut String) {
+  let count = Shed::jobs(|j| {
+    j.jobs()
+      .iter()
+      .filter(|j| {
+        j.as_ref().is_some_and(|j| {
+          j.get_stats()
+            .iter()
+            .all(|st| matches!(st, WtStat::StillAlive))
+        })
+      })
+      .count()
+  });
+  out.push_str(&count.to_string());
+}
+
+fn ascii_oct(n: i32, out: &mut String) {
+  if let Some(ch) = std::char::from_u32(n.cast_unsigned()) {
+    out.push(ch);
+  }
+}
+
+fn func_expand(input: &str, out: &mut String) -> ShResult<()> {
+  let errexit = shopt!(set.errexit);
+  let noexec = shopt!(set.noexec);
+  let xtrace = shopt!(set.xtrace);
+
+  shopt_mut!(set.errexit = false);
+  shopt_mut!(set.noexec = false);
+  shopt_mut!(set.xtrace = false);
+  let res = expand_cmd_sub(input);
+  shopt_mut!(set.errexit = errexit);
+  shopt_mut!(set.noexec = noexec);
+  shopt_mut!(set.xtrace = xtrace);
+
+  out.push_str(&res?);
+  Ok(())
+}
+
+fn hostname(short: bool, out: &mut String) {
+  let hostname = var!("HOST");
+
+  if short && let Some(first) = hostname.split('.').next() {
+    out.push_str(first);
+  } else {
+    out.push_str(&hostname);
+  }
 }
 
 #[cfg(test)]
@@ -701,5 +725,143 @@ mod tests {
     crate::tests::testutil::test_input("prompt_greet() { printf hello; }").unwrap();
     let out = expand_prompt("[\\@prompt_greet ]").unwrap();
     assert_eq!(out, "[hello ]");
+  }
+
+  // ===================== prompt.substitute =====================
+
+  fn with_substitute<F: FnOnce()>(enabled: bool, body: F) {
+    let prev = Shed::shopts(|o| o.prompt.substitute);
+    Shed::shopts_mut(|o| o.prompt.substitute = enabled);
+    body();
+    Shed::shopts_mut(|o| o.prompt.substitute = prev);
+  }
+
+  fn set_var(name: &str, value: &str) {
+    use crate::state::vars::{VarFlags, VarKind};
+    Shed::vars_mut(|v| v.set_var(name, VarKind::Str(value.into()), VarFlags::empty())).unwrap();
+  }
+
+  #[test]
+  fn substitute_off_leaves_dollar_var_literal() {
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("MY_PROMPT_VAR", "hello");
+    with_substitute(false, || {
+      let out = expand_prompt("$MY_PROMPT_VAR").unwrap();
+      assert_eq!(out, "$MY_PROMPT_VAR");
+    });
+  }
+
+  #[test]
+  fn substitute_on_expands_dollar_var() {
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("MY_PROMPT_VAR", "hello");
+    with_substitute(true, || {
+      let out = expand_prompt("$MY_PROMPT_VAR").unwrap();
+      assert_eq!(out, "hello");
+    });
+  }
+
+  #[test]
+  fn substitute_expands_braced_var() {
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("MY_PROMPT_VAR", "hello");
+    with_substitute(true, || {
+      let out = expand_prompt("[${MY_PROMPT_VAR}]").unwrap();
+      assert_eq!(out, "[hello]");
+    });
+  }
+
+  #[test]
+  fn substitute_uses_default_for_unset_var() {
+    // ${UNSET:-fallback} → "fallback" when UNSET is undefined.
+    let _g = crate::tests::testutil::TestGuard::new();
+    with_substitute(true, || {
+      let out = expand_prompt("${DEFINITELY_UNSET:-fallback}").unwrap();
+      assert_eq!(out, "fallback");
+    });
+  }
+
+  #[test]
+  fn substitute_runs_after_prompt_escapes() {
+    // Order matters: prompt-escape pass runs first, then substitution. A
+    // function call produces a value the substitution pass operates on.
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("SUFFIX", "world");
+    with_substitute(true, || {
+      let out = expand_prompt("\\s/$SUFFIX").unwrap();
+      assert_eq!(out, "shed/world");
+    });
+  }
+
+  #[test]
+  fn substitute_preserves_unrelated_text() {
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("MID", "X");
+    with_substitute(true, || {
+      let out = expand_prompt("-- $MID --").unwrap();
+      assert_eq!(out, "-- X --");
+    });
+  }
+
+  #[test]
+  fn substitute_preserves_ansi_escape_after_dollar() {
+    // Regression: read_varsub used to consume the byte after a non-varname
+    // `$`, which silently ate the `\x1b` in colored prompts like `\e[0m`.
+    let _g = crate::tests::testutil::TestGuard::new();
+    with_substitute(true, || {
+      let out = expand_prompt("\\e[32m$ \\e[0m").unwrap();
+      assert!(out.contains("$ \x1b[0m"), "got {out:?}");
+      assert!(out.starts_with("\x1b[32m"), "got {out:?}");
+    });
+  }
+
+  #[test]
+  fn substitute_handles_special_param_in_braces() {
+    // Regression: ${?:-?} used to fail because `?` was treated as the
+    // operator char in perform_param_expansion, leaving an empty var_name
+    // and erroring downstream. Statline left_string would then fall back
+    // to displaying its raw template.
+    let _g = crate::tests::testutil::TestGuard::new();
+    Shed::set_status(7);
+    with_substitute(true, || {
+      let out = expand_prompt("[${?:-fallback}]").unwrap();
+      assert_eq!(out, "[7]");
+    });
+  }
+
+  #[test]
+  fn substitute_special_param_default_fires_when_empty() {
+    // When $? is "0" it's still set (non-null), so :- shouldn't kick in.
+    // This pins the behavior — change here means a behavioral change.
+    let _g = crate::tests::testutil::TestGuard::new();
+    Shed::set_status(0);
+    with_substitute(true, || {
+      let out = expand_prompt("${?:-fallback}").unwrap();
+      assert_eq!(out, "0");
+    });
+  }
+
+  #[test]
+  fn substitute_multiple_vars_one_expand() {
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("A", "1");
+    set_var("B", "2");
+    with_substitute(true, || {
+      let out = expand_prompt("$A-$B").unwrap();
+      assert_eq!(out, "1-2");
+    });
+  }
+
+  #[test]
+  fn substitute_does_not_recurse_on_value() {
+    // A var whose value contains $X stays literal after one substitution
+    // pass; we don't re-run the tokenizer/expander on output.
+    let _g = crate::tests::testutil::TestGuard::new();
+    set_var("OUTER", "$INNER");
+    set_var("INNER", "should-not-appear");
+    with_substitute(true, || {
+      let out = expand_prompt("$OUTER").unwrap();
+      assert_eq!(out, "$INNER");
+    });
   }
 }

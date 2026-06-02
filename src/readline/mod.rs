@@ -543,10 +543,7 @@ impl ShedLine {
         VarFlags::empty(),
       )
     })?;
-    new.prompt.refresh();
-    if let Some(line) = new.statline.as_mut() {
-      line.refresh();
-    }
+    new.refresh_ui();
     queue_term!(TermCtl::PrintChar('\n')).ok();
     new.print_line(false)?;
     Ok(new)
@@ -578,13 +575,25 @@ impl ShedLine {
     self.focused_history().fuzzy_finder.as_mut()
   }
 
-  /// Mark that the display needs to be redrawn (e.g., after SIGWINCH)
-  pub fn mark_dirty(&mut self) {
-    self.needs_redraw = true;
+  fn refresh_prompt(&mut self) {
     self.prompt.refresh();
+  }
+
+  fn refresh_statline(&mut self) {
     if let Some(line) = self.statline.as_mut() {
       line.refresh();
     }
+  }
+
+  fn refresh_ui(&mut self) {
+    self.refresh_prompt();
+    self.refresh_statline();
+  }
+
+  /// Mark that the display needs to be redrawn (e.g., after SIGWINCH)
+  pub fn mark_dirty(&mut self) {
+    self.needs_redraw = true;
+    self.refresh_ui();
   }
 
   pub fn reset_active_widget(&mut self, full_redraw: bool) -> ShResult<()> {
@@ -605,10 +614,7 @@ impl ShedLine {
   pub fn reset(&mut self, full_redraw: bool) -> ShResult<()> {
     // Clear old display before resetting state - old_layout must survive
     // so print_line can call clear_rows with the full multi-line layout
-    self.prompt.refresh();
-    if let Some(line) = self.statline.as_mut() {
-      line.refresh();
-    }
+    self.refresh_ui();
     self.editor = LineBuf::default();
     let mut mode = if shopt!(set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
@@ -727,10 +733,7 @@ impl ShedLine {
           )
         })
         .ok();
-        self.prompt.refresh();
-        if let Some(line) = self.statline.as_mut() {
-          line.refresh();
-        }
+        self.refresh_ui();
         self.needs_redraw = true;
       }
       SelectorResponse::Dismiss => {
@@ -749,10 +752,7 @@ impl ShedLine {
           )
         })
         .ok();
-        self.prompt.refresh();
-        if let Some(line) = self.statline.as_mut() {
-          line.refresh();
-        }
+        self.refresh_ui();
         self.needs_redraw = true;
       }
       SelectorResponse::Consumed => {
@@ -779,10 +779,7 @@ impl ShedLine {
         )
       })
       .ok();
-      this.prompt.refresh();
-      if let Some(line) = this.statline.as_mut() {
-        line.refresh();
-      }
+      this.refresh_ui();
       this.needs_redraw = true;
       Ok(())
     };
@@ -816,10 +813,7 @@ impl ShedLine {
           )
         })
         .ok();
-        self.prompt.refresh();
-        if let Some(line) = self.statline.as_mut() {
-          line.refresh();
-        }
+        self.refresh_ui();
 
         with_vars(
           [("COMP_CANDIDATE".into(), candidate.content().to_string())],
@@ -1105,10 +1099,7 @@ impl ShedLine {
             )
           })
           .ok();
-          self.prompt.refresh();
-          if let Some(line) = self.statline.as_mut() {
-            line.refresh();
-          }
+          self.refresh_ui();
           self.needs_redraw = true;
           self.editor.clear_hint();
         } else {
@@ -1165,10 +1156,7 @@ impl ShedLine {
           )
         })
         .ok();
-        self.prompt.refresh();
-        if let Some(line) = self.statline.as_mut() {
-          line.refresh();
-        }
+        self.refresh_ui();
         self.needs_redraw = true;
         self.editor.clear_hint();
       } else {
@@ -2044,10 +2032,7 @@ impl ShedLine {
       )
     })
     .ok();
-    self.prompt.refresh();
-    if let Some(line) = self.statline.as_mut() {
-      line.refresh();
-    }
+    self.refresh_ui();
   }
 
   #[expect(clippy::too_many_lines)]
@@ -2143,10 +2128,7 @@ impl ShedLine {
           VarFlags::empty(),
         )
       })?;
-      self.prompt.refresh();
-      if let Some(line) = self.statline.as_mut() {
-        line.refresh();
-      }
+      self.refresh_ui();
       return Ok(());
     }
 
@@ -2184,10 +2166,7 @@ impl ShedLine {
         VarFlags::empty(),
       )
     })?;
-    self.prompt.refresh();
-    if let Some(line) = self.statline.as_mut() {
-      line.refresh();
-    }
+    self.refresh_ui();
 
     Ok(())
   }
@@ -2377,13 +2356,11 @@ impl ShedLine {
   fn fire_editor_command(&mut self, cmd: &EditCmd) -> ShResult<()> {
     let is_shell_cmd = cmd.is_shell_cmd();
     let res = self.editor.exec_cmd(cmd);
+    self.needs_redraw = true;
+    self.refresh_statline();
 
     if is_shell_cmd {
-      self.needs_redraw = true;
-      self.prompt.refresh();
-      if let Some(line) = self.statline.as_mut() {
-        line.refresh();
-      }
+      self.refresh_prompt();
     }
 
     res
@@ -2413,9 +2390,6 @@ impl ShedLine {
     &mut self.pending_keymap
   }
 
-  pub(super) fn set_needs_redraw(&mut self, needs_redraw: bool) {
-    self.needs_redraw = needs_redraw;
-  }
   #[cfg(test)]
   pub fn with_initial(mut self, initial: &str) -> Self {
     self.editor = LineBuf::new().with_initial(initial, 0);

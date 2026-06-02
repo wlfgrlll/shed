@@ -224,6 +224,23 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       // so VarName::parse handles it as an array slice
       var_name.push(ch);
     }
+
+    // it's a shell parameter, don't get it confused with the operators below
+    ch if var_name.is_empty() && matches!(ch, '?' | '!' | '#' | '-') => {
+
+      let next_is_name_char = chars
+        .clone()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_');
+      if next_is_name_char {
+        rest.push(ch);
+        rest.push_str(&chars.collect::<String>());
+      } else {
+        var_name.push(ch);
+        rest.push_str(&chars.collect::<String>());
+      }
+      break;
+    }
     '!' | '#' | '%' | ':' | '-' | '+' | '^' | ',' | '=' | '/' | '?' => {
       rest.push(ch);
       rest.push_str(&chars.collect::<String>());

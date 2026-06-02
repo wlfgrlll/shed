@@ -3,13 +3,36 @@ use std::iter::Peekable;
 use std::ops::Range;
 use std::str::Chars;
 
+use bitflags::bitflags;
+
 use super::{QuoteState, ShResult, markers, match_loop, sherr, try_var, util::is_var_name_ch};
 
+bitflags! {
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+  struct ExpandFlags: u8 {
+    const TILDE    = 1 << 0;  // `~`, `~user`, `~uid`
+    const SUBSHELL = 1 << 1;  // bare `(...)` as a substitution
+    const VAR      = 1 << 2;  // `$var`, `${var}`, `$'...'`
+    const CMDSUB   = 1 << 3;  // `$(...)`, backticks
+    const ANSI_STR = 1 << 4;  // ANSI-C quoting (`$'...'`)
+    const PROCSUB  = 1 << 5;  // `<(...)`, `>(...)`
+    const QUOTE    = 1 << 6;  // single/double quote sub-machines
+  }
+}
+
+impl ExpandFlags {
+  const WORD: Self = Self::all();
+
+  const HEREDOC: Self = Self::VAR.union(Self::CMDSUB);
+
+  const PROMPT: Self = Self::VAR.union(Self::CMDSUB);
+
+  const COMPLETION: Self = Self::all()
+    .difference(Self::CMDSUB)
+    .difference(Self::PROCSUB);
+}
+
 /// Strip ESCAPE markers from a string, leaving the characters they protect intact.
-///
-/// Takes the string by value: when the input has no markers we hand the
-/// original `String` back without allocating, since `str::replace` always
-/// builds a fresh `String` even on a no-op pass.
 pub(super) fn strip_escape_markers(s: String) -> String {
   if !s.contains(markers::ESCAPE) {
     return s;
@@ -18,13 +41,6 @@ pub(super) fn strip_escape_markers(s: String) -> String {
 }
 
 /// Convert internal quote/escape markers into glob-syntax for `glob::Pattern`.
-///
-/// Glob metacharacters that should be treated as literal (because they were
-/// quoted or backslash-escaped in the source) are emitted as bracket
-/// expressions — `[*]`, `[?]`, `[[]` — since the `glob` crate doesn't honor
-/// `\x` escapes. Non-meta characters that were quoted/escaped are emitted
-/// bare (no escape needed). Unquoted glob metas pass through as-is, keeping
-/// their wildcard meaning.
 pub(super) fn markers_to_glob_escapes(s: &str) -> String {
   let mut out = String::with_capacity(s.len());
   let mut chars = s.chars();
@@ -86,13 +102,8 @@ fn push_glob_literal(out: &mut String, c: char) {
 
 const SPECIAL_CHARS: &str = "#$^*()=|{}[]`<>?~;& '\"";
 
-/// Processes strings into intermediate representations that are more readable
-/// by the program.
-///
-/// Clean up a single layer of escape characters, and then replace control
-/// characters like '$' with a non-character unicode representation that is
-/// unmistakable by the rest of the code
-pub fn unescape_str(raw: &str) -> String {
+/// Install internal marker characters for substitution, quoting, escape, etc.,
+fn unescape_with(raw: &str, flags: ExpandFlags) -> String {
   if !raw.bytes().any(|b| {
     matches!(
       b,
@@ -101,47 +112,76 @@ pub fn unescape_str(raw: &str) -> String {
   }) {
     return raw.to_string();
   }
+
   let mut chars = raw.chars().peekable();
   let mut result = String::new();
-  let mut last_was_word_break = false;
-  let word_breaks = try_var!("COMP_WORDBREAKS").unwrap_or("\"'><=;|&(: ".into());
-  let ifs = try_var!("IFS").unwrap_or(" \t\n".into());
-  let word_breaks = format!("{word_breaks}{ifs}");
-  let mut first_char = true;
+
+  let (word_breaks, mut last_was_word_break, mut first_char) = if flags.contains(ExpandFlags::TILDE)
+  {
+    let wb = try_var!("COMP_WORDBREAKS").unwrap_or("\"'><=;|&(: ".into());
+    let ifs = try_var!("IFS").unwrap_or(" \t\n".into());
+    (format!("{wb}{ifs}"), false, true)
+  } else {
+    (String::new(), false, false)
+  };
 
   while let Some(ch) = chars.next() {
     match ch {
-      '~' if last_was_word_break || first_char => result.push(markers::TILDE_SUB),
+      '~' if flags.contains(ExpandFlags::TILDE) && (last_was_word_break || first_char) => {
+        result.push(markers::TILDE_SUB);
+      }
       '\\' => {
         if let Some(next_ch) = chars.next() {
           result.push(markers::ESCAPE);
           result.push(next_ch);
         }
       }
-      '(' => read_subsh(&mut chars, &mut result),
-      '"' => read_dub_quote(&mut chars, &mut result),
-      '\'' => read_sng_quote(&mut chars, &mut result),
-      '`' => read_backtick(&mut chars, &mut result),
-      '<' if chars.peek() == Some(&'(') => read_proc_sub_in(&mut chars, &mut result),
-      '>' if chars.peek() == Some(&'(') => read_proc_sub_out(&mut chars, &mut result),
-      '$' if chars.peek() == Some(&'\'') => {
+      '"' if flags.contains(ExpandFlags::QUOTE) => read_dub_quote(&mut chars, &mut result),
+      '\'' if flags.contains(ExpandFlags::QUOTE) => read_sng_quote(&mut chars, &mut result),
+      '`' if flags.contains(ExpandFlags::CMDSUB) => read_backtick(&mut chars, &mut result),
+      '<' if flags.contains(ExpandFlags::PROCSUB) && chars.peek() == Some(&'(') => {
+        read_proc_sub_in(&mut chars, &mut result);
+      }
+      '>' if flags.contains(ExpandFlags::PROCSUB) && chars.peek() == Some(&'(') => {
+        read_proc_sub_out(&mut chars, &mut result);
+      }
+      '$' if flags.contains(ExpandFlags::CMDSUB) && chars.peek() == Some(&'(') => {
+        result.push(markers::VAR_SUB);
         chars.next();
-        // read_dollar_quote omits the markers so that it is also compatible with double quoted strings
-        // so we push them explicitly here
+        read_subsh(&mut chars, &mut result);
+      }
+      '$' if flags.contains(ExpandFlags::VAR) && chars.peek() == Some(&'\'') => {
+        chars.next();
         result.push(markers::SNG_QUOTE);
         read_dollar_quote(&mut chars, &mut result);
         result.push(markers::SNG_QUOTE);
       }
-      '$' => {
+      '$' if flags.intersects(ExpandFlags::VAR.union(ExpandFlags::CMDSUB)) => {
         read_varsub(&mut chars, &mut result);
       }
+      // Bare `(...)` as a substitution — only in word context.
+      '(' if flags.contains(ExpandFlags::SUBSHELL) => read_subsh(&mut chars, &mut result),
       _ => result.push(ch),
     }
-    last_was_word_break = word_breaks.contains(ch);
-    first_char = false;
+    if flags.contains(ExpandFlags::TILDE) {
+      last_was_word_break = word_breaks.contains(ch);
+      first_char = false;
+    }
   }
 
   result
+}
+
+/// Full word-context unescape: all substitutions, quote sub-machines, tildes,
+/// process subs, escapes. Used by the main expansion pipeline.
+pub fn unescape_str(raw: &str) -> String {
+  unescape_with(raw, ExpandFlags::WORD)
+}
+
+/// Prompt-context unescape: $var, ${var}, $(cmd), backticks. No quote handling,
+/// no tildes, no procsubs, no bare subshells. Used by `prompt.substitute`.
+pub fn unescape_prompt(raw: &str) -> String {
+  unescape_with(raw, ExpandFlags::PROMPT)
 }
 
 fn read_varsub(chars: &mut Peekable<Chars>, result: &mut String) -> bool {
@@ -149,7 +189,6 @@ fn read_varsub(chars: &mut Peekable<Chars>, result: &mut String) -> bool {
     .peek()
     .is_none_or(|ch| *ch != '$' && *ch != '(' && *ch != '{' && !is_var_name_ch(*ch))
   {
-    chars.next();
     result.push('$');
   } else {
     result.push(markers::VAR_SUB);
@@ -462,48 +501,10 @@ fn read_backtick(chars: &mut Peekable<Chars>, result: &mut String) {
   });
 }
 
-/// Like `unescape_str` but for heredoc bodies. Only processes:
-/// - $var / ${var} / $(cmd) substitution markers
-/// - Backslash escapes (only before $, \`, \, and newline)
-///
-/// Everything else (quotes, tildes, globs, process subs, etc.) is literal.
+/// Heredoc body: $var / ${var} / $(cmd) / backticks only. Quotes, tildes,
+/// globs, process subs, and bare subshells all pass through as literal text.
 pub fn unescape_heredoc(raw: &str) -> String {
-  let mut chars = raw.chars().peekable();
-  let mut result = String::new();
-
-  match_loop!(chars.next() => ch, {
-    '\\' => {
-      match chars.peek() {
-        Some('$' | '`' | '\\' | '\n') => {
-          let next_ch = chars.next().unwrap();
-          if next_ch == '\n' {
-            // line continuation - discard both backslash and newline
-            continue;
-          }
-          result.push(markers::ESCAPE);
-          result.push(next_ch);
-        }
-        _ => {
-          // backslash is literal
-          result.push('\\');
-        }
-      }
-    }
-    '$' if chars.peek() == Some(&'(') => {
-      result.push(markers::VAR_SUB);
-      chars.next(); // consume '('
-      read_subsh(&mut chars, &mut result);
-    }
-    '$' => {
-      read_varsub(&mut chars, &mut result);
-    }
-    '`' => {
-      read_backtick(&mut chars, &mut result);
-    }
-    _ => result.push(ch),
-  });
-
-  result
+  unescape_with(raw, ExpandFlags::HEREDOC)
 }
 
 pub fn escape_str(raw: &str, use_marker: bool) -> String {
