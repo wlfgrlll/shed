@@ -518,7 +518,7 @@ pub(crate) struct ShOptStatLine {
   pub enable: bool,
 
   /// The raw string used for the left side of the status line.
-  #[default(String::new())]
+  #[default("\\e[7;1m-- $SHED_EDIT_MODE -- | \\T -> [${?:-?}]".into())]
   pub left_string: String,
 
   /// The raw string used for the middle of the status line.
@@ -526,7 +526,7 @@ pub(crate) struct ShOptStatLine {
   pub middle_string: String,
 
   /// The raw string used for the right side of the status line.
-  #[default(String::new())]
+  #[default(" ln:$EDITOR_LINE/$EDITOR_LINES   SHLVL [$SHLVL]        ".into())]
   pub right_string: String,
 }
 
