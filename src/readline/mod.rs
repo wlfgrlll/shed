@@ -930,7 +930,7 @@ impl ShedLine {
       self.needs_redraw = false;
     }
     let line_data = self.get_line_data();
-    Shed::meta_mut(|m| m.notify_line_edit(line_data));
+    Shed::notify_line_edit(line_data);
 
     self.try_comp_hint();
 

@@ -316,6 +316,32 @@ processes.
           `job>>child>> 12347 failed:1 grep missing`
           `job>>child>> 12348 done wc -l`
 
+  7.3 Broadcast messages                       *socket-event-msg*
+
+  `msg>> {text}`
+
+      Broadcast when the `msg` builtin is invoked with `-b` /
+      `--broadcast` from inside the shell (see |builtin-msg|).
+      Every subscriber receives the same line. Each line of
+      `{text}` is prefixed with `msg>>` on the wire, so multi-line
+      messages produce multiple events.
+
+      Example:
+
+          `msg -b "build complete"`
+
+      lands on subscribers as:
+
+          `msg>> build complete`
+
+      Unlike the `msg::status::` and `msg::system::` socket
+      requests (which are inbound — external clients posting to
+      the shell), `msg>>` events flow the other way: the shell
+      pushes them out to all connected subscribers. This makes
+      `msg -b` the natural way to dispatch shell-side events to
+      external listeners (e.g. completion engines, notifiers,
+      log scrapers) without going through autocmds.
+
 ==============================================================================
 8. Other Requests                              *socket-other*
 

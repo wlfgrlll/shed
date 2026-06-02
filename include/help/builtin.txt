@@ -1144,25 +1144,37 @@ LOCAL                                            *builtin-local* *local*
 ==============================================================================
 MSG                                              *builtin-msg* *msg*
 
-  `msg [-s | --status] [-S | --system] {text}`
+  `msg [-s | --status] [-S | --system] [-b | --broadcast] {text}`
 
-  Post a text message to the shell's status display area.
-  Useful for surfacing information from things like keymap
-  scripts without cluttering stdout. Has no effect in
-  non-interactive shells.
+  Post a text message to the shell's status display area,
+  or broadcast over the |socket|. Useful for surfacing
+  information from things like keymap scripts without
+  cluttering stdout, or communicating with sidecar scripts
+  via the socket. Has no effect in non-interactive shells.
 
-  `-s` / `--status`   post as a status message (default).
-                      Status messages appear under the prompt
-                      and survive prompt redraws for 5 seconds.
+  `-s` / `--status`     post as a status message (default).
+                        Status messages appear under the prompt
+                        and survive prompt redraws for 5 seconds.
 
-  `-S` / `--system`   post as a system-level message. These appear
-                      above the prompt, in the same way that job
-                      notifications do.
+  `-S` / `--system`     post as a system-level message. These appear
+                        above the prompt, in the same way that job
+                        notifications do.
+
+  `-b` / `--broadcast`  send the message to every connected |socket|
+                        subscriber under the `msg` namespace. Each line
+                        of `{text}` is prefixed with `msg>>` on the
+                        wire, so subscribers can filter for it
+                        alongside other event namespaces.
+
+  Flags can be combined; for example, `msg -sb hello` posts to the
+  status line and broadcasts to subscribers in one call.
 
   Examples:
 
       `msg "build complete"`
       `msg --system "low disk space"`
+      `msg -b "rebuild finished"`
+      `msg -sb "deploy started"`
 
 ==============================================================================
 POPD                                             *builtin-popd* *popd*

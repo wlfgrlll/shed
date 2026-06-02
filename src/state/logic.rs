@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{
-  ShErr, Shed,
+  ShErr,
   eval::{Node, lex::Span},
   expand::as_var_val_display,
   keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
@@ -221,7 +221,6 @@ impl LogTab {
     entry.push(cmd);
   }
   pub fn get_autocmds(&self, kind: AutoCmdKind) -> Vec<AutoCmd> {
-    Shed::meta_mut(|m| m.notify_autocmd(kind));
     self.autocmds.get(&kind).cloned().unwrap_or_default()
   }
   /// Iterate every registered autocmd in `(kind, command)` order. Skips

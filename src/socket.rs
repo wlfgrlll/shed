@@ -47,7 +47,7 @@ use super::{
 pub(crate) static PRIVATE_TOKEN: LazyLock<String> =
   LazyLock::new(|| uuid::Uuid::new_v4().to_string());
 
-/// Write something to the socket.
+/// Write something to the socket as a client.
 pub(crate) fn send_to_socket(msg: &str) -> ShResult<()> {
   let path = ShedSocket::path();
   let mut stream = UnixStream::connect(path)?;
@@ -508,7 +508,7 @@ pub(super) fn handle_socket_request(
       write(&conn, b"ok\n").ok();
     }
     SocketRequest::Subscribe => {
-      Shed::meta_mut(|m| m.push_subscriber(conn));
+      Shed::push_subscriber(conn);
     }
     SocketRequest::RefreshPrompt => {
       kill(Pid::this(), Signal::SIGUSR1)?;
@@ -577,9 +577,11 @@ pub(super) fn handle_socket_request(
         }
       }),
       LineHeader::Hint => {
+        log::debug!("Setting hint from socket: {value}");
         readline
           .editor_mut()
           .set_hint(Some(Hint::Override(Lines::to_lines(&value))));
+        readline.mark_dirty();
       }
       LineHeader::Mode => {
         if !readline.try_swap_mode_from_str(&value) {

@@ -4,6 +4,7 @@ use std::{
   cell::RefCell,
   collections::VecDeque,
   fmt::Display,
+  os::{fd::AsFd, unix::net::UnixStream},
   sync::{
     Arc, OnceLock,
     atomic::{AtomicI32, Ordering},
@@ -113,6 +114,9 @@ pub(super) struct Shed {
   system_msg_queue: RefCell<VecDeque<Message>>,
   system_msg_hist: RefCell<VecDeque<Message>>,
 
+  socket: RefCell<Option<Arc<socket::ShedSocket>>>,
+  subscribers: RefCell<Vec<Arc<UnixStream>>>,
+
   #[cfg(test)]
   saved: RefCell<Option<Box<Self>>>,
 }
@@ -134,6 +138,9 @@ impl Shed {
 
       system_msg_queue: RefCell::new(VecDeque::new()),
       system_msg_hist: RefCell::new(VecDeque::new()),
+
+      socket: RefCell::new(None),
+      subscribers: RefCell::new(vec![]),
 
       #[cfg(test)]
       saved: RefCell::new(None),
@@ -260,6 +267,24 @@ impl Shed {
     access_mut!(SHED, terminal, f)
   }
 
+  fn broadcast<F>(mut f: F)
+  where
+    F: FnMut(&Arc<UnixStream>) -> std::io::Result<()>,
+  {
+    SHED.with(|shed| {
+      let mut subs = shed.subscribers.borrow_mut();
+      let mut dead = vec![];
+      for (i, subscriber) in subs.iter().enumerate() {
+        if f(subscriber).is_err() {
+          dead.push(i);
+        }
+      }
+      for i in dead.into_iter().rev() {
+        subs.remove(i);
+      }
+    });
+  }
+
   pub fn system_msg_pending() -> bool {
     SHED.with(|shed| !shed.system_msg_queue.borrow().is_empty())
   }
@@ -305,6 +330,155 @@ impl Shed {
     Some(msg.to_string())
   }
 
+  pub fn create_socket() -> ShResult<()> {
+    let sock = socket::ShedSocket::new()?;
+    SHED.with(|shed| {
+      *shed.socket.borrow_mut() = Some(sock.into());
+    });
+    Ok(())
+  }
+  pub fn get_socket() -> Option<Arc<socket::ShedSocket>> {
+    SHED.with(|shed| shed.socket.borrow().clone())
+  }
+  pub fn read_socket() -> Vec<(UnixStream, socket::SocketRequest)> {
+    let mut requests = vec![];
+    let Some(listener) = Self::get_socket() else {
+      return requests;
+    };
+
+    while let Ok((conn, _)) = listener.listener().accept()
+      && let Some(req) = Self::read_request(&conn)
+    {
+      requests.push((conn, req));
+    }
+
+    requests
+  }
+  pub fn read_request(conn: &UnixStream) -> Option<socket::SocketRequest> {
+    use nix::{
+      errno::Errno,
+      unistd::{read, write},
+    };
+    use std::str::FromStr;
+
+    conn.set_nonblocking(false).ok();
+    let mut bytes = vec![];
+    loop {
+      let mut buffer = [0u8; 1024];
+      match read(conn, &mut buffer) {
+        Ok(0) => break,
+        Ok(n) => {
+          if let Some(pos) = buffer[..n].iter().position(|&b| b == b'\n') {
+            bytes.extend_from_slice(&buffer[..pos]);
+            break;
+          }
+          bytes.extend_from_slice(&buffer[..n]);
+        }
+        Err(Errno::EINTR) => (),
+        Err(e) => {
+          writefd!(conn, "error>> failed to parse request: {e}\n").ok();
+          break;
+        }
+      }
+    }
+    let input = String::from_utf8_lossy(&bytes).to_string();
+    let request = match socket::SocketRequest::from_str(&input) {
+      Ok(req) => req,
+      Err(e) => {
+        write(
+          conn,
+          format!("error>> failed to parse request: {e}\n").as_bytes(),
+        )
+        .ok();
+        return None;
+      }
+    };
+
+    Some(request)
+  }
+  pub fn push_subscriber(subscriber: UnixStream) {
+    SHED.with(|shed| {
+      shed.subscribers.borrow_mut().push(Arc::new(subscriber));
+    });
+  }
+  pub fn num_subscribers() -> usize {
+    SHED.with(|shed| shed.subscribers.borrow().len())
+  }
+  pub fn broadcast_msg(msg: &str) {
+    let payload = msg
+      .lines()
+      .map(|l| format!("msg>>{l}"))
+      .collect::<Vec<String>>()
+      .join("\n");
+
+    Self::broadcast(|sub| writefd!(sub, "{payload}\n"));
+  }
+  pub fn notify_autocmd(kind: logic::AutoCmdKind) {
+    Self::broadcast(|sub| writefd!(sub, "autocmd_event>>{kind}\n"));
+  }
+  pub fn notify_job_complete(job: &jobs::Job) {
+    use itertools::izip;
+    use std::fmt::Write as _;
+
+    let id = job.tabid().map(|i| (i + 1).to_string()).unwrap_or_default();
+    let pids = job.get_pids();
+    let stats = job.get_stats();
+    let cmds = job.get_cmds();
+
+    Self::broadcast(|sub| {
+      let mut buf = format!("job>>begin>>{id} {}\n", pids.len());
+      for (pid, stat, cmd) in izip!(&pids, &stats, &cmds) {
+        let stat_str = match stat {
+          WtStat::Exited(_, 0) => "done".to_string(),
+          WtStat::Exited(_, n) => format!("failed:{n}"),
+          WtStat::Signaled(_, sig, _) => format!("signaled:{sig:?}"),
+          other => format!("{other:?}"),
+        };
+        let _ = writeln!(buf, "job>>child>>{pid} {stat_str} {cmd}");
+      }
+      writefd!(sub, "{buf}")?;
+      Ok(())
+    });
+  }
+  pub fn notify_line_edit(data: readline::LineData) {
+    use nix::unistd::write;
+    use std::fmt::Write as _;
+
+    let readline::LineData {
+      buffer,
+      cursor,
+      anchor,
+      hint,
+      mode,
+    } = data;
+
+    Self::broadcast(|sub| {
+      let mut buf = String::new();
+      let _ = writeln!(buf, "line>>buffer>>{buffer}");
+      let _ = writeln!(buf, "line>>cursor>>{cursor}");
+      if let Some(anchor) = anchor {
+        let _ = writeln!(buf, "line>>anchor>>{anchor}");
+      }
+      if let Some(hint) = &hint {
+        let _ = writeln!(buf, "line>>hint>>{hint}");
+      }
+      let _ = writeln!(buf, "line>>mode>>{mode}");
+
+      write(sub, buf.as_bytes())?;
+      Ok(())
+    });
+  }
+  pub fn notify_key_event(event: &keys::KeyEvent) {
+    use nix::unistd::write;
+
+    let seq = event.as_vim_seq();
+
+    Self::broadcast(|sub| {
+      let buf = format!("line>>key_event>>{seq}\n");
+      write(sub, buf.as_bytes())?;
+      Ok(())
+    });
+  }
   pub fn status_msg_hist() -> Vec<Message> {
     SHED.with(|shed| {
       shed
@@ -388,6 +562,8 @@ impl Shed {
       status_msg_hist: RefCell::new(self.status_msg_hist.borrow().clone()),
       system_msg_queue: RefCell::new(self.system_msg_queue.borrow().clone()),
       system_msg_hist: RefCell::new(self.system_msg_hist.borrow().clone()),
+      socket: RefCell::new(self.socket.borrow().clone()),
+      subscribers: RefCell::new(self.subscribers.borrow().clone()),
       saved: RefCell::new(None),
       status_code: AtomicI32::new(self.status_code.load(Ordering::Relaxed)),
     };

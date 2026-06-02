@@ -435,7 +435,6 @@ macro_rules! writefd {
 /// Post a status message to the shell's status line.
 ///
 /// This is intended for transient messages that should be visible to the user but not take up space in the terminal output, such as "File saved" or "Syntax error on line 3".
-/// NOTE: This calls `Shed::meta_mut()` internally. Calling this inside of a `Shed::meta_mut()` closure will cause a `RefCell` panic.
 #[macro_export]
 macro_rules! status_msg {
   ($($arg:tt)*) => {{
@@ -453,6 +452,16 @@ macro_rules! system_msg {
   }};
 }
 
+/// Broadcast a message over the socket.
+///
+/// Socket messages are sent to every current socket subscriber. Each line is prefixed with `msg>>`
+#[macro_export]
+macro_rules! socket_msg {
+  ($($arg:tt)*) => {{
+    $crate::state::Shed::broadcast_msg(&format!($($arg)*));
+  }};
+}
+
 /// Execute autocmds
 #[macro_export]
 macro_rules! autocmd {
@@ -460,6 +469,7 @@ macro_rules! autocmd {
     let post_cmds =
       $crate::state::Shed::logic(|l| l.get_autocmds($crate::state::logic::AutoCmdKind::$kind));
     let saved_status = $crate::state::Shed::get_status();
+    $crate::state::Shed::notify_autocmd($crate::state::logic::AutoCmdKind::$kind);
     for cmd in post_cmds {
       if let Err(e) =
         $crate::eval::execute::exec_nonint(cmd.command().to_string(), Some("autocmd".into()))

@@ -1,3 +1,5 @@
+use crate::socket_msg;
+
 use super::{
   Shed,
   getopt::{Opt, OptSpec},
@@ -11,20 +13,25 @@ impl super::Builtin for Msg {
     vec![
       OptSpec::flag('s'),
       OptSpec::flag('S'),
+      OptSpec::flag('b'),
       OptSpec::flag("status"),
       OptSpec::flag("system"),
+      OptSpec::flag("broadcast"),
     ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let mut system = false;
     let mut status = false;
+    let mut broadcast = false;
 
     for opt in args.opts {
       match opt {
         Opt::Short('S') => system = true,
         Opt::Short('s') => status = true,
+        Opt::Short('b') => broadcast = true,
         Opt::Long(o) if o.as_str() == "system" => system = true,
         Opt::Long(o) if o.as_str() == "status" => status = true,
+        Opt::Long(o) if o.as_str() == "broadcast" => broadcast = true,
         _ => {
           return Err(sherr!(ExecFail, "msg: Unexpected flag '{opt}'",));
         }
@@ -49,12 +56,17 @@ impl super::Builtin for Msg {
 
     let (msg, _span) = join_raw_args(args.argv);
 
+    if broadcast {
+      // sends to all socket subscribers
+      socket_msg!("{msg}");
+    }
+
     if system {
       system_msg!("{msg}");
     }
 
     // defaults to status messages if no flag is provided, but if both are provided we post to both
-    if status || !system {
+    if status || (!system && !broadcast) {
       status_msg!("{msg}");
     }
 

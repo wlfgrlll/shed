@@ -122,10 +122,8 @@ fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
 
   sig_setup(args.login_shell);
 
-  Shed::meta_mut(|m| {
-    MetaTab::ensure_meta_table()?;
-    m.create_socket()
-  })?;
+  MetaTab::ensure_meta_table()?;
+  Shed::create_socket()?;
 
   if let Some(msg) = MetaTab::welcome_message(args.welcome) {
     outln!("\n{msg}\n\n");
@@ -204,7 +202,7 @@ pub(super) fn shed_interactive(
   };
   let tty_poll = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty_fd) }, PollFlags::POLLIN);
 
-  let socket_fd = Shed::meta_mut(|m| m.get_socket().map(|s| s.as_raw_fd()));
+  let socket_fd = Shed::get_socket().map(|s| s.as_raw_fd());
   let socket_poll =
     socket_fd.map(|fd| PollFd::new(unsafe { BorrowedFd::borrow_raw(fd) }, PollFlags::POLLIN));
 
@@ -280,7 +278,7 @@ fn shed_loop_iter(
     readline.fix_editing_mode();
 
     *vi_mode = !(*vi_mode); // and toggle this
-  } else if Shed::meta(MetaTab::num_subscribers) == 0 && readline.in_insert_mode() {
+  } else if Shed::num_subscribers() == 0 && readline.in_insert_mode() {
     // we are in remote mode with no consumers for our broadcasted input.
     // That effectively soft locks the shell, so let's fix that
     readline.fix_editing_mode();
@@ -368,7 +366,7 @@ fn shed_loop_iter(
     .and_then(nix::poll::PollFd::revents)
     .is_some_and(|r| r.contains(PollFlags::POLLIN))
   {
-    let requests = Shed::meta_mut(MetaTab::read_socket);
+    let requests = Shed::read_socket();
     for (conn, req) in requests {
       let res = handle_socket_request(conn, req, readline).transpose();
       if let Some(event) = res

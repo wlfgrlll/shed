@@ -424,7 +424,7 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
 
   Shed::jobs(|j| {
     if let Some(job) = j.query(JobID::Pgid(child_pgid)) {
-      Shed::meta_mut(|m| m.notify_job_complete(job));
+      Shed::notify_job_complete(job);
     }
   });
 

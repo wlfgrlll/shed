@@ -1,14 +1,9 @@
 use std::{
   collections::{HashMap, HashSet, VecDeque},
   fmt::Write,
-  os::{
-    fd::{AsFd, OwnedFd},
-    unix::{fs::PermissionsExt, net::UnixStream},
-  },
+  os::{fd::OwnedFd, unix::fs::PermissionsExt},
   path::{Path, PathBuf},
   rc::Rc,
-  str::FromStr,
-  sync::Arc,
   time::{Duration, Instant},
 };
 
@@ -21,22 +16,18 @@ use super::{
   keys::KeyEvent,
   logic::AutoCmdKind,
   match_loop,
-  readline::{Candidate, CompSpec, LineData},
-  sherr, socket, system_msg,
+  readline::{Candidate, CompSpec},
+  sherr, system_msg,
   util::query_db,
-  var, writefd,
+  var,
 };
-use itertools::izip;
 use nix::{
-  errno::Errno,
   libc::time_t,
   poll::PollTimeout,
   sys::{
     resource::{Usage, UsageWho, getrusage},
     time::TimeVal,
-    wait::WaitStatus as WtStat,
   },
-  unistd::{read, write},
 };
 use regex::Regex;
 
@@ -453,8 +444,6 @@ pub(crate) struct MetaTab {
   runtime_start: Option<Instant>,
   runtime_stop: Option<Instant>,
 
-  socket: Option<Arc<socket::ShedSocket>>,
-  subscribers: Vec<Arc<UnixStream>>,
   last_job: Option<Job>,
 
   // pushd/popd stack
@@ -498,8 +487,6 @@ impl Clone for MetaTab {
       interactive_shell: self.interactive_shell,
       runtime_start: self.runtime_start,
       runtime_stop: self.runtime_stop,
-      socket: self.socket.clone(),
-      subscribers: self.subscribers.clone(),
       dir_stack: self.dir_stack.clone(),
       getopts_offset: self.getopts_offset,
       old_path: self.old_path.clone(),
@@ -528,8 +515,6 @@ impl Default for MetaTab {
       interactive_shell: false,
       runtime_start: None,
       runtime_stop: None,
-      socket: None,
-      subscribers: vec![],
       last_job: None,
       dir_stack: VecDeque::new(),
       getopts_offset: 0,
@@ -869,142 +854,6 @@ impl MetaTab {
     }
     files
   }
-  pub fn create_socket(&mut self) -> ShResult<()> {
-    let sock = socket::ShedSocket::new()?;
-    self.socket = Some(sock.into());
-    Ok(())
-  }
-  pub fn get_socket(&self) -> Option<Arc<socket::ShedSocket>> {
-    self.socket.clone()
-  }
-  pub fn read_socket(&mut self) -> Vec<(UnixStream, socket::SocketRequest)> {
-    let mut requests = vec![];
-    let Some(listener) = self.get_socket() else {
-      return requests;
-    };
-
-    while let Ok((conn, _)) = listener.listener().accept()
-      && let Some(req) = Self::read_request(&conn)
-    {
-      requests.push((conn, req));
-    }
-
-    requests
-  }
-  pub fn read_request(conn: &UnixStream) -> Option<socket::SocketRequest> {
-    conn.set_nonblocking(false).ok();
-    let mut bytes = vec![];
-    loop {
-      let mut buffer = [0u8; 1024];
-      match read(conn, &mut buffer) {
-        Ok(0) => break,
-        Ok(n) => {
-          if let Some(pos) = buffer[..n].iter().position(|&b| b == b'\n') {
-            bytes.extend_from_slice(&buffer[..pos]);
-            break;
-          }
-          bytes.extend_from_slice(&buffer[..n]);
-        }
-        Err(Errno::EINTR) => (),
-        Err(e) => {
-          writefd!(conn, "error>> failed to parse request: {e}\n").ok();
-          break;
-        }
-      }
-    }
-    let input = String::from_utf8_lossy(&bytes).to_string();
-    let request = match socket::SocketRequest::from_str(&input) {
-      Ok(req) => req,
-      Err(e) => {
-        write(
-          conn,
-          format!("error>> failed to parse request: {e}\n").as_bytes(),
-        )
-        .ok();
-        return None;
-      }
-    };
-
-    Some(request)
-  }
-  pub fn push_subscriber(&mut self, subscriber: UnixStream) {
-    self.subscribers.push(Arc::new(subscriber));
-  }
-  pub fn notify_autocmd(&self, kind: AutoCmdKind) {
-    for subscriber in &self.subscribers {
-      write(subscriber, format!("autocmd_event>>{kind}\n").as_bytes()).ok();
-    }
-  }
-  pub fn num_subscribers(&self) -> usize {
-    self.subscribers.len()
-  }
-  fn broadcast<F: FnMut(&Arc<UnixStream>) -> std::io::Result<()>>(&mut self, mut f: F) {
-    let mut dead = vec![];
-    for (i, subscriber) in self.subscribers.iter().enumerate() {
-      if f(subscriber).is_err() {
-        dead.push(i);
-      }
-    }
-
-    for i in dead.into_iter().rev() {
-      self.subscribers.remove(i);
-    }
-  }
-  pub fn notify_job_complete(&mut self, job: &Job) {
-    let id = job.tabid().map(|i| (i + 1).to_string()).unwrap_or_default();
-    let pids = job.get_pids();
-    let stats = job.get_stats();
-    let cmds = job.get_cmds();
-
-    self.broadcast(|sub| {
-      let mut buf = format!("job>>begin>>{id} {}\n", pids.len());
-      for (pid, stat, cmd) in izip!(&pids, &stats, &cmds) {
-        let stat_str = match stat {
-          WtStat::Exited(_, 0) => "done".to_string(),
-          WtStat::Exited(_, n) => format!("failed:{n}"),
-          WtStat::Signaled(_, sig, _) => format!("signaled:{sig:?}"),
-          other => format!("{other:?}"),
-        };
-        let _ = writeln!(buf, "job>>child>>{pid} {stat_str} {cmd}");
-      }
-      writefd!(sub, "{buf}")?;
-      Ok(())
-    });
-  }
-  pub fn notify_line_edit(&mut self, data: LineData) {
-    let LineData {
-      buffer,
-      cursor,
-      anchor,
-      hint,
-      mode,
-    } = data;
-
-    self.broadcast(|sub| {
-      let mut buf = String::new();
-      let _ = writeln!(buf, "line>>buffer>>{buffer}");
-      let _ = writeln!(buf, "line>>cursor>>{cursor}");
-      if let Some(anchor) = anchor {
-        let _ = writeln!(buf, "line>>anchor>>{anchor}");
-      }
-      if let Some(hint) = &hint {
-        let _ = writeln!(buf, "line>>hint>>{hint}");
-      }
-      let _ = writeln!(buf, "line>>mode>>{mode}");
-
-      write(sub, buf.as_bytes())?;
-      Ok(())
-    });
-  }
-  pub fn notify_key_event(&mut self, event: &KeyEvent) {
-    let seq = event.as_vim_seq();
-
-    self.broadcast(|sub| {
-      let buf = format!("line>>key_event>>{seq}\n");
-      write(sub, buf.as_bytes())?;
-      Ok(())
-    });
-  }
   pub fn cache_util(&mut self, util: Rc<Utility>) {
     self.util_cache.insert(util);
   }
@@ -1133,97 +982,6 @@ impl MetaTab {
   }
   pub fn dirs_mut(&mut self) -> &mut VecDeque<PathBuf> {
     &mut self.dir_stack
-  }
-}
-
-#[cfg(test)]
-mod read_request_tests {
-  use crate::socket::SocketRequest;
-  use crate::state::meta::MetaTab;
-  use crate::tests::testutil::TestGuard;
-  use std::io::Write;
-  use std::os::unix::net::UnixStream;
-
-  /// Set up a `UnixStream` pair; the test writes a request to `writer`
-  /// then calls `read_request` on `reader`.
-  fn pair() -> (UnixStream, UnixStream) {
-    UnixStream::pair().unwrap()
-  }
-
-  #[test]
-  fn read_request_subscribe() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    writer.write_all(b"subscribe\n").unwrap();
-    let req = MetaTab::read_request(&reader).unwrap();
-    assert!(matches!(req, SocketRequest::Subscribe));
-  }
-
-  #[test]
-  fn read_request_redraw() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    writer.write_all(b"redraw\n").unwrap();
-    let req = MetaTab::read_request(&reader).unwrap();
-    assert!(matches!(req, SocketRequest::RefreshPrompt));
-  }
-
-  #[test]
-  fn read_request_msg_system() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    writer.write_all(b"msg::system::hello world\n").unwrap();
-    let req = MetaTab::read_request(&reader).unwrap();
-    match req {
-      SocketRequest::PostSystemMessage(msg) => assert_eq!(msg, "hello world"),
-      other => panic!("expected PostSystemMessage, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn read_request_msg_status() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    writer.write_all(b"msg::status::saved\n").unwrap();
-    let req = MetaTab::read_request(&reader).unwrap();
-    match req {
-      SocketRequest::PostStatusMessage(msg) => assert_eq!(msg, "saved"),
-      other => panic!("expected PostStatusMessage, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn read_request_invalid_returns_none_after_write_error() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    writer.write_all(b"nonsense_request\n").unwrap();
-    let req = MetaTab::read_request(&reader);
-    assert!(req.is_none());
-  }
-
-  #[test]
-  fn read_request_handles_buffered_split_across_reads() {
-    let _g = TestGuard::new();
-    let (mut writer, reader) = pair();
-    // Write in two chunks to exercise the loop's accumulator branch.
-    writer.write_all(b"subscr").unwrap();
-    writer.write_all(b"ibe\n").unwrap();
-    let req = MetaTab::read_request(&reader).unwrap();
-    assert!(matches!(req, SocketRequest::Subscribe));
-  }
-
-  #[test]
-  fn read_request_eof_without_newline_parses_buffered() {
-    let _g = TestGuard::new();
-    let (writer, reader) = pair();
-    {
-      let mut w = writer;
-      w.write_all(b"subscribe").unwrap();
-      // Drop writer → EOF on reader side; the loop's Ok(0) branch
-      // fires and we parse what we have.
-    }
-    let req = MetaTab::read_request(&reader).unwrap();
-    assert!(matches!(req, SocketRequest::Subscribe));
   }
 }
 
