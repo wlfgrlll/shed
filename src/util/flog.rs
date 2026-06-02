@@ -2,10 +2,6 @@ use std::cell::Cell;
 
 use super::{ShResult, sherr, system_msg, ui, var};
 
-thread_local! {
-  static IN_META_MUT: Cell<bool> = const { Cell::new(false) };
-}
-
 pub(crate) fn init() -> ShResult<()> {
   log::set_logger(&Flog).map_err(|e| sherr!(InternalErr, "Failed to set logger: {e}"))?;
   update_log_level();
@@ -28,15 +24,6 @@ impl log::Log for Flog {
   fn log(&self, record: &log::Record) {
     if !self.enabled(record.metadata()) {
       return;
-    }
-
-    let re_entering = IN_META_MUT.with(|f| f.replace(true));
-    if re_entering {
-      return;
-    }
-
-    scopeguard::defer! {
-      IN_META_MUT.with(|f| f.set(false));
     }
 
     let level = ui::stylize_loglevel(record.level());

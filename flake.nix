@@ -57,7 +57,7 @@
 
     packages.default = rustPlatform.buildRustPackage {
       pname = "shed";
-      version = "0.25.2";
+      version = "0.25.3";
 
       src = self;
 

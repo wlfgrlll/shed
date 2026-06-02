@@ -780,7 +780,6 @@ impl Terminal {
 
   pub fn prepare_for_pager(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.edit_termios(enable_raw_mode)?;
     let actions = [
       TermCtl::SetAttr(Attr::BracketPaste(Toggle::Off)),
       TermCtl::SetAttr(Attr::FocusReport(Toggle::Off)),
@@ -796,6 +795,7 @@ impl Terminal {
     }
 
     self.flush()?;
+    self.edit_termios(enable_raw_mode)?;
     Ok(guard.activate())
   }
 

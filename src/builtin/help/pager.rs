@@ -234,15 +234,15 @@ impl HelpPager {
 
     for line in &content_lines {
       write_term!("{line}").ok();
-      queue_term!(TermCtl::Clear(WholeLine), TermCtl::PrintChar('\n')).ok();
+      queue_term!(TermCtl::Clear(LineToEnd), TermCtl::PrintChar('\n')).ok();
     }
 
     for _ in content_lines.len()..height {
       write_term!("\x1b[1;34m~\x1b[0m").ok(); // draw tildes on empty lines
-      queue_term!(TermCtl::Clear(WholeLine), TermCtl::PrintChar('\n')).ok();
+      queue_term!(TermCtl::Clear(LineToEnd), TermCtl::PrintChar('\n')).ok();
     }
 
-    queue_term!(TermCtl::PrintChar('\n')).ok();
+    queue_term!(TermCtl::PrintChar('\r')).ok();
 
     if let Some(name) = &self.filename {
       write_term!("\x1b[1;7;4m {name} \x1b[0m ",).ok();
@@ -256,7 +256,7 @@ impl HelpPager {
       };
       write_term!("\x1b[1;7;4m {prefix}{query} \x1b[0m",).ok();
     } else {
-      queue_term!(TermCtl::Clear(WholeLine),).ok();
+      queue_term!(TermCtl::Clear(LineToEnd),).ok();
     }
 
     Shed::term_mut(io::Write::flush)?;
