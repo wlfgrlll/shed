@@ -1105,8 +1105,7 @@ impl ExParser {
   fn parse_edit(&mut self) -> ExR<ExNdRule> {
     let mut args = vec![];
     while let Some(arg) = self.tokens.next() {
-      let path = PathBuf::from(arg.span.as_str().to_string());
-      args.push(path);
+      args.push(expand_path_arg(arg.span.as_str()));
     }
     let args = args.into_boxed_slice();
 
@@ -1142,17 +1141,27 @@ impl ExParser {
       if is_append && let Some(next) = self.tokens.next() {
         arg = next;
       }
-      let arg = arg.span.as_str();
+      let path = expand_path_arg(arg.span.as_str());
 
       if is_read {
-        ExR::success(ExNdRule::Read(ReadSrc::File(PathBuf::from(arg))))
+        ExR::success(ExNdRule::Read(ReadSrc::File(path)))
       } else if is_append {
-        ExR::success(ExNdRule::Write(WriteDest::FileAppend(PathBuf::from(arg))))
+        ExR::success(ExNdRule::Write(WriteDest::FileAppend(path)))
       } else {
-        ExR::success(ExNdRule::Write(WriteDest::File(PathBuf::from(arg))))
+        ExR::success(ExNdRule::Write(WriteDest::File(path)))
       }
     }
   }
+}
+
+/// Run an ex-command path argument through the shell's word-expansion
+fn expand_path_arg(arg: &str) -> PathBuf {
+  let expanded = crate::expand::Expander::from_raw(arg, TkFlags::empty())
+    .no_glob()
+    .no_split()
+    .expand_no_split()
+    .unwrap_or_else(|_| arg.to_string());
+  PathBuf::from(expanded)
 }
 
 #[cfg(test)]
