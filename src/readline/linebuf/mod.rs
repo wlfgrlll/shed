@@ -3,7 +3,10 @@ use std::{collections::VecDeque, ops::Range};
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::readline::context;
+use crate::{
+  readline::context,
+  state::vars::{VarFlags, VarKind},
+};
 
 use super::{
   Shed, autocmd,
@@ -204,6 +207,24 @@ impl LineBuf {
 
     // Execute the command
     let res = self.exec_verb(cmd);
+
+    let num_lines = self.lines().len();
+    let cursor_line = self.cursor().row;
+
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "EDITOR_LINES",
+        VarKind::Str(num_lines.to_string()),
+        VarFlags::READONLY,
+      )
+    })?;
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "EDITOR_LINE",
+        VarKind::Str((cursor_line + 1).to_string()),
+        VarFlags::READONLY,
+      )
+    })?;
 
     if self.is_empty() {
       self.set_hint(None);

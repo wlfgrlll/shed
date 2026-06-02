@@ -859,22 +859,22 @@ impl BashCompSpec {
       v.set_var(
         "COMP_WORDS",
         VarKind::arr_from_vec(raw_words),
-        VarFlags::empty(),
+        VarFlags::READONLY,
       )
     })?;
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_CWORD",
         VarKind::Str(cword.to_string()),
-        VarFlags::empty(),
+        VarFlags::READONLY,
       )
     })?;
-    Shed::vars_mut(|v| v.set_var("COMP_LINE", VarKind::Str(line.clone()), VarFlags::empty()))?;
+    Shed::vars_mut(|v| v.set_var("COMP_LINE", VarKind::Str(line.clone()), VarFlags::READONLY))?;
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_POINT",
         VarKind::Str(cursor_pos.to_string()),
-        VarFlags::empty(),
+        VarFlags::READONLY,
       )
     })?;
 
