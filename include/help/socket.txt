@@ -35,7 +35,9 @@ processes.
 ==============================================================================
 2. Protocol                                    *socket-protocol*
 
-  Messages are sent as a single line of text terminated by `\n`.
+  Each request is one message per connection, terminated by EOF on the
+  client's write half.
+
   The general format is:
 
       `{command}{separator}{arg1}{separator}{arg2}...`
@@ -48,6 +50,10 @@ processes.
       `msg::status::hello world`
       `msg/\/\/\/status/\/\/\/hello world`
       `msg<>status<>hello world`
+
+  This pattern makes escaping entirely unnecessary, if
+  the separator is sufficiently complex. Examples will use the
+  `msg::status::hello world` form.
 
   Requests that take no arguments have no separator:
 
@@ -335,7 +341,7 @@ processes.
           `msg>> build complete`
 
       Unlike the `msg::status::` and `msg::system::` socket
-      requests (which are inbound — external clients posting to
+      requests (which are inbound, external clients posting to
       the shell), `msg>>` events flow the other way: the shell
       pushes them out to all connected subscribers. This makes
       `msg -b` the natural way to dispatch shell-side events to

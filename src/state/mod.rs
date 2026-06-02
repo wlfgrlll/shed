@@ -360,19 +360,26 @@ impl Shed {
       unistd::{read, write},
     };
     use std::str::FromStr;
+    const MAX_IDLE_ITERS: u32 = 50;
 
-    conn.set_nonblocking(false).ok();
+    // Nonblocking read; the request ends at EOF on the client's write half
+    conn.set_nonblocking(true).ok();
     let mut bytes = vec![];
+    let mut idle_iters = 0;
     loop {
       let mut buffer = [0u8; 1024];
       match read(conn, &mut buffer) {
         Ok(0) => break,
         Ok(n) => {
-          if let Some(pos) = buffer[..n].iter().position(|&b| b == b'\n') {
-            bytes.extend_from_slice(&buffer[..pos]);
+          bytes.extend_from_slice(&buffer[..n]);
+          idle_iters = 0;
+        }
+        Err(Errno::EAGAIN) => {
+          idle_iters += 1;
+          if idle_iters >= MAX_IDLE_ITERS {
             break;
           }
-          bytes.extend_from_slice(&buffer[..n]);
+          std::thread::sleep(std::time::Duration::from_millis(1));
         }
         Err(Errno::EINTR) => (),
         Err(e) => {
@@ -381,6 +388,11 @@ impl Shed {
         }
       }
     }
+
+    if bytes.last() == Some(&b'\n') {
+      bytes.pop();
+    }
+
     let input = String::from_utf8_lossy(&bytes).to_string();
     let request = match socket::SocketRequest::from_str(&input) {
       Ok(req) => req,

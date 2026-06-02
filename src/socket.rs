@@ -564,7 +564,7 @@ pub(super) fn handle_socket_request(
 
         readline.editor_mut().set_hint(hint);
         readline.editor_mut().move_cursor_to_end();
-        readline.set_needs_redraw(true);
+        readline.mark_dirty();
       }
       LineHeader::Cursor => readline.editor_mut().with_hint(|this| {
         if let Some((row, col)) = value.split_once(':')
@@ -679,7 +679,7 @@ pub(super) fn handle_socket_request(
             lines: Lines::to_lines(&hint),
             token_start,
           }));
-          readline.set_needs_redraw(true);
+          readline.mark_dirty();
         }
       }
     },
