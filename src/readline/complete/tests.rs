@@ -252,6 +252,41 @@ fn wordbreak_colon_when_set() {
 }
 
 #[test]
+fn wordbreak_splits_on_subtoken_edge() {
+  // Regression: a wordbreak char immediately followed by something that
+  // *starts* a sub-token (e.g. `~/...` becomes a tilde-prefix sub-token)
+  // used to block the split — `can_split_at` rejected the position because
+  // the sub-token's range started right at it. The split is safe on a
+  // sub-token edge; only positions strictly inside a sub-token should be
+  // rejected. Without the fix, `scp host:~/foo` stays as one token and
+  // remote-path completion can't tell where the host ends.
+  let _g = TestGuard::new();
+  Shed::vars_mut(|v| {
+    v.set_var(
+      "COMP_WORDBREAKS",
+      VarKind::Str("=:".into()),
+      VarFlags::empty(),
+    )
+  })
+  .unwrap();
+
+  let mut comp = SimpleCompleter::default();
+  let line = "scp host:~/foo".to_string();
+  let cursor = line.len();
+  let _ = comp.get_candidates(&line, cursor, super::CompSource::Shell);
+
+  let colon_idx = line.find(':').unwrap();
+  assert_eq!(
+    comp.token_span.0,
+    colon_idx + 1,
+    "token_span.0 ({}) should be right after ':' ({}) — \
+     wordbreak split must fire even when the next char starts a sub-token",
+    comp.token_span.0,
+    colon_idx
+  );
+}
+
+#[test]
 fn wordbreak_rightmost_wins() {
   let _g = TestGuard::new();
   Shed::vars_mut(|v| {

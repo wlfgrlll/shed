@@ -465,7 +465,7 @@ impl CtxTk {
     }
     !self.sub_tokens.iter().any(|c| {
       let cr = c.span.range();
-      (cr.start..cr.end).contains(&at)
+      cr.start < at && at < cr.end
     })
   }
 
