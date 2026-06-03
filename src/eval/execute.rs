@@ -1131,7 +1131,7 @@ impl Dispatcher {
     };
 
     drop(cooked_guard); // exit cooked mode
-    if !is_bg || interactive {
+    if !is_bg && interactive {
       Shed::term_mut(Terminal::fix_cursor_column)?;
       if let Some((_, bottom)) = saved_region {
         Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
@@ -1964,6 +1964,56 @@ mod tests {
     test_input("if true; then true; false; fi").unwrap();
     // Body's last command (false) determines if-statement's status
     assert_eq!(state::Shed::get_status(), 1);
+  }
+
+  // ===================== scope sharing between cond and body =====================
+
+  #[test]
+  fn if_cond_assignment_visible_in_body() {
+    // Assignments in an if-condition need to be visible to the matching
+    // body — that's the motivation for sharing a scope between cond and
+    // body. Regression for `if foo=$(...); then use $foo; fi`.
+    let g = TestGuard::new();
+    test_input("if foo=hello; then echo \"got $foo\"; fi").unwrap();
+    assert_eq!(g.read_output(), "got hello\n");
+  }
+
+  #[test]
+  fn while_cond_assignment_visible_in_body() {
+    // `while line=$(read_next); do use $line; done` style: cond writes a
+    // variable each iteration, body reads it.
+    let g = TestGuard::new();
+    test_input(
+      r#"
+        i=0
+        while i=$((i + 1)); [ $i -le 3 ]; do
+          echo "iter $i"
+        done
+      "#,
+    )
+    .unwrap();
+    assert_eq!(g.read_output(), "iter 1\niter 2\niter 3\n");
+  }
+
+  #[test]
+  fn while_cond_mutations_persist_across_iterations() {
+    // Regression for the OPTIND-in-getopts case: a while-loop's cond and
+    // body share a single scope spanning all iterations, so mutations made
+    // in cond on iteration N are visible on iteration N+1. If the scope
+    // were per-iteration, this would loop forever (counter resets each
+    // time) or exit immediately depending on the variable.
+    let g = TestGuard::new();
+    test_input(
+      r#"
+        n=0
+        while n=$((n + 1)); [ $n -lt 4 ]; do
+          echo "tick"
+        done
+        echo "final n=$n"
+      "#,
+    )
+    .unwrap();
+    assert_eq!(g.read_output(), "tick\ntick\ntick\nfinal n=4\n");
   }
 
   #[test]
