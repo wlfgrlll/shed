@@ -963,8 +963,9 @@ impl CompSpec for BashCompSpec {
     candidates = candidates
       .into_iter()
       .map(|mut c| {
-        let tail = c.strip_prefix(&stripped).unwrap_or_default();
-        c.content = format!("{prefix}{tail}");
+        if let Some(tail) = c.strip_prefix(&stripped) {
+          c.content = format!("{prefix}{tail}");
+        }
         c
       })
       .collect();
