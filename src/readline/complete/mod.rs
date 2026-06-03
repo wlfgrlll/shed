@@ -921,14 +921,15 @@ impl CompSpec for BashCompSpec {
     let unescaped = unescape_str(prefix.as_str());
     let expanded = expand_raw_inner(&mut unescaped.chars().peekable(), false)?;
     let stripped = strip_markers(&expanded);
+    let expanded_cursor = stripped.len();
     if self.targets.contains(CompFlags::FILES) {
-      candidates.extend(complete_path(&stripped, ctx.cursor_pos));
+      candidates.extend(complete_path(&stripped, expanded_cursor));
     }
     if self.targets.contains(CompFlags::DIRS) {
-      candidates.extend(complete_dirs(&stripped, ctx.cursor_pos));
+      candidates.extend(complete_dirs(&stripped, expanded_cursor));
     }
     if self.targets.contains(CompFlags::CMDS) {
-      candidates.extend(complete_commands(&stripped, ctx.cursor_pos));
+      candidates.extend(complete_commands(&stripped, expanded_cursor));
     }
     if self.targets.contains(CompFlags::VARS) {
       candidates.extend(complete_vars_raw(&stripped));
