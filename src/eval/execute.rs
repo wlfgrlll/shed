@@ -793,6 +793,7 @@ impl Dispatcher {
         }
       };
       let CondNode { cond, body } = cond_node;
+      let _guard = shared_scope_guard();
       'outer: loop {
         if let Err(e) = s.dispatch_node(*cond.clone()) {
           state::Shed::set_status(1);
@@ -801,7 +802,6 @@ impl Dispatcher {
 
         let status = state::Shed::get_status();
         if keep_going(kind, status) {
-          let _guard = shared_scope_guard();
           if let Err(e) = s.dispatch_node(*(body.clone())) {
             match e.kind() {
               ShErrKind::LoopBreak(code) => {
@@ -958,18 +958,15 @@ impl Dispatcher {
       let mut matched = false;
       for node in cond_nodes {
         let CondNode { cond, body } = node;
-        {
-          let _guard = shared_scope_guard();
+        let _guard = shared_scope_guard();
 
-          if let Err(e) = s.dispatch_node(*cond) {
-            state::Shed::set_status(1);
-            return Err(e);
-          }
+        if let Err(e) = s.dispatch_node(*cond) {
+          state::Shed::set_status(1);
+          return Err(e);
         }
 
         if state::Shed::get_status() == 0 {
           matched = true;
-          let _guard = shared_scope_guard();
           s.dispatch_node(*body)?;
           break; // Don't check remaining elif conditions
         }
@@ -1134,7 +1131,7 @@ impl Dispatcher {
     };
 
     drop(cooked_guard); // exit cooked mode
-    if !is_bg {
+    if !is_bg || interactive {
       Shed::term_mut(Terminal::fix_cursor_column)?;
       if let Some((_, bottom)) = saved_region {
         Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
