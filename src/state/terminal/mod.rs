@@ -612,7 +612,7 @@ impl Terminal {
     };
 
     if c.0 != 1 {
-      write!(self, "\x1b[7m%\x1b[0m\n\r");
+      write!(self, "\x1b[7m%\x1b[0m\n\r")?;
     }
     self.flush()?;
     Ok(())

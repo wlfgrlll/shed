@@ -71,28 +71,6 @@ impl Palette {
     })
   }
 
-  pub fn neutral() -> Self {
-    let entry = PaletteEntry::new();
-    // no styles. used when syntax highlighting is disabled
-    Self {
-      string: entry,
-      keyword: entry,
-      external_command: entry,
-      builtin: entry,
-      function: entry,
-      alias: entry,
-      directory: entry,
-      invalid_command: entry,
-      control_flow_keyword: entry,
-      argument: entry,
-      argument_file: entry,
-      variable: entry,
-      operator: entry,
-      comment: entry,
-      glob: entry,
-    }
-  }
-
   pub fn style_for(&self, tk: &CtxTk, editor_cursor_pos: usize) -> PaletteEntry {
     let class = tk.class();
     match class {
