@@ -1,3 +1,4 @@
+use crate::state::{Shed, terminal::Terminal};
 use crate::util::posix_extension::execvpe;
 use nix::errno::Errno;
 
@@ -22,6 +23,8 @@ impl super::Builtin for Exec {
 
     let cmd = &args.cmd.0;
     let span = args.cmd.1;
+
+    let _term_guard = Shed::term_mut(Terminal::prepare_for_exec);
 
     let Err(e) = execvpe(cmd, &args.argv, &args.envp);
 
