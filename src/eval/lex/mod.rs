@@ -11,7 +11,7 @@ use super::{
   Shed,
   builtin::BUILTIN_NAMES,
   match_loop, sherr,
-  util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_braces, scan_parens},
+  util::{Pos, QuoteState, ShResult, ends_with_unescaped, scan_param_exp, scan_parens},
 };
 
 pub const KEYWORDS: [&str; 21] = [
@@ -185,11 +185,13 @@ impl ariadne::Span for Span {
   }
 
   fn start(&self) -> usize {
-    self.range.start
+    let max = self.source.content.len();
+    self.range.start.min(max).min(self.range.end)
   }
 
   fn end(&self) -> usize {
-    self.range.end
+    let max = self.source.content.len();
+    self.range.end.min(max)
   }
 }
 
@@ -1034,11 +1036,12 @@ impl LexStream {
       '$' if chars.peek() == Some(&'{') => {
         pos += 2;
         chars.next();
-        if !scan_braces(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
+        let open_pos = pos - 2;
+        if !scan_param_exp(&mut chars, &mut pos, 1) && !self.flags.contains(LexFlags::LEX_UNFINISHED_STRUCTURES) {
           return Err(lex_err!(
             self,
             pos,
-            pos..pos + 1,
+            open_pos..open_pos + 2,
             "Unclosed parameter expansion",
           ));
         }
