@@ -1,4 +1,4 @@
-use crate::{autocmd, eval::parse::LabelCtx, shopt_mut, state::logic::AutoloadTrigger};
+use crate::{autocmd, eval::parse::LabelCtx, shopt_mut, state::logic::AutoloadKind};
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use crate::state::util::with_vars;
@@ -598,19 +598,14 @@ impl Dispatcher {
 
     let func_body = match sh_func {
       ShFunc::Defined { logic, .. } => logic,
-      ShFunc::Autoload { src, trigger } => {
-        match trigger {
-          AutoloadTrigger::OnCommand => {
-            Shed::logic_mut(|l| l.remove_func(&func_name)); // remove autoload from the table
-            src.source(trigger)?; // load
+      ShFunc::Autoload(src) => {
+        Shed::logic_mut(|l| l.remove_func(&func_name)); // remove autoload from the table
+        src.source(AutoloadKind::Function)?;
 
-            // retry, passing func by value
-            // the scoped assignment and borrow above are done
-            // so that we can pass func untouched to dispatch_cmd()
-            return self.dispatch_cmd(func);
-          }
-          AutoloadTrigger::OnCompletion => unreachable!(), // is_func() filters these out
-        }
+        // retry, passing func by value
+        // the scoped assignment and borrow above are done
+        // so that we can pass func untouched to dispatch_cmd()
+        return self.dispatch_cmd(func);
       }
     };
 

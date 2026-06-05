@@ -658,10 +658,6 @@ impl CtxTk {
         sub_tokens: vec![],
       }];
     } else if flags.contains(TkFlags::ASSIGN) && !value.as_str().starts_with('=') {
-      // Assignment-shaped token: structurally tokenize so the index
-      // (which can contain $(...) / ${...}) and the RHS are properly
-      // recognized for highlighting / completion. Skip the leading-`=`
-      // case — that's a regular command, not an assignment.
       return parse_assignment(span, *flags);
     } else if check_path_exists(value.as_str()) {
       CtxTkRule::ArgumentFile

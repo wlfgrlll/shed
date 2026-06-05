@@ -6,7 +6,7 @@ use super::{
   outln, sherr,
   state::{
     self, Shed,
-    logic::{AutoloadSrc, AutoloadTrigger, ShFunc},
+    logic::{AutoloadSrc, ShFunc},
     meta::UtilKind,
     vars::VarKind,
   },
@@ -43,19 +43,17 @@ impl super::Builtin for Type {
           UtilKind::Function => {
             let func = Shed::logic(|v| v.get_func(&arg)).unwrap();
             match func {
-              ShFunc::Autoload { src, trigger } => {
+              ShFunc::Autoload(src) => {
                 let (origin, location) = match &src {
                   AutoloadSrc::Path(p) => ("external", p.display().to_string()),
                   AutoloadSrc::Embedded(s) => ("internal", s.clone()),
                 };
-                let kind = match trigger {
-                  AutoloadTrigger::OnCommand => "shell function",
-                  AutoloadTrigger::OnCompletion => "completion function",
-                };
                 if short {
                   outln!("{arg} ({origin}) -> {location}");
                 } else {
-                  outln!("{arg} is an {origin} autoloading {kind}, pointing at '{location}'");
+                  outln!(
+                    "{arg} is an {origin} autoloading shell function, pointing at '{location}'"
+                  );
                 }
               }
               ShFunc::Defined { source, .. } => {

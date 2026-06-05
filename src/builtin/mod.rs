@@ -63,34 +63,6 @@ use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
 /// Embed a completion script directly in the binary.
 ///
 /// The script has to define a completion function *and* call complete -F {func} {name}
-macro_rules! embed {
-  ($path:literal) => {
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))
-  };
-}
-
-/// Register a script to embed in the binary and source on shell startup
-///
-/// These are mainly used for builtin functions, aliases and utility variables
-macro_rules! register_scripts {
-  ($($path:literal),* $(,)?) => {
-    static SCRIPTS: &[(&str,&str)] = &[
-      $(($path, embed!($path))),*
-    ];
-
-    pub fn source_builtin_scripts() {
-      let mut code = 0;
-      for (path, src) in SCRIPTS {
-        if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
-          code = 2;
-          e.print_error();
-        }
-      }
-      $crate::state::Shed::set_status(code);
-    }
-  };
-}
-
 macro_rules! register_completions {
   ($($name:literal => $script:expr),* $(,)?) => {
     static COMPLETIONS: &[(&str,&str)] = &[
@@ -271,22 +243,6 @@ register_completions! {
   "fpush"    => compgen!("fpush",    "-v"),
   "rotate"   => compgen!("rotate",   "-v"),
   "builtin"  => compgen!("builtin",  "-b"),
-  "kill"     => embed!("completions/kill.sh"),
-  "keymap"   => embed!("completions/keymap.sh"),
-  "declare"  => embed!("completions/declare.sh"),
-  "trap"     => embed!("completions/trap.sh"),
-  "ulimit"   => embed!("completions/ulimit.sh"),
-  "set"      => embed!("completions/set.sh"),
-  "autocmd"  => embed!("completions/autocmd.sh"),
-  "cd"       => embed!("completions/cd.sh"),
-  "shopt"    => embed!("completions/shopt.sh"),
-  "compadd"  => embed!("completions/compadd.sh"),
-  "help"     => embed!("completions/help.sh"),
-  "hist"     => embed!("completions/hist.sh"),
-}
-
-register_scripts! {
-  "functions/version.sh",
 }
 
 /// Lookup a name in the builtin table via binary search
@@ -694,7 +650,7 @@ impl CommandBuiltin {
 pub mod tests {
   use crate::{
     Shed, assert_status_eq,
-    builtin::{source_builtin_completions, source_builtin_scripts},
+    builtin::source_builtin_completions,
     eval::execute::exec_nonint,
     state::{self, vars::VarFlags},
     tests::testutil::{TestGuard, has_cmd, test_input},
@@ -756,25 +712,6 @@ pub mod tests {
     let var = Shed::vars(|v| v.try_get_var_meta("FOO")).unwrap();
     let flags = var.flags();
     assert!(flags.contains(VarFlags::EXPORT));
-  }
-
-  #[test]
-  fn builtin_scripts_pass() {
-    let _g = TestGuard::new();
-    source_builtin_scripts();
-    assert_status_eq!(0);
-
-    let failures: Vec<&str> = super::SCRIPTS
-      .iter()
-      .filter(|(path, src)| {
-        crate::eval::execute::exec_nonint(src.to_string(), Some(path.to_string().into())).is_err()
-      })
-      .map(|(path, _)| *path)
-      .collect();
-    assert!(
-      failures.is_empty(),
-      "Functions failed to source: {failures:?}"
-    );
   }
 
   #[test]

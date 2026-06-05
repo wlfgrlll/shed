@@ -13,7 +13,7 @@ use std::os::fd::BorrowedFd;
 use super::{Shed, eval, expand, match_loop, procio, sherr, state, system_msg, var, write_term};
 
 pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
-pub(super) use path::{is_executable_file, path_list_entries, split_path_list};
+pub(super) use path::{is_executable_file, path_list_entries};
 pub(super) use pos::{Pos, SignedPos};
 pub(super) use ui::{
   BOT_LEFT, BOT_RIGHT, HOR_LINE, PaletteEntry, TOP_LEFT, TOP_RIGHT, TREE_LEFT, TREE_RIGHT,
