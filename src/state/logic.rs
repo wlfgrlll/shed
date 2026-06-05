@@ -3,8 +3,11 @@ use nix::sys::signal::Signal;
 use std::{
   collections::HashMap,
   fmt::{self, Display},
+  path::PathBuf,
   str::FromStr,
 };
+
+use crate::{ShResult, eval::execute::exec_nonint, sherr, util};
 
 use super::{
   ShErr,
@@ -38,22 +41,184 @@ impl Display for ShAlias {
   }
 }
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "include"]
+#[include = "functions/*"]
+struct AutoloadFuncs;
+
+#[derive(rust_embed::RustEmbed)]
+#[folder = "include"]
+#[include = "completions/*"]
+struct AutoloadComps;
+
+/// Shared body for `AutoloadFuncs::get_all` / `AutoloadComps::get_all`.
+///
+/// Walks the embedded asset paths and the on-disk entries under `env_var`,
+/// running each stub through `tag` so completion sources can flip the
+/// trigger from `OnCommand` to `OnCompletion`. On-disk entries shadow
+/// embedded ones with the same name; that's intentional so users can
+/// override bundled scripts.
+fn collect_autoload<I, F>(embedded: I, env_var: &str, tag: F) -> HashMap<String, ShFunc>
+where
+  I: Iterator<Item = std::borrow::Cow<'static, str>>,
+  F: Fn(ShFunc) -> ShFunc + Copy,
+{
+  let mut out: HashMap<String, ShFunc> = embedded
+    .filter_map(|path_str| {
+      let name = PathBuf::from(path_str.as_ref())
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)?;
+      if name.is_empty() {
+        return None;
+      }
+      let stub = tag(ShFunc::autoload_embedded(path_str.to_string()));
+      Some((name, stub))
+    })
+    .collect();
+
+  let path_var = std::env::var(env_var).unwrap_or_default();
+  for entry in util::split_path_list(&path_var) {
+    if entry.is_dir() {
+      continue;
+    }
+    if let Some(name) = entry
+      .file_name()
+      .and_then(|n| n.to_str())
+      .and_then(|s| s.strip_suffix(".sh"))
+    {
+      out.insert(name.to_string(), tag(ShFunc::autoload_path(entry)));
+    }
+  }
+
+  out
+}
+
+impl AutoloadFuncs {
+  pub fn get_all() -> HashMap<String, ShFunc> {
+    collect_autoload(Self::iter(), "SHED_FUNC_PATH", |f| f)
+  }
+}
+
+impl AutoloadComps {
+  pub fn get_all() -> HashMap<String, ShFunc> {
+    collect_autoload(Self::iter(), "SHED_COMPLETE_PATH", ShFunc::on_completion)
+  }
+}
+
 /// A shell function
 #[derive(Clone, Debug)]
-pub struct ShFunc {
-  pub body: Node,
-  pub source: Span,
+pub enum ShFunc {
+  Defined {
+    logic: Box<Node>,
+    source: Span,
+  },
+  Autoload {
+    src: AutoloadSrc,
+    trigger: AutoloadTrigger,
+  },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum AutoloadTrigger {
+  OnCommand,
+  OnCompletion,
+}
+
+#[derive(Clone, Debug)]
+pub enum AutoloadSrc {
+  Path(PathBuf),
+  Embedded(String),
+}
+
+impl AutoloadSrc {
+  pub fn source(&self, trigger: &AutoloadTrigger) -> ShResult<()> {
+    match self {
+      Self::Path(p) => super::util::source_file(p.clone()),
+      Self::Embedded(s) => {
+        let body = match trigger {
+          AutoloadTrigger::OnCommand => AutoloadFuncs::get(s)
+            .ok_or_else(|| sherr!(NotFound, "Failed to load embedded function: {s}"))?,
+          AutoloadTrigger::OnCompletion => AutoloadComps::get(s)
+            .ok_or_else(|| sherr!(NotFound, "Failed to load embedded completion: {s}"))?,
+        }
+        .data;
+        let text = String::from_utf8_lossy(&body).to_string();
+        exec_nonint(text, Some(s.clone().into()))
+      }
+    }
+  }
 }
 
 impl ShFunc {
-  pub fn new(body: Node, source: Span) -> Self {
-    Self { body, source }
+  pub fn defined(logic: Node, source: Span) -> Self {
+    Self::Defined {
+      logic: Box::new(logic),
+      source,
+    }
   }
-  pub fn body(&self) -> &Node {
-    &self.body
+  pub fn autoload_path(path: PathBuf) -> Self {
+    Self::Autoload {
+      src: AutoloadSrc::Path(path),
+      trigger: AutoloadTrigger::OnCommand,
+    }
   }
-  pub fn body_mut(&mut self) -> &mut Node {
-    &mut self.body
+  pub fn on_completion(self) -> Self {
+    match self {
+      Self::Autoload { src, .. } => Self::Autoload {
+        src,
+        trigger: AutoloadTrigger::OnCompletion,
+      },
+      Self::Defined { .. } => self,
+    }
+  }
+  pub fn autoload_embedded(path: String) -> Self {
+    Self::Autoload {
+      src: AutoloadSrc::Embedded(path),
+      trigger: AutoloadTrigger::OnCommand,
+    }
+  }
+  // Accessors below mirror the variant shape so callers don't have to
+  // pattern-match for the common "give me the inner data if it's there"
+  // cases. Some aren't called yet but will be once more consumers move
+  // through the autoload path; keep them for symmetry.
+  #[allow(dead_code)]
+  pub fn autoload_src(&self) -> Option<&AutoloadSrc> {
+    match self {
+      Self::Autoload { src, .. } => Some(src),
+      Self::Defined { .. } => None,
+    }
+  }
+  pub fn trigger(&self) -> Option<AutoloadTrigger> {
+    match self {
+      Self::Autoload { trigger, .. } => Some(*trigger),
+      Self::Defined { .. } => None,
+    }
+  }
+  #[allow(dead_code)]
+  pub fn source(&self) -> Option<&Span> {
+    match self {
+      Self::Defined { source, .. } => Some(source),
+      Self::Autoload { .. } => None,
+    }
+  }
+  #[allow(dead_code)]
+  pub fn logic(&self) -> Option<&Node> {
+    match self {
+      Self::Defined { logic, .. } => Some(logic),
+      Self::Autoload { .. } => None,
+    }
+  }
+  #[allow(dead_code)]
+  pub fn logic_mut(&mut self) -> Option<&mut Node> {
+    match self {
+      Self::Defined { logic, .. } => Some(logic),
+      Self::Autoload { .. } => None,
+    }
+  }
+  #[allow(dead_code)]
+  pub fn is_defined(&self) -> bool {
+    matches!(self, Self::Defined { .. })
   }
 }
 
@@ -205,7 +370,13 @@ pub(crate) struct LogTab {
 
 impl LogTab {
   pub fn new() -> Self {
-    Self::default()
+    let mut new = Self::default();
+    let included_funcs = AutoloadFuncs::get_all();
+    let included_comps = AutoloadComps::get_all();
+    for (name, func) in included_funcs.into_iter().chain(included_comps) {
+      new.functions.insert(name, func);
+    }
+    new
   }
   pub fn dirty(&self) -> bool {
     self.dirty
@@ -276,11 +447,29 @@ impl LogTab {
   pub fn traps(&self) -> &HashMap<TrapTarget, String> {
     &self.traps
   }
+  pub fn has_command_func(&self, name: &str) -> bool {
+    self.functions.get(name).is_some_and(|f| {
+      f.trigger()
+        .is_none_or(|t| !matches!(t, AutoloadTrigger::OnCompletion))
+    })
+  }
   pub fn get_func(&self, name: &str) -> Option<ShFunc> {
     self.functions.get(name).cloned()
   }
   pub fn funcs(&self) -> &HashMap<String, ShFunc> {
     &self.functions
+  }
+  pub fn remove_func(&mut self, name: &str) {
+    self.functions.remove(name);
+    self.dirty = true;
+  }
+  pub fn take_comp_autoload(&mut self, name: &str) -> Option<ShFunc> {
+    let trigger = self.functions.get(name)?.trigger();
+    if matches!(trigger, Some(AutoloadTrigger::OnCompletion)) {
+      self.functions.remove(name)
+    } else {
+      None
+    }
   }
   pub fn aliases(&self) -> &HashMap<String, ShAlias> {
     &self.aliases

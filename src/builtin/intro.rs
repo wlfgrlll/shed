@@ -4,7 +4,12 @@ use super::{
   eval::lex::KEYWORDS,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{self, Shed},
+  state::{
+    self, Shed,
+    logic::{AutoloadSrc, AutoloadTrigger, ShFunc},
+    meta::UtilKind,
+    vars::VarKind,
+  },
   util::{ShResult, with_status},
 };
 
@@ -20,7 +25,7 @@ impl super::Builtin for Type {
     for (arg, span) in args.argv {
       if let Some(util) = state::util::which_util(&arg) {
         match util.kind() {
-          state::meta::UtilKind::Alias => {
+          UtilKind::Alias => {
             let alias = Shed::logic(|v| v.get_alias(&arg)).unwrap();
             let (line, col) = alias.source().line_and_col();
             let name = alias.source().source().name();
@@ -35,29 +40,48 @@ impl super::Builtin for Type {
               );
             }
           }
-          state::meta::UtilKind::Function => {
+          UtilKind::Function => {
             let func = Shed::logic(|v| v.get_func(&arg)).unwrap();
-            let (line, col) = func.source.line_and_col();
-            let name = func.source.source().name();
-            if short {
-              outln!("function");
-            } else {
-              outln!(
-                "{arg} is a function defined at {name}:{ln}:{co}",
-                ln = line + 1,
-                co = col + 1,
-                name = name,
-              );
+            match func {
+              ShFunc::Autoload { src, trigger } => {
+                let (origin, location) = match &src {
+                  AutoloadSrc::Path(p) => ("external", p.display().to_string()),
+                  AutoloadSrc::Embedded(s) => ("internal", s.clone()),
+                };
+                let kind = match trigger {
+                  AutoloadTrigger::OnCommand => "shell function",
+                  AutoloadTrigger::OnCompletion => "completion function",
+                };
+                if short {
+                  outln!("{arg} ({origin}) -> {location}");
+                } else {
+                  outln!("{arg} is an {origin} autoloading {kind}, pointing at '{location}'");
+                }
+              }
+              ShFunc::Defined { source, .. } => {
+                let (line, col) = source.line_and_col();
+                let name = source.source().name();
+                if short {
+                  outln!("function");
+                } else {
+                  outln!(
+                    "{arg} is a function defined at {name}:{ln}:{co}",
+                    ln = line + 1,
+                    co = col + 1,
+                    name = name,
+                  );
+                }
+              }
             }
           }
-          state::meta::UtilKind::Builtin => {
+          UtilKind::Builtin => {
             if short {
               outln!("builtin");
             } else {
               outln!("{arg} is a shell builtin");
             }
           }
-          state::meta::UtilKind::Command(path_buf) | state::meta::UtilKind::File(path_buf) => {
+          UtilKind::Command(path_buf) | UtilKind::File(path_buf) => {
             if short {
               outln!("external");
             } else {
@@ -74,17 +98,17 @@ impl super::Builtin for Type {
       } else if let Some(var) = Shed::vars(|v| v.try_get_var_meta(arg.as_str())) {
         if short {
           match var.kind() {
-            state::vars::VarKind::Str(_) => outln!("string"),
-            state::vars::VarKind::Int(_) => outln!("integer"),
-            state::vars::VarKind::Arr(_) => outln!("array"),
-            state::vars::VarKind::AssocArr(_) => outln!("assoc_array"),
+            VarKind::Str(_) => outln!("string"),
+            VarKind::Int(_) => outln!("integer"),
+            VarKind::Arr(_) => outln!("array"),
+            VarKind::AssocArr(_) => outln!("assoc_array"),
           }
         } else {
           match var.kind() {
-            state::vars::VarKind::Str(_) => outln!("{arg} is a string variable"),
-            state::vars::VarKind::Int(_) => outln!("{arg} is an integer variable"),
-            state::vars::VarKind::Arr(_) => outln!("{arg} is an array variable"),
-            state::vars::VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
+            VarKind::Str(_) => outln!("{arg} is a string variable"),
+            VarKind::Int(_) => outln!("{arg} is an integer variable"),
+            VarKind::Arr(_) => outln!("{arg} is an array variable"),
+            VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
           }
         }
       } else {

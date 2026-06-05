@@ -443,6 +443,7 @@ fn handle_readline_event(
 
       exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 
+      Shed::term_mut(Terminal::fix_cursor_column)?;
       if let Err(e) = res {
         match e.kind() {
           ShErrKind::Interrupt => {
@@ -499,8 +500,6 @@ fn handle_readline_event(
       log::trace!("History update done in {:.2?}", hist_update_start.elapsed());
 
       let term_start = Instant::now();
-
-      Shed::term_mut(Terminal::fix_cursor_column)?;
 
       log::trace!("Terminal adjustments done in {:.2?}", term_start.elapsed());
 

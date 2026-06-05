@@ -1,4 +1,4 @@
-use crate::{autocmd, eval::parse::LabelCtx, shopt_mut};
+use crate::{autocmd, eval::parse::LabelCtx, shopt_mut, state::logic::AutoloadTrigger};
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use crate::state::util::with_vars;
@@ -553,7 +553,7 @@ impl Dispatcher {
       ));
     }
 
-    let func = ShFunc::new(*body, blame);
+    let func = ShFunc::defined(*body, blame);
     Shed::logic_mut(|l| l.insert_func(func_name, func)); // Store the AST
     if Shed::term(Terminal::interactive) {
       Shed::meta_mut(|m| {
@@ -566,26 +566,66 @@ impl Dispatcher {
   }
   fn exec_func(&mut self, func: Node) -> ShResult<()> {
     let mut blame = func.get_span().clone();
-    let func_name = func
-      .get_command()
-      .unwrap()
-      .clone()
-      .expand()?
-      .get_first_word()
-      .unwrap_or_default();
 
-    let func_ctx = util::get_context(
-      styled_format!("in call to function '{func_name}'",),
-      func.get_span(),
-    );
-    let caller_contexts: Vec<_> = func.context.iter().cloned().collect();
-    let NdRule::Command {
-      assignments,
-      mut argv,
-    } = func.class
+    // need to do this in a new scope so we can borrow func safely
+    let func_name = {
+      // borrow func.class to avoid partial move
+      let NdRule::Command { argv, .. } = &func.class else {
+        unreachable!()
+      };
+
+      let Some(func_name) = argv.first() else {
+        return Err(sherr!(
+            InternalErr @ blame,
+            "Expected function name in command position"
+        ));
+      };
+
+      func_name
+        .clone()
+        .expand()?
+        .get_first_word()
+        .map(Into::<Rc<str>>::into)
+        .unwrap_or_default()
+    };
+
+    let Some(ref mut sh_func) = Shed::logic(|l| l.get_func(&func_name)) else {
+      return Err(sherr!(
+        InternalErr @ blame,
+        "Failed to find function '{func_name}'"
+      ));
+    };
+
+    let func_body = match sh_func {
+      ShFunc::Defined { logic, .. } => logic,
+      ShFunc::Autoload { src, trigger } => {
+        match trigger {
+          AutoloadTrigger::OnCommand => {
+            Shed::logic_mut(|l| l.remove_func(&func_name)); // remove autoload from the table
+            src.source(trigger)?; // load
+
+            // retry, passing func by value
+            // the scoped assignment and borrow above are done
+            // so that we can pass func untouched to dispatch_cmd()
+            return self.dispatch_cmd(func);
+          }
+          AutoloadTrigger::OnCompletion => unreachable!(), // is_func() filters these out
+        }
+      }
+    };
+
+    // now we take ownership
+    let NdRule::Command { assignments, argv } = func.class
+    // not borrowed
     else {
       unreachable!()
     };
+
+    let func_ctx = util::get_context(
+      styled_format!("in call to function '{}'", &func_name),
+      blame.clone(),
+    );
+    let caller_contexts: Vec<_> = func.context.iter().cloned().collect();
 
     let max_depth = Shed::shopts(|s| s.core.max_recurse_depth);
     let depth = Shed::meta(MetaTab::func_depth);
@@ -597,62 +637,47 @@ impl Dispatcher {
     }
 
     let env_vars = Self::set_assignments(assignments, AssignBehavior::Export)?;
-    let func_name = argv.remove(0);
     let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
 
     let redirs = RedirSet::from(func.redirs);
     let _guard = redirs.apply()?;
 
-    let name = func_name
-      .clone()
-      .expand()?
-      .get_first_word()
-      .map(Into::<Rc<str>>::into)
-      .unwrap_or_default();
-    blame.rename(name.clone());
+    blame.rename(func_name.clone());
 
-    argv.insert(0, func_name.clone());
     let argv = prepare_argv(argv).try_blame(blame.clone())?;
-    if let Some(ref mut func_body) = Shed::logic(|l| l.get_func(&name)) {
-      defer! {
-        if let Some(trap) = Shed::logic(|l| l.get_trap(TrapTarget::Return)) {
-          let saved_status = state::Shed::get_status();
-          if let Err(e) = exec_nonint(trap, Some("trap RETURN".into())) {
-            e.print_error();
-          }
-          state::Shed::set_status(saved_status);
+    defer! {
+      if let Some(trap) = Shed::logic(|l| l.get_trap(TrapTarget::Return)) {
+        let saved_status = state::Shed::get_status();
+        if let Err(e) = exec_nonint(trap, Some("trap RETURN".into())) {
+          e.print_error();
         }
+        state::Shed::set_status(saved_status);
       }
+    }
 
-      let _guard = scope_guard(Some(argv));
-      let _func_guard = Shed::meta_mut(MetaTab::enter_func);
+    let _guard = scope_guard(Some(argv));
+    let _func_guard = Shed::meta_mut(MetaTab::enter_func);
 
-      for ctx in caller_contexts.into_iter().rev() {
-        func_body.body_mut().propagate_context(&ctx);
-      }
-      func_body.body_mut().propagate_context(&func_ctx);
-      func_body.body_mut().flags = func.flags;
+    for ctx in caller_contexts.into_iter().rev() {
+      func_body.propagate_context(&ctx);
+    }
+    func_body.propagate_context(&func_ctx);
+    func_body.flags = func.flags;
 
-      let _timer = self.take_timer();
-      match self.dispatch_node(func_body.body().clone()) {
-        Ok(()) => Ok(()),
-        Err(e) => match e.kind() {
-          ShErrKind::FuncReturn(code) => {
-            state::Shed::set_status(*code);
-            Ok(())
-          }
-          ShErrKind::ErrInterrupt => {
-            // set -e caught an error
-            Err(e.with_context(func_body.body().context.clone()))
-          }
-          _ => Err(e),
-        },
-      }
-    } else {
-      Err(sherr!(
-        InternalErr @ blame,
-        "Failed to find function '{func_name}'"
-      ))
+    let _timer = self.take_timer();
+    match self.dispatch_node((**func_body).clone()) {
+      Ok(()) => Ok(()),
+      Err(e) => match e.kind() {
+        ShErrKind::FuncReturn(code) => {
+          state::Shed::set_status(*code);
+          Ok(())
+        }
+        ShErrKind::ErrInterrupt => {
+          // set -e caught an error
+          Err(e.with_context(func_body.context.clone()))
+        }
+        _ => Err(e),
+      },
     }
   }
   /// Run a compound command.
@@ -1033,6 +1058,7 @@ impl Dispatcher {
     };
 
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
+    let interactive = Shed::term(Terminal::interactive);
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
     let mut tty_attached = false;
@@ -1044,6 +1070,10 @@ impl Dispatcher {
       let cmd = cmds.remove(0);
       return self.exec_one(cmd, should_fork_segment, pipeline_flags);
     }
+
+    let saved_region = Shed::term(|t| t.scroll_region().dims());
+    let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
+    let cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
 
     // closure that gets the pgid we need if the child wants the tty
     let tty_controller = |s: &mut Self| -> Option<Pid> {
@@ -1058,12 +1088,8 @@ impl Dispatcher {
     let redirs = RedirSet::from(pipeline.redirs);
 
     let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
-    let interactive = Shed::term(Terminal::interactive);
     let mut result = Ok(());
 
-    let saved_region = Shed::term(|t| t.scroll_region().dims());
-    let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
-    let cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
     let mut spans = vec![];
 
     let pipes = PipeGenerator::new(num_cmds);
@@ -1130,12 +1156,9 @@ impl Dispatcher {
       Some(pipeline_span)
     };
 
-    drop(cooked_guard); // exit cooked mode
-    if !is_bg && interactive {
-      Shed::term_mut(Terminal::fix_cursor_column)?;
-      if let Some((_, bottom)) = saved_region {
-        Shed::term_mut(|t| t.fix_cursor_row(bottom))?; // this only works in raw mode
-      }
+    drop(cooked_guard); // exit cooked mode; scroll region is still Unset here
+    if !is_bg && let Some((_, bottom)) = saved_region {
+      Shed::term_mut(|t| t.fix_cursor_row(bottom))?;
     }
 
     check_err(pipeline_flags, None, blame_span, pipeline_context)?;
@@ -1540,7 +1563,7 @@ pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String,
 }
 
 pub fn is_func(name: &str) -> bool {
-  Shed::logic(|l| l.get_func(name)).is_some()
+  Shed::logic(|l| l.has_command_func(name))
 }
 
 pub fn is_arith(tk: Option<&Tk>) -> bool {

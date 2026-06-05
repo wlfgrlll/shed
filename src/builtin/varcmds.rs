@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::state::logic::ShFunc;
+
 use super::{
   Span, Tk,
   expand::expand_arithmetic,
@@ -191,13 +193,20 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
       let names: Vec<&str> = argv.iter().map(|(n, _)| n.as_str()).collect();
       let dump = Shed::logic(|l| {
         let mut out = String::new();
-        let mut entries: Vec<_> = l.funcs().iter().collect();
+        let mut entries: Vec<_> = l
+          .funcs()
+          .iter()
+          .filter(|(_, f)| matches!(f, ShFunc::Defined { .. }))
+          .collect();
         entries.sort_by_key(|(k, _)| (*k).clone());
         for (name, func) in entries {
+          let ShFunc::Defined { source, .. } = func else {
+            continue;
+          };
           if !names.is_empty() && !names.contains(&name.as_str()) {
             continue;
           }
-          out.push_str(func.source.as_str());
+          out.push_str(source.as_str());
           out.push('\n');
         }
         out
