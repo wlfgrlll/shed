@@ -11,6 +11,84 @@ use super::{
   vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab},
 };
 
+type MagicVar = (&'static str, fn() -> Option<String>);
+pub static MAGIC_VARS: [MagicVar; 8] = [
+  ("SECONDS", || {
+    let shell_time = Shed::meta(MetaTab::shell_time);
+    let secs = Instant::now().duration_since(shell_time).as_secs();
+    Some(secs.to_string())
+  }),
+  ("EPOCHREALTIME", || {
+    let epoch = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or(Duration::from_secs(0))
+      .as_secs_f64();
+    Some(epoch.to_string())
+  }),
+  ("EPOCHSECONDS", || {
+    let epoch = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or(Duration::from_secs(0))
+      .as_secs();
+    Some(epoch.to_string())
+  }),
+  ("RANDOM", || {
+    let random = rand::random_range(0..32768);
+    Some(random.to_string())
+  }),
+  ("LINES", || {
+    let rows = Shed::term(Terminal::t_rows);
+    Some(rows.to_string())
+  }),
+  ("COLUMNS", || {
+    let cols = Shed::term(Terminal::t_cols);
+    Some(cols.to_string())
+  }),
+  ("?", || Some(Shed::get_status().to_string())),
+  ("-", || {
+    let mut set_string = String::new();
+    Shed::shopts(|o| {
+      if o.set.allexport {
+        set_string.push('a');
+      }
+      if o.set.notify {
+        set_string.push('b');
+      }
+      if o.set.noclobber {
+        set_string.push('C');
+      }
+      if o.set.errexit {
+        set_string.push('e');
+      }
+      if o.set.noglob {
+        set_string.push('f');
+      }
+      if o.set.hashall {
+        set_string.push('h');
+      }
+      if Shed::term(Terminal::interactive) {
+        set_string.push('i');
+      }
+      if o.set.monitor {
+        set_string.push('m');
+      }
+      if o.set.noexec {
+        set_string.push('n');
+      }
+      if o.set.nounset {
+        set_string.push('u');
+      }
+      if o.set.verbose {
+        set_string.push('v');
+      }
+      if o.set.xtrace {
+        set_string.push('x');
+      }
+    });
+    (!set_string.is_empty()).then_some(set_string)
+  }),
+];
+
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
   // ALWAYS keep one scope.
@@ -125,6 +203,14 @@ impl ScopeStack {
       }
     }
 
+    for (var, func) in MAGIC_VARS {
+      if let Some(value) = func()
+        && let Entry::Vacant(e) = flat_vars.entry(var.to_string())
+      {
+        e.insert(Var::new(VarKind::Str(value), VarFlags::empty()));
+      }
+    }
+
     flat_vars
   }
   pub fn set_var(&mut self, var_name: &str, val: VarKind, flags: VarFlags) -> ShResult<()> {
@@ -210,83 +296,10 @@ impl ScopeStack {
     scope.set_var(var_name, val, flags)
   }
   pub fn get_magic_var(var_name: &str) -> Option<String> {
-    match var_name {
-      "SECONDS" => {
-        let shell_time = Shed::meta(MetaTab::shell_time);
-        let secs = Instant::now().duration_since(shell_time).as_secs();
-        Some(secs.to_string())
-      }
-      "EPOCHREALTIME" => {
-        let epoch = std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap_or(Duration::from_secs(0))
-          .as_secs_f64();
-        Some(epoch.to_string())
-      }
-      "EPOCHSECONDS" => {
-        let epoch = std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap_or(Duration::from_secs(0))
-          .as_secs();
-        Some(epoch.to_string())
-      }
-      "RANDOM" => {
-        let random = rand::random_range(0..32768);
-        Some(random.to_string())
-      }
-      "LINES" => {
-        let rows = Shed::term(Terminal::t_rows);
-        Some(rows.to_string())
-      }
-      "COLUMNS" => {
-        let cols = Shed::term(Terminal::t_cols);
-        Some(cols.to_string())
-      }
-      "?" => Some(Shed::get_status().to_string()),
-      "-" => {
-        let mut set_string = String::new();
-        Shed::shopts(|o| {
-          if o.set.allexport {
-            set_string.push('a');
-          }
-          if o.set.notify {
-            set_string.push('b');
-          }
-          if o.set.noclobber {
-            set_string.push('C');
-          }
-          if o.set.errexit {
-            set_string.push('e');
-          }
-          if o.set.noglob {
-            set_string.push('f');
-          }
-          if o.set.hashall {
-            set_string.push('h');
-          }
-          if Shed::term(Terminal::interactive) {
-            set_string.push('i');
-          }
-          if o.set.monitor {
-            set_string.push('m');
-          }
-          if o.set.noexec {
-            set_string.push('n');
-          }
-          if o.set.nounset {
-            set_string.push('u');
-          }
-          if o.set.verbose {
-            set_string.push('v');
-          }
-          if o.set.xtrace {
-            set_string.push('x');
-          }
-        });
-        (!set_string.is_empty()).then_some(set_string)
-      }
-      _ => None,
-    }
+    MAGIC_VARS
+      .iter()
+      .find_map(|(n, f)| (*n == var_name).then(f))
+      .flatten()
   }
   pub fn try_get_arr_elems(&self, var_name: &str) -> ShResult<Vec<String>> {
     for scope in self.scopes.iter().rev() {
