@@ -102,7 +102,13 @@ impl Expander {
     Self::from_raw(tk_raw, raw.flags)
   }
   pub fn from_raw(raw: &str, flags: TkFlags) -> Self {
-    let raw = if raw.contains('{') {
+    Self::from_raw_inner(raw, flags, true)
+  }
+  pub fn from_raw_no_brace(raw: &str, flags: TkFlags) -> Self {
+    Self::from_raw_inner(raw, flags, false)
+  }
+  fn from_raw_inner(raw: &str, flags: TkFlags, expand_braces: bool) -> Self {
+    let raw = if expand_braces && raw.contains('{') {
       brace::expand_braces_full(raw).join(" ")
     } else {
       raw.to_string()

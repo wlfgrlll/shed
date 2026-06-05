@@ -58,7 +58,7 @@ struct AutoloadComps;
 /// trigger from `OnCommand` to `OnCompletion`. On-disk entries shadow
 /// embedded ones with the same name; that's intentional so users can
 /// override bundled scripts.
-fn collect_autoload<I, F>(embedded: I, env_var: &str, tag: F) -> HashMap<String, ShFunc>
+fn collect_autoload<I>(embedded: I, env_var: &str) -> HashMap<String, AutoloadSrc>
 where
   I: Iterator<Item = std::borrow::Cow<'static, str>>,
 {
