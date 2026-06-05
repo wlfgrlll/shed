@@ -1,3 +1,5 @@
+use crate::util;
+
 use super::scopes::ScopeStack;
 
 use std::{
@@ -692,6 +694,17 @@ impl VarTab {
       let set_var = |var: &str, val: &str| {
         unsafe { std::env::set_var(var, val) };
       };
+
+      if let Some(install_dir) = super::builtin::HELP_PAGE_INSTALL_DIR {
+        match std::env::var("SHED_HPATH").ok() {
+          Some(hpath) if !util::split_path_list(&hpath).any(|p| p.as_os_str() == install_dir) => {
+            set_var("SHED_HPATH", &format!("{}:{}", install_dir, hpath));
+          }
+          None => set_var("SHED_HPATH", install_dir),
+
+          _ => { /* hpath is set, and our install path is in it. do nothing */ }
+        }
+      }
 
       // PWD always set from getcwd()
       let pwd = pathbuf_to_string(std::env::current_dir());

@@ -59,6 +59,7 @@ mod trap;
 mod varcmds;
 
 use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
+pub(crate) use help::HELP_PAGE_INSTALL_DIR;
 
 macro_rules! register_builtins {
   ($($name:literal => $ty:expr),* $(,)?) => {
