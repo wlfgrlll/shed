@@ -184,6 +184,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     let var = Shed::vars(|v| v.get_var_meta(var_spec));
     return Ok(
       match var.kind() {
+        VarKind::Magic(func) => func().unwrap_or_default().len(),
         VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
         VarKind::Arr(items) => items.len(),
         VarKind::AssocArr(items) => items.len(),
@@ -405,7 +406,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemShortestPrefix(prefix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&prefix, TkFlags::empty())
+        let expanded = Expander::from_raw_no_brace(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = compile_glob(&expanded).unwrap();
@@ -421,7 +422,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemLongestPrefix(prefix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&prefix, TkFlags::empty())
+        let expanded = Expander::from_raw_no_brace(&prefix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = compile_glob(&expanded).unwrap();
@@ -437,7 +438,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemShortestSuffix(suffix) => {
         let value = Shed::vars(get);
-        let expanded = Expander::from_raw(&suffix, TkFlags::empty())
+        let expanded = Expander::from_raw_no_brace(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = compile_glob(&expanded).unwrap();
@@ -453,7 +454,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       }
       ParamExp::RemLongestSuffix(suffix) => {
         let value = Shed::vars(get);
-        let expanded_suffix = Expander::from_raw(&suffix, TkFlags::empty())
+        let expanded_suffix = Expander::from_raw_no_brace(&suffix, TkFlags::empty())
           .no_glob()
           .expand_for_glob()?;
         let pattern = compile_glob(&expanded_suffix).unwrap();

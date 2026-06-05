@@ -1960,7 +1960,23 @@ impl ShedLine {
       };
 
       if !content.is_empty() {
-        Shed::term_mut(|t| t.draw_status_message(&content));
+        if shopt!(statline.enable) {
+          Shed::term_mut(|t| t.draw_status_message(&content));
+        } else {
+          let gap_to_end = new_layout.end.row.saturating_sub(new_layout.cursor.row) as u16;
+          let gap_to_msg = gap_to_end + if has_sub_editor { 1 } else { 2 };
+          let return_col = new_layout.cursor.col as u16 + 1;
+          for _ in 0..gap_to_msg {
+            queue_term!(TermCtl::PrintChar('\n')).ok();
+          }
+          queue_term!(TermCtl::PrintChar('\r'), TermCtl::Clear(WholeLine),).ok();
+          write_term!("{content}").ok();
+          queue_term!(
+            TermCtl::Cursor(Up(gap_to_msg)),
+            TermCtl::Cursor(Col(return_col)),
+          )
+          .ok();
+        }
       }
     }
 

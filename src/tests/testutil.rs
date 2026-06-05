@@ -186,6 +186,25 @@ impl TestGuard {
     let old_cwd = env::current_dir().unwrap();
     let saved_env = env::vars().collect();
     state::Shed::save_state();
+    let scrub_keys = [
+      "SHED_HPATH",
+      "SHED_FUNC_PATH",
+      "SHED_COMPLETE_PATH",
+      "SHED_LOG",
+      "SHED_COLOR_MODE",
+      "SHELL_PROMPT_PREFIX",
+      "SHELL_PROMPT_SUFFIX",
+      "SHELL_WELCOME",
+      "NO_COLOR",
+    ];
+    for key in scrub_keys {
+      unsafe { env::remove_var(key) };
+    }
+    Shed::vars_mut(|v| {
+      for key in scrub_keys {
+        let _ = v.unset_var(key);
+      }
+    });
     state::util::try_hash();
     save_registers();
     // Set up an in-memory sqlite db (once per test thread; OnceLock means

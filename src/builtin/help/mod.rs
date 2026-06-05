@@ -6,6 +6,7 @@ use markup::StyledHelp;
 use pager::{HelpPager, PagerEvent};
 
 use std::{
+  collections::HashSet,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
 };
@@ -31,51 +32,19 @@ use nix::{
   poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 
-/// Validates the included help pages
-///
-/// If the help pages contain tabs or non-ascii characters,
-/// that is a compile error. The goal is to keep formatting
-/// consistent, and make sure that output looks good even in the tty
-const fn validate_help_page(s: &str) {
-  let bytes = s.as_bytes();
-  let mut i = 0;
-  while i < bytes.len() {
-    assert!(bytes[i] != b'\t', "help file contains tabs");
-    assert!(bytes[i] <= 127, "help file contains non-ascii characters");
+#[derive(rust_embed::RustEmbed)]
+#[folder = "include"]
+#[include = "help/*"]
+struct AutoloadHelp;
 
-    i += 1;
+impl AutoloadHelp {
+  fn load(name: &str) -> Option<String> {
+    let raw = Self::get(name)?.data;
+    Some(String::from_utf8_lossy(&raw).into_owned())
   }
 }
 
-macro_rules! include_help_pages {
-  ($($name:literal),* $(,)?) => {
-    const HELP_PAGES: &[(&str, &str)] = &[
-      $({
-        const S: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $name));
-        validate_help_page(S);
-        ($name, S)
-      },)*
-    ];
-  };
-}
-
-include_help_pages! {
-  "help/arith.txt",
-  "help/autocmd.txt",
-  "help/builtin.txt",
-  "help/commands.txt",
-  "help/ex.txt",
-  "help/glob.txt",
-  "help/help.txt",
-  "help/jobs.txt",
-  "help/keybinds.txt",
-  "help/param.txt",
-  "help/prompt.txt",
-  "help/redirect.txt",
-  "help/scripting.txt",
-  "help/socket.txt",
-  "help/variables.txt",
-}
+pub const HELP_PAGE_INSTALL_DIR: Option<&str> = option_env!("SHED_HELP_DIR");
 
 pub(super) struct Help;
 impl super::Builtin for Help {
@@ -120,27 +89,40 @@ impl super::Builtin for Help {
   }
 }
 
+fn check_hpath_names(hpath_names: &HashSet<String>, page: &str) -> bool {
+  let basename = Path::new(page)
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or_default();
+  hpath_names.contains(basename)
+}
+
 pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   let mut tags = vec![];
-  let hpath = var!("SHED_HPATH");
-  for path in hpath.split(':') {
-    let path = Path::new(path);
-    if let Ok(entries) = path.read_dir() {
-      for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if !path.is_file() {
-          continue;
-        }
 
-        let mut new_tags = read_tags_from_file(&path)?;
-        tags.append(&mut new_tags);
-      }
+  let hpath = var!("SHED_HPATH");
+  let mut hpath_names: HashSet<String> = HashSet::new();
+
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
     }
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+      hpath_names.insert(name.to_string());
+    }
+    let mut new_tags = read_tags_from_file(&path)?;
+    tags.append(&mut new_tags);
   }
 
-  for (page, content) in HELP_PAGES {
-    let mut new_tags = read_tags(content, page);
+  for page in AutoloadHelp::iter() {
+    if check_hpath_names(&hpath_names, &page) {
+      continue;
+    }
+    let Some(content) = AutoloadHelp::load(&page) else {
+      continue;
+    };
+    let mut new_tags = read_tags(&content, &page);
     tags.append(&mut new_tags);
   }
 
@@ -160,58 +142,58 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   }
 
   let hpath = var!("SHED_HPATH");
+  let mut hpath_names: HashSet<String> = HashSet::new();
 
-  // search for prefixes of help doc filenames
-  for path in hpath.split(':') {
-    let dir = Path::new(path);
-    let Ok(entries) = dir.read_dir() else {
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
+    }
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+      hpath_names.insert(name.to_string());
+    }
+    let stem = path.file_stem().unwrap().to_string_lossy();
+    if stem.starts_with(topic) {
+      let Ok(contents) = std::fs::read_to_string(&path) else {
+        continue;
+      };
+
+      return Some((0, contents, Some(stem.to_string())));
+    }
+  }
+
+  for page in AutoloadHelp::iter() {
+    if check_hpath_names(&hpath_names, &page) {
+      continue;
+    }
+    if page.starts_with(topic) {
+      let Some(content) = AutoloadHelp::load(&page) else {
+        continue;
+      };
+      return Some((0, content, Some(page.to_string())));
+    }
+  }
+
+  // No filename match, fall through to tag scoring across both sources.
+  let mut tags = vec![];
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
+    }
+
+    let mut new_tags = read_tags_from_file(&path).ok()?;
+    score_matches(topic, &mut new_tags);
+    tags.append(&mut new_tags);
+  }
+  for page in AutoloadHelp::iter() {
+    if check_hpath_names(&hpath_names, &page) {
+      continue;
+    }
+    let Some(content) = AutoloadHelp::load(&page) else {
       continue;
     };
-    for entry in entries {
-      let Ok(entry) = entry else { continue };
-      let path = entry.path();
-      if !path.is_file() {
-        continue;
-      }
-      let stem = path.file_stem().unwrap().to_string_lossy();
-      if stem.starts_with(topic) {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-          continue;
-        };
-
-        return Some((0, contents, Some(stem.to_string())));
-      }
-    }
-  }
-
-  // ok, not a filename. let's check our builtin help pages
-  for (page, content) in HELP_PAGES {
-    if page.starts_with(topic) {
-      return Some((0, content.to_string(), Some(page.to_string())));
-    }
-  }
-
-  // didn't find a filename match, its probably a tag search
-  let mut tags = vec![];
-  for path in hpath.split(':') {
-    let path = Path::new(path);
-    if let Ok(entries) = path.read_dir() {
-      for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if !path.is_file() {
-          continue;
-        }
-
-        let mut new_tags = read_tags_from_file(&path).ok()?;
-        score_matches(topic, &mut new_tags);
-        tags.append(&mut new_tags);
-      }
-    }
-  }
-
-  for (page, content) in HELP_PAGES {
-    let mut new_tags = read_tags(content, page);
+    let mut new_tags = read_tags(&content, &page);
     score_matches(topic, &mut new_tags);
     tags.append(&mut new_tags);
   }
@@ -221,12 +203,10 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   tags.last().and_then(|best| {
     let ScoredTag { tag: _, line, file } = best;
 
-    if let Some((_, content)) = HELP_PAGES.iter().find(|(name, _)| name == file) {
-      return Some((
-        line.saturating_sub(2),
-        content.to_string(),
-        Some(file.clone()),
-      ));
+    if let Some(path) = AutoloadHelp::iter().find(|path| path == file) {
+      let content = AutoloadHelp::load(&path)?;
+
+      return Some((line.saturating_sub(2), content, Some(file.clone())));
     }
 
     std::fs::read_to_string(file).ok().map(|content| {

@@ -1,3 +1,5 @@
+use crate::state::logic::ShFunc;
+
 use super::{super::eval::lex::Tk, SHED, Shed, try_var};
 
 use std::{
@@ -285,7 +287,7 @@ pub fn which_util(name: &str) -> Option<Rc<Utility>> {
   if Shed::logic(|l| l.get_alias(name).is_some()) {
     return Some(Rc::new(Utility::alias(name.to_string())));
   }
-  if Shed::logic(|l| l.get_func(name).is_some()) {
+  if Shed::logic(|l| l.has_command_func(name)) {
     return Some(Rc::new(Utility::function(name.to_string())));
   }
   if crate::builtin::lookup_builtin(name).is_some() {
@@ -444,7 +446,10 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
       let mut funcs: Vec<(String, String)> = Shed::logic(|l| {
         l.funcs()
           .iter()
-          .map(|(name, f)| (name.clone(), f.source.as_str().to_string()))
+          .filter_map(|(name, f)| match f {
+            ShFunc::Defined { source, .. } => Some((name.clone(), source.as_str().to_string())),
+            _ => None,
+          })
           .collect()
       });
       funcs.sort_by(|a, b| a.0.cmp(&b.0));

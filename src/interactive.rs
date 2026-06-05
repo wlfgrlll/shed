@@ -19,7 +19,6 @@ use crate::{exec_term, signal::FOCUS_GAINED};
 
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
-  builtin::{source_builtin_completions, source_builtin_scripts},
   errln,
   eval::execute::exec_int,
   lifecycle::{self, first_run_setup},
@@ -146,9 +145,6 @@ fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
   {
     e.print_error();
   }
-
-  source_builtin_scripts();
-  source_builtin_completions();
 
   if let Some(welcome) = try_var!("SHELL_WELCOME") {
     // support for systemd's run0 message
@@ -443,6 +439,7 @@ fn handle_readline_event(
 
       exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 
+      Shed::term_mut(Terminal::fix_cursor_column)?;
       if let Err(e) = res {
         match e.kind() {
           ShErrKind::Interrupt => {
@@ -499,8 +496,6 @@ fn handle_readline_event(
       log::trace!("History update done in {:.2?}", hist_update_start.elapsed());
 
       let term_start = Instant::now();
-
-      Shed::term_mut(Terminal::fix_cursor_column)?;
 
       log::trace!("Terminal adjustments done in {:.2?}", term_start.elapsed());
 

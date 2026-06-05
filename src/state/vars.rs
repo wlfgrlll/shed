@@ -1,17 +1,22 @@
+use crate::util;
+
 use super::scopes::ScopeStack;
 
 use std::{
   collections::{HashMap, VecDeque},
   fmt::{self, Display},
+  ops::Deref,
   path::PathBuf,
+  rc::Rc,
   str::FromStr,
+  time::{Duration, Instant},
 };
 
 use bitflags::bitflags;
 use nix::unistd::{Pid, User, gethostname, getppid, isatty};
 
 use super::{
-  ShResult,
+  ShResult, Shed,
   eval::{
     lex::{LexFlags, LexStream, Tk},
     parse::node::Node,
@@ -20,6 +25,7 @@ use super::{
   procio::stdin_fileno,
   readline::Candidate,
   sherr,
+  terminal::Terminal,
   util::get_separator,
 };
 
@@ -73,7 +79,6 @@ pub(crate) fn display_local(vars: &ScopeStack) -> String {
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Copy)]
 pub(crate) enum ShellParam {
   // Global
-  Status,
   ShPid,
   LastJob,
   ShellName,
@@ -87,15 +92,11 @@ pub(crate) enum ShellParam {
 
 impl ShellParam {
   pub fn is_global(&self) -> bool {
-    matches!(
-      self,
-      Self::Status | Self::ShPid | Self::LastJob | Self::ShellName
-    )
+    matches!(self, Self::ShPid | Self::LastJob | Self::ShellName)
   }
 
   pub fn from_char(c: char) -> Option<Self> {
     match c {
-      '?' => Some(Self::Status),
       '$' => Some(Self::ShPid),
       '!' => Some(Self::LastJob),
       '0' => Some(Self::ShellName),
@@ -110,7 +111,6 @@ impl ShellParam {
 impl Display for ShellParam {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      Self::Status => write!(f, "?"),
       Self::ShPid => write!(f, "$"),
       Self::LastJob => write!(f, "!"),
       Self::ShellName => write!(f, "0"),
@@ -126,7 +126,6 @@ impl FromStr for ShellParam {
   type Err = ();
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s {
-      "?" => Ok(Self::Status),
       "$" => Ok(Self::ShPid),
       "!" => Ok(Self::LastJob),
       "0" => Ok(Self::ShellName),
@@ -197,7 +196,7 @@ impl ArrIndex {
   pub fn resolve_for(self, kind: &VarKind) -> ShResult<Self> {
     match self {
       Self::Raw(s) => match kind {
-        VarKind::Arr(_) | VarKind::Str(_) | VarKind::Int(_) => {
+        VarKind::Arr(_) | VarKind::Str(_) | VarKind::Int(_) | VarKind::Magic(_) => {
           let evaluated = expand_arithmetic(&s)?;
           let n: usize = evaluated
             .parse()
@@ -334,12 +333,41 @@ impl VarName {
   }
 }
 
+#[derive(Clone)]
+pub(crate) struct MagicVar(Rc<dyn Fn() -> Option<String>>);
+
+impl<F: Fn() -> Option<String> + 'static> From<F> for MagicVar {
+  fn from(value: F) -> Self {
+    Self(Rc::new(value))
+  }
+}
+
+impl Deref for MagicVar {
+  type Target = dyn Fn() -> Option<String>;
+  fn deref(&self) -> &Self::Target {
+    &*self.0
+  }
+}
+
+impl std::fmt::Debug for MagicVar {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "<magic var>")
+  }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum VarKind {
   Str(String),
   Int(i32),
   Arr(VecDeque<String>),
   AssocArr(Vec<(String, String)>),
+
+  /// A "magic" variable. Lazily evaluated on access by calling the wrapped function, which can return `None`
+  /// It wraps an `Rc<dyn Fn() -> Option<String>>`
+  ///
+  /// You can put call parens on the wrapped value directly to obtain the value of the variable.
+  /// These aren't currently exposed in the user-facing syntax.
+  Magic(MagicVar),
 }
 
 impl Default for VarKind {
@@ -469,6 +497,7 @@ impl Display for VarKind {
         }
         Ok(())
       }
+      VarKind::Magic(func) => write!(f, "{}", func().unwrap_or_default()),
     }
   }
 }
@@ -584,6 +613,7 @@ impl VarTab {
       deferred_cmds: Vec::new(),
     };
     var_tab.init_sh_argv();
+    var_tab.init_magic_vars();
     var_tab
   }
   fn init_params() -> HashMap<ShellParam, String> {
@@ -665,6 +695,17 @@ impl VarTab {
         unsafe { std::env::set_var(var, val) };
       };
 
+      if let Some(install_dir) = super::builtin::HELP_PAGE_INSTALL_DIR {
+        match std::env::var("SHED_HPATH").ok() {
+          Some(hpath) if !util::split_path_list(&hpath).any(|p| p.as_os_str() == install_dir) => {
+            set_var("SHED_HPATH", &format!("{}:{}", install_dir, hpath));
+          }
+          None => set_var("SHED_HPATH", install_dir),
+
+          _ => { /* hpath is set, and our install path is in it. do nothing */ }
+        }
+      }
+
       // PWD always set from getcwd()
       let pwd = pathbuf_to_string(std::env::current_dir());
       set_var("PWD", &pwd);
@@ -688,6 +729,24 @@ impl VarTab {
     }
 
     vars
+  }
+  pub fn init_magic_vars(&mut self) {
+    let magic_vars = [
+      ("?".into(), get_status_str.into()),
+      ("SECONDS".into(), get_seconds.into()),
+      ("EPOCHREALTIME".into(), get_epoch_realtime.into()),
+      ("EPOCHSECONDS".into(), get_epoch_seconds.into()),
+      ("RANDOM".into(), get_random.into()),
+      ("LINES".into(), get_lines.into()),
+      ("COLUMNS".into(), get_columns.into()),
+      ("-".into(), get_set_flags.into()),
+    ];
+
+    for (name, func) in magic_vars {
+      self
+        .vars
+        .insert(name, Var::new(VarKind::Magic(func), VarFlags::READONLY));
+    }
   }
   pub fn init_sh_argv(&mut self) {
     for arg in std::env::args() {
@@ -871,10 +930,6 @@ impl VarTab {
         .get(n)
         .map(ToString::to_string)
         .unwrap_or_default(),
-      ShellParam::Status => self
-        .params
-        .get(&ShellParam::Status)
-        .map_or("0".into(), &String::clone),
       ShellParam::AllArgsStr => {
         let ifs = get_separator();
         self
@@ -960,11 +1015,6 @@ mod shell_param_fmt_tests {
   use super::*;
 
   #[test]
-  fn status_formats_as_question_mark() {
-    assert_eq!(ShellParam::Status.to_string(), "?");
-  }
-
-  #[test]
   fn shpid_formats_as_dollar() {
     assert_eq!(ShellParam::ShPid.to_string(), "$");
   }
@@ -1006,7 +1056,6 @@ mod shell_param_fmt_tests {
   fn every_variant_round_trips_through_from_str() {
     use std::str::FromStr;
     let cases = [
-      ShellParam::Status,
       ShellParam::ShPid,
       ShellParam::LastJob,
       ShellParam::ShellName,
@@ -1021,6 +1070,90 @@ mod shell_param_fmt_tests {
       assert_eq!(parsed, v, "round-trip mismatch for {v:?} via {s:?}");
     }
   }
+}
+
+// magic variable functions
+
+fn get_status_str() -> Option<String> {
+  Some(Shed::get_status().to_string())
+}
+fn get_seconds() -> Option<String> {
+  let shell_time = Shed::meta(super::meta::MetaTab::shell_time);
+  let secs = Instant::now().duration_since(shell_time).as_secs();
+  Some(secs.to_string())
+}
+fn get_epoch_realtime() -> Option<String> {
+  let epoch = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or(Duration::from_secs(0))
+    .as_secs_f64();
+  Some(epoch.to_string())
+}
+
+fn get_epoch_seconds() -> Option<String> {
+  let epoch = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or(Duration::from_secs(0))
+    .as_secs();
+  Some(epoch.to_string())
+}
+
+fn get_random() -> Option<String> {
+  let random = rand::random_range(0..32768);
+  Some(random.to_string())
+}
+
+fn get_lines() -> Option<String> {
+  let rows = Shed::term(Terminal::t_rows);
+  Some(rows.to_string())
+}
+
+fn get_columns() -> Option<String> {
+  let cols = Shed::term(Terminal::t_cols);
+  Some(cols.to_string())
+}
+
+fn get_set_flags() -> Option<String> {
+  let mut set_string = String::new();
+  Shed::shopts(|o| {
+    if o.set.allexport {
+      set_string.push('a');
+    }
+    if o.set.notify {
+      set_string.push('b');
+    }
+    if o.set.noclobber {
+      set_string.push('C');
+    }
+    if o.set.errexit {
+      set_string.push('e');
+    }
+    if o.set.noglob {
+      set_string.push('f');
+    }
+    if o.set.hashall {
+      set_string.push('h');
+    }
+    if Shed::term(Terminal::interactive) {
+      set_string.push('i');
+    }
+    if o.set.monitor {
+      set_string.push('m');
+    }
+    if o.set.noexec {
+      set_string.push('n');
+    }
+    if o.set.nounset {
+      set_string.push('u');
+    }
+    if o.set.verbose {
+      set_string.push('v');
+    }
+    if o.set.xtrace {
+      set_string.push('x');
+    }
+  });
+  (!set_string.is_empty()).then_some(set_string)
 }
 
 #[cfg(test)]

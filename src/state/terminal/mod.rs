@@ -58,9 +58,10 @@ static TTY_FILENO: LazyLock<Option<OwnedFd>> = LazyLock::new(|| {
   procio::move_high(owned).ok()
 });
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub(crate) enum ScrollRegionState {
   Set(u16, u16),
+  #[default]
   Unset,
 }
 
@@ -521,7 +522,7 @@ impl Terminal {
   }
 
   pub fn reserved_rows() -> u16 {
-    if shopt!(statline.enable) { 2 } else { 1 }
+    if shopt!(statline.enable) { 2 } else { 0 }
   }
 
   pub fn update_t_dims(&mut self) {
@@ -584,15 +585,22 @@ impl Terminal {
     }
     Ok(None)
   }
+  /// If the cursor is outside of the scroll region, move it into the scroll region
+  ///
+  /// Note: the scroll region actually has to be unset here. this is called after
+  /// yield_terminal unsets it, before it gets reset.
   pub fn fix_cursor_row(&mut self, bottom: u16) -> ShResult<()> {
+    if !shopt!(statline.enable) {
+      return Ok(());
+    }
     let cursor_row = self.get_cursor_pos().ok().flatten().map(|(r, _)| r.0);
 
     if cursor_row.is_none_or(|r| r >= bottom as usize) {
-      if shopt!(statline.enable) {
-        write!(self, "\n\n")?;
-      } else {
-        writeln!(self)?;
-      }
+      // Caller invokes us while the scroll region is still Unset (between
+      // `cooked_guard` and `_scroll_guard` drops in `exec_pipeline`), so `\n`
+      // at terminal bottom triggers a full-screen scroll that pulls gutter
+      // content into the soon-to-be-restored region.
+      write!(self, "\n\n")?;
       self
         .execute_control(&TermCtl::Cursor(CursorCtl::Absolute {
           row: bottom,
@@ -600,6 +608,7 @@ impl Terminal {
         }))
         .ok();
     }
+    self.flush().ok();
     Ok(())
   }
 
@@ -817,6 +826,20 @@ impl Terminal {
 
     self.flush()?; // flush escape sequences before switching to cooked mode
 
+    // Drain any pending bytes still in flight on the tty (e.g., a late CPR
+    // response from the previous pipeline's `fix_cursor_row`). Cooked mode's
+    // ECHO would otherwise echo them onto stdout as `^[[N;MR` garbage.
+    if let Some(tty) = self.tty() {
+      let mut buf = [0u8; 256];
+      while let Ok(n) = self.poll(PollTimeout::ZERO)
+        && n > 0
+      {
+        if nix::unistd::read(tty, &mut buf).is_err() {
+          break;
+        }
+      }
+    }
+
     self.edit_termios(enable_cooked_mode)?;
     Ok(guard.activate())
   }
@@ -919,6 +942,9 @@ impl Terminal {
   }
 
   pub fn reserve_status_rows(&mut self) -> ShResult<()> {
+    if !shopt!(statline.enable) {
+      return Ok(());
+    }
     let reserved: u16 = Self::reserved_rows();
     let bottom = (self.t_rows() as u16).saturating_sub(reserved).max(1);
     self.execute_control(&TermCtl::Scroll(Scroll::SetRegion(1, bottom)))?;

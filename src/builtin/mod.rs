@@ -59,56 +59,7 @@ mod trap;
 mod varcmds;
 
 use getopt::{Opt, OptSpec, get_opts_from_tokens, get_opts_from_tokens_strict};
-
-/// Embed a completion script directly in the binary.
-///
-/// The script has to define a completion function *and* call complete -F {func} {name}
-macro_rules! embed {
-  ($path:literal) => {
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/include/", $path))
-  };
-}
-
-/// Register a script to embed in the binary and source on shell startup
-///
-/// These are mainly used for builtin functions, aliases and utility variables
-macro_rules! register_scripts {
-  ($($path:literal),* $(,)?) => {
-    static SCRIPTS: &[(&str,&str)] = &[
-      $(($path, embed!($path))),*
-    ];
-
-    pub fn source_builtin_scripts() {
-      let mut code = 0;
-      for (path, src) in SCRIPTS {
-        if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{path}").into())) {
-          code = 2;
-          e.print_error();
-        }
-      }
-      $crate::state::Shed::set_status(code);
-    }
-  };
-}
-
-macro_rules! register_completions {
-  ($($name:literal => $script:expr),* $(,)?) => {
-    static COMPLETIONS: &[(&str,&str)] = &[
-      $(($name, $script)),*
-    ];
-
-    pub fn source_builtin_completions() {
-      let mut code = 0;
-      for (name, src) in COMPLETIONS {
-        if let Err(e) = $crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into())) {
-          code = 2;
-          e.print_error();
-        }
-      }
-      $crate::state::Shed::set_status(code);
-    }
-  };
-}
+pub(crate) use help::HELP_PAGE_INSTALL_DIR;
 
 macro_rules! register_builtins {
   ($($name:literal => $ty:expr),* $(,)?) => {
@@ -225,68 +176,6 @@ register_builtins! {
   "unalias"  => alias::Unalias,
   "unset"    => varcmds::Unset,
   "wait"     => jobctl::Wait,
-}
-
-/// Autogenerate a completion spec for the given command using a compgen flag
-///
-/// Useful for simple builtins
-macro_rules! compgen {
-  ($name:literal, $flag:expr) => {
-    concat!(
-      "_",
-      $name,
-      "_comp() { compadd $(compgen ",
-      $flag,
-      r#" -- "$2"); }; complete -F _"#,
-      $name,
-      "_comp ",
-      $name
-    )
-  };
-}
-
-register_completions! {
-  "unalias"  => compgen!("unalias",  "-a"),
-  "alias"    => compgen!("alias",    "-a"),
-  "pushd"    => compgen!("pushd",    "-d"),
-  "unset"    => compgen!("unset",    "-v"),
-  "type"     => compgen!("type",     "-c"),
-  "hash"     => compgen!("hash",     "-c"),
-  "command"  => compgen!("command",  "-c"),
-  "exec"     => compgen!("exec",     "-c"),
-  "bg"       => compgen!("bg",       "-j"),
-  "fg"       => compgen!("fg",       "-j"),
-  "readonly" => compgen!("readonly", "-v"),
-  "export"   => compgen!("export",   "-v"),
-  "local"    => compgen!("local",    "-v"),
-  "disown"   => compgen!("disown",   "-j"),
-  "wait"     => compgen!("wait",     "-j"),
-  "source"   => compgen!("source",   "-f"),
-  "."        => compgen!(".",        "-f"),
-  "read"     => compgen!("read",     "-v"),
-  "readkey"  => compgen!("readkey",  "-v"),
-  "pop"      => compgen!("pop",      "-v"),
-  "fpop"     => compgen!("fpop",     "-v"),
-  "push"     => compgen!("push",     "-v"),
-  "fpush"    => compgen!("fpush",    "-v"),
-  "rotate"   => compgen!("rotate",   "-v"),
-  "builtin"  => compgen!("builtin",  "-b"),
-  "kill"     => embed!("completions/kill_comp.sh"),
-  "keymap"   => embed!("completions/keymap_comp.sh"),
-  "declare"  => embed!("completions/declare_comp.sh"),
-  "trap"     => embed!("completions/trap_comp.sh"),
-  "ulimit"   => embed!("completions/ulimit_comp.sh"),
-  "set"      => embed!("completions/set_comp.sh"),
-  "autocmd"  => embed!("completions/autocmd_comp.sh"),
-  "cd"       => embed!("completions/cd_comp.sh"),
-  "shopt"    => embed!("completions/shopt_comp.sh"),
-  "compadd"  => embed!("completions/compadd_comp.sh"),
-  "help"     => embed!("completions/help_comp.sh"),
-  "hist"     => embed!("completions/hist_comp.sh"),
-}
-
-register_scripts! {
-  "version.sh",
 }
 
 /// Lookup a name in the builtin table via binary search
@@ -694,7 +583,6 @@ impl CommandBuiltin {
 pub mod tests {
   use crate::{
     Shed, assert_status_eq,
-    builtin::{source_builtin_completions, source_builtin_scripts},
     eval::execute::exec_nonint,
     state::{self, vars::VarFlags},
     tests::testutil::{TestGuard, has_cmd, test_input},
@@ -756,25 +644,6 @@ pub mod tests {
     let var = Shed::vars(|v| v.try_get_var_meta("FOO")).unwrap();
     let flags = var.flags();
     assert!(flags.contains(VarFlags::EXPORT));
-  }
-
-  #[test]
-  fn builtin_scripts_pass() {
-    let _g = TestGuard::new();
-    source_builtin_scripts();
-    assert_status_eq!(0);
-
-    let failures: Vec<&str> = super::SCRIPTS
-      .iter()
-      .filter(|(path, src)| {
-        crate::eval::execute::exec_nonint(src.to_string(), Some(path.to_string().into())).is_err()
-      })
-      .map(|(path, _)| *path)
-      .collect();
-    assert!(
-      failures.is_empty(),
-      "Functions failed to source: {failures:?}"
-    );
   }
 
   #[test]
@@ -949,25 +818,6 @@ pub mod tests {
     assert!(
       out.contains("PATH_NOW=/sentinel_path_xyz"),
       "PATH was not restored after `command -p`: got {out:?}",
-    );
-  }
-
-  #[test]
-  fn builtin_completions_pass() {
-    let _g = TestGuard::new();
-    source_builtin_completions();
-    assert_status_eq!(0);
-    let failures: Vec<&str> = super::COMPLETIONS
-      .iter()
-      .filter(|(name, src)| {
-        crate::eval::execute::exec_nonint(src.to_string(), Some(format!("{name} comp").into()))
-          .is_err()
-      })
-      .map(|(name, _)| *name)
-      .collect();
-    assert!(
-      failures.is_empty(),
-      "Completions failed to source: {failures:?}"
     );
   }
 }

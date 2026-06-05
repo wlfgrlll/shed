@@ -219,8 +219,40 @@ pub fn scan_parens(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -
   scan_delims('(', chars, pos, depth).unwrap()
 }
 
-pub fn scan_braces(chars: &mut Peekable<Chars>, pos: &mut usize, depth: usize) -> bool {
-  scan_delims('{', chars, pos, depth).unwrap()
+pub fn scan_param_exp(chars: &mut Peekable<Chars>, pos: &mut usize, mut depth: usize) -> bool {
+  let mut qt = QuoteState::default();
+  match_loop!(chars.next() => ch, {
+    '\\' => {
+      *pos += 1;
+      if let Some(next_ch) = chars.next() {
+        *pos += next_ch.len_utf8();
+      }
+    }
+    '\'' => { *pos += 1; qt.toggle_single(); }
+    '"' if !qt.in_single() => { *pos += 1; qt.toggle_double(); }
+    _ if qt.in_quote() => *pos += ch.len_utf8(),
+    '$' if chars.peek() == Some(&'{') => {
+      chars.next();
+      *pos += 2;
+      depth += 1;
+    }
+    '$' if chars.peek() == Some(&'(') => {
+      chars.next();
+      *pos += 2;
+      // Reuse the paren-matcher so an inner `$(... } ...)` doesn't trip the
+      // param-expansion closer scan.
+      if !scan_parens(chars, pos, 1) {
+        return false;
+      }
+    }
+    '}' => {
+      *pos += 1;
+      depth -= 1;
+      if depth == 0 { break; }
+    }
+    _ => *pos += ch.len_utf8(),
+  });
+  depth == 0
 }
 
 fn scan_delims(

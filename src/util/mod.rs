@@ -2,6 +2,7 @@ pub(crate) mod error;
 pub mod flog;
 mod guards;
 mod macros;
+mod path;
 mod pos;
 pub mod posix_extension;
 mod strops;
@@ -12,6 +13,7 @@ use std::os::fd::BorrowedFd;
 use super::{Shed, eval, expand, match_loop, procio, sherr, state, system_msg, var, write_term};
 
 pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
+pub(super) use path::{is_executable_file, path_list_entries, split_path_list};
 pub(super) use pos::{Pos, SignedPos};
 pub(super) use ui::{
   BOT_LEFT, BOT_RIGHT, HOR_LINE, PaletteEntry, TOP_LEFT, TOP_RIGHT, TREE_LEFT, TREE_RIGHT,
@@ -30,7 +32,7 @@ pub(super) use error::{ShErr, ShErrKind, ShResult, ShResultExt, get_context};
 
 pub(super) use strops::{
   QuoteState, compile_glob, ends_with_unescaped, expand_ansi_c, format_mode, format_size,
-  format_time, has_unescaped, replace_posix_classes, rfind_unescaped, scan_braces, scan_parens,
+  format_time, has_unescaped, replace_posix_classes, rfind_unescaped, scan_param_exp, scan_parens,
   split_at_unescaped, split_tk,
 };
 

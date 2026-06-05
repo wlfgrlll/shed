@@ -60,10 +60,14 @@
       version = "0.25.4";
 
       src = self;
+      cargoLock = { lockFile = ./Cargo.lock; };
 
-      cargoLock = {
-        lockFile = ./Cargo.lock;
-      };
+      SHED_HELP_DIR = "${placeholder "out"}/share/shed/help";
+
+      postInstall = ''
+        install -Dm644 include/help/* -t $out/share/shed/help/
+        install -Dm644 LICENSE -t $out/share/shed/
+      '';
 
       passthru.shellPath = "/bin/shed";
 

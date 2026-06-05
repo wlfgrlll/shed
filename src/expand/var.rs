@@ -91,6 +91,8 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
   let mut var_name = String::new();
   let mut brace_depth: i32 = 0;
   let mut inner_brace_depth: i32 = 0;
+  let mut prev_was_dollar = false;
+  let mut in_subsh = false;
   match_loop!(chars.peek() => &ch => ch, {
     markers::SUBSH if var_name.is_empty() => {
       chars.next(); // now safe to consume
@@ -117,8 +119,9 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     '{' if var_name.is_empty() && brace_depth == 0 => {
       chars.next(); // consume the brace
       brace_depth += 1;
+      prev_was_dollar = false;
     }
-    '}' if brace_depth > 0 && inner_brace_depth == 0 => {
+    '}' if brace_depth > 0 && inner_brace_depth == 0 && !in_subsh => {
       chars.next(); // consume the brace
       let val = perform_param_expansion(&var_name, allow_side_effects)?;
       return Ok(val);
@@ -129,6 +132,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       if let Some(next_ch) = chars.next() {
         var_name.push(next_ch);
       }
+      prev_was_dollar = false;
     }
     markers::DUB_QUOTE | markers::SNG_QUOTE if brace_depth > 0 => {
       let opener = ch;
@@ -145,15 +149,20 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
           var_name.push(esc_ch);
         }
       }
+      prev_was_dollar = false;
     }
     ch if brace_depth > 0 => {
       chars.next(); // safe to consume
-      if ch == '{' {
-        inner_brace_depth += 1;
+      if ch == markers::SUBSH {
+        in_subsh = !in_subsh;
+      } else if !in_subsh {
+        if ch == '{' && prev_was_dollar {
+          inner_brace_depth += 1;
+        } else if ch == '}' && inner_brace_depth > 0 {
+          inner_brace_depth -= 1;
+        }
       }
-      if ch == '}' {
-        inner_brace_depth -= 1;
-      }
+      prev_was_dollar = !in_subsh && ch == markers::VAR_SUB;
       var_name.push(ch);
     }
     ch if var_name.is_empty() && (PARAMETERS.contains(&ch) || ch.is_ascii_digit()) => {

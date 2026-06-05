@@ -749,6 +749,7 @@ fn prefix_of(strat: &CompStrat) -> &str {
     CompStrat::ExCommand { prefix }
     | CompStrat::Var { prefix }
     | CompStrat::Tilde { prefix }
+    | CompStrat::Builtin { prefix }
     | CompStrat::Command { prefix } => prefix,
     CompStrat::Argument { path } | CompStrat::Files { path } => path,
     CompStrat::Separator | CompStrat::Null => "",

@@ -18,7 +18,10 @@ pub(crate) use fuzzy::{FuzzyCompleter, FuzzySelector, ScoredCandidate, SelectorR
 
 pub(crate) use grid::GridCompleter;
 
-use crate::readline::context::get_ex_context_tokens;
+use crate::{
+  readline::context::{CmdKind, get_ex_context_tokens},
+  state::logic::AutoloadKind,
+};
 
 use super::{
   super::state::meta::MetaTab,
@@ -81,6 +84,9 @@ enum CompStrat {
     prefix: String,
   },
   Tilde {
+    prefix: String,
+  },
+  Builtin {
     prefix: String,
   },
   Command {
@@ -153,9 +159,11 @@ impl CompStrat {
     let whole = leaf.span().as_str();
     let cursor_pos = leaf.relative_cursor_pos(cursor_pos);
     let strat = match leaf.class() {
-      CtxTkRule::ValidCommand(_) | CtxTkRule::InvalidCommand | CtxTkRule::Keyword => {
-        Self::Command { prefix }
-      }
+      CtxTkRule::ValidCommand(kind) => match kind {
+        CmdKind::Builtin => Self::Builtin { prefix },
+        _ => Self::Command { prefix },
+      },
+      CtxTkRule::InvalidCommand | CtxTkRule::Keyword => Self::Command { prefix },
 
       CtxTkRule::InvalidExCommand | CtxTkRule::ValidExCommand => Self::ExCommand { prefix },
 
@@ -1380,15 +1388,7 @@ impl SimpleCompleter {
     ctx
   }
 
-  pub fn try_comp_spec(ctx: &CompContext) -> ShResult<CompSpecResult> {
-    let Some(cmd) = ctx.cmd() else {
-      return Ok(CompSpecResult::NoSpec);
-    };
-
-    let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) else {
-      return Ok(CompSpecResult::NoSpec);
-    };
-
+  fn run_comp_spec(ctx: &CompContext, spec: Box<dyn CompSpec>) -> ShResult<CompSpecResult> {
     let candidates = spec.complete(ctx)?;
     if candidates.is_empty() {
       Ok(CompSpecResult::NoMatch {
@@ -1400,6 +1400,25 @@ impl SimpleCompleter {
         flags: spec.get_flags(),
       })
     }
+  }
+
+  pub fn try_comp_spec(ctx: &CompContext) -> ShResult<CompSpecResult> {
+    let Some(cmd) = ctx.cmd() else {
+      return Ok(CompSpecResult::NoSpec);
+    };
+
+    if let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) {
+      return Self::run_comp_spec(ctx, spec);
+    }
+
+    if let Some(src) = Shed::logic_mut(|l| l.take_comp_autoload(cmd)) {
+      src.source(AutoloadKind::Completion)?;
+      if let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) {
+        return Self::run_comp_spec(ctx, spec);
+      }
+    }
+
+    Ok(CompSpecResult::NoSpec)
   }
 
   pub fn get_candidates(
@@ -1419,6 +1438,7 @@ impl SimpleCompleter {
       CompStrat::Var { prefix } => CompResult::from_candidates(complete_vars(&prefix)),
       CompStrat::Tilde { prefix } => CompResult::from_candidates(complete_users(&prefix)),
       CompStrat::ExCommand { prefix } => CompResult::from_candidates(complete_ex_commands(&prefix)),
+      CompStrat::Builtin { prefix } => CompResult::from_candidates(complete_builtins(&prefix)),
       CompStrat::Command { prefix } => {
         CompResult::from_candidates(complete_commands(&prefix, leaf_cursor_pos))
       }

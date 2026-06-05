@@ -58,6 +58,7 @@ uuid = { version = "1.23.1", features = ["v4"] }
 vte = "0.15"
 yansi = "1.0.1"
 bytecount = "0.6.9"
+rust-embed = { version = "8.11.0", features = ["include-exclude"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
