@@ -19,7 +19,6 @@ use crate::{exec_term, signal::FOCUS_GAINED};
 
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
-  builtin::source_builtin_completions,
   errln,
   eval::execute::exec_int,
   lifecycle::{self, first_run_setup},
@@ -146,8 +145,6 @@ fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
   {
     e.print_error();
   }
-
-  source_builtin_completions();
 
   if let Some(welcome) = try_var!("SHELL_WELCOME") {
     // support for systemd's run0 message
