@@ -133,7 +133,7 @@ impl AutoloadSrc {
         }
         .data;
         let text = String::from_utf8_lossy(&body).to_string();
-        exec_nonint(text, Some(s.clone().into()))
+        exec_nonint(text, Some(format!("<include>/{s}").into()))
       }
     }
   }
