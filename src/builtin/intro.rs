@@ -102,6 +102,7 @@ impl super::Builtin for Type {
             VarKind::Int(_) => outln!("integer"),
             VarKind::Arr(_) => outln!("array"),
             VarKind::AssocArr(_) => outln!("assoc_array"),
+            VarKind::Magic(_) => outln!("magic"),
           }
         } else {
           match var.kind() {
@@ -109,6 +110,7 @@ impl super::Builtin for Type {
             VarKind::Int(_) => outln!("{arg} is an integer variable"),
             VarKind::Arr(_) => outln!("{arg} is an array variable"),
             VarKind::AssocArr(_) => outln!("{arg} is an associative array"),
+            VarKind::Magic(_) => outln!("{arg} is a magic variable"),
           }
         }
       } else {

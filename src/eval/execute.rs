@@ -1478,9 +1478,14 @@ impl Dispatcher {
             VarKind::Arr(items) => {
               if matches!(op, AssignKind::PlusEq) {
                 match &val {
-                  VarKind::Str(s) => items.push_back(s.clone()),
                   VarKind::Int(n) => items.push_back(n.to_string()),
+                  VarKind::Str(s) => items.push_back(s.clone()),
                   VarKind::Arr(other) => items.extend(other.clone()),
+                  VarKind::Magic(n) => {
+                    if let Some(s) = n() {
+                      items.push_back(s);
+                    }
+                  }
                   VarKind::AssocArr(_) => {
                     return Err(sherr!(
                       InvalidAssignment @ span,
@@ -1494,6 +1499,12 @@ impl Dispatcher {
                   "cannot {op_name} array variable"
                 ));
               }
+            }
+            VarKind::Magic(_) => {
+              return Err(sherr!(
+                InvalidAssignment @ span,
+                "cannot {op_name} magic variable"
+              ));
             }
             VarKind::AssocArr(_) => {
               return Err(sherr!(

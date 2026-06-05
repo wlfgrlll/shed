@@ -184,6 +184,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
     let var = Shed::vars(|v| v.get_var_meta(var_spec));
     return Ok(
       match var.kind() {
+        VarKind::Magic(func) => func().unwrap_or_default().len(),
         VarKind::Str(_) | VarKind::Int(_) => var.to_string().len(),
         VarKind::Arr(items) => items.len(),
         VarKind::AssocArr(items) => items.len(),
