@@ -123,20 +123,15 @@ impl super::Builtin for Help {
 pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   let mut tags = vec![];
   let hpath = var!("SHED_HPATH");
-  for path in hpath.split(':') {
-    let path = Path::new(path);
-    if let Ok(entries) = path.read_dir() {
-      for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if !path.is_file() {
-          continue;
-        }
 
-        let mut new_tags = read_tags_from_file(&path)?;
-        tags.append(&mut new_tags);
-      }
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
     }
+
+    let mut new_tags = read_tags_from_file(&path)?;
+    tags.append(&mut new_tags);
   }
 
   for (page, content) in HELP_PAGES {
@@ -161,26 +156,18 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
 
   let hpath = var!("SHED_HPATH");
 
-  // search for prefixes of help doc filenames
-  for path in hpath.split(':') {
-    let dir = Path::new(path);
-    let Ok(entries) = dir.read_dir() else {
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
       continue;
-    };
-    for entry in entries {
-      let Ok(entry) = entry else { continue };
-      let path = entry.path();
-      if !path.is_file() {
+    }
+    let stem = path.file_stem().unwrap().to_string_lossy();
+    if stem.starts_with(topic) {
+      let Ok(contents) = std::fs::read_to_string(&path) else {
         continue;
-      }
-      let stem = path.file_stem().unwrap().to_string_lossy();
-      if stem.starts_with(topic) {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-          continue;
-        };
+      };
 
-        return Some((0, contents, Some(stem.to_string())));
-      }
+      return Some((0, contents, Some(stem.to_string())));
     }
   }
 
@@ -193,21 +180,15 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
 
   // didn't find a filename match, its probably a tag search
   let mut tags = vec![];
-  for path in hpath.split(':') {
-    let path = Path::new(path);
-    if let Ok(entries) = path.read_dir() {
-      for entry in entries {
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        if !path.is_file() {
-          continue;
-        }
-
-        let mut new_tags = read_tags_from_file(&path).ok()?;
-        score_matches(topic, &mut new_tags);
-        tags.append(&mut new_tags);
-      }
+  for entry in util::path_list_entries(&hpath) {
+    let path = entry.path();
+    if !path.is_file() {
+      continue;
     }
+
+    let mut new_tags = read_tags_from_file(&path).ok()?;
+    score_matches(topic, &mut new_tags);
+    tags.append(&mut new_tags);
   }
 
   for (page, content) in HELP_PAGES {

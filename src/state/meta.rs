@@ -1,7 +1,7 @@
 use std::{
   collections::{HashMap, HashSet, VecDeque},
   fmt::Write,
-  os::{fd::OwnedFd, unix::fs::PermissionsExt},
+  os::fd::OwnedFd,
   path::{Path, PathBuf},
   rc::Rc,
   time::{Duration, Instant},
@@ -790,40 +790,23 @@ impl MetaTab {
   }
   pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
     let path = var!("PATH");
-    let paths = path.split(':').map(PathBuf::from);
+    let paths = util::path_list_entries(&path);
+
     let mut seen = HashSet::new();
     let mut cmds = vec![];
-    for path in paths {
-      if let Ok(entries) = path.read_dir() {
-        for entry in entries.flatten() {
-          // file_type() is free (uses dirent.d_type when available). For
-          // regular files, entry.metadata() avoids the full-path resolution
-          // that std::fs::metadata(entry.path()) would do. For symlinks we
-          // must use the path-based stat so the target is followed (PATH
-          // entries on NixOS / Homebrew are routinely symlink farms).
-          let ft = entry.file_type().ok();
-          let is_symlink = ft.is_some_and(|t| t.is_symlink());
-          let meta = if is_symlink {
-            std::fs::metadata(entry.path())
-          } else {
-            entry.metadata()
-          };
-          let Ok(meta) = meta else {
-            continue;
-          };
-          let is_exec = meta.permissions().mode() & 0o111 != 0;
 
-          if meta.is_file()
-            && is_exec
-            && let Some(name) = entry.file_name().to_str()
-            && seen.insert(name.to_string())
-          {
-            let util = Utility::command(name.to_string(), entry.path());
-            cmds.push(util.into());
-          }
-        }
+    for entry in paths {
+      let is_exec = util::is_executable_file(&entry);
+
+      if is_exec
+        && let Some(name) = entry.file_name().to_str()
+        && seen.insert(name.to_string())
+      {
+        let util = Utility::command(name.to_string(), entry.path());
+        cmds.push(util.into());
       }
     }
+
     cmds
   }
   pub fn get_exec_files_in_cwd() -> Vec<Rc<Utility>> {
@@ -831,22 +814,9 @@ impl MetaTab {
     let mut files = vec![];
     if let Ok(entries) = Path::new(&cwd).read_dir() {
       for entry in entries.flatten() {
-        let ft = entry.file_type().ok();
-        let is_symlink = ft.is_some_and(|t| t.is_symlink());
-        let meta = if is_symlink {
-          std::fs::metadata(entry.path())
-        } else {
-          entry.metadata()
-        };
-        let Ok(meta) = meta else {
-          continue;
-        };
-        let is_exec = meta.permissions().mode() & 0o111 != 0;
+        let is_exec = util::is_executable_file(&entry);
 
-        if meta.is_file()
-          && is_exec
-          && let Some(name) = entry.file_name().to_str()
-        {
+        if is_exec && let Some(name) = entry.file_name().to_str() {
           let util = Utility::file(name.to_string(), entry.path());
           files.push(util.into());
         }
