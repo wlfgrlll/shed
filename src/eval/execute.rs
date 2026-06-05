@@ -1572,16 +1572,31 @@ pub fn is_arith(tk: Option<&Tk>) -> bool {
 
 /// Checks if a command will fork on its own or not
 pub fn runs_inline(cmd: &Node) -> bool {
-  let NdRule::Command { argv, .. } = &cmd.class else {
-    return false;
-  };
-  if argv.is_empty() {
-    // assignment-only command, will never fork
-    return true;
+  match &cmd.class {
+    NdRule::Command { argv, .. } => {
+      if argv.is_empty() {
+        // assignment-only command, will never fork
+        return true;
+      }
+      let cmd_word = cmd.get_command().unwrap();
+      is_func(cmd_word.as_str()) || cmd_word.flags.contains(TkFlags::BUILTIN)
+    }
+    NdRule::List { .. }
+    | NdRule::Conjunction { .. }
+    | NdRule::IfNode { .. }
+    | NdRule::LoopNode { .. }
+    | NdRule::ForNode { .. }
+    | NdRule::ForArith { .. }
+    | NdRule::CaseNode { .. }
+    | NdRule::BraceGrp { .. }
+    | NdRule::TryNode { .. }
+    | NdRule::DeferNode { .. }
+    | NdRule::Negate { .. }
+    | NdRule::Timed { .. }
+    | NdRule::Arithmetic { .. }
+    | NdRule::FuncDef { .. } => true,
+    NdRule::Subshell { .. } | NdRule::Pipeline { .. } | NdRule::Assignment { .. } => false,
   }
-
-  let cmd_word = cmd.get_command().unwrap();
-  is_func(cmd_word.as_str()) || cmd_word.flags.contains(TkFlags::BUILTIN)
 }
 
 pub fn will_fork(cmd: &Node) -> bool {
