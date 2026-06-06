@@ -11,6 +11,12 @@ impl ParseStream {
     assert!(self.cursor + num_consumed <= self.tokens.len());
     self.cursor += num_consumed;
   }
+  pub fn last_consumed_was_sep(&self) -> bool {
+    self
+      .tokens
+      .get(self.cursor.wrapping_sub(1))
+      .is_some_and(|tk| tk.class == TkRule::Sep)
+  }
   pub(super) fn next_tk_class(&self) -> &TkRule {
     self.peek_tk().map_or(&TkRule::Null, |tk| &tk.class)
   }
@@ -44,9 +50,14 @@ impl ParseStream {
   /// fi
   /// ```
   /// are valid syntax
-  pub(super) fn catch_separator(&mut self, node_tks: &mut Vec<Tk>) {
+  pub(super) fn catch_separator(&mut self, span: &mut Option<Span>) {
     while *self.next_tk_class() == TkRule::Sep {
-      node_tks.push(self.next_tk().unwrap());
+      let next = self.next_tk().unwrap();
+      if let Some(span) = span {
+        span.merge_inplace(&next.span);
+      } else {
+        *span = Some(next.span);
+      }
     }
   }
   pub(super) fn check_separator(&mut self) -> bool {
@@ -55,7 +66,7 @@ impl ParseStream {
       TkRule::Or | TkRule::Bg | TkRule::And | TkRule::BraceGrpEnd | TkRule::Pipe | TkRule::Sep
     )
   }
-  pub(super) fn assert_separator(&mut self, node_tks: &mut Vec<Tk>) -> ShResult<()> {
+  pub(super) fn assert_separator(&mut self, node_tks: &mut Option<Span>) -> ShResult<()> {
     let next_class = self.next_tk_class();
     match next_class {
       TkRule::Eoi | TkRule::Or | TkRule::Bg | TkRule::And | TkRule::BraceGrpEnd | TkRule::Pipe => {
@@ -64,7 +75,7 @@ impl ParseStream {
 
       TkRule::Sep => {
         if let Some(tk) = self.next_tk() {
-          node_tks.push(tk);
+          extend_span!(*node_tks, tk.span);
         }
         Ok(())
       }
@@ -117,7 +128,7 @@ pub(super) fn split_for_arith_tk(
     },
     flags: NdFlags::empty(),
     redirs: vec![],
-    tokens: vec![init_tk],
+    span: init_tk.span,
     context: VecDeque::default(),
   }));
 
@@ -130,7 +141,7 @@ pub(super) fn split_for_arith_tk(
     },
     flags: NdFlags::empty(),
     redirs: vec![],
-    tokens: vec![cond_tk],
+    span: cond_tk.span,
     context: VecDeque::default(),
   }));
 
@@ -143,7 +154,7 @@ pub(super) fn split_for_arith_tk(
     },
     flags: NdFlags::empty(),
     redirs: vec![],
-    tokens: vec![step_tk],
+    span: step_tk.span,
     context: VecDeque::default(),
   }));
 

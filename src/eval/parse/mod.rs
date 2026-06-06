@@ -204,25 +204,25 @@ impl ParseStream {
   }
   fn parse_cmd_list(&mut self) -> ShResult<Option<Node>> {
     let mut commands = vec![];
-    let mut node_tks = vec![];
+    let mut span: Option<Span> = None;
     while let Some(command) = self.parse_conjunction()? {
-      node_tks.extend(command.tokens.clone());
+      extend_span!(span, command.get_span());
       commands.push(command);
     }
 
     if commands.is_empty() {
       Ok(None)
     } else {
-      Ok(Some(node!(self, node_tks, NdRule::List { commands })))
+      Ok(Some(node!(self, span, NdRule::List { commands })))
     }
   }
   fn parse_conjunction(&mut self) -> ShResult<Option<Node>> {
     let mut elements = vec![];
-    let mut node_tks = vec![];
+    let mut span: Option<Span> = None;
 
     while let Some(mut block) = self.parse_block(true)? {
-      node_tks.append(&mut block.tokens.clone());
-      self.catch_separator(&mut node_tks);
+      extend_span!(span, block.get_span());
+      self.catch_separator(&mut span);
 
       let conjunct_op = match self.next_tk_class() {
         TkRule::And => ConjunctOp::And,
@@ -243,8 +243,8 @@ impl ParseStream {
 
       if conjunct_op != ConjunctOp::Null {
         let Some(tk) = self.next_tk() else { break };
-        node_tks.push(tk);
-        self.catch_separator(&mut node_tks);
+        extend_span!(span, tk.span);
+        self.catch_separator(&mut span);
       }
 
       if conjunct_op == ConjunctOp::Null {
@@ -255,11 +255,7 @@ impl ParseStream {
     if elements.is_empty() {
       Ok(None)
     } else {
-      Ok(Some(node!(
-        self,
-        node_tks,
-        NdRule::Conjunction { elements }
-      )))
+      Ok(Some(node!(self, span, NdRule::Conjunction { elements })))
     }
   }
   /// This tries to match on different stuff that can appear in a command
@@ -268,50 +264,52 @@ impl ParseStream {
   /// appearing at the bottom The `check_pipelines` parameter is used to prevent
   /// left-recursion issues in `self.parse_pipeln()`
   fn parse_block(&mut self, check_pipelines: bool) -> ShResult<Option<Node>> {
-    if !check_pipelines {
-      self.block_depth += 1;
-    }
-
-    // You will live to see man made horrors beyond your comprehension
-    let result = || -> ShResult<Option<Node>> {
-      if check_pipelines {
-        try_match!(self.parse_pipeln()?);
-        Ok(None)
-      } else {
-        try_match!(self.parse_func_def()?);
-        try_match!(self.parse_brc_grp(false /* from_func_def */)?);
-        try_match!(self.parse_subsh()?);
-        try_match!(self.parse_case()?);
-        try_match!(self.parse_loop()?);
-        try_match!(self.parse_for()?);
-
-        // these aren't nested contexts
-        // so we decrement the depth and descend into
-        // yet another immediately-invoked closure
-        // please stabilize the try block my rust developers!!
-        self.block_depth -= 1;
-        let r = || -> ShResult<Option<Node>> {
-          try_match!(self.parse_if()?);
-          try_match!(self.parse_negate()?);
-          try_match!(self.parse_time()?);
-          try_match!(self.parse_defer()?);
-          try_match!(self.parse_try()?);
-          try_match!(self.parse_func_keyword()?);
-          try_match!(self.parse_arith()?);
-          try_match!(self.parse_cmd()?);
-          Ok(None)
-        }()?;
+    stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+      if !check_pipelines {
         self.block_depth += 1;
-
-        Ok(r)
       }
-    }()?;
 
-    if !check_pipelines {
-      self.block_depth -= 1;
-    }
+      // You will live to see man made horrors beyond your comprehension
+      let result = || -> ShResult<Option<Node>> {
+        if check_pipelines {
+          try_match!(self.parse_pipeln()?);
+          Ok(None)
+        } else {
+          try_match!(self.parse_func_def()?);
+          try_match!(self.parse_brc_grp(false /* from_func_def */)?);
+          try_match!(self.parse_subsh()?);
+          try_match!(self.parse_case()?);
+          try_match!(self.parse_loop()?);
+          try_match!(self.parse_for()?);
 
-    Ok(result)
+          // these aren't nested contexts
+          // so we decrement the depth and descend into
+          // yet another immediately-invoked closure
+          // please stabilize the try block my rust developers!!
+          self.block_depth -= 1;
+          let r = || -> ShResult<Option<Node>> {
+            try_match!(self.parse_if()?);
+            try_match!(self.parse_negate()?);
+            try_match!(self.parse_time()?);
+            try_match!(self.parse_defer()?);
+            try_match!(self.parse_try()?);
+            try_match!(self.parse_func_keyword()?);
+            try_match!(self.parse_arith()?);
+            try_match!(self.parse_cmd()?);
+            Ok(None)
+          }()?;
+          self.block_depth += 1;
+
+          Ok(r)
+        }
+      }()?;
+
+      if !check_pipelines {
+        self.block_depth -= 1;
+      }
+
+      Ok(result)
+    })
   }
   fn parse_compound(&mut self) -> ShResult<Option<Node>> {
     // parse only a compound command.
@@ -337,9 +335,9 @@ impl ParseStream {
 
     Ok(result)
   }
-  fn panic_mode(&mut self, node_tks: &mut Vec<Tk>) {
+  fn panic_mode(&mut self, span: &mut Option<Span>) {
     while let Some(tk) = self.next_tk() {
-      node_tks.push(tk.clone());
+      extend_span!(*span, tk.span);
       if tk.class == TkRule::Sep {
         break;
       }

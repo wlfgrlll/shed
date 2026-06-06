@@ -24,13 +24,23 @@ macro_rules! bail {
 
 /// A helper macro for constructing parse errors with context
 macro_rules! parse_err {
-	($parser:expr, $tks:expr, $($arg:tt)*) => {
+	($parser:expr, $span:expr, $($arg:tt)*) => {
 		$crate::eval::parse::util::parse_err_full(
 			&format!($($arg)*),
-			&crate::eval::lex::TkVecUtils::get_span(&$tks).unwrap(),
+			&$span.unwrap_or_default(),
 			$parser.context.clone(),
 		)
 	};
+}
+
+macro_rules! extend_span {
+  ($span:expr, $other:expr) => {
+    if let Some(span) = &mut $span {
+      span.merge_inplace(&$other);
+    } else {
+      $span = Some($other.clone());
+    }
+  };
 }
 
 /// A helper macro for constructing AST nodes with varying amounts of information
@@ -41,31 +51,43 @@ macro_rules! parse_err {
 /// node!(self, node_tks, NdRule::Conjunction { elements }, vec![], NdFlags::empty())
 /// ```
 macro_rules! node {
-  ($parser:expr, $tks:expr, $class:expr, $redirs:expr, $flags:expr) => {
+  ($parser:expr, $span:expr, $class:expr, $redirs:expr, $flags:expr) => {{
+    let mut flags = $flags;
+    if $parser.last_consumed_was_sep() {
+      flags |= $crate::eval::parse::node::NdFlags::PUNCTUATED;
+    }
     $crate::eval::parse::node::Node {
       class: $class,
-      flags: $flags,
+      flags,
       redirs: $redirs,
       context: $parser.context.clone(),
-      tokens: $tks,
+      span: $span.unwrap_or_default(),
     }
-  };
-  ($parser:expr, $tks:expr, $class:expr, $redirs:expr) => {
+  }};
+  ($parser:expr, $span:expr, $class:expr, $redirs:expr) => {{
+    let mut flags = $crate::eval::parse::node::NdFlags::empty();
+    if $parser.last_consumed_was_sep() {
+      flags |= $crate::eval::parse::node::NdFlags::PUNCTUATED;
+    }
     $crate::eval::parse::node::Node {
       class: $class,
-      flags: $crate::eval::parse::node::NdFlags::empty(),
+      flags,
       redirs: $redirs,
       context: $parser.context.clone(),
-      tokens: $tks,
+      span: $span.unwrap_or_default(),
     }
-  };
-  ($parser:expr, $tks:expr, $class:expr) => {
+  }};
+  ($parser:expr, $span:expr, $class:expr) => {{
+    let mut flags = $crate::eval::parse::node::NdFlags::empty();
+    if $parser.last_consumed_was_sep() {
+      flags |= $crate::eval::parse::node::NdFlags::PUNCTUATED;
+    }
     $crate::eval::parse::node::Node {
       class: $class,
-      flags: $crate::eval::parse::node::NdFlags::empty(),
+      flags,
       redirs: vec![],
       context: $parser.context.clone(),
-      tokens: $tks,
+      span: $span.unwrap_or_default(),
     }
-  };
+  }};
 }

@@ -5,14 +5,13 @@ use super::{
   node::{AssignKind, NodeVecUtils},
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
-  util::node_is_punctuated,
 };
 
 impl ParseStream {
   fn build_redir<F: FnMut() -> Option<Tk>>(
     redir_tk: &Tk,
     mut next: F,
-    node_tks: &mut Vec<Tk>,
+    span: &mut Option<Span>,
     context: LabelCtx,
   ) -> ShResult<RedirSpec> {
     let redir_bldr = RedirBldr::try_from(redir_tk.clone())?;
@@ -54,7 +53,7 @@ impl ParseStream {
         flags: redir_tk.flags,
       }
     } else {
-      node_tks.push(next_tk.clone());
+      extend_span!(*span, next_tk.span);
       RedirTarget::Path(next_tk)
     };
 
@@ -66,11 +65,11 @@ impl ParseStream {
   fn push_redir<F: FnMut() -> Option<Tk>>(
     redir_tk: &Tk,
     next: F,
-    node_tks: &mut Vec<Tk>,
+    span: &mut Option<Span>,
     context: LabelCtx,
     redirs: &mut Vec<RedirSpec>,
   ) -> ShResult<()> {
-    let redir = Self::build_redir(redir_tk, next, node_tks, context)?;
+    let redir = Self::build_redir(redir_tk, next, span, context)?;
     redirs.push(redir);
     if redir_tk.flags.contains(TkFlags::REDIR_ALL) {
       redirs.push(RedirSpec::Dup {
@@ -85,14 +84,14 @@ impl ParseStream {
   pub(super) fn parse_redir(
     &mut self,
     redirs: &mut Vec<RedirSpec>,
-    node_tks: &mut Vec<Tk>,
+    span: &mut Option<Span>,
   ) -> ShResult<()> {
     while self.check_redir() {
       let tk = self.next_tk().unwrap();
-      node_tks.push(tk.clone());
+      extend_span!(*span, tk.span);
       let ctx = self.context.clone();
-      if let Err(e) = Self::push_redir(&tk, || self.next_tk(), node_tks, ctx, redirs) {
-        self.panic_mode(node_tks);
+      if let Err(e) = Self::push_redir(&tk, || self.next_tk(), span, ctx, redirs) {
+        self.panic_mode(span);
         return Err(e);
       }
     }
@@ -100,12 +99,13 @@ impl ParseStream {
   }
   pub(super) fn parse_pipeln(&mut self) -> ShResult<Option<Node>> {
     let mut cmds = vec![];
-    let mut node_tks = vec![];
+    let mut span: Option<Span> = None;
     let mut flags = NdFlags::empty();
 
     while let Some(mut cmd) = self.parse_block(false)? {
-      let is_punctuated = node_is_punctuated(&cmd.tokens);
-      node_tks.append(&mut cmd.tokens.clone());
+      let is_punctuated = cmd.flags.contains(NdFlags::PUNCTUATED);
+
+      extend_span!(span, cmd.span);
       let next_class = self.next_tk_class().clone();
       if next_class == TkRule::ErrPipe {
         cmd.flags |= NdFlags::PIPE_ERR;
@@ -118,14 +118,14 @@ impl ParseStream {
       cmds.push(cmd);
       if next_class == TkRule::Bg {
         let tk = self.next_tk().unwrap();
-        node_tks.push(tk.clone());
+        extend_span!(span, tk.span);
         flags |= NdFlags::BACKGROUND;
         break;
       } else if (!matches!(next_class, TkRule::Pipe | TkRule::ErrPipe)) || is_punctuated {
         break;
       } else if let Some(pipe) = self.next_tk() {
-        node_tks.push(pipe);
-        self.catch_separator(&mut node_tks);
+        extend_span!(span, pipe.span);
+        self.catch_separator(&mut span);
       } else {
         break;
       }
@@ -135,7 +135,7 @@ impl ParseStream {
     } else {
       Ok(Some(node!(
         self,
-        node_tks,
+        span,
         NdRule::Pipeline { cmds },
         vec![/*redirs*/],
         flags
@@ -144,11 +144,12 @@ impl ParseStream {
   }
   #[expect(clippy::while_let_loop, clippy::too_many_lines)]
   pub(super) fn parse_cmd(&mut self) -> ShResult<Option<Node>> {
-    let mut node_tks = vec![];
+    let mut span: Option<Span> = None;
 
     let result = 'out: {
       let tk_slice = self.tokens();
       let mut tk_iter = tk_slice.iter().peekable();
+      let mut tk_counter = 0;
       let mut redirs = vec![];
       let mut argv = vec![];
       let mut flags = NdFlags::empty();
@@ -163,30 +164,40 @@ impl ParseStream {
         let is_keyword = prefix_tk.flags.contains(TkFlags::KEYWORD);
 
         if is_cmd {
-          node_tks.push(prefix_tk.clone());
+          extend_span!(span, prefix_tk.span);
+          tk_counter += 1;
           argv.push(prefix_tk.clone());
           break;
         } else if is_assignment {
           let Some(assign) = self.parse_assignment(prefix_tk) else {
             break;
           };
-          node_tks.push(prefix_tk.clone());
+          extend_span!(span, prefix_tk.span);
+          tk_counter += 1;
           assignments.push(assign);
         } else if is_keyword {
           return Ok(None);
         } else if prefix_tk.class == TkRule::Redir {
-          node_tks.push(prefix_tk.clone());
+          extend_span!(span, prefix_tk.span);
+          tk_counter += 1;
           let ctx = self.context.clone();
           Self::push_redir(
             prefix_tk,
-            || tk_iter.next().cloned(),
-            &mut node_tks,
+            || {
+              let tk = tk_iter.next().cloned();
+              if tk.is_some() {
+                tk_counter += 1;
+              }
+              tk
+            },
+            &mut span,
             ctx,
             &mut redirs,
           )?;
         } else if prefix_tk.class == TkRule::Sep {
           // Separator ends the prefix section - add it so commit() consumes it
-          node_tks.push(prefix_tk.clone());
+          extend_span!(span, prefix_tk.span);
+          tk_counter += 1;
           break;
         } else {
           // Other non-prefix token ends the prefix section
@@ -204,7 +215,7 @@ impl ParseStream {
         }
         // If we have assignments but no command word,
         // return the assignment-only command without parsing more tokens
-        self.commit(node_tks.len());
+        self.commit(tk_counter);
         let mut context = self.context.clone();
         let assignments_span = assignments.get_span().unwrap();
         context.push_back(get_context(
@@ -213,7 +224,7 @@ impl ParseStream {
         ));
         return Ok(Some(node!(
           self,
-          node_tks,
+          span.clone(),
           NdRule::Command { assignments, argv },
           redirs,
           flags
@@ -225,8 +236,9 @@ impl ParseStream {
         };
         match tk.class {
           TkRule::And | TkRule::Or if in_dbracket => {
+            extend_span!(span, tk.span);
+            tk_counter += 1;
             argv.push(tk.clone());
-            node_tks.push(tk.clone());
           }
           TkRule::Eoi
           | TkRule::Comment
@@ -238,31 +250,40 @@ impl ParseStream {
           | TkRule::Or
           | TkRule::Bg => break,
           TkRule::Sep => {
-            node_tks.push(tk.clone());
+            extend_span!(span, tk.span);
+            tk_counter += 1;
             break;
           }
           TkRule::Str => {
             let is_dbracket_close = in_dbracket && tk.as_str() == "]]";
+            extend_span!(span, tk.span);
+            tk_counter += 1;
             argv.push(tk.clone());
-            node_tks.push(tk.clone());
             if is_dbracket_close {
               break;
             }
           }
           TkRule::HereDoc { .. } | TkRule::Redir => {
-            node_tks.push(tk.clone());
+            extend_span!(span, tk.span);
+            tk_counter += 1;
             let ctx = self.context.clone();
             if let Err(e) = Self::push_redir(
               tk,
-              || tk_iter.next().cloned(),
-              &mut node_tks,
+              || {
+                let tk = tk_iter.next().cloned();
+                if tk.is_some() {
+                  tk_counter += 1;
+                }
+                tk
+              },
+              &mut span,
               ctx,
               &mut redirs,
             ) {
               // excluding from coverage reports, see the
               // comment at line 24
               // LCOV_EXCL_START
-              self.panic_mode(&mut node_tks);
+              self.panic_mode(&mut span);
               return Err(e);
               // LCOV_EXCL_STOP
             }
@@ -270,18 +291,18 @@ impl ParseStream {
           _ => {
             break 'out Err(parse_err!(
               self,
-              node_tks,
+              span.clone(),
               "Unexpected token in command: {:?}",
               tk.class
             ));
           }
         }
       }
-      self.commit(node_tks.len());
+      self.commit(tk_counter);
 
       return Ok(Some(node!(
         self,
-        node_tks,
+        span,
         NdRule::Command { assignments, argv },
         redirs,
         flags
@@ -291,7 +312,7 @@ impl ParseStream {
     match result {
       Ok(node) => Ok(node),
       Err(e) => {
-        self.panic_mode(&mut node_tks);
+        self.panic_mode(&mut span);
         Err(e)
       }
     }
@@ -400,7 +421,7 @@ impl ParseStream {
 
     Some(node!(
       self,
-      vec![token.clone()],
+      Some(token.span.clone()),
       NdRule::Assignment {
         kind: assign_kind,
         var,

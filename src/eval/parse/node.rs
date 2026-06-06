@@ -2,7 +2,7 @@ use crate::ShResult;
 
 use super::{
   LabelCtx,
-  lex::{Span, Tk, TkRule},
+  lex::{Span, Tk},
   procio::RedirSpec,
   two_way_display,
 };
@@ -36,7 +36,7 @@ pub(crate) struct Node {
   pub class: NdRule,
   pub flags: NdFlags,
   pub redirs: Vec<RedirSpec>,
-  pub tokens: Vec<Tk>,
+  pub span: Span,
   pub context: LabelCtx,
 }
 
@@ -188,21 +188,7 @@ impl Node {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
   }
   pub fn get_span(&self) -> Span {
-    let Some(first_tk) = self.tokens.first() else {
-      unreachable!()
-    };
-    let last_tk = self
-      .tokens
-      .iter()
-      .rev()
-      .find(|tk| !matches!(tk.class, TkRule::Sep | TkRule::Eoi))
-      .unwrap_or(first_tk);
-
-    Span::from_span_source(
-      first_tk.span.range().start..last_tk.span.range().end,
-      first_tk.span.span_source().clone(),
-    )
-    .at(first_tk.span.pos())
+    self.span.clone()
   }
 }
 
@@ -218,6 +204,7 @@ bitflags! {
     const IS_ERR        = 1 << 6; // force trigger ERR traps and set -e
     const PIPE_CMD      = 1 << 7; // is not the last command in a pipeline
     const NO_SPLIT      = 1 << 8; // don't split words, used in double bracket tests ('[[')
+    const PUNCTUATED    = 1 << 9; // ends with a separator
   }
 }
 
