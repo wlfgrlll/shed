@@ -19,11 +19,14 @@ pub fn dispatch_input(mut args: lifecycle::ShedArgs) -> ShResult<()> {
     // for the line editor to consume and execute
     let input = if let Some(ref cmd) = args.command {
       cmd.clone()
-    } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
+    } else if args.stdin {
+      // explicit `-s`: read stdin as the script, script_args are positional
       read_input()?
     } else if !args.script_args.is_empty() {
       let path = args.script_args.remove(0);
       std::fs::read_to_string(path)?
+    } else if !isatty(procio::stdin_fileno()).unwrap_or(false) {
+      read_input()?
     } else {
       // no input provided, just run interactively
       status_msg!("warning: --script was passed but no input was given");
@@ -34,11 +37,14 @@ pub fn dispatch_input(mut args: lifecycle::ShedArgs) -> ShResult<()> {
     interactive::shed_interactive(&args, Some(keys))
   } else if let Some(cmd) = args.command {
     exec_dash_c(cmd, args.script_args)
-  } else if args.stdin || !isatty(procio::stdin_fileno()).unwrap_or(false) {
+  } else if args.stdin {
+    // explicit `-s`: read stdin, script_args are positional
     read_commands(args.script_args)
   } else if !args.script_args.is_empty() {
     let path = args.script_args.remove(0);
     run_script(path, args.script_args)
+  } else if !isatty(procio::stdin_fileno()).unwrap_or(false) {
+    read_commands(args.script_args)
   } else {
     interactive::shed_interactive(&args, None)
   }
