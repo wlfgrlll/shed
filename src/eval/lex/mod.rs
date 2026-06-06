@@ -108,6 +108,18 @@ impl Span {
       source,
     }
   }
+  pub fn merge_inplace(&mut self, other: &Span) {
+    // make sure these two spans originate from the same input
+    if !Rc::ptr_eq(&self.source.content, &other.source.content) {
+      return;
+    }
+
+    if other.range.start < self.range.start {
+      self.pos = other.pos;
+    }
+    self.range.start = self.range.start.min(other.range.start);
+    self.range.end = self.range.end.max(other.range.end);
+  }
   pub fn merge_with(mut self, other: &Span) -> Option<Self> {
     // make sure these two spans originate from the same input
     if !Rc::ptr_eq(&self.source.content, &other.source.content) {
@@ -603,7 +615,7 @@ impl LexStream {
   #[expect(clippy::too_many_lines)]
   pub fn read_redir(&mut self) -> Option<ShResult<Tk>> {
     assert!(self.cursor <= self.source.len());
-    let slice = self.slice(self.cursor..)?.to_string();
+    let slice = self.slice(self.cursor..)?;
     let mut pos = self.cursor;
     let mut chars = slice.chars().peekable();
     let mut tk = Tk::default();
@@ -779,7 +791,8 @@ impl LexStream {
   }
   #[expect(clippy::too_many_lines)]
   pub fn read_heredoc(&mut self, mut pos: usize) -> ShResult<Option<Tk>> {
-    let slice = self.slice(pos..).unwrap_or_default().to_string();
+    let source = self.source.clone();
+    let slice = source.get(pos..).unwrap_or_default();
     let span_start = pos;
     let mut chars = slice.chars().peekable();
     let mut delim = String::new();
@@ -828,10 +841,8 @@ impl LexStream {
 
     // Re-slice from cursor_after_delim so iterator and pos are in sync
     // (the old chars iterator consumed the hard_sep without advancing pos)
-    let rest = self
-      .slice(cursor_after_delim..)
-      .unwrap_or_default()
-      .to_string();
+    let source = self.source.clone();
+    let rest = source.get(cursor_after_delim..).unwrap_or_default();
     let mut chars = rest.chars();
 
     // Scan forward to the newline (or use heredoc_skip from a previous heredoc)
@@ -941,7 +952,8 @@ impl LexStream {
   #[expect(clippy::too_many_lines)]
   pub fn read_string(&mut self) -> ShResult<Tk> {
     assert!(self.cursor <= self.source.len());
-    let slice = self.slice_from_cursor().unwrap().to_string();
+    let source = self.source.clone();
+    let slice = source.get(self.cursor..).unwrap_or_default();
     let mut pos = self.cursor;
     let mut chars = slice.chars().peekable();
     let can_be_subshell = chars.peek() == Some(&'(');
@@ -1295,7 +1307,7 @@ impl LexStream {
   }
   pub fn func_paren_lookahead(&mut self, pos: &mut usize) -> bool {
     let saved_pos = *pos;
-    let slice = self.slice(*pos..).unwrap_or_default().to_string();
+    let slice = self.slice(*pos..).unwrap_or_default();
     let mut chars = slice.chars().peekable();
     match_loop!(chars.next() => ch, {
       ' ' | '\t' => {
