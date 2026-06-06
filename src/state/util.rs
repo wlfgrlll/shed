@@ -29,6 +29,7 @@ use super::{
   meta::{MetaTab, Utility},
   sherr,
   shopt::ShoptSource,
+  var,
   vars::{ArrIndex, Var, VarFlags, VarKind},
 };
 
@@ -261,10 +262,20 @@ pub fn get_time_fmt() -> String {
 }
 
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
-  Shed::meta_mut(|m| {
-    m.try_rehash_path_cache();
-    m.lookup_cached_cmd(cmd).map(Path::to_path_buf)
-  })
+  let path = Shed::meta_mut(|m| {
+    m.invalidate_path_cache_if_stale();
+    if let Some(p) = m.lookup_cached_cmd(cmd) {
+      return Some(p.to_path_buf());
+    }
+    None
+  });
+  if let Some(p) = path {
+    return Some(p);
+  }
+  let path_env = var!("PATH");
+  let resolved = crate::util::resolve_in_path(&path_env, cmd)?;
+  Shed::meta_mut(|m| m.cache_cmd(cmd.to_string(), resolved.clone()));
+  Some(resolved)
 }
 
 pub fn which_util(name: &str) -> Option<Rc<Utility>> {

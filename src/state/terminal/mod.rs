@@ -508,6 +508,7 @@ impl Terminal {
     if let Some(scroll_region) = guard.scroll_region() {
       match scroll_region {
         ScrollRegionState::Set(top, bottom) => {
+          self.fix_cursor_row(bottom)?;
           self.execute_control(&TermCtl::Scroll(Scroll::SetRegion(top, bottom)))?;
         }
         ScrollRegionState::Unset => self.execute_control(&TermCtl::Scroll(Scroll::ResetRegion))?,

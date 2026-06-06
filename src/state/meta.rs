@@ -434,6 +434,9 @@ impl PathTable {
   pub fn lookup(&self, cmd: &str) -> Option<&Path> {
     self.index.get(cmd).map(|p| p.as_path())
   }
+  pub fn insert(&mut self, name: String, path: PathBuf) {
+    self.index.insert(name, path);
+  }
   pub fn entries(&self) -> impl Iterator<Item = (&String, &PathBuf)> {
     self.index.iter()
   }
@@ -875,6 +878,17 @@ impl MetaTab {
       self.old_path = Some(path.clone());
       self.path_cache.hash_path_list(&path);
     }
+  }
+  pub fn invalidate_path_cache_if_stale(&mut self) {
+    let path = var!("PATH");
+    if self.old_path.as_ref().is_none_or(|old| *old != path) {
+      self.old_path = Some(path);
+      self.path_cache.clear();
+    }
+  }
+
+  pub fn cache_cmd(&mut self, name: String, path: PathBuf) {
+    self.path_cache.insert(name, path);
   }
   pub fn start_timer(&mut self) {
     self.runtime_start = Some(Instant::now());

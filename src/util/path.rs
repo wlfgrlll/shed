@@ -1,5 +1,18 @@
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};
 
+pub fn resolve_in_path(path_list: &str, cmd: &str) -> Option<PathBuf> {
+  for dir in split_path_list(path_list) {
+    let candidate = dir.join(cmd);
+    if let Ok(meta) = std::fs::metadata(&candidate)
+      && meta.is_file()
+      && meta.permissions().mode() & 0o111 != 0
+    {
+      return Some(candidate);
+    }
+  }
+  None
+}
+
 pub fn split_path_list(path_list: &str) -> impl Iterator<Item = PathBuf> {
   // `split_all_with` calls `build(start, end)` — both byte indices into
   // `path_list`, not (start, length). Naming the second arg `end` keeps the
