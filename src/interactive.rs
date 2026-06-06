@@ -435,7 +435,10 @@ fn handle_readline_event(
 
       exec_term!(TermCtl::Osc(ExecStart)).ok();
 
-      let res = exec_int(input.clone(), Some("<stdin>".into()));
+      let res = {
+        let _scroll_guard = Shed::term_mut(Terminal::yield_terminal);
+        exec_int(input.clone(), Some("<stdin>".into()))
+      };
 
       exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 

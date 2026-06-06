@@ -302,44 +302,37 @@ impl Dispatcher {
     Ok(())
   }
   pub fn dispatch_node(&mut self, node: Node) -> ShResult<()> {
-    let _guard = Shed::meta_mut(MetaTab::push_procsub_frame);
+    stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+      let _guard = Shed::meta_mut(MetaTab::push_procsub_frame);
 
-    while signals_pending() {
-      // If we have received SIGINT,
-      // this will stop the execution here
-      // and propagate back to the functions in main.rs
-      check_signals()?;
-    }
-    let result = match node.class {
-      NdRule::List { .. } => self.exec_list(node),
-      NdRule::Conjunction { .. } => self.exec_conjunction(node),
-      NdRule::Pipeline { .. } => self.exec_pipeline(node),
-      NdRule::IfNode { .. } => self.exec_if(node),
-      NdRule::LoopNode { .. } => self.exec_loop(node),
-      NdRule::ForNode { .. } => self.exec_for_arr(node),
-      NdRule::ForArith { .. } => self.exec_for_arith(node),
-      NdRule::CaseNode { .. } => self.exec_case(node),
-      NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
-      NdRule::Subshell { .. } => self.exec_subsh(node),
-      NdRule::Negate { .. } => self.exec_negated(node),
-      NdRule::Timed { .. } => self.exec_timed(node),
-      NdRule::Command { .. } => self.dispatch_cmd(node),
-      NdRule::TryNode { .. } => self.exec_try(node),
-      NdRule::DeferNode { .. } => Self::exec_defer(node),
-
-      NdRule::FuncDef { .. } => Self::exec_func_def(node),
-      NdRule::Arithmetic { .. } => Self::exec_arith(node),
-      NdRule::Assignment { .. } => unreachable!(),
-    };
-
-    if let Err(e) = result {
-      if e.is_flow_control() {
-        return Err(e);
+      while signals_pending() {
+        // If we have received SIGINT,
+        // this will stop the execution here
+        // and propagate back to the functions in main.rs
+        check_signals()?;
       }
-      return Err(e);
-    }
+      match node.class {
+        NdRule::List { .. } => self.exec_list(node),
+        NdRule::Conjunction { .. } => self.exec_conjunction(node),
+        NdRule::Pipeline { .. } => self.exec_pipeline(node),
+        NdRule::IfNode { .. } => self.exec_if(node),
+        NdRule::LoopNode { .. } => self.exec_loop(node),
+        NdRule::ForNode { .. } => self.exec_for_arr(node),
+        NdRule::ForArith { .. } => self.exec_for_arith(node),
+        NdRule::CaseNode { .. } => self.exec_case(node),
+        NdRule::BraceGrp { .. } => self.exec_brc_grp(node),
+        NdRule::Subshell { .. } => self.exec_subsh(node),
+        NdRule::Negate { .. } => self.exec_negated(node),
+        NdRule::Timed { .. } => self.exec_timed(node),
+        NdRule::Command { .. } => self.dispatch_cmd(node),
+        NdRule::TryNode { .. } => self.exec_try(node),
+        NdRule::DeferNode { .. } => Self::exec_defer(node),
 
-    Ok(())
+        NdRule::FuncDef { .. } => Self::exec_func_def(node),
+        NdRule::Arithmetic { .. } => Self::exec_arith(node),
+        NdRule::Assignment { .. } => unreachable!(),
+      }
+    })
   }
   pub fn exec_list(&mut self, node: Node) -> ShResult<()> {
     let NdRule::List { commands } = node.class else {
@@ -1065,9 +1058,7 @@ impl Dispatcher {
       return self.exec_one(cmd, should_fork_segment, pipeline_flags);
     }
 
-    let saved_region = Shed::term(|t| t.scroll_region().dims());
-    let _scroll_guard = (!is_bg).then(|| Shed::term_mut(Terminal::yield_terminal));
-    let cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
+    let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
 
     // closure that gets the pgid we need if the child wants the tty
     let tty_controller = |s: &mut Self| -> Option<Pid> {
@@ -1079,6 +1070,7 @@ impl Dispatcher {
     self.job_stack.new_job();
     self.fg_job = !is_bg && Shed::term(Terminal::interactive);
 
+    let has_redirs = !pipeline.redirs.is_empty();
     let redirs = RedirSet::from(pipeline.redirs);
 
     let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
@@ -1090,12 +1082,14 @@ impl Dispatcher {
     let cmds_and_pipes = cmds.into_iter().enumerate().zip(pipes);
 
     for ((i, mut cmd), (r, w)) in cmds_and_pipes {
+      let has_redirs = has_redirs || (r.is_some() || w.is_some());
+
       if num_cmds > 1 {
         // builtins must fork in multi-command pipelines
         cmd.flags |= NdFlags::FORK_BUILTINS;
       }
 
-      let _guard = RedirGuard::stdio();
+      let _guard = (has_redirs).then(RedirGuard::stdio);
 
       if i == 0 {
         std::mem::take(&mut in_rdrs).apply_persistent().ok();
@@ -1149,11 +1143,6 @@ impl Dispatcher {
     } else {
       Some(pipeline_span)
     };
-
-    drop(cooked_guard); // exit cooked mode; scroll region is still Unset here
-    if !is_bg && let Some((_, bottom)) = saved_region {
-      Shed::term_mut(|t| t.fix_cursor_row(bottom))?;
-    }
 
     check_err(pipeline_flags, None, blame_span, pipeline_context)?;
     Ok(())
