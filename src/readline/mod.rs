@@ -1648,18 +1648,14 @@ impl ShedLine {
     let _sync = SyncOutputGuard::begin();
     if self.statline.is_some() && !shopt!(statline.enable) {
       self.statline = None;
-      let (row, new_bot) = Shed::term(|t| -> (u16, u16) {
-        let total_rows = t.t_rows() as u16;
-        let new_bottom = total_rows.saturating_sub(1).max(1);
-        (total_rows, new_bottom)
-      });
+      let row = Shed::term(|t| t.t_rows()) as u16;
 
       queue_term!(
         TermCtl::Cursor(SavePos),
         TermCtl::Cursor(Absolute { row, col: 1 }),
         TermCtl::Clear(WholeLine),
         TermCtl::Cursor(RestorePos),
-        TermCtl::Scroll(Scroll::SetRegion(1, new_bot)),
+        TermCtl::Scroll(Scroll::ResetRegion),
       )
       .ok();
     }
