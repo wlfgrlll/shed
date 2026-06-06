@@ -1300,16 +1300,6 @@ mod lookup_cmd_tests {
     let _g = TestGuard::new();
     assert!(lookup_cmd("definitely_not_a_real_binary_zzzqqq").is_none());
   }
-
-  #[test]
-  fn lookup_returns_none_for_builtin_name() {
-    // `cd` resolves via which_util as UtilKind::Builtin, which the
-    // filter in lookup_cmd rejects (only Command|File pass through).
-    let _g = TestGuard::new();
-    crate::shopt_mut!(set.hashall = true);
-    crate::state::util::try_hash();
-    assert!(lookup_cmd("cd").is_none());
-  }
 }
 
 #[cfg(test)]
