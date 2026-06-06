@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 use super::{
   Shed,
   expand::as_var_val_display,
   getopt::{Opt, OptSpec},
   outln, sherr,
-  state::{self, meta::MetaTab, meta::Utility},
+  state::meta::MetaTab,
   util::{ShResult, with_status},
 };
 
@@ -27,37 +25,38 @@ impl super::Builtin for Hash {
     }
 
     if args.argv.is_empty() && args.opts.is_empty() {
-      let cmds: Vec<Rc<Utility>> = Shed::meta(|m| m.cached_utils().collect());
-      for cmd in cmds {
-        if let state::meta::UtilKind::Command(path) = cmd.kind() {
-          let path = as_var_val_display(&path.to_string_lossy());
-          let name = cmd.name();
-          outln!("{name}={path}");
-        }
+      let entries: Vec<(String, std::path::PathBuf)> = Shed::meta(|m| {
+        m.path_cache()
+          .entries()
+          .map(|(name, path)| (name.clone(), path.clone()))
+          .collect()
+      });
+      for (name, path) in entries {
+        let path = as_var_val_display(&path.to_string_lossy());
+        outln!("{name}={path}");
       }
     }
 
     Shed::meta_mut(|m| {
       if clear {
-        m.clear_cache();
+        m.clear_path_cache();
       }
       if refresh {
-        m.rehash();
+        m.rehash_path_cache();
       }
     });
 
-    let path_cmds = MetaTab::get_cmds_in_path();
-
-    Shed::meta_mut(|m| {
-      for (arg, span) in args.argv {
-        if let Some(cmd) = path_cmds.iter().find(|cmd| cmd.name() == arg) {
-          m.cache_util(Rc::clone(cmd));
-        } else {
-          return Err(sherr!(NotFound, "Command not found: {arg}").promote(span));
+    if !args.argv.is_empty() {
+      Shed::meta_mut(MetaTab::rehash_path_cache);
+      Shed::meta(|m| -> ShResult<()> {
+        for (arg, span) in args.argv {
+          if m.lookup_cached_cmd(&arg).is_none() {
+            return Err(sherr!(NotFound, "Command not found: {arg}").promote(span));
+          }
         }
-      }
-      Ok(())
-    })?;
+        Ok(())
+      })?;
+    }
 
     with_status(0)
   }
@@ -71,7 +70,7 @@ mod hash_tests {
 
   /// Strip cached utilities so each test starts from a known state.
   fn clear_cache() {
-    Shed::meta_mut(MetaTab::clear_cache);
+    Shed::meta_mut(MetaTab::clear_path_cache);
   }
 
   // ─── no args, no opts → list cached commands ────────────────────

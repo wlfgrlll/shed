@@ -8,9 +8,7 @@ use std::{
 };
 
 use super::{
-  ShResult, Shed, autocmd,
-  builtin::BUILTIN_NAMES,
-  crate_util as util,
+  ShResult, Shed, autocmd, crate_util as util,
   expand::{expand_keymap, glob_to_regex},
   jobs::Job,
   keys::KeyEvent,
@@ -411,6 +409,38 @@ impl Utility {
   }
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PathTable {
+  index: HashMap<String, PathBuf>,
+}
+
+impl PathTable {
+  pub fn new() -> Self {
+    Self::default()
+  }
+  pub fn hash_path_list(&mut self, path_list: &str) {
+    self.index.clear();
+    for entry in util::path_list_entries(path_list) {
+      if !util::is_executable_file(&entry) {
+        continue;
+      }
+      let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+        continue;
+      };
+      self.index.entry(name).or_insert_with(|| entry.path());
+    }
+  }
+  pub fn lookup(&self, cmd: &str) -> Option<&Path> {
+    self.index.get(cmd).map(|p| p.as_path())
+  }
+  pub fn entries(&self) -> impl Iterator<Item = (&String, &PathBuf)> {
+    self.index.iter()
+  }
+  pub fn clear(&mut self) {
+    self.index.clear();
+  }
+}
+
 /// Automatically manages loop depth in the meta table.
 ///
 /// When dropped, decrements the loop depth in the meta table.
@@ -452,11 +482,10 @@ pub(crate) struct MetaTab {
   getopts_offset: usize,
 
   old_path: Option<String>,
-  old_pwd: Option<String>,
   // regex cache - patterns we have seen before
   regexes: HashMap<String, Regex>,
   // utility cache - commands, functions, aliases, etc
-  util_cache: HashSet<Rc<Utility>>,
+  path_cache: PathTable,
   // programmable completion specs
   comp_specs: HashMap<String, Box<dyn CompSpec>>,
 
@@ -490,12 +519,11 @@ impl Clone for MetaTab {
       dir_stack: self.dir_stack.clone(),
       getopts_offset: self.getopts_offset,
       old_path: self.old_path.clone(),
-      old_pwd: self.old_pwd.clone(),
       loop_depth: self.loop_depth,
       func_depth: self.func_depth,
       comp_add_candidates: self.comp_add_candidates.clone(),
       regexes: self.regexes.clone(),
-      util_cache: self.util_cache.clone(),
+      path_cache: self.path_cache.clone(),
       comp_specs: self.comp_specs.clone(),
       pending_widget_keys: self.pending_widget_keys.clone(),
       last_was_func_def: self.last_was_func_def,
@@ -519,13 +547,12 @@ impl Default for MetaTab {
       dir_stack: VecDeque::new(),
       getopts_offset: 0,
       old_path: None,
-      old_pwd: None,
       loop_depth: 0,
       func_depth: 0,
       procsub_stack: vec![],
       comp_add_candidates: vec![],
       regexes: HashMap::new(),
-      util_cache: HashSet::new(),
+      path_cache: PathTable::new(),
       comp_specs: HashMap::new(),
       pending_widget_keys: vec![],
       last_was_func_def: false,
@@ -758,9 +785,6 @@ impl MetaTab {
   pub fn reset_getopts_char_offset(&mut self) {
     self.getopts_offset = 0;
   }
-  pub fn cached_utils(&self) -> impl Iterator<Item = Rc<Utility>> {
-    self.util_cache.iter().cloned()
-  }
   pub fn comp_specs(&self) -> &HashMap<String, Box<dyn CompSpec>> {
     &self.comp_specs
   }
@@ -772,15 +796,6 @@ impl MetaTab {
   }
   pub fn remove_comp_spec(&mut self, cmd: &str) -> bool {
     self.comp_specs.remove(cmd).is_some()
-  }
-  pub fn get_cached_cmd(&self, cmd: &str) -> Option<Rc<Utility>> {
-    // used when the hashall option is set
-    // and we use cached command paths for the execve system call
-    self
-      .util_cache
-      .iter()
-      .find(|util| util.name() == cmd && matches!(util.kind(), UtilKind::Command(_)))
-      .cloned()
   }
   pub fn set_last_was_func_def(&mut self, was_func_def: bool) {
     self.last_was_func_def = was_func_def;
@@ -824,96 +839,35 @@ impl MetaTab {
     }
     files
   }
-  pub fn cache_util(&mut self, util: Rc<Utility>) {
-    self.util_cache.insert(util);
-  }
-  pub fn clear_cached_files(&mut self) {
-    self
-      .util_cache
-      .retain(|util| !matches!(util.kind(), UtilKind::File(_)));
-  }
-  pub fn clear_cached_cmds(&mut self) {
-    self
-      .util_cache
-      .retain(|util| !matches!(util.kind(), UtilKind::Command(_)));
-  }
-  pub fn clear_cached_aliases(&mut self) {
-    self
-      .util_cache
-      .retain(|util| !matches!(util.kind(), UtilKind::Alias));
-  }
-  pub fn clear_cached_functions(&mut self) {
-    self
-      .util_cache
-      .retain(|util| !matches!(util.kind(), UtilKind::Function));
-  }
-  pub fn clear_cached_builtins(&mut self) {
-    self
-      .util_cache
-      .retain(|util| !matches!(util.kind(), UtilKind::Builtin));
-  }
-  pub fn clear_cache(&mut self) {
-    self.util_cache.clear();
-  }
-  pub fn rehash_path(&mut self) {
-    let path = var!("PATH");
-    self.clear_cached_cmds();
-    self.old_path = Some(path.clone());
-    let cmds_in_path = Self::get_cmds_in_path();
-    for cmd in cmds_in_path {
-      self.cache_util(cmd);
-    }
-  }
-  pub fn rehash_cwd(&mut self) {
-    let cwd = var!("PWD");
-    self.clear_cached_files();
-    self.old_pwd = Some(cwd.clone());
-    let exec_files_in_cwd = Self::get_exec_files_in_cwd();
-    for file in exec_files_in_cwd {
-      self.cache_util(file);
-    }
-  }
-  pub fn rehash_internals(&mut self) {
-    Shed::logic_mut(|l| {
-      if !l.dirty() {
-        return;
-      }
-      self.clear_cached_aliases();
-      self.clear_cached_functions();
-      self.clear_cached_builtins();
-      let funcs = l.funcs();
-      let aliases = l.aliases();
-      for func in funcs.keys() {
-        let util = Utility::function(func.clone());
-        self.cache_util(util.into());
-      }
-      for alias in aliases.keys() {
-        let util = Utility::alias(alias.clone());
-        self.cache_util(util.into());
-      }
-      l.set_dirty(false);
-    });
 
-    for cmd in BUILTIN_NAMES {
-      let util = Utility::builtin(cmd.to_string());
-      self.cache_util(util.into());
-    }
+  /// Look up an external command in the PATH cache. Returns `None` for a
+  /// cache miss; callers that want to populate the cache on miss should
+  /// call [`try_rehash_path_cache`](Self::try_rehash_path_cache) first.
+  pub fn lookup_cached_cmd(&self, cmd: &str) -> Option<&Path> {
+    self.path_cache.lookup(cmd)
   }
-  pub fn rehash(&mut self) {
-    self.rehash_path();
-    self.rehash_cwd();
-    self.rehash_internals();
+
+  pub fn path_cache(&self) -> &PathTable {
+    &self.path_cache
   }
-  pub fn try_rehash_utils(&mut self) {
+
+  pub fn rehash_path_cache(&mut self) {
     let path = var!("PATH");
-    let cwd = var!("PWD");
+    self.old_path = Some(path.clone());
+    self.path_cache.hash_path_list(&path);
+  }
+
+  pub fn clear_path_cache(&mut self) {
+    self.old_path = None;
+    self.path_cache.clear();
+  }
+
+  pub fn try_rehash_path_cache(&mut self) {
+    let path = var!("PATH");
     if self.old_path.as_ref().is_none_or(|old| *old != path) {
-      self.rehash_path();
+      self.old_path = Some(path.clone());
+      self.path_cache.hash_path_list(&path);
     }
-    if self.old_pwd.as_ref().is_none_or(|old| *old != cwd) {
-      self.rehash_cwd();
-    }
-    self.rehash_internals();
   }
   pub fn start_timer(&mut self) {
     self.runtime_start = Some(Instant::now());

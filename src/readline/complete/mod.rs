@@ -597,6 +597,32 @@ fn complete_ex_commands(start: &str) -> Vec<Candidate> {
     .collect()
 }
 
+fn command_utils() -> Vec<Utility> {
+  let mut utils = Vec::new();
+  Shed::logic(|l| {
+    utils.extend(l.aliases().keys().cloned().map(Utility::alias));
+    utils.extend(l.funcs().keys().cloned().map(Utility::function));
+  });
+  utils.extend(
+    BUILTIN_NAMES
+      .iter()
+      .map(|n| Utility::builtin((*n).to_string())),
+  );
+  Shed::meta(|m| {
+    utils.extend(
+      m.path_cache()
+        .entries()
+        .map(|(name, path)| Utility::command(name.clone(), path.clone())),
+    );
+  });
+  utils.extend(
+    MetaTab::get_exec_files_in_cwd()
+      .into_iter()
+      .map(|rc| (*rc).clone()),
+  );
+  utils
+}
+
 fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
   if has_unescaped(start, "/") {
     return complete_path(start, cursor_pos)
@@ -610,12 +636,11 @@ fn complete_commands(start: &str, cursor_pos: usize) -> Vec<Candidate> {
       .collect();
   }
 
-  let mut candidates: Vec<Candidate> = Shed::meta(|m| {
-    m.cached_utils()
-      .map(Candidate::from)
-      .filter(|c| c.is_match(start))
-      .collect()
-  });
+  let mut candidates: Vec<Candidate> = command_utils()
+    .into_iter()
+    .map(Candidate::from)
+    .filter(|c| c.is_match(start))
+    .collect();
 
   if shopt!(core.autocd) {
     let dirs = complete_dirs(start, cursor_pos);

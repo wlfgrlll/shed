@@ -320,7 +320,6 @@ pub(crate) struct LogTab {
   functions: HashMap<String, ShFunc>,
   comp_autoloads: HashMap<String, AutoloadSrc>,
   aliases: HashMap<String, ShAlias>,
-  dirty: bool, // flips on alias/function insertion. used for signaling function/alias caching.
 
   traps: HashMap<TrapTarget, String>,
   keymaps: Vec<KeyMap>,
@@ -335,12 +334,6 @@ impl LogTab {
     }
     new.comp_autoloads = AutoloadComps::get_all();
     new
-  }
-  pub fn dirty(&self) -> bool {
-    self.dirty
-  }
-  pub fn set_dirty(&mut self, dirty: bool) {
-    self.dirty = dirty;
   }
   pub fn insert_autocmd(&mut self, cmd: AutoCmd) {
     let entry = self.autocmds.entry(cmd.kind).or_default();
@@ -391,7 +384,6 @@ impl LogTab {
   }
   pub fn insert_func(&mut self, name: &str, src: ShFunc) {
     self.functions.insert(name.into(), src);
-    self.dirty = true;
   }
   pub fn insert_trap(&mut self, target: TrapTarget, command: String) {
     self.traps.insert(target, command);
@@ -416,7 +408,6 @@ impl LogTab {
   }
   pub fn remove_func(&mut self, name: &str) {
     self.functions.remove(name);
-    self.dirty = true;
   }
   pub fn take_comp_autoload(&mut self, name: &str) -> Option<AutoloadSrc> {
     self.comp_autoloads.remove(name)
@@ -428,13 +419,11 @@ impl LogTab {
     self
       .aliases
       .insert(name.into(), ShAlias::new(body.into(), source));
-    self.dirty = true;
   }
   pub fn get_alias(&self, name: &str) -> Option<ShAlias> {
     self.aliases.get(name).cloned()
   }
   pub fn remove_alias(&mut self, name: &str) {
     self.aliases.remove(name);
-    self.dirty = true;
   }
 }

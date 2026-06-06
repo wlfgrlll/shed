@@ -261,29 +261,13 @@ pub fn get_time_fmt() -> String {
 }
 
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
-  if Shed::shopts(|o| o.set.hashall) {
-    which_util(cmd)
-      .filter(|u| matches!(u.kind(), UtilKind::Command(_) | UtilKind::File(_)))
-      .map(|u| {
-        let (UtilKind::Command(path) | UtilKind::File(path)) = u.kind() else {
-          unreachable!()
-        };
-        path.clone()
-      })
-  } else {
-    MetaTab::get_exec_files_in_cwd()
-      .into_iter()
-      .chain(MetaTab::get_cmds_in_path())
-      .find(|u| u.name() == cmd)
-      .and_then(|u| match u.kind() {
-        UtilKind::Command(path) | UtilKind::File(path) => Some(path.clone()),
-        _ => None,
-      })
-  }
+  Shed::meta_mut(|m| {
+    m.try_rehash_path_cache();
+    m.lookup_cached_cmd(cmd).map(Path::to_path_buf)
+  })
 }
 
 pub fn which_util(name: &str) -> Option<Rc<Utility>> {
-  // Check in shell resolution order: alias > function > builtin > cached command > PATH
   if Shed::logic(|l| l.get_alias(name).is_some()) {
     return Some(Rc::new(Utility::alias(name.to_string())));
   }
@@ -293,21 +277,22 @@ pub fn which_util(name: &str) -> Option<Rc<Utility>> {
   if crate::builtin::lookup_builtin(name).is_some() {
     return Some(Rc::new(Utility::builtin(name.to_string())));
   }
-  // For external commands, check cache first, then scan PATH
-  Shed::meta(|m| m.get_cached_cmd(name)).or_else(|| {
-    MetaTab::get_cmds_in_path()
+  let cached = Shed::meta_mut(|m| {
+    m.try_rehash_path_cache();
+    m.lookup_cached_cmd(name)
+      .map(|p| Rc::new(Utility::command(name.to_string(), p.to_path_buf())))
+  });
+  cached.or_else(|| {
+    // Last resort: an executable file living in $PWD that isn't in $PATH.
+    MetaTab::get_exec_files_in_cwd()
       .into_iter()
-      .chain(MetaTab::get_exec_files_in_cwd())
       .find(|u| u.name() == name)
-      .inspect(|u| Shed::meta_mut(|m| m.cache_util(Rc::clone(u))))
   })
 }
 
 pub fn try_hash() {
   if Shed::shopts(|o| o.set.hashall) {
-    Shed::meta_mut(MetaTab::try_rehash_utils);
-  } else {
-    Shed::meta_mut(MetaTab::clear_cache);
+    Shed::meta_mut(MetaTab::try_rehash_path_cache);
   }
 }
 

@@ -1219,6 +1219,7 @@ impl Dispatcher {
     // argv is not empty. let's set this stuff here.
     let cmd_tk = argv[0].clone();
     let cmd_name = cmd_tk.as_str();
+    let exec_path = state::util::lookup_cmd(cmd_name);
 
     let no_fork = cmd.flags.contains(NdFlags::NO_FORK);
 
@@ -1259,7 +1260,7 @@ impl Dispatcher {
       let span = exec_args.cmd.1;
       let cmd_raw = cmd.to_str().unwrap_or_default();
 
-      let Err(e) = if let Some(path) = state::util::lookup_cmd(cmd_raw) {
+      let Err(e) = if let Some(path) = exec_path {
         let path_bytes = path.as_os_str().to_str().unwrap_or_default().as_bytes();
         let c_path = CString::new(path_bytes).unwrap_or_default();
         execve(&c_path, &exec_args.argv, &exec_args.envp)
