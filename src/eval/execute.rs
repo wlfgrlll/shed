@@ -109,8 +109,8 @@ pub enum AssignBehavior {
 /// Arguments to the execvpe function
 pub struct ExecArgs {
   pub cmd: (CString, Span),
-  pub argv: Vec<CString>,
-  pub envp: Vec<CString>,
+  pub argv: Rc<[CString]>,
+  pub envp: Rc<[CString]>,
 }
 
 impl ExecArgs {
@@ -130,16 +130,15 @@ impl ExecArgs {
     let span = argv[0].1.clone();
     (CString::new(cmd).unwrap(), span)
   }
-  pub fn get_argv(argv: Vec<(String, Span)>) -> Vec<CString> {
+  pub fn get_argv(argv: Vec<(String, Span)>) -> Rc<[CString]> {
     argv
       .into_iter()
       .map(|s| CString::new(s.0).unwrap())
-      .collect()
+      .collect::<Vec<CString>>()
+      .into()
   }
-  pub fn get_envp() -> Vec<CString> {
-    std::env::vars()
-      .map(|v| CString::new(format!("{}={}", v.0, v.1)).unwrap())
-      .collect()
+  pub fn get_envp() -> Rc<[CString]> {
+    Shed::meta_mut(|m| m.get_envp())
   }
 }
 

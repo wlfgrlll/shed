@@ -26,7 +26,7 @@ use super::{
     lex::{LexFlags, LexStream},
   },
   match_loop,
-  meta::{MetaTab, UtilKind, Utility},
+  meta::{MetaTab, Utility},
   sherr,
   shopt::ShoptSource,
   vars::{ArrIndex, Var, VarFlags, VarKind},

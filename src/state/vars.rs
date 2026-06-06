@@ -816,14 +816,17 @@ impl VarTab {
     self.vars.get(var_name).map(|var| var.flags)
   }
   pub fn unset_var(&mut self, var_name: &str) -> ShResult<()> {
-    if let Some(var) = self.vars.get(var_name)
-      && var.flags.contains(VarFlags::READONLY)
-    {
-      return Err(sherr!(
-        ExecFail,
-        "cannot unset readonly variable '{}'",
-        var_name,
-      ));
+    if let Some(var) = self.vars.get(var_name) {
+      if var.flags.contains(VarFlags::READONLY) {
+        return Err(sherr!(
+          ExecFail,
+          "cannot unset readonly variable '{}'",
+          var_name,
+        ));
+      }
+      if var.flags.contains(VarFlags::EXPORT) {
+        Shed::meta_mut(|m| m.clear_envp());
+      }
     }
     self.vars.remove(var_name);
     unsafe { std::env::remove_var(var_name) };
@@ -902,11 +905,14 @@ impl VarTab {
         if flags.contains(VarFlags::EXPORT) && !var.flags.contains(VarFlags::EXPORT) {
           var.mark_for_export();
         }
+
+        Shed::meta_mut(|m| m.clear_envp());
         unsafe { std::env::set_var(var_name, var.kind.to_string()) };
       }
     } else {
       let mut var = Var::new(val, flags);
       if flags.contains(VarFlags::EXPORT) {
+        Shed::meta_mut(|m| m.clear_envp());
         var.mark_for_export();
         unsafe { std::env::set_var(var_name, var.to_string()) };
       }

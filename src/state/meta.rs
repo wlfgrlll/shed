@@ -1,7 +1,8 @@
 use std::{
-  collections::{HashMap, HashSet, VecDeque},
+  collections::{HashMap, VecDeque},
+  ffi::CString,
   fmt::Write,
-  os::fd::OwnedFd,
+  os::{fd::OwnedFd, unix::ffi::OsStrExt},
   path::{Path, PathBuf},
   rc::Rc,
   time::{Duration, Instant},
@@ -482,10 +483,12 @@ pub(crate) struct MetaTab {
   getopts_offset: usize,
 
   old_path: Option<String>,
-  // regex cache - patterns we have seen before
-  regexes: HashMap<String, Regex>,
   // utility cache - commands, functions, aliases, etc
   path_cache: PathTable,
+  // regex cache - patterns we have seen before
+  regexes: HashMap<String, Regex>,
+  // envp cache - environment variables for execve
+  envp_cache: Option<Rc<[CString]>>,
   // programmable completion specs
   comp_specs: HashMap<String, Box<dyn CompSpec>>,
 
@@ -521,6 +524,7 @@ impl Clone for MetaTab {
       old_path: self.old_path.clone(),
       loop_depth: self.loop_depth,
       func_depth: self.func_depth,
+      envp_cache: self.envp_cache.clone(),
       comp_add_candidates: self.comp_add_candidates.clone(),
       regexes: self.regexes.clone(),
       path_cache: self.path_cache.clone(),
@@ -549,6 +553,7 @@ impl Default for MetaTab {
       old_path: None,
       loop_depth: 0,
       func_depth: 0,
+      envp_cache: None,
       procsub_stack: vec![],
       comp_add_candidates: vec![],
       regexes: HashMap::new(),
@@ -803,27 +808,6 @@ impl MetaTab {
   pub fn take_last_was_func_def(&mut self) -> bool {
     std::mem::take(&mut self.last_was_func_def)
   }
-  pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
-    let path = var!("PATH");
-    let paths = util::path_list_entries(&path);
-
-    let mut seen = HashSet::new();
-    let mut cmds = vec![];
-
-    for entry in paths {
-      let is_exec = util::is_executable_file(&entry);
-
-      if is_exec
-        && let Some(name) = entry.file_name().to_str()
-        && seen.insert(name.to_string())
-      {
-        let util = Utility::command(name.to_string(), entry.path());
-        cmds.push(util.into());
-      }
-    }
-
-    cmds
-  }
   pub fn get_exec_files_in_cwd() -> Vec<Rc<Utility>> {
     let cwd = var!("PWD");
     let mut files = vec![];
@@ -838,6 +822,29 @@ impl MetaTab {
       }
     }
     files
+  }
+  pub fn clear_envp(&mut self) {
+    self.envp_cache = None;
+  }
+  pub fn get_envp(&mut self) -> Rc<[CString]> {
+    if let Some(envp) = &self.envp_cache {
+      return Rc::clone(envp);
+    }
+
+    let envp: Vec<CString> = std::env::vars_os()
+      .map(|(k, v)| {
+        let mut bytes = Vec::with_capacity(k.len() + v.len() + 2);
+        bytes.extend_from_slice(k.as_bytes());
+        bytes.push(b'=');
+        bytes.extend_from_slice(v.as_bytes());
+
+        unsafe { CString::from_vec_unchecked(bytes) }
+      })
+      .collect();
+
+    self.envp_cache = Some(Rc::from(envp.as_slice()));
+
+    self.get_envp()
   }
 
   /// Look up an external command in the PATH cache. Returns `None` for a
@@ -906,6 +913,28 @@ impl MetaTab {
   }
   pub fn dirs_mut(&mut self) -> &mut VecDeque<PathBuf> {
     &mut self.dir_stack
+  }
+  #[cfg(test)]
+  pub fn get_cmds_in_path() -> Vec<Rc<Utility>> {
+    let path = var!("PATH");
+    let paths = util::path_list_entries(&path);
+
+    let mut seen = std::collections::HashSet::new();
+    let mut cmds = vec![];
+
+    for entry in paths {
+      let is_exec = util::is_executable_file(&entry);
+
+      if is_exec
+        && let Some(name) = entry.file_name().to_str()
+        && seen.insert(name.to_string())
+      {
+        let util = Utility::command(name.to_string(), entry.path());
+        cmds.push(util.into());
+      }
+    }
+
+    cmds
   }
 }
 
