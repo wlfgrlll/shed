@@ -196,15 +196,9 @@ pub fn sig_setup(is_login: bool) {
 pub fn reset_signals(is_fg: bool) {
   let default = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
   unsafe {
-    for sig in Signal::iterator() {
-      // SIGKILL and SIGSTOP can't be caught/changed
-      if sig == Signal::SIGKILL || sig == Signal::SIGSTOP {
-        continue;
-      }
-      if is_fg && (sig == Signal::SIGTTIN || sig == Signal::SIGTTOU) {
-        continue;
-      }
-      let _ = sigaction(sig, &default);
+    if !is_fg {
+      sigaction(Signal::SIGTTIN, &default).ok();
+      sigaction(Signal::SIGTTOU, &default).ok();
     }
   }
 }
