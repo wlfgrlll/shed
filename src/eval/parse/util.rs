@@ -106,12 +106,6 @@ impl ParseStream {
   }
 }
 
-pub(super) fn node_is_punctuated(tokens: &[Tk]) -> bool {
-  tokens
-    .last()
-    .is_some_and(|tk| matches!(tk.class, TkRule::Sep))
-}
-
 #[expect(clippy::type_complexity)]
 pub(super) fn split_for_arith_tk(
   tk: &Tk,

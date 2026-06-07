@@ -101,13 +101,6 @@ impl Span {
       source,
     }
   }
-  pub fn from_span_source(range: Range<usize>, source: SpanSource) -> Self {
-    Span {
-      range,
-      pos: Pos::MIN,
-      source,
-    }
-  }
   pub fn merge_inplace(&mut self, other: &Span) {
     // make sure these two spans originate from the same input
     if !Rc::ptr_eq(&self.source.content, &other.source.content) {
@@ -172,10 +165,6 @@ impl Span {
   pub fn rebase_into(&mut self, outer_span: &Span, offset: usize) {
     self.range = (self.range.start + offset)..(self.range.end + offset);
     self.source = outer_span.source.clone();
-  }
-
-  pub(crate) fn pos(&self) -> Pos {
-    self.pos
   }
 }
 
@@ -536,9 +525,6 @@ impl LexStream {
   pub fn with_name(mut self, name: Rc<str>) -> Self {
     self.name = name;
     self
-  }
-  pub fn slice_from_cursor(&self) -> Option<&str> {
-    self.slice(self.cursor..)
   }
   pub fn in_brc_grp(&self) -> bool {
     self.brc_grp_depth > 0

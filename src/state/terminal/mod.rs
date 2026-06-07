@@ -65,15 +65,6 @@ pub(crate) enum ScrollRegionState {
   Unset,
 }
 
-impl ScrollRegionState {
-  pub fn dims(self) -> Option<(u16, u16)> {
-    match self {
-      ScrollRegionState::Set(top, bottom) => Some((top, bottom)),
-      ScrollRegionState::Unset => None,
-    }
-  }
-}
-
 bitflags! {
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
   pub(crate) struct TermCap: u32 {
@@ -685,10 +676,6 @@ impl Terminal {
 
   pub fn buf_ends_with_newline(&self) -> bool {
     self.input_buf.ends_with('\n')
-  }
-
-  pub fn scroll_region(&self) -> ScrollRegionState {
-    self.scroll_region
   }
 
   pub fn verbatim_single(&mut self, on: bool) {
