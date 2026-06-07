@@ -201,6 +201,9 @@ impl Display for Line {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lines(pub(super) Vec<Line>);
 impl Lines {
+  pub fn into_vec(self) -> Vec<Line> {
+    self.0
+  }
   pub fn to_lines(s: &str) -> Lines {
     let s = s.to_string();
     let mut new: Lines = s.split('\n').map(to_graphemes).map(Line::from).collect();

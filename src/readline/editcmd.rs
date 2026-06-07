@@ -285,6 +285,8 @@ pub enum Verb {
   HistoryDown,
   ClearScreen,
   AcceptHint,
+  Expand,
+  ExpandAll,
 
   // emacs stuff
   Kill,

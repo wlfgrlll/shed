@@ -723,6 +723,7 @@ pub enum ExNdRule {
   Delete,
   Yank,
   Put(Anchor),
+  Expand,
   Quit,
 
   Edit(Box<[PathBuf]>),
@@ -950,7 +951,7 @@ impl ExParser {
       ExCommand::Put => ExR::success(ExNdRule::Put(Anchor::After)),
       ExCommand::Quit => ExR::success(ExNdRule::Quit),
       ExCommand::Unknown => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
-      ExCommand::Expand => todo!(),
+      ExCommand::Expand => ExR::success(ExNdRule::Expand),
     }
   }
   fn parse_shell(&mut self) -> ExR<ExNdRule> {

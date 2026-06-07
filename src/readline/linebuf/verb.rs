@@ -1,11 +1,11 @@
 use super::{
   ShResult,
   editcmd::{Anchor, Bound, Cmd, Direction, EditCmd, Motion, To, Verb, Word},
-  motion,
+  expand, motion,
   register::RegisterContent,
   status_msg,
 };
-use crate::{keys::KeyEvent, verb};
+use crate::{eval::lex::TkFlags, keys::KeyEvent, verb};
 
 use super::{
   Grapheme, Line, Lines, MotionKind, Pos, SelectMode, killring, ordered, rot13_char,
@@ -60,8 +60,10 @@ impl super::LineBuf {
       Verb::IncrementNumber(n) /*======*/ => Ok(self.adjust_number(i64::from(*n))),
       Verb::DecrementNumber(n) /*------*/ => Ok(self.adjust_number(-i64::from(*n))),
       Verb::Insert(s) /*---------------*/ => Ok(self.insert_str(s)),
-      Verb::AcceptLineOrNewline /*-----*/ => Ok(self.insert(Grapheme::from('\n'))),
-      Verb::EndOfFile /*===============*/ => Ok(self.lines.clear()),
+      Verb::AcceptLineOrNewline /*=====*/ => Ok(self.insert(Grapheme::from('\n'))),
+      Verb::EndOfFile /*---------------*/ => Ok(self.lines.clear()),
+      Verb::Expand /*==================*/ => self.expand(cmd, false),
+      Verb::ExpandAll /*---------------*/ => self.expand(cmd, true),
 
       Verb::Complete
       | Verb::ExMode
@@ -110,6 +112,39 @@ impl super::LineBuf {
       self.motion_mutation(&motion, &f);
     }
   }
+  fn expand(&mut self, cmd: &EditCmd, bang: bool) -> ShResult<()> {
+    let EditCmd { register, .. } = cmd;
+    let Some(motion) = self.eval_motion(cmd)? else {
+      return Ok(());
+    };
+    let content = self.yank_range(&motion);
+    let reg_content = RegisterContent::from_extracted(content.clone(), &motion);
+
+    let content_raw = content.join();
+    let expanded = if bang {
+      // got ':expand!'
+      // perform full expansion on the content
+      expand::Expander::from_raw(&content_raw, TkFlags::empty())
+        .expand()?
+        .join(" ")
+    } else {
+      // got ':expand'
+      // perform partial expansion on the content
+      // preserves quotes and stuff so command structure stays the same
+      expand::Expander::from_raw(&content_raw, TkFlags::empty()).expand_keep_quotes()?
+    };
+
+    // if we are here, expanding did not produce an error
+    // so we can replace the original text now
+
+    self.delete_range(&motion);
+    register.write_to_register(reg_content);
+
+    self.fix_cursor();
+    self.insert_str(&expanded);
+
+    Ok(())
+  }
   fn delete_change_yank(&mut self, cmd: &EditCmd) -> ShResult<()> {
     let EditCmd {
       register,
@@ -143,11 +178,7 @@ impl super::LineBuf {
       self.fix_cursor();
       lines
     };
-    let reg_content = match &motion {
-      MotionKind::Char { .. } => RegisterContent::Span(content.0),
-      MotionKind::Line { .. } => RegisterContent::Line(content.0),
-      MotionKind::Block { .. } => RegisterContent::Block(content.0),
-    };
+    let reg_content = RegisterContent::from_extracted(content.clone(), &motion);
     register.write_to_register(reg_content);
 
     match motion {

@@ -213,7 +213,55 @@ command history navigable with `Up` and `Down`.
       Put (paste) from the default register after the cursor.
 
 ==============================================================================
-8. Other Commands                              *ex-other*
+8. Expand                                      *ex-expand*
+
+  `:expand`                                    *ex-expand-cmd*
+
+      Perform shell expansion on the addressed lines, replacing them
+      in-place with the expanded result. Variables (`$VAR`,
+      `${param}`), command substitutions (`$(...)`, ``...``), tildes
+      (`~`, `~user`), arithmetic (`$((...))`), and brace expansion
+      (`{a,b,c}`) are all expanded.
+
+      Quoting structure is preserved: a value that was inside double
+      quotes stays inside double quotes after expansion, and operators
+      (`&&`, `|`, `;`, etc.) are left as operators. The result is a
+      valid shell command line that, when re-executed, behaves the
+      same as the original.
+
+      Default range is the entire buffer (equivalent to `:%expand`).
+      To expand only the current line, use `:.expand`.
+
+      Examples:
+
+        `:expand`           expand the entire buffer
+        `:.expand`          expand just the current line
+        `:3,5expand`        expand lines 3 through 5
+
+  `:expand!`                                   *ex-expand-bang*
+
+      Perform expansion with full POSIX shell semantics: word
+      splitting and globbing are applied, quotes are removed, and the
+      output is the literal text the shell would hand to the kernel
+      after all expansion phases.
+
+      Use this when you need the fully-resolved form (e.g. to paste
+      into a Makefile, log message, or documentation) rather than an
+      editor-friendly equivalent.
+
+      Examples:
+
+        `:expand!`          full expansion of the entire buffer
+        `:.expand!`         full expansion of the current line
+
+      The bangless form (`:expand`) is round-trip safe: re-executing
+      the result produces the same effect as re-executing the
+      original. The bang form (`:expand!`) collapses shell syntax
+      into literal data, which may not be re-executable if any
+      expanded value contains shell metacharacters.
+
+==============================================================================
+9. Other Commands                              *ex-other*
 
   `:q`                                         *ex-quit*
 
@@ -224,7 +272,7 @@ command history navigable with `Up` and `Down`.
       Display help for {topic}. Runs the `help` builtin.
 
 ==============================================================================
-9. Path Expansion                              *ex-paths*
+10. Path Expansion                             *ex-paths*
 
   File paths in ex commands are subject to variable expansion. You can
   use environment variables in paths:
@@ -233,14 +281,14 @@ command history navigable with `Up` and `Down`.
       `:w ${TMPDIR}/output.txt`
 
 ==============================================================================
-10. Ex Command History                         *ex-history*
+11. Ex Command History                         *ex-history*
 
   Ex mode maintains its own command history, separate from the main
   shell history. Navigate with `Up` and `Down` while in ex mode, or
   open history search with `Ctrl+R`.
 
 ==============================================================================
-11. Stash                                       *ex-stash*
+12. Stash                                      *ex-stash*
 
   The stash lets you save and recall command snippets directly
   from the line editor. Unnamed stashes act as a temporary stack;

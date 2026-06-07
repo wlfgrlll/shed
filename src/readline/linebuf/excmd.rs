@@ -42,6 +42,7 @@ impl super::LineBuf {
     let address = address.clone();
 
     match kind {
+      ExNdRule::Expand /*====================*/ => self.ex_expand(cmd, address, *bang),
       ExNdRule::Delete /*--------------------*/ => self.ex_delete(cmd, address),
       ExNdRule::Yank /*======================*/ => self.ex_yank(cmd, address),
       ExNdRule::Put(anchor) /*---------------*/ => self.ex_put(cmd, *anchor, address),
@@ -52,7 +53,7 @@ impl super::LineBuf {
       ExNdRule::Shell(sh_cmd) /*=============*/ => self.ex_shell_cmd(cmd, sh_cmd),
       ExNdRule::Stash(stash_args) /*---------*/ => self.ex_stash(stash_args),
       ExNdRule::Substitute { pat, repl, flags } => self.ex_substitute(cmd, pat, repl, *flags, address.as_ref()),
-      ExNdRule::Global { pat, nested } => self.ex_global(cmd, *bang, pat, nested, address),
+      ExNdRule::Global { pat, nested } /*----*/ => self.ex_global(cmd, *bang, pat, nested, address),
       ExNdRule::Read(read_src) /*============*/ => {
         self.ex_read(read_src);
         Ok(())
@@ -634,6 +635,15 @@ impl super::LineBuf {
     Ok(output)
   }
 
+  fn ex_expand(&mut self, cmd: &EditCmd, range: Option<AddressRange>, bang: bool) -> ShResult<()> {
+    let range = range.unwrap_or(AddressRange::all_lines()); // expands entire buffer
+    let verb = match bang {
+      true => Verb::ExpandAll,
+      false => Verb::Expand,
+    };
+
+    self.replace_verb(cmd, verb, &range)
+  }
   fn ex_delete(&mut self, cmd: &EditCmd, range: Option<AddressRange>) -> ShResult<()> {
     let range = range.unwrap_or_default();
     self.replace_verb(cmd, Verb::Delete, &range)

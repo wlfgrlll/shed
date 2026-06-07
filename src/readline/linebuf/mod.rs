@@ -15,6 +15,7 @@ use super::{
   editcmd::{EditCmd, Motion, Verb},
   editmode, eval,
   eval::lex::{LexFlags, LexStream, TkFlags, TkRule},
+  expand,
   expand::expand_alias_with_pos,
   highlight,
   history::History,

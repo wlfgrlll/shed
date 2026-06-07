@@ -2,7 +2,13 @@ use std::{cell::RefCell, collections::HashMap, fmt::Display};
 
 use itertools::Itertools;
 
-use super::{super::keys::KeyEvent, expand::expand_keymap, linebuf::Line};
+use crate::readline::linebuf::MotionKind;
+
+use super::{
+  super::keys::KeyEvent,
+  expand::expand_keymap,
+  linebuf::{Line, Lines},
+};
 
 thread_local! {
   pub static REGISTERS: RefCell<Registers> = RefCell::new(Registers::new());
@@ -117,6 +123,15 @@ pub(super) enum RegisterContent {
   Macro(Vec<KeyEvent>),
   #[default]
   Empty,
+}
+impl RegisterContent {
+  pub fn from_extracted(content: Lines, motion: &MotionKind) -> Self {
+    match motion {
+      MotionKind::Char { .. } => RegisterContent::Span(content.into_vec()),
+      MotionKind::Line { .. } => RegisterContent::Line(content.into_vec()),
+      MotionKind::Block { .. } => RegisterContent::Block(content.into_vec()),
+    }
+  }
 }
 
 impl Display for RegisterContent {
