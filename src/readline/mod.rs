@@ -327,6 +327,7 @@ enum LineCmd {
   ScrollHistVirtual(EditCmd),
   EndOfFile,
   Quit,
+  WriteQuit,
   ClearScreen,
   ResetWidget,
   NormalSeq(Vec<usize>, String),
@@ -616,6 +617,16 @@ impl ShedLine {
     // so print_line can call clear_rows with the full multi-line layout
     self.refresh_ui();
     self.editor = LineBuf::default();
+    Shed::vars_mut(|v| {
+      v.set_var("EDITOR_LINES", VarKind::Int(1), VarFlags::READONLY)?;
+      v.set_var("EDITOR_LINE", VarKind::Int(1), VarFlags::READONLY)?;
+      v.set_var(
+        "EDITOR_FILE",
+        VarKind::Str(String::new()),
+        VarFlags::READONLY,
+      )
+    })?;
+
     let mut mode = if shopt!(set.vi) {
       Box::new(ViInsert::new()) as Box<dyn EditMode>
     } else {
@@ -1268,7 +1279,17 @@ impl ShedLine {
     if cmd.verb_is(&Verb::EndOfFile) && self.focused_editor().is_empty() {
       return Ok(Some(LineCmd::EndOfFile));
     } else if cmd.is_quit() {
-      return Ok(Some(LineCmd::Quit));
+      if self.editor.open_file().is_some() {
+        return Ok(Some(LineCmd::ResetWidget));
+      } else {
+        return Ok(Some(LineCmd::Quit));
+      }
+    } else if cmd.is_write_quit() {
+      if self.editor.open_file().is_some() {
+        return Ok(Some(LineCmd::WriteQuit));
+      } else {
+        return Ok(Some(LineCmd::Quit));
+      }
     } else if cmd.verb_is(&Verb::AcceptHint) {
       return Ok(Some(LineCmd::AppendHint));
     }
@@ -1405,6 +1426,13 @@ impl ShedLine {
           self.reset_active_widget(false)?;
           Ok(None)
         }
+      }
+      LineCmd::WriteQuit => {
+        let write_cmd = EditCmd::plain_write();
+        self.run_cmd(write_cmd)?;
+
+        self.reset_active_widget(false)?;
+        Ok(None)
       }
       LineCmd::Quit => Ok(Some(ReadlineEvent::Eof)),
       LineCmd::ClearScreen => {

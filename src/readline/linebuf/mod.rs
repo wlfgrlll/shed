@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, ops::Range};
+use std::{collections::VecDeque, ops::Range, path::PathBuf};
 
 use ariadne::Span as AriadneSpan;
 use unicode_segmentation::UnicodeSegmentation;
@@ -107,6 +107,8 @@ pub struct LineBuf {
   indent_cache: Option<Vec<(usize, usize)>>,
   parse_status: bool,
 
+  open_file: Option<PathBuf>,
+
   /// Cached highlight info
   highlight_cache: Option<HighlightCache>,
 }
@@ -141,6 +143,7 @@ impl Default for LineBuf {
       undo_stack: vec![],
       redo_stack: vec![],
       merging_undos: false,
+      open_file: None,
       kill_ring: KillRing::new(),
       concat_points: VecDeque::new(),
       indent_cache: None,
@@ -217,15 +220,18 @@ impl LineBuf {
         "EDITOR_LINES",
         VarKind::Str(num_lines.to_string()),
         VarFlags::READONLY,
-      )
-    })?;
-    Shed::vars_mut(|v| {
+      )?;
       v.set_var(
         "EDITOR_LINE",
         VarKind::Str((cursor_line + 1).to_string()),
         VarFlags::READONLY,
       )
     })?;
+
+    if let Some(file) = &self.open_file {
+      let display = state::util::display_path(file);
+      Shed::vars_mut(|v| v.set_var("EDITOR_FILE", VarKind::Str(display), VarFlags::READONLY))?;
+    }
 
     if self.is_empty() {
       self.set_hint(None);
@@ -417,5 +423,9 @@ impl LineBuf {
     } else {
       vec![]
     }
+  }
+
+  pub fn open_file(&self) -> Option<&PathBuf> {
+    self.open_file.as_ref()
   }
 }

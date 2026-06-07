@@ -202,8 +202,10 @@ pub const COMMANDS: &[(&str, ExCommand)] = &[
   ("edit", ExCommand::Edit),
   ("read", ExCommand::Read),
   ("write", ExCommand::Write),
-  ("delete", ExCommand::Delete),
   ("quit", ExCommand::Quit),
+  ("wq", ExCommand::WriteQuit),
+  ("x", ExCommand::WriteQuit), // TODO: implement the "only write if modified" behavior for :x
+  ("delete", ExCommand::Delete),
   ("yank", ExCommand::Yank),
   ("put", ExCommand::Put),
   ("substitute", ExCommand::Substitute),
@@ -271,6 +273,7 @@ pub enum ExCommand {
   Write,
   Stash,
   Quit,
+  WriteQuit,
   Help,
   Shell,
 
@@ -724,11 +727,12 @@ pub enum ExNdRule {
   Yank,
   Put(Anchor),
   Expand,
-  Quit,
 
   Edit(Box<[PathBuf]>),
   Read(ReadSrc),
   Write(WriteDest),
+  Quit,
+  WriteQuit,
 
   Substitute {
     pat: String,
@@ -950,8 +954,9 @@ impl ExParser {
       ExCommand::Yank => ExR::success(ExNdRule::Yank),
       ExCommand::Put => ExR::success(ExNdRule::Put(Anchor::After)),
       ExCommand::Quit => ExR::success(ExNdRule::Quit),
-      ExCommand::Unknown => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
+      ExCommand::WriteQuit => ExR::success(ExNdRule::WriteQuit),
       ExCommand::Expand => ExR::success(ExNdRule::Expand),
+      ExCommand::Unknown => ExR::error(format!("not an editor command: {}", tk.span.as_str())),
     }
   }
   fn parse_shell(&mut self) -> ExR<ExNdRule> {
@@ -1132,19 +1137,29 @@ impl ExParser {
         ExR::success(ExNdRule::Write(WriteDest::Cmd(args_raw)))
       }
     } else {
-      let Some(mut arg) = self.tokens.next() else {
-        return ExR::error(format!(
-          "expected {} argument for read command",
-          if is_shell_arg { "shell" } else { "file" }
-        ));
-      };
-      let is_append = matches!(arg.class, ExTkRule::Append);
-      if is_append && let Some(next) = self.tokens.next() {
-        arg = next;
+      let mut arg = self.tokens.next();
+      let is_append = arg
+        .as_ref()
+        .is_some_and(|a| matches!(a.class, ExTkRule::Append));
+      if is_append {
+        let Some(next) = self.tokens.next() else {
+          return ExR::error(format!(
+            "expected {} argument for append write",
+            if is_shell_arg { "shell" } else { "file" }
+          ));
+        };
+        arg = Some(next);
       }
-      let path = expand_path_arg(arg.span.as_str());
+
+      let path = arg.map(|a| expand_path_arg(a.span.as_str()));
 
       if is_read {
+        let Some(path) = path else {
+          return ExR::error(format!(
+            "expected {} argument for read command",
+            if is_shell_arg { "shell" } else { "file" }
+          ));
+        };
         ExR::success(ExNdRule::Read(ReadSrc::File(path)))
       } else if is_append {
         ExR::success(ExNdRule::Write(WriteDest::FileAppend(path)))
@@ -1402,7 +1417,7 @@ mod parse_read_write_tests {
     let kind = parse_ok("write out.txt");
     assert_eq!(
       kind,
-      ExNdRule::Write(WriteDest::File(PathBuf::from("out.txt")))
+      ExNdRule::Write(WriteDest::File(Some(PathBuf::from("out.txt"))))
     );
   }
 
@@ -1412,14 +1427,16 @@ mod parse_read_write_tests {
     let kind = parse_ok("write >> out.txt");
     assert_eq!(
       kind,
-      ExNdRule::Write(WriteDest::FileAppend(PathBuf::from("out.txt")))
+      ExNdRule::Write(WriteDest::FileAppend(Some(PathBuf::from("out.txt"))))
     );
   }
 
   #[test]
-  fn write_no_args_errors() {
-    let msg = parse_err("write");
-    assert!(msg.contains("expected"), "got: {msg:?}");
+  fn write_no_args_parses_as_active_file_target() {
+    // `:w` with no path parses successfully; the active-file check
+    // happens at execution time (errors there if no file is set).
+    let kind = parse_ok("write");
+    assert_eq!(kind, ExNdRule::Write(WriteDest::File(None)));
   }
 
   // ─── :write! <cmd> shell dest ───────────────────────────────────

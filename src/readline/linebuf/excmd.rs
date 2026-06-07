@@ -19,7 +19,7 @@ use super::{
   state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg, try_var,
 };
-use crate::verb;
+use crate::{sherr, state, verb};
 use crate::{
   state::terminal::Terminal,
   util::{format_size, var_ctx_guard},
@@ -60,6 +60,7 @@ impl super::LineBuf {
       }
 
       ExNdRule::Normal {..} /*---------------*/ |
+      ExNdRule::WriteQuit /*-----------------*/ |
       ExNdRule::Quit /*======================*/ => unreachable!(/* handled in readline/mod.rs */),
     }
   }
@@ -438,16 +439,22 @@ impl super::LineBuf {
   fn ex_write(&mut self, dest: &WriteDest) -> ShResult<()> {
     match dest {
       WriteDest::FileAppend(path_buf) | WriteDest::File(path_buf) => {
+        let Some(path_buf) = path_buf.clone().or_else(|| self.open_file.clone()) else {
+          status_msg!("expected file argument for write command");
+          return Ok(());
+        };
+        let display_path = state::util::display_path(&path_buf);
+
         let Ok(mut file) = (if matches!(dest, WriteDest::File(_)) {
           OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
-            .open(path_buf)
+            .open(&path_buf)
         } else {
-          OpenOptions::new().create(true).append(true).open(path_buf)
+          OpenOptions::new().create(true).append(true).open(&path_buf)
         }) else {
-          system_msg!("Failed to open file {}", path_buf.display());
+          system_msg!("Failed to open file {display_path}");
           return Ok(());
         };
         let joined = self.to_string();
@@ -457,10 +464,10 @@ impl super::LineBuf {
         let size = format_size(len);
 
         if let Err(e) = file.write_all(bytes) {
-          system_msg!("Failed to write to file {}: {e}", path_buf.display());
+          system_msg!("Failed to write to file {display_path}: {e}");
         }
 
-        status_msg!("Wrote {lines} lines [{size}] to '{}'", path_buf.display());
+        status_msg!("Wrote {lines} lines [{size}] to '{display_path}'");
 
         return Ok(());
       }
@@ -488,20 +495,20 @@ impl super::LineBuf {
   fn ex_read(&mut self, src: &ReadSrc) {
     let contents = match src {
       ReadSrc::File(path_buf) => {
+        let display_path = state::util::display_path(path_buf);
         let contents = match std::fs::read_to_string(path_buf) {
           Ok(c) => c,
           Err(e) => {
-            system_msg!("Failed to read '{}': {e}", path_buf.display());
+            system_msg!("Failed to read '{display_path}': {e}");
             return;
           }
         };
         let line_count = contents.lines().count();
         let byte_count = contents.len();
         let size = format_size(byte_count as u64);
-        status_msg!(
-          "Read {line_count} lines [{size}] from '{}'",
-          path_buf.display()
-        );
+        status_msg!("Read {line_count} lines [{size}] from '{display_path}'",);
+        let realpath = state::util::lex_normalize_path(path_buf);
+        self.open_file = Some(realpath);
         contents
       }
       ReadSrc::Cmd(cmd) => {
@@ -636,7 +643,7 @@ impl super::LineBuf {
   }
 
   fn ex_expand(&mut self, cmd: &EditCmd, range: Option<AddressRange>, bang: bool) -> ShResult<()> {
-    let range = range.unwrap_or(AddressRange::all_lines()); // expands entire buffer
+    let range = range.unwrap_or_else(AddressRange::all_lines); // expands entire buffer
     let verb = match bang {
       true => Verb::ExpandAll,
       false => Verb::Expand,
@@ -1066,7 +1073,7 @@ mod tests {
       // Pre-existing content should be truncated.
       std::fs::write(&path, "OLD_CONTENT_TO_BE_OVERWRITTEN").unwrap();
       let mut buf = make_buf("new buffer content");
-      buf.ex_write(&WriteDest::File(path.clone())).unwrap();
+      buf.ex_write(&WriteDest::File(Some(path.clone()))).unwrap();
       let content = std::fs::read_to_string(&path).unwrap();
       assert_eq!(content, "new buffer content");
     }
@@ -1077,7 +1084,7 @@ mod tests {
       let dir = tempfile::TempDir::new().unwrap();
       let path = dir.path().join("newfile.txt");
       let mut buf = make_buf("hello");
-      buf.ex_write(&WriteDest::File(path.clone())).unwrap();
+      buf.ex_write(&WriteDest::File(Some(path.clone()))).unwrap();
       assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
     }
 
@@ -1088,7 +1095,9 @@ mod tests {
       let path = dir.path().join("append.txt");
       std::fs::write(&path, "first ").unwrap();
       let mut buf = make_buf("second");
-      buf.ex_write(&WriteDest::FileAppend(path.clone())).unwrap();
+      buf
+        .ex_write(&WriteDest::FileAppend(Some(path.clone())))
+        .unwrap();
       let content = std::fs::read_to_string(&path).unwrap();
       assert_eq!(content, "first second");
     }
@@ -1100,7 +1109,7 @@ mod tests {
       let _g = TestGuard::new();
       let mut buf = make_buf("anything");
       let bad_path = std::path::PathBuf::from("/this/does/not/exist/xyz/out.txt");
-      let res = buf.ex_write(&WriteDest::File(bad_path));
+      let res = buf.ex_write(&WriteDest::File(Some(bad_path)));
       assert!(res.is_ok());
     }
 

@@ -1,4 +1,8 @@
+use std::path::PathBuf;
+
 use bitflags::bitflags;
+
+use crate::verb;
 
 use super::{
   editmode::ExNode,
@@ -166,6 +170,20 @@ impl EditCmd {
     };
     find_normal_seq(node)
   }
+  /// Constructs a plain `:w` command, which is used as the default write command for `:x` and `:wq`
+  pub fn plain_write() -> Self {
+    EditCmd {
+      register: RegisterName::default(),
+      verb: Some(verb!(Verb::ExCmd(ExNode {
+        address: None,
+        bang: false,
+        kind: ExNdRule::Write(WriteDest::File(None)),
+      }))),
+      motion: None,
+      raw_seq: String::new(),
+      flags: CmdFlags::empty(),
+    }
+  }
 }
 
 /// Walks an `ExNode` tree, descending through any nesting Global wrappers,
@@ -188,6 +206,19 @@ impl EditCmd {
           address: _,
           bang: _,
           kind: ExNdRule::Quit
+        })
+      ))
+    )
+  }
+  pub fn is_write_quit(&self) -> bool {
+    matches!(
+      self.verb.as_ref(),
+      Some(Cmd(
+        _,
+        Verb::ExCmd(ExNode {
+          address: _,
+          bang: _,
+          kind: ExNdRule::WriteQuit
         })
       ))
     )
@@ -561,14 +592,14 @@ pub enum To {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ReadSrc {
-  File(std::path::PathBuf),
+  File(PathBuf),
   Cmd(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum WriteDest {
-  File(std::path::PathBuf),
-  FileAppend(std::path::PathBuf),
+  File(Option<PathBuf>),
+  FileAppend(Option<PathBuf>),
   Cmd(String),
 }
 
