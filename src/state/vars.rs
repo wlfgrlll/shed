@@ -21,7 +21,7 @@ use super::{
     lex::{LexFlags, LexStream, Tk},
     parse::node::Node,
   },
-  expand::{as_var_val_display, expand_arithmetic, expand_raw, markers},
+  expand::{expand_arithmetic, expand_raw, markers, shell_quote},
   procio::stdin_fileno,
   readline::Candidate,
   sherr,
@@ -47,11 +47,7 @@ pub(crate) fn display_as_vars(
 
 #[expect(clippy::needless_pass_by_value)]
 pub(crate) fn display_as_var(name: impl ToString, value: impl ToString) -> String {
-  format!(
-    "{}={}",
-    name.to_string(),
-    as_var_val_display(&value.to_string())
-  )
+  format!("{}={}", name.to_string(), shell_quote(&value.to_string()))
 }
 
 pub(crate) fn display_env_vars() -> String {

@@ -1,6 +1,6 @@
 use super::{
   Shed,
-  expand::as_var_val_display,
+  expand::shell_quote,
   getopt::{Opt, OptSpec},
   outln, sherr,
   state::meta::MetaTab,
@@ -32,7 +32,7 @@ impl super::Builtin for Hash {
           .collect()
       });
       for (name, path) in entries {
-        let path = as_var_val_display(&path.to_string_lossy());
+        let path = shell_quote(&path.to_string_lossy());
         outln!("{name}={path}");
       }
     }

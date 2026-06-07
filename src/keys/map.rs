@@ -4,7 +4,7 @@ use bitflags::bitflags;
 
 use super::{
   KeyEvent,
-  expand::{as_var_val_display, expand_keymap},
+  expand::{expand_keymap, shell_quote},
 };
 
 bitflags! {
@@ -79,8 +79,8 @@ impl KeyMap {
 impl Display for KeyMap {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     let flags = self.flags.to_string();
-    let keys = as_var_val_display(&self.keys);
-    let action = as_var_val_display(&self.action);
+    let keys = shell_quote(&self.keys);
+    let action = shell_quote(&self.action);
 
     write!(f, "keymap {flags} {keys} {action}")
   }

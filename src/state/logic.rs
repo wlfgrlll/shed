@@ -12,7 +12,7 @@ use crate::{ShResult, eval::execute::exec_nonint, sherr, util};
 use super::{
   ShErr,
   eval::{Node, lex::Span},
-  expand::as_var_val_display,
+  expand::shell_quote,
   keys::{KeyEvent, KeyMap, KeyMapFlags, KeyMapMatch},
   signal::parse_signal,
 };
@@ -273,7 +273,7 @@ impl AutoCmd {
 impl Display for AutoCmd {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let kind = self.kind.to_string();
-    let command = as_var_val_display(&self.command);
+    let command = shell_quote(&self.command);
     write!(f, "autocmd {kind} {command}")
   }
 }

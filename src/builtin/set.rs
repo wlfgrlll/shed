@@ -6,7 +6,7 @@ use crate::state::shopt::ShOptSet;
 
 use super::{
   super::state::scopes::ScopeStack,
-  expand::as_var_val_display,
+  expand::shell_quote,
   match_loop, outln, sherr,
   state::{Shed, vars::VarKind},
   util::{ShErr, ShResult, ShResultExt, with_status},
@@ -253,12 +253,12 @@ impl super::Builtin for Set {
           let items = items
             .clone()
             .into_iter()
-            .map(|v| as_var_val_display(v.as_str()))
+            .map(|v| shell_quote(v.as_str()))
             .collect::<Vec<_>>()
             .join(" ");
           outln!("{k}=( {items} )");
         } else {
-          let v = as_var_val_display(&v.to_string());
+          let v = shell_quote(&v.to_string());
           outln!("{k}={v}");
         }
       }

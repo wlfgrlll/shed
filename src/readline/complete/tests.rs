@@ -981,21 +981,21 @@ fn dispatch_argument_carries_full_path() {
 // ===================== comp function arg quoting =====================
 //
 // exec_comp_func builds the function-call input as
-//   `{fn_name} {as_var_val_display(cmd)} {as_var_val_display(cword)} {as_var_val_display(pword)}`
+//   `{fn_name} {shell_quote(cmd)} {shell_quote(cword)} {shell_quote(pword)}`
 // The comp function's $1/$2/$3 must receive the original strings even when
 // they contain spaces, quotes, $, ;, etc. These tests exercise the same
 // formatting path that exec_comp_func uses.
 
-use crate::expand::as_var_val_display;
+use crate::expand::shell_quote;
 use crate::tests::testutil::test_input;
 
 fn run_comp_func_with_args(cmd: &str, cword: &str, pword: &str) -> (String, String, String) {
   test_input("_capture() { CAP1=\"$1\"; CAP2=\"$2\"; CAP3=\"$3\"; }").unwrap();
   let input = format!(
     "_capture {} {} {}",
-    as_var_val_display(cmd),
-    as_var_val_display(cword),
-    as_var_val_display(pword),
+    shell_quote(cmd),
+    shell_quote(cword),
+    shell_quote(pword),
   );
   test_input(input).unwrap();
   (var!("CAP1"), var!("CAP2"), var!("CAP3"))

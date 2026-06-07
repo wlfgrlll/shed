@@ -146,7 +146,7 @@ pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
       let s = ident.to_string();
       quote! {
         {
-          let val = crate::expand::as_var_val_display(&defaults.#ident.to_string());
+          let val = crate::expand::shell_quote(&defaults.#ident.to_string());
           let entry = format!("shopt {}.{}={}", #group, #s, val);
           let doc: Option<String> = if #doc.is_empty() {
             None
@@ -166,7 +166,7 @@ pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
       let s = ident.to_string();
       quote! {
         {
-          let val = crate::expand::as_var_val_display(&self.#ident.to_string());
+          let val = crate::expand::shell_quote(&self.#ident.to_string());
           let entry = format!("shopt {}.{}={}", #group, #s, val);
           let doc: Option<String> = if #doc.is_empty() {
             None
@@ -184,7 +184,7 @@ pub fn derive_shopt_group(input: TokenStream) -> TokenStream {
     .map(|ident| {
       let s = ident.to_string();
       quote! {
-        format!("{}.{}={}", #group, #s, crate::expand::as_var_val_display(&self.#ident.to_string()))
+        format!("{}.{}={}", #group, #s, crate::expand::shell_quote(&self.#ident.to_string()))
       }
     })
     .collect();

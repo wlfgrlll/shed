@@ -12,8 +12,8 @@ mod var;
 pub(super) use alias::{expand_alias_with_pos, expand_aliases, expand_keymap};
 pub(super) use arithmetic::{expand_arithmetic, expand_arithmetic_wrapped};
 pub(super) use escape::{
-  as_var_val_display, escape_glob, escape_str, read_hex, read_octal, read_stty_escape,
-  unescape_heredoc, unescape_prompt, unescape_str,
+  escape_glob, escape_str, read_hex, read_octal, read_stty_escape, shell_quote, unescape_heredoc,
+  unescape_prompt, unescape_str,
 };
 pub(super) use prompt::expand_prompt;
 pub(super) use util::{expand_case_pattern, glob_to_regex};
@@ -188,6 +188,12 @@ impl Expander {
   }
   pub fn expand_no_split(&mut self) -> ShResult<String> {
     let raw = self.expand_inner()?;
+    Ok(markers::strip_markers(&raw))
+  }
+  pub fn expand_keep_quotes(&mut self) -> ShResult<String> {
+    let mut raw = self.expand_inner()?;
+    raw = raw.replace(markers::DUB_QUOTE, "\"");
+    raw = raw.replace(markers::SNG_QUOTE, "'");
     Ok(markers::strip_markers(&raw))
   }
   pub fn expand_for_glob(&mut self) -> ShResult<String> {

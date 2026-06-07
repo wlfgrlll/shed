@@ -30,8 +30,7 @@ use super::{
   editmode,
   eval::{execute::exec_nonint, lex::Span},
   expand::{
-    as_var_val_display, escape_glob, escape_str, expand_raw_inner, markers::strip_markers,
-    unescape_str,
+    escape_glob, escape_str, expand_raw_inner, markers::strip_markers, shell_quote, unescape_str,
   },
   key,
   keys::{self, KeyEvent as K},
@@ -924,9 +923,9 @@ impl BashCompSpec {
     let input = format!(
       "{} {} {} {}",
       self.function.as_ref().unwrap(),
-      as_var_val_display(&cmd_name),
-      as_var_val_display(&cword_str),
-      as_var_val_display(&pword_str),
+      shell_quote(&cmd_name),
+      shell_quote(&cword_str),
+      shell_quote(&pword_str),
     );
     exec_nonint(input, Some("comp_function".into()))?;
 

@@ -12,7 +12,7 @@ use super::{
     execute::{AssignBehavior, Dispatcher, exec_nonint, prepare_argv_with},
     lex::{KEYWORDS, Span, Tk},
   },
-  expand::{self, as_var_val_display},
+  expand::{self, shell_quote},
   key, keys, match_loop, out, outln,
   procio::{self, RedirSet},
   readline, sherr, shopt, signal,
@@ -531,7 +531,7 @@ impl CommandBuiltin {
             let Some(alias) = Shed::logic(|l| l.get_alias(name_str)) else {
               return with_status(127);
             };
-            outln!("alias {name_str}={}", as_var_val_display(alias.body()));
+            outln!("alias {name_str}={}", shell_quote(alias.body()));
           }
           UtilKind::Function | UtilKind::Builtin => outln!("{name_str}"),
           UtilKind::Command(p) | UtilKind::File(p) => outln!("{}", p.display()),
@@ -553,10 +553,7 @@ impl CommandBuiltin {
             let Some(alias) = Shed::logic(|l| l.get_alias(name_str)) else {
               return with_status(127);
             };
-            outln!(
-              "{name_str} is an alias for {}",
-              as_var_val_display(alias.body())
-            );
+            outln!("{name_str} is an alias for {}", shell_quote(alias.body()));
           }
           UtilKind::Function => outln!("{name_str} is a function"),
           UtilKind::Builtin => outln!("{name_str} is a shell builtin"),

@@ -602,7 +602,7 @@ pub fn unescape_math(raw: &str) -> ShResult<String> {
 }
 
 /// Escapes a string for displaying as a var value
-pub fn as_var_val_display(s: &str) -> String {
+pub fn shell_quote(s: &str) -> String {
   // An empty string MUST be quoted, otherwise interpolating it into a command
   // line collapses into surrounding whitespace and the arg is silently dropped.
   if s.is_empty() {
@@ -732,60 +732,60 @@ mod tests {
     assert_eq!(result, expected);
   }
 
-  // ===================== as_var_val_display =====================
+  // ===================== shell_quote =====================
 
   #[test]
   fn display_simple_value_unquoted() {
-    assert_eq!(as_var_val_display("hello"), "hello");
+    assert_eq!(shell_quote("hello"), "hello");
   }
 
   #[test]
   fn display_value_with_spaces_single_quoted() {
-    assert_eq!(as_var_val_display("hello world"), "'hello world'");
+    assert_eq!(shell_quote("hello world"), "'hello world'");
   }
 
   #[test]
   fn display_backslash_no_escaping_in_single_quote_context() {
     // backslash not before ' - should not be doubled
-    assert_eq!(as_var_val_display("\\@prompt "), "'\\@prompt '");
+    assert_eq!(shell_quote("\\@prompt "), "'\\@prompt '");
   }
 
   #[test]
   fn display_backslash_passthrough_inside_squotes() {
-    assert_eq!(as_var_val_display("bar\\' biz"), "'bar\\'\\'' biz'");
+    assert_eq!(shell_quote("bar\\' biz"), "'bar\\'\\'' biz'");
   }
 
   #[test]
   fn display_single_quote_uses_posix_idiom() {
-    assert_eq!(as_var_val_display("it's"), "'it'\\''s'");
+    assert_eq!(shell_quote("it's"), "'it'\\''s'");
   }
 
   #[test]
   fn display_control_char_uses_ansi_c_quoting() {
-    assert_eq!(as_var_val_display("foo\nbar"), "$'foo\\nbar'");
+    assert_eq!(shell_quote("foo\nbar"), "$'foo\\nbar'");
   }
 
   #[test]
   fn display_backslash_escaped_in_ansi_c_context() {
-    assert_eq!(as_var_val_display("foo\\\nbar"), "$'foo\\\\\\nbar'");
+    assert_eq!(shell_quote("foo\\\nbar"), "$'foo\\\\\\nbar'");
   }
 
   #[test]
   fn display_tab_uses_ansi_c_quoting() {
-    assert_eq!(as_var_val_display("foo\tbar"), "$'foo\\tbar'");
+    assert_eq!(shell_quote("foo\tbar"), "$'foo\\tbar'");
   }
 
   #[test]
   fn display_special_chars_single_quoted() {
-    assert_eq!(as_var_val_display("$VAR"), "'$VAR'");
-    assert_eq!(as_var_val_display("foo|bar"), "'foo|bar'");
-    assert_eq!(as_var_val_display("foo&bar"), "'foo&bar'");
+    assert_eq!(shell_quote("$VAR"), "'$VAR'");
+    assert_eq!(shell_quote("foo|bar"), "'foo|bar'");
+    assert_eq!(shell_quote("foo&bar"), "'foo&bar'");
   }
 
   #[test]
   fn display_empty_string() {
     // Empty must be quoted so it survives whitespace collapsing when
     // interpolated into a command line.
-    assert_eq!(as_var_val_display(""), "''");
+    assert_eq!(shell_quote(""), "''");
   }
 }

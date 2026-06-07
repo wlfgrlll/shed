@@ -1,6 +1,6 @@
 use super::{
   Shed, errln,
-  expand::as_var_val_display,
+  expand::shell_quote,
   outln,
   state::logic::TrapTarget,
   util::{ShResult, ShResultExt, with_status},
@@ -17,7 +17,7 @@ impl super::Builtin for Trap {
       Shed::logic(|l| -> ShResult<()> {
         for l in l.traps() {
           let target = l.0;
-          let command = as_var_val_display(l.1);
+          let command = shell_quote(l.1);
           outln!("trap -- {command} {target}");
         }
         Ok(())
