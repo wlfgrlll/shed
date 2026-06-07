@@ -165,19 +165,36 @@ command history navigable with `Up` and `Down`.
 ==============================================================================
 6. File Operations                             *ex-file*
 
+  Reading a file with `:r {file}` marks it as the editor's "active
+  file." Subsequent `:w`, `:wq`, and `:x` commands target the active
+  file by default if no path is given. The shell-exit verbs (`:q`,
+  `:wq`) also change behavior when an active file is set: instead of
+  exiting the shell they clear the editor back to a fresh prompt.
+
+  The active file's path is exposed to the shell as `$EDITOR_FILE`
+  (empty string when no file is active).
+
   `:r {file}`                                  *ex-read*
 
       Read the contents of {file} and insert them into the buffer at
-      the cursor position.
+      the cursor position. Marks {file} as the active file so that
+      subsequent `:w`/`:wq`/`:x` can be issued without arguments.
 
   `:r !{cmd}`                                  *ex-read-cmd*
 
-      Execute {cmd} and insert its output into the buffer.
+      Execute {cmd} and insert its output into the buffer. Does NOT
+      set an active file.
+
+  `:w`                                         *ex-write-active*
+
+      Write the buffer contents to the active file (the one last
+      opened with `:r {file}`). Errors if no active file is set.
 
   `:w {file}`                                  *ex-write*
 
       Write the buffer contents to {file}. Creates the file if it does
-      not exist, or truncates it if it does.
+      not exist, or truncates it if it does. Does not change the
+      active file.
 
   `:w >> {file}`                               *ex-write-append*
 
@@ -187,10 +204,21 @@ command history navigable with `Up` and `Down`.
 
       Pipe the buffer contents to {cmd} as stdin.
 
+  `:wq`                                        *ex-write-quit*
+  `:x`                                         *ex-x*
+
+      Write the buffer (to the active file if no path is given) and
+      then clear the editor. If no active file is set, behaves as
+      `:q` and exits the shell.
+
+      `:x` is a synonym for `:wq`.
+
   `:e {file}`                                  *ex-edit*
 
       Open {file} in the editor defined by `$EDITOR`. Requires the
-      `EDITOR` environment variable to be set.
+      `EDITOR` environment variable to be set. Unlike `:r`, this
+      spawns an external editor rather than loading into shed's own
+      buffer, so it does NOT set an active file.
 
       Example:
         `:e ~/.config/shed/shedrc`
@@ -265,7 +293,14 @@ command history navigable with `Up` and `Down`.
 
   `:q`                                         *ex-quit*
 
-      Quit the editor / exit the shell.
+      If no active file is set (see |ex-file|), exits the shell.
+
+      If an active file is set, clears the editor buffer and returns
+      to a fresh prompt without writing. The shell stays running.
+
+      Use this distinction when you've opened a file with `:r {file}`:
+      `:q` lets you discard your edits and get back to the prompt
+      without leaving shed.
 
   `:help {topic}`                              *ex-help*
 
