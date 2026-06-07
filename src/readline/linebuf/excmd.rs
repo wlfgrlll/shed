@@ -19,7 +19,7 @@ use super::{
   state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg, try_var,
 };
-use crate::{sherr, state, verb};
+use crate::{state, verb};
 use crate::{
   state::terminal::Terminal,
   util::{format_size, var_ctx_guard},

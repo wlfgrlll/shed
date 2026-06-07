@@ -249,9 +249,15 @@ fn shed_loop_iter(
   // 3. we reap our child process, and the grandchild is orphaned
   // 4. we get back to the loop here, grandchild alters termios
   // 5. shell is softlocked
-  Shed::term_mut(|t| {
-    let _ = t.enforce_raw_mode();
-  });
+  if let Err(e) = Shed::term_mut(Terminal::enforce_raw_mode)
+    && let ShErrKind::Errno(errno) = e.kind()
+  {
+    if let Errno::EINTR = errno {
+      return Ok(LoopAction::Continue);
+    } else {
+      return Err(sherr!(CleanExit(1), "Failed to set raw mode: {e}"));
+    }
+  }
   exec_term!(
     TermCtl::SetAttr(BracketPaste(On)),
     TermCtl::SetAttr(FocusReport(On))
