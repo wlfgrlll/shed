@@ -1379,6 +1379,17 @@ impl Dispatcher {
         .map(|(name, idx_raw)| state::util::expand_arr_index(&idx_raw, true).map(|idx| (name, idx)))
         .transpose()?;
 
+      let indexed = if let Some((name, idx)) = indexed {
+        let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
+        let resolved = match kind {
+          Some(k) => idx.resolve_for(&k)?,
+          None => idx.resolve_for(&VarKind::Arr(Default::default()))?,
+        };
+        Some((name, resolved))
+      } else {
+        None
+      };
+
       match kind {
         AssignKind::Eq => {
           if let Some((name, idx)) = indexed {
@@ -1497,6 +1508,17 @@ impl Dispatcher {
               ));
             }
           }
+
+          let indexed = if let Some((name, idx)) = indexed {
+            let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
+            let resolved = match kind {
+              Some(k) => idx.resolve_for(&k)?,
+              None => idx.resolve_for(&VarKind::Arr(Default::default()))?,
+            };
+            Some((name, resolved))
+          } else {
+            None
+          };
 
           if let Some((name, idx)) = indexed {
             Shed::vars_mut(|v| v.update_var_indexed(&name, idx, var.to_string()))?;

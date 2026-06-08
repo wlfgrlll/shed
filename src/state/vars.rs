@@ -829,10 +829,10 @@ impl VarTab {
     Ok(())
   }
   pub fn set_index(&mut self, var_name: &str, idx: ArrIndex, val: String) -> ShResult<()> {
+    // 'idx' must already be resolved at this point
     if self.var_exists(var_name)
       && let Some(var) = self.vars_mut().get_mut(var_name)
     {
-      let idx = idx.resolve_for(var.kind())?;
       match var.kind_mut() {
         VarKind::Arr(items) => {
           let idx = match idx {
@@ -1318,16 +1318,22 @@ mod set_index_tests {
 
   #[test]
   fn literal_index_on_assoc_array_becomes_string_key() {
-    // resolve_for converts Literal(n) → Key(n.to_string()) for assoc
+    // `resolve_for` converts Literal(n) → Key(n.to_string()) for assoc
     // arrays. Pin this stringification behavior.
+    //
+    // Note: as of the issue #93 fix, `set_index` no longer calls
+    // `resolve_for` internally — callers must pre-resolve outside of
+    // any write borrow on var_scopes (because arithmetic-eval on Raw
+    // indices re-enters the var table). This test mirrors that flow:
+    // peek at the kind, resolve, then set.
     let _g = TestGuard::new();
     let mut tab = VarTab::new();
     tab
       .set_var("h", VarKind::AssocArr(vec![]), VarFlags::empty())
       .unwrap();
-    tab
-      .set_index("h", ArrIndex::Literal(7), "v".into())
-      .unwrap();
+    let kind = tab.try_get_var_meta("h").unwrap().kind().clone();
+    let resolved = ArrIndex::Literal(7).resolve_for(&kind).unwrap();
+    tab.set_index("h", resolved, "v".into()).unwrap();
     assert_eq!(
       assoc_items(&tab, "h"),
       vec![("7".to_string(), "v".to_string())]
