@@ -447,11 +447,16 @@ impl HintWorker {
         .ok()
         .flatten();
 
-      // If we got an exact match, use it as the hint
-      if let Some(CompMatch::Exact { line }) = outcome {
-        let token_start = completer.token_span().0;
-        let msg = format!("PRIVATE {token} set-comp-hint {req_gen} {token_start} {line}");
-        socket::send_to_socket(&msg).ok();
+      let Some(outcome) = outcome else { continue };
+
+      match outcome {
+        CompMatch::Exact { line }
+        | CompMatch::CommonPrefix { line }
+        | CompMatch::Cycled { line } => {
+          let token_start = completer.token_span().0;
+          let msg = format!("PRIVATE {token} set-comp-hint {req_gen} {token_start} {line}");
+          socket::send_to_socket(&msg).ok();
+        }
       }
     }
   }
