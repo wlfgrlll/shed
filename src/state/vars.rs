@@ -1,4 +1,9 @@
-use crate::util;
+use crate::{
+  eval::lex::TkFlags,
+  expand::Expander,
+  match_loop,
+  util::{self, QuoteState},
+};
 
 use super::scopes::ScopeStack;
 
@@ -424,43 +429,86 @@ impl VarKind {
         raw,
       ));
     }
-    let raw = raw[1..raw.len() - 1].to_string();
-
-    let tokens: Vec<String> = LexStream::new(raw.into(), LexFlags::empty())
-      .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
-      .try_fold(String::new(), |mut acc, wrds| {
-        match wrds {
-          Ok(wrds) => {
-            for wrd in wrds {
-              if !acc.is_empty() {
-                acc.push(markers::ARG_SEP);
-              }
-              acc.push_str(&wrd);
-            }
-          }
-          Err(e) => return Err(e),
-        }
-        Ok(acc)
-      })?
-      .split(markers::ARG_SEP)
-      .filter(|s| !s.is_empty())
-      .map(ToString::to_string)
-      .collect();
-
+    let body = &raw[1..raw.len() - 1];
     let mut pairs = Vec::new();
-    for token in tokens {
-      if token.starts_with('[') && token.contains("]=") {
-        let key_end = token.find("]=").unwrap();
-        let key = token[1..key_end].to_string();
-        let val = token[key_end + 2..].to_string();
-        pairs.push((key, val));
-      } else {
+    let mut chars = body.chars().peekable();
+
+    loop {
+      // Skip whitespace
+      while chars.peek().is_some_and(|c| c.is_whitespace()) {
+        chars.next();
+      }
+      if chars.peek().is_none() {
+        break;
+      }
+
+      // Expect '[' to open the key.
+      if chars.next() != Some('[') {
         return Err(sherr!(
           ParseErr,
-          "Invalid associative array element: expected [key]=value, got {}",
-          token,
+          "Invalid associative array element: expected '[' to start key in {raw}",
         ));
       }
+
+      // Read until the matching ']'.
+      let mut key = String::new();
+      let mut depth = 1usize;
+      loop {
+        let Some(c) = chars.next() else {
+          return Err(sherr!(ParseErr, "Unclosed '[' in associative array key",));
+        };
+        match c {
+          '[' => {
+            depth += 1;
+            key.push(c);
+          }
+          ']' => {
+            depth -= 1;
+            if depth == 0 {
+              break;
+            }
+            key.push(c);
+          }
+          _ => key.push(c),
+        }
+      }
+
+      log::debug!("Raw associative array key: '{}'", key);
+      let expanded_key = Expander::from_raw(&key, TkFlags::empty()).expand_no_split()?;
+      log::debug!("Expanded associative array key: '{}'", expanded_key);
+
+      // Expect '=' immediately after ']'.
+      if chars.next() != Some('=') {
+        return Err(sherr!(
+          ParseErr,
+          "Expected '=' after ']' in associative array element",
+        ));
+      }
+
+      // Read the value until top-level whitespace, respecting quotes so
+      // values like "foo bar biz" stay together.
+      let mut val = String::new();
+      let mut qt_state = QuoteState::default();
+      match_loop!(chars.peek() => &c => c, {
+        '"' => {
+          chars.next();
+          qt_state.toggle_double()
+        }
+        '\'' => {
+          chars.next();
+          qt_state.toggle_single()
+        }
+        _ if c.is_whitespace() && qt_state.outside() => break,
+        _ => {
+          chars.next();
+          val.push(c)
+        }
+      });
+
+      // Expand the value
+      let expanded_val = Expander::from_raw(&val, TkFlags::empty()).expand_no_split()?;
+
+      pairs.push((expanded_key, expanded_val));
     }
 
     Ok(Self::AssocArr(pairs))
@@ -486,7 +534,9 @@ impl Display for VarKind {
         let mut item_iter = items.iter().peekable();
         while let Some(item) = item_iter.next() {
           let (k, v) = item;
-          write!(f, "{k}={v}")?;
+          let key = super::expand::shell_quote(k);
+          let val = super::expand::shell_quote(v);
+          write!(f, "{key}={val}")?;
           if item_iter.peek().is_some() {
             write!(f, " ")?;
           }
