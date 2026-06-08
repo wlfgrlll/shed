@@ -41,7 +41,7 @@ use super::{
     vars::{VarFlags, VarKind},
   },
   try_var,
-  util::{self, ShResult, ends_with_unescaped, has_unescaped, rfind_unescaped, var_ctx_guard},
+  util::{self, ShResult, ends_with_unescaped, has_unescaped, var_ctx_guard},
   var, write_term,
 };
 
@@ -665,6 +665,74 @@ fn unescape_for_completion(raw: &str) -> String {
     .map_or_else(|_| raw.to_string(), |s| strip_markers(&s))
 }
 
+/// Length of the longest byte-aligned common suffix between `a` and `b`.
+fn common_suffix_len(a: &str, b: &str) -> usize {
+  let a = a.as_bytes();
+  let b = b.as_bytes();
+  let max = a.len().min(b.len());
+  let mut n = 0;
+  while n < max && a[a.len() - 1 - n] == b[b.len() - 1 - n] {
+    n += 1;
+  }
+  // back off if the split lands mid-codepoint
+  let mut adjusted = a.len() - n;
+  while adjusted < a.len() && !is_char_boundary(a, adjusted) {
+    adjusted += 1;
+  }
+  a.len() - adjusted
+}
+
+fn is_char_boundary(bytes: &[u8], i: usize) -> bool {
+  i == 0 || i == bytes.len() || (bytes[i] as i8) >= -0x40
+}
+
+/// Reconstruct a candidate's display form: keep the user's literal input
+/// (preserving `~`, `$VAR`, shell escapes) and escape only the filesystem-
+/// derived suffix. Tries an exact `strip_prefix(expanded)` first for the
+/// common no-expansion / escape-bearing case; falls back to a common-suffix
+/// splice for `~`/`$VAR` structural prefixes and case-insensitive matches.
+fn splice_literal_prefix(literal: &str, expanded: &str, candidate: &str) -> String {
+  if let Some(rest) = candidate.strip_prefix(expanded) {
+    let rest_escaped = escape_str(rest, false);
+    return format!("{literal}{rest_escaped}");
+  }
+
+  let suffix_len = common_suffix_len(literal, expanded);
+  let literal_structural = &literal[..literal.len() - suffix_len];
+  let expanded_structural = &expanded[..expanded.len() - suffix_len];
+
+  match candidate.strip_prefix(expanded_structural) {
+    Some(rest) => {
+      let rest_escaped = escape_str(rest, false);
+      format!("{literal_structural}{rest_escaped}")
+    }
+    None => escape_str(candidate, false),
+  }
+}
+
+/// Run a path-shaped completion against the expanded form of `literal`,
+/// then splice the literal back over each candidate so `$VAR`/`~` survive.
+fn with_expanded_prefix<F>(literal: &str, comp_func: F) -> ShResult<Vec<Candidate>>
+where
+  F: FnOnce(&str, usize) -> Vec<Candidate>,
+{
+  let expanded = unescape_for_completion(literal);
+  let candidates = comp_func(&expanded, expanded.len());
+  Ok(
+    candidates
+      .into_iter()
+      .map(|mut c| {
+        c.content = splice_literal_prefix(literal, &expanded, &c.content);
+        c
+      })
+      .collect(),
+  )
+}
+
+/// Glob filesystem paths starting with `path`. Expects `path` to be
+/// pre-expanded; callers route through `with_expanded_prefix` for that.
+/// Candidate content comes back unescaped; the wrapper escapes after
+/// splicing.
 fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
   let (prefix, postfix) = path.split_at_checked(cursor_pos).unwrap_or((path, ""));
   let prefix = if ends_with_unescaped(prefix, "\\") {
@@ -673,10 +741,8 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
     prefix
   };
 
-  let unescaped_pre = unescape_for_completion(prefix);
-  let unescaped_post = unescape_for_completion(postfix);
-  let escaped_pre = escape_glob(&unescaped_pre, false);
-  let escaped_post = escape_glob(&unescaped_post, false);
+  let escaped_pre = escape_glob(prefix, false);
+  let escaped_post = escape_glob(postfix, false);
 
   let ignore_case = shopt!(prompt.completion_ignore_case);
   let pat = format!("{escaped_pre}*{escaped_post}");
@@ -693,46 +759,14 @@ fn complete_path(path: &str, cursor_pos: usize) -> Vec<Candidate> {
     .into_iter()
     .map(|mut c| {
       let is_dir = c.desc.as_ref().is_some_and(|d| d.contains("dir"));
-      let raw = c.content.clone();
 
-      let mut new_content = if let Some(after_prefix) = raw.strip_prefix(&unescaped_pre) {
-        // strip the start and end, escape it for completion.
-        // We do this so that something like "$SOME_PATH/foo"
-        // is not replaced by "/some/path/foo" (preserves variable names and other stuff)
-        let middle = after_prefix
-          .strip_suffix(&unescaped_post)
-          .unwrap_or(after_prefix);
-        let middle_escaped = escape_str(middle, false);
-        format!("{prefix}{middle_escaped}{postfix}")
-      } else if ignore_case {
-        // Glob matched case-insensitively; preserve actual filename casing from `raw`
-        // but keep whatever directory prefix the user typed (e.g. ~/ or $VAR/).
-        // rfind_unescaped handles escaped slashes in filenames; unescaped_pre needs
-        // plain rfind since it is already unescaped.
-        let typed_dir_end = rfind_unescaped(prefix, '/').map_or(0, |i| i + 1);
-        let raw_dir_end = raw.rfind('/').map_or(0, |i| i + 1);
-
-        let filename_raw = &raw[raw_dir_end..];
-        let middle = filename_raw
-          .strip_suffix(&unescaped_post)
-          .unwrap_or(filename_raw);
-        let middle_escaped = escape_str(middle, false);
-
-        format!("{}{middle_escaped}{postfix}", &prefix[..typed_dir_end])
-      } else {
-        escape_str(&raw, false)
-      };
-
-      // glob strips this, we have to add it back
-      if path.starts_with("./") && !new_content.starts_with("./") && !new_content.starts_with('/') {
-        new_content = format!("./{new_content}");
+      // glob strips a leading ./ even when the search pattern had it
+      if path.starts_with("./") && !c.content.starts_with("./") && !c.content.starts_with('/') {
+        c.content = format!("./{}", c.content);
       }
-
       if is_dir {
-        new_content.push('/');
+        c.content.push('/');
       }
-
-      c.content = new_content;
       c
     })
     .collect()
@@ -947,42 +981,48 @@ impl BashCompSpec {
 
 impl CompSpec for BashCompSpec {
   fn complete(&self, ctx: &CompContext) -> ShResult<Vec<Candidate>> {
-    let mut candidates: Vec<Candidate> = vec![];
     let prefix = &ctx.words[ctx.cword];
 
     let unescaped = unescape_str(prefix.as_str());
     let expanded = expand_raw_inner(&mut unescaped.chars().peekable(), false)?;
     let stripped = strip_markers(&expanded);
-    let expanded_cursor = stripped.len();
+
+    // path-shaped: wrapper handles expansion and escaping, candidates are
+    // already display-ready and skip the reformat below
+    let mut path_candidates: Vec<Candidate> = vec![];
     if self.targets.contains(CompFlags::FILES) {
-      candidates.extend(complete_path(&stripped, expanded_cursor));
+      path_candidates.extend(with_expanded_prefix(prefix, complete_path)?);
     }
     if self.targets.contains(CompFlags::DIRS) {
-      candidates.extend(complete_dirs(&stripped, expanded_cursor));
+      path_candidates.extend(with_expanded_prefix(prefix, complete_dirs)?);
     }
     if self.targets.contains(CompFlags::CMDS) {
-      candidates.extend(complete_commands(&stripped, expanded_cursor));
+      path_candidates.extend(with_expanded_prefix(prefix, complete_commands)?);
     }
+
+    // name-shaped: matched against the expanded form, then re-prefixed with
+    // the user's literal text below so escapes and markers survive
+    let mut name_candidates: Vec<Candidate> = vec![];
     if self.targets.contains(CompFlags::VARS) {
-      candidates.extend(complete_vars_raw(&stripped));
+      name_candidates.extend(complete_vars_raw(&stripped));
     }
     if self.targets.contains(CompFlags::USERS) {
-      candidates.extend(complete_users(&stripped));
+      name_candidates.extend(complete_users(&stripped));
     }
     if self.targets.contains(CompFlags::JOBS) {
-      candidates.extend(complete_jobs(&stripped));
+      name_candidates.extend(complete_jobs(&stripped));
     }
     if self.targets.contains(CompFlags::ALIAS) {
-      candidates.extend(complete_aliases(&stripped));
+      name_candidates.extend(complete_aliases(&stripped));
     }
     if self.targets.contains(CompFlags::SIGNALS) {
-      candidates.extend(complete_signals(&stripped));
+      name_candidates.extend(complete_signals(&stripped));
     }
     if self.targets.contains(CompFlags::BUILTINS) {
-      candidates.extend(complete_builtins(&stripped));
+      name_candidates.extend(complete_builtins(&stripped));
     }
     if let Some(words) = &self.wordlist {
-      candidates.extend(
+      name_candidates.extend(
         words
           .iter()
           .map(Candidate::from)
@@ -990,9 +1030,10 @@ impl CompSpec for BashCompSpec {
       );
     }
     if self.function.is_some() {
-      candidates.extend(self.exec_comp_func(ctx)?);
+      name_candidates.extend(self.exec_comp_func(ctx)?);
     }
-    candidates = candidates
+
+    let name_candidates: Vec<Candidate> = name_candidates
       .into_iter()
       .map(|mut c| {
         if let Some(tail) = c.strip_prefix(&stripped) {
@@ -1013,6 +1054,9 @@ impl CompSpec for BashCompSpec {
         c
       })
       .collect();
+
+    let mut candidates: Vec<Candidate> =
+      path_candidates.into_iter().chain(name_candidates).collect();
 
     candidates.sort_by_key(|c| c.content.len()); // sort by length to prioritize shorter completions, ties are then sorted alphabetically
     candidates.reverse();
@@ -1467,7 +1511,7 @@ impl SimpleCompleter {
       CompSource::Shell => get_context_tokens(line),
       CompSource::ExMode => get_ex_context_tokens(line),
     };
-    let (strat, replace_span, leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
+    let (strat, replace_span, _leaf_cursor_pos) = CompStrat::resolve(&tks, cursor_pos);
 
     self.token_span = (replace_span.range().start, replace_span.range().end);
     let mut result = match strat {
@@ -1476,13 +1520,13 @@ impl SimpleCompleter {
       CompStrat::ExCommand { prefix } => CompResult::from_candidates(complete_ex_commands(&prefix)),
       CompStrat::Builtin { prefix } => CompResult::from_candidates(complete_builtins(&prefix)),
       CompStrat::Command { prefix } => {
-        CompResult::from_candidates(complete_commands(&prefix, leaf_cursor_pos))
+        CompResult::from_candidates(with_expanded_prefix(&prefix, complete_commands)?)
       }
       CompStrat::Files { path } => {
         if self.dirs_only {
-          CompResult::from_candidates(complete_dirs(&path, leaf_cursor_pos))
+          CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs)?)
         } else {
-          CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+          CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
         }
       }
       CompStrat::Separator => CompResult::Exact {
@@ -1499,16 +1543,16 @@ impl SimpleCompleter {
             result
           }
           CompSpecResult::NoSpec => {
-            CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+            CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
           }
           CompSpecResult::NoMatch { flags } => {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
             if flags.contains(CompOptFlags::DIRNAMES) || self.dirs_only {
-              CompResult::from_candidates(complete_dirs(&path, leaf_cursor_pos))
+              CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs)?)
             } else if flags.contains(CompOptFlags::DEFAULT) {
-              CompResult::from_candidates(complete_path(&path, leaf_cursor_pos))
+              CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
             } else {
               CompResult::NoMatch
             }

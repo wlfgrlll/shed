@@ -1618,4 +1618,53 @@ mod bash_comp_spec_tests {
       );
     }
   }
+
+  // Completion via BashCompSpec should preserve the user's typed structural
+  // prefix ($VAR/, ~/, etc.) through expansion.
+  #[test]
+  fn comp_spec_preserves_structural_prefix_under_expansion() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+
+    // a fresh var name avoids collisions with whatever TestGuard or the host
+    // already set for HOME / TMPDIR / etc.
+    let dir_path = dir.path().to_string_lossy().to_string();
+    state::Shed::vars_mut(|v| {
+      v.set_var("TESTDIR", VarKind::Str(dir_path.clone()), VarFlags::EXPORT)
+    })
+    .unwrap();
+
+    let spec = BashCompSpec::new().files(true).dirs(true);
+    let ctx = CompContext {
+      words: vec!["cd".into(), "$TESTDIR/s".into()],
+      cword: 1,
+      line: "cd $TESTDIR/s".into(),
+      cursor_pos: 13,
+    };
+    let candidates = spec.complete(&ctx).unwrap();
+
+    let matching: Vec<_> = candidates
+      .iter()
+      .filter(|c| c.content.trim_end_matches('/').ends_with("src"))
+      .collect();
+    assert!(
+      !matching.is_empty(),
+      "expected an src-shaped candidate, got: {candidates:?}"
+    );
+    for c in &matching {
+      assert!(
+        c.content.starts_with("$TESTDIR/"),
+        "candidate must preserve $TESTDIR literal in displayed content; \
+         got: {:?}",
+        c.content
+      );
+      assert!(
+        !c.content.contains(&dir_path),
+        "candidate must not leak the expanded $TESTDIR path into content; \
+         got: {:?}",
+        c.content
+      );
+    }
+  }
 }
