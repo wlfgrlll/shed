@@ -1,5 +1,5 @@
 <h1 align="center">
-	shed
+      <a href="https://en.wikipedia.org/wiki/Bourne_shell">sh</a><a href="https://en.wikipedia.org/wiki/Ed_(text_editor)">ed</a>
 </h1>
 <p align="center">
 	<img alt="Coveralls" src="https://img.shields.io/coverallsCoverage/github/km-clay/shed?color=%23178f2d">
@@ -372,7 +372,6 @@ pkgs = import nixpkgs {
 ## Known issues
 
 * The expanded content from the `PSR` variable doesn't work well with multi-line content
-* The line editor hasn't been optimized for very large buffers yet (3000+ lines or so), so its pretty slow/unpredictable with those.
 * Aliases can't be used in the same script that defines them.
 
 ## AI Usage
