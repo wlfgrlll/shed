@@ -1569,4 +1569,53 @@ mod bash_comp_spec_tests {
     assert!(!spec.targets.contains(CompFlags::FILES));
     assert!(!spec.targets.contains(CompFlags::DIRS));
   }
+
+  #[test]
+  fn case_insensitive_complete_preserves_candidate_case() {
+    let _g = TestGuard::new();
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+
+    let prev_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(dir.path()).unwrap();
+    crate::shopt_mut!(prompt.completion_ignore_case = true);
+
+    let spec = BashCompSpec::new().files(true).dirs(true);
+    let ctx = CompContext {
+      words: vec!["cd".into(), "S".into()],
+      cword: 1,
+      line: "cd S".into(),
+      cursor_pos: 4,
+    };
+    let candidates = spec.complete(&ctx).unwrap();
+
+    std::env::set_current_dir(prev_cwd).unwrap();
+    crate::shopt_mut!(prompt.completion_ignore_case = false);
+
+    let src_candidates: Vec<_> = candidates
+      .iter()
+      .filter(|c| {
+        let s = c.content.trim_end_matches('/');
+        s.eq_ignore_ascii_case("src")
+      })
+      .collect();
+    assert!(
+      !src_candidates.is_empty(),
+      "expected an `src`-shaped candidate, got: {candidates:?}"
+    );
+    for c in &src_candidates {
+      assert!(
+        c.content.starts_with("src"),
+        "candidate should preserve lowercase `src` from the filesystem, \
+         not the typed `S`; got: {:?}",
+        c.content
+      );
+      assert!(
+        !c.content.starts_with("Src"),
+        "candidate must not re-introduce typed-case prefix (issue #90); \
+         got: {:?}",
+        c.content
+      );
+    }
+  }
 }

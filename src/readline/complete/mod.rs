@@ -996,7 +996,19 @@ impl CompSpec for BashCompSpec {
       .into_iter()
       .map(|mut c| {
         if let Some(tail) = c.strip_prefix(&stripped) {
-          c.content = format!("{prefix}{tail}");
+          let ignore_case = shopt!(prompt.completion_ignore_case);
+          let new_prefix = if ignore_case {
+            let match_len = c.content.len() - tail.len();
+            let cand_match = &c.content[..match_len];
+            let struct_len = prefix.len().saturating_sub(stripped.len());
+
+            let prefix = &prefix[..struct_len];
+            format!("{prefix}{cand_match}")
+          } else {
+            prefix.to_string()
+          };
+
+          c.content = format!("{new_prefix}{tail}");
         }
         c
       })
