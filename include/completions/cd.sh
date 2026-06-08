@@ -27,4 +27,4 @@ _cd_comp() {
 		done
 	fi
 }
-complete -F _cd_comp cd
+complete -F _cd_comp -d cd
