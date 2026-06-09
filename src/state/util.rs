@@ -1,4 +1,4 @@
-use crate::state::logic::ShFunc;
+use crate::{state::logic::ShFunc, util::ShErrKind};
 
 use super::{super::eval::lex::Tk, SHED, Shed, try_var};
 
@@ -633,8 +633,22 @@ pub fn source_file(path: PathBuf) -> ShResult<()> {
 
   let mut buf = String::new();
   file.read_to_string(&mut buf)?;
-  exec_nonint(buf, Some(source_display.into()))?;
-  Ok(())
+
+  // sourced files behave like functions
+  // 'return' is valid inside of them, and we also track recursion depth
+  let _guard = Shed::meta_mut(MetaTab::enter_func);
+
+  match exec_nonint(buf, Some(source_display.into())) {
+    Ok(()) => Ok(()),
+    Err(e) => {
+      if let ShErrKind::FuncReturn(code) = e.kind() {
+        Shed::set_status(*code);
+        Ok(())
+      } else {
+        Err(e)
+      }
+    }
+  }
 }
 
 pub fn display_path<P: AsRef<Path>>(path: P) -> String {

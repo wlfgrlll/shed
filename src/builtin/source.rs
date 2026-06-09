@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::{ShResult, sherr, state::util::source_file, with_status};
+use super::{ShResult, sherr, state::util::source_file};
 
 pub(super) struct Source;
 impl super::Builtin for Source {
@@ -27,7 +27,7 @@ impl super::Builtin for Source {
       source_file(path)?;
     }
 
-    with_status(0)
+    Ok(())
   }
 }
 
@@ -157,5 +157,48 @@ pub mod tests {
 
     test_input(format!("source {path}")).unwrap();
     assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn source_top_level_return_exits_script_cleanly() {
+    let _g = TestGuard::new();
+    let mut file = NamedTempFile::new().unwrap();
+    let path = file.path().display().to_string();
+    file
+      .write_all(b"before=set\nreturn 0\nafter=should_not_run\n")
+      .unwrap();
+
+    test_input(format!("source {path}")).unwrap();
+    assert_eq!(var!("before"), "set");
+    assert_eq!(var!("after"), "");
+    assert_eq!(state::Shed::get_status(), 0);
+  }
+
+  #[test]
+  fn source_top_level_return_propagates_status() {
+    let _g = TestGuard::new();
+    let mut file = NamedTempFile::new().unwrap();
+    let path = file.path().display().to_string();
+    file.write_all(b"return 42").unwrap();
+
+    test_input(format!("source {path}")).unwrap();
+    assert_eq!(state::Shed::get_status(), 42);
+  }
+
+  #[test]
+  fn source_return_inside_conditional() {
+    let _g = TestGuard::new();
+    let mut file = NamedTempFile::new().unwrap();
+    let path = file.path().display().to_string();
+    file
+      .write_all(
+        b"GUARD=yes\n\
+          if [ -n \"$GUARD\" ]; then return; fi\n\
+          after=should_not_run\n",
+      )
+      .unwrap();
+
+    test_input(format!("source {path}")).unwrap();
+    assert_eq!(var!("after"), "");
   }
 }
