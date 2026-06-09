@@ -644,10 +644,7 @@ impl super::LineBuf {
 
   fn ex_expand(&mut self, cmd: &EditCmd, range: Option<AddressRange>, bang: bool) -> ShResult<()> {
     let range = range.unwrap_or_else(AddressRange::all_lines); // expands entire buffer
-    let verb = match bang {
-      true => Verb::ExpandAll,
-      false => Verb::Expand,
-    };
+    let verb = if bang { Verb::ExpandAll } else { Verb::Expand };
 
     self.replace_verb(cmd, verb, &range)
   }

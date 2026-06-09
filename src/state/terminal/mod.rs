@@ -299,10 +299,10 @@ impl Terminal {
     let tty = self
       .tty()
       .ok_or_else(|| sherr!(InternalErr, "Not attached to a terminal"))?;
-    if !isatty(tty)? {
-      Err(sherr!(InternalErr, "File descriptor is not a terminal"))
-    } else {
+    if isatty(tty)? {
       Ok(tty)
+    } else {
+      Err(sherr!(InternalErr, "File descriptor is not a terminal"))
     }
   }
 
@@ -604,7 +604,7 @@ impl Terminal {
   /// If the cursor is outside of the scroll region, move it into the scroll region
   ///
   /// Note: the scroll region actually has to be unset here. this is called after
-  /// yield_terminal unsets it, before it gets reset.
+  /// `yield_terminal` unsets it, before it gets reset.
   pub fn fix_cursor_row(&mut self, bottom: u16) -> ShResult<()> {
     if !shopt!(statline.enable) {
       return Ok(());

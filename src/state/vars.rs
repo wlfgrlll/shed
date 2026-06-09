@@ -5,7 +5,7 @@ use crate::{
   util::{self, QuoteState},
 };
 
-use super::scopes::ScopeStack;
+use super::{meta::MetaTab, scopes::ScopeStack};
 
 use std::{
   collections::{HashMap, VecDeque},
@@ -473,9 +473,9 @@ impl VarKind {
         }
       }
 
-      log::debug!("Raw associative array key: '{}'", key);
+      log::debug!("Raw associative array key: '{key}'");
       let expanded_key = Expander::from_raw(&key, TkFlags::empty()).expand_no_split()?;
-      log::debug!("Expanded associative array key: '{}'", expanded_key);
+      log::debug!("Expanded associative array key: '{expanded_key}'");
 
       // Expect '=' immediately after ']'.
       if chars.next() != Some('=') {
@@ -492,16 +492,16 @@ impl VarKind {
       match_loop!(chars.peek() => &c => c, {
         '"' => {
           chars.next();
-          qt_state.toggle_double()
+          qt_state.toggle_double();
         }
         '\'' => {
           chars.next();
-          qt_state.toggle_single()
+          qt_state.toggle_single();
         }
         _ if c.is_whitespace() && qt_state.outside() => break,
         _ => {
           chars.next();
-          val.push(c)
+          val.push(c);
         }
       });
 
@@ -744,7 +744,7 @@ impl VarTab {
       if let Some(install_dir) = super::builtin::HELP_PAGE_INSTALL_DIR {
         match std::env::var("SHED_HPATH").ok() {
           Some(hpath) if !util::split_path_list(&hpath).any(|p| p.as_os_str() == install_dir) => {
-            set_var("SHED_HPATH", &format!("{}:{}", install_dir, hpath));
+            set_var("SHED_HPATH", &format!("{install_dir}:{hpath}"));
           }
           None => set_var("SHED_HPATH", install_dir),
 
@@ -871,7 +871,7 @@ impl VarTab {
         ));
       }
       if var.flags.contains(VarFlags::EXPORT) {
-        Shed::meta_mut(|m| m.clear_envp());
+        Shed::meta_mut(MetaTab::clear_envp);
       }
     }
     self.vars.remove(var_name);
@@ -952,13 +952,13 @@ impl VarTab {
           var.mark_for_export();
         }
 
-        Shed::meta_mut(|m| m.clear_envp());
+        Shed::meta_mut(MetaTab::clear_envp);
         unsafe { std::env::set_var(var_name, var.kind.to_string()) };
       }
     } else {
       let mut var = Var::new(val, flags);
       if flags.contains(VarFlags::EXPORT) {
-        Shed::meta_mut(|m| m.clear_envp());
+        Shed::meta_mut(MetaTab::clear_envp);
         var.mark_for_export();
         unsafe { std::env::set_var(var_name, var.to_string()) };
       }
@@ -1130,7 +1130,7 @@ fn get_status_str() -> Option<String> {
   Some(Shed::get_status().to_string())
 }
 fn get_seconds() -> Option<String> {
-  let shell_time = Shed::meta(super::meta::MetaTab::shell_time);
+  let shell_time = Shed::meta(MetaTab::shell_time);
   let secs = Instant::now().duration_since(shell_time).as_secs();
   Some(secs.to_string())
 }

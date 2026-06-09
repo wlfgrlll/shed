@@ -1,4 +1,6 @@
 #![expect(
+  clippy::unnecessary_wraps,
+  clippy::too_many_lines,
   clippy::cast_sign_loss,
   clippy::cast_possible_wrap,
   clippy::cast_possible_truncation,

@@ -498,10 +498,10 @@ impl Builtin for CommandBuiltin {
       };
       // TODO: Find a way to do this that doesn't involve forcing a full PATH rehash twice
       defer! {
-        Shed::meta_mut(super::state::meta::MetaTab::rehash_path_cache);
+        Shed::meta_mut(MetaTab::rehash_path_cache);
       }
       state::util::with_vars([("PATH".to_string(), default_path)], || {
-        Shed::meta_mut(super::state::meta::MetaTab::rehash_path_cache);
+        Shed::meta_mut(MetaTab::rehash_path_cache);
         Self::execute_inner(print_path, print_type, node, dispatcher)
       })
     } else {

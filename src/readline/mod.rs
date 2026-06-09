@@ -1286,15 +1286,13 @@ impl ShedLine {
     } else if cmd.is_quit() {
       if self.editor.open_file().is_some() {
         return Ok(Some(LineCmd::ResetWidget));
-      } else {
-        return Ok(Some(LineCmd::Quit));
       }
+      return Ok(Some(LineCmd::Quit));
     } else if cmd.is_write_quit() {
       if self.editor.open_file().is_some() {
         return Ok(Some(LineCmd::WriteQuit));
-      } else {
-        return Ok(Some(LineCmd::Quit));
       }
+      return Ok(Some(LineCmd::Quit));
     } else if cmd.verb_is(&Verb::AcceptHint) {
       return Ok(Some(LineCmd::AppendHint));
     }
@@ -1681,7 +1679,7 @@ impl ShedLine {
     let _sync = SyncOutputGuard::begin();
     if self.statline.is_some() && !shopt!(statline.enable) {
       self.statline = None;
-      let row = Shed::term(|t| t.t_rows()) as u16;
+      let row = Shed::term(Terminal::t_rows) as u16;
 
       queue_term!(
         TermCtl::Cursor(SavePos),

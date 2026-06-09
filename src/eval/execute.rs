@@ -138,7 +138,7 @@ impl ExecArgs {
       .into()
   }
   pub fn get_envp() -> Rc<[CString]> {
-    Shed::meta_mut(|m| m.get_envp())
+    Shed::meta_mut(MetaTab::get_envp)
   }
 }
 
@@ -1383,7 +1383,7 @@ impl Dispatcher {
         let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
         let resolved = match kind {
           Some(k) => idx.resolve_for(&k)?,
-          None => idx.resolve_for(&VarKind::Arr(Default::default()))?,
+          None => idx.resolve_for(&VarKind::Arr(VecDeque::default()))?,
         };
         Some((name, resolved))
       } else {
@@ -1513,7 +1513,7 @@ impl Dispatcher {
             let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
             let resolved = match kind {
               Some(k) => idx.resolve_for(&k)?,
-              None => idx.resolve_for(&VarKind::Arr(Default::default()))?,
+              None => idx.resolve_for(&VarKind::Arr(VecDeque::default()))?,
             };
             Some((name, resolved))
           } else {

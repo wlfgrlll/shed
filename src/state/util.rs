@@ -444,7 +444,7 @@ pub fn compose_rc(config: &GenRcConfig) -> Vec<String> {
           .iter()
           .filter_map(|(name, f)| match f {
             ShFunc::Defined { source, .. } => Some((name.clone(), source.as_str().to_string())),
-            _ => None,
+            ShFunc::Autoload(_) => None,
           })
           .collect()
       });

@@ -325,7 +325,7 @@ impl super::LineBuf {
     let line = &self.lines[self.cursor.pos.row];
     let col = self.cursor.pos.col.min(line.len());
     for g in &line.graphemes()[..col] {
-      write!(result, "{}", g).ok();
+      write!(result, "{g}").ok();
     }
     result
   }

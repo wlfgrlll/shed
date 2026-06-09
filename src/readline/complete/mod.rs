@@ -712,21 +712,19 @@ fn splice_literal_prefix(literal: &str, expanded: &str, candidate: &str) -> Stri
 
 /// Run a path-shaped completion against the expanded form of `literal`,
 /// then splice the literal back over each candidate so `$VAR`/`~` survive.
-fn with_expanded_prefix<F>(literal: &str, comp_func: F) -> ShResult<Vec<Candidate>>
+fn with_expanded_prefix<F>(literal: &str, comp_func: F) -> Vec<Candidate>
 where
   F: FnOnce(&str, usize) -> Vec<Candidate>,
 {
   let expanded = unescape_for_completion(literal);
   let candidates = comp_func(&expanded, expanded.len());
-  Ok(
-    candidates
-      .into_iter()
-      .map(|mut c| {
-        c.content = splice_literal_prefix(literal, &expanded, &c.content);
-        c
-      })
-      .collect(),
-  )
+  candidates
+    .into_iter()
+    .map(|mut c| {
+      c.content = splice_literal_prefix(literal, &expanded, &c.content);
+      c
+    })
+    .collect()
 }
 
 /// Glob filesystem paths starting with `path`. Expects `path` to be
@@ -991,13 +989,13 @@ impl CompSpec for BashCompSpec {
     // already display-ready and skip the reformat below
     let mut path_candidates: Vec<Candidate> = vec![];
     if self.targets.contains(CompFlags::FILES) {
-      path_candidates.extend(with_expanded_prefix(prefix, complete_path)?);
+      path_candidates.extend(with_expanded_prefix(prefix, complete_path));
     }
     if self.targets.contains(CompFlags::DIRS) {
-      path_candidates.extend(with_expanded_prefix(prefix, complete_dirs)?);
+      path_candidates.extend(with_expanded_prefix(prefix, complete_dirs));
     }
     if self.targets.contains(CompFlags::CMDS) {
-      path_candidates.extend(with_expanded_prefix(prefix, complete_commands)?);
+      path_candidates.extend(with_expanded_prefix(prefix, complete_commands));
     }
 
     // name-shaped: matched against the expanded form, then re-prefixed with
@@ -1046,7 +1044,7 @@ impl CompSpec for BashCompSpec {
             let prefix = &prefix[..struct_len];
             format!("{prefix}{cand_match}")
           } else {
-            prefix.to_string()
+            prefix.clone()
           };
 
           c.content = format!("{new_prefix}{tail}");
@@ -1468,7 +1466,7 @@ impl SimpleCompleter {
     ctx
   }
 
-  fn run_comp_spec(ctx: &CompContext, spec: Box<dyn CompSpec>) -> ShResult<CompSpecResult> {
+  fn run_comp_spec(ctx: &CompContext, spec: &dyn CompSpec) -> ShResult<CompSpecResult> {
     let candidates = spec.complete(ctx)?;
     if candidates.is_empty() {
       Ok(CompSpecResult::NoMatch {
@@ -1488,13 +1486,13 @@ impl SimpleCompleter {
     };
 
     if let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) {
-      return Self::run_comp_spec(ctx, spec);
+      return Self::run_comp_spec(ctx, &*spec);
     }
 
     if let Some(src) = Shed::logic_mut(|l| l.take_comp_autoload(cmd)) {
       src.source(AutoloadKind::Completion)?;
       if let Some(spec) = Shed::meta(|m| m.get_comp_spec(cmd)) {
-        return Self::run_comp_spec(ctx, spec);
+        return Self::run_comp_spec(ctx, &*spec);
       }
     }
 
@@ -1520,13 +1518,13 @@ impl SimpleCompleter {
       CompStrat::ExCommand { prefix } => CompResult::from_candidates(complete_ex_commands(&prefix)),
       CompStrat::Builtin { prefix } => CompResult::from_candidates(complete_builtins(&prefix)),
       CompStrat::Command { prefix } => {
-        CompResult::from_candidates(with_expanded_prefix(&prefix, complete_commands)?)
+        CompResult::from_candidates(with_expanded_prefix(&prefix, complete_commands))
       }
       CompStrat::Files { path } => {
         if self.dirs_only {
-          CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs)?)
+          CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs))
         } else {
-          CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
+          CompResult::from_candidates(with_expanded_prefix(&path, complete_path))
         }
       }
       CompStrat::Separator => CompResult::Exact {
@@ -1543,16 +1541,16 @@ impl SimpleCompleter {
             result
           }
           CompSpecResult::NoSpec => {
-            CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
+            CompResult::from_candidates(with_expanded_prefix(&path, complete_path))
           }
           CompSpecResult::NoMatch { flags } => {
             if flags.contains(CompOptFlags::SPACE) {
               self.add_space = true;
             }
             if flags.contains(CompOptFlags::DIRNAMES) || self.dirs_only {
-              CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs)?)
+              CompResult::from_candidates(with_expanded_prefix(&path, complete_dirs))
             } else if flags.contains(CompOptFlags::DEFAULT) {
-              CompResult::from_candidates(with_expanded_prefix(&path, complete_path)?)
+              CompResult::from_candidates(with_expanded_prefix(&path, complete_path))
             } else {
               CompResult::NoMatch
             }

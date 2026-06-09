@@ -87,33 +87,51 @@ fn handle_signals_interactive(readline: &mut ShedLine) -> ShResult<bool> {
   Ok(true)
 }
 
-fn get_poll_timeout(readline: &mut ShedLine) -> (PollTimeout, Option<String>) {
-  let mut exec_if_timeout = None;
+enum ShedPollTimeout {
+  Null,
+  Zero,
+  PendingKeymap,
+  Override(PollTimeout),
+  ScreenSaver(PollTimeout, String),
+}
 
-  let timeout = if Shed::term(Terminal::reader_has_pending) {
-    PollTimeout::ZERO
+impl From<&ShedPollTimeout> for PollTimeout {
+  fn from(value: &ShedPollTimeout) -> Self {
+    match value {
+      ShedPollTimeout::Override(poll_timeout) | ShedPollTimeout::ScreenSaver(poll_timeout, _) => {
+        *poll_timeout
+      }
+      ShedPollTimeout::Null => PollTimeout::NONE,
+      ShedPollTimeout::Zero => PollTimeout::ZERO,
+      ShedPollTimeout::PendingKeymap => PollTimeout::from(1000u16),
+    }
+  }
+}
+
+fn get_poll_timeout(readline: &mut ShedLine) -> ShedPollTimeout {
+  if Shed::term(Terminal::reader_has_pending) {
+    ShedPollTimeout::Zero
   } else if !readline.pending_keymap().is_empty() {
     // wait for more keymap keys
-    PollTimeout::from(1000u16)
+    ShedPollTimeout::PendingKeymap
   } else if let Some(timeout) = Shed::meta_mut(MetaTab::take_poll_timeout) {
     // something gave us an explicit poll timeout to use.
     // usually this means there is a status message showing.
     // after the timeout, it will trigger a redraw that clears
     // the status message.
-    timeout
+    ShedPollTimeout::Override(timeout)
   } else {
     let screensaver_cmd = shopt!(prompt.screensaver_cmd.clone()).trim().to_string();
     let screensaver_idle_time = shopt!(prompt.screensaver_idle_time);
     if screensaver_idle_time.is_zero() || screensaver_cmd.is_empty() {
       // no screensaver stuff, set no timeout
-      PollTimeout::NONE
+      ShedPollTimeout::Null
     } else {
-      exec_if_timeout = Some(screensaver_cmd);
-      PollTimeout::try_from(screensaver_idle_time.duration()).unwrap_or(PollTimeout::NONE)
+      let timeout =
+        PollTimeout::try_from(screensaver_idle_time.duration()).unwrap_or(PollTimeout::NONE);
+      ShedPollTimeout::ScreenSaver(timeout, screensaver_cmd)
     }
-  };
-
-  (timeout, exec_if_timeout)
+  }
 }
 
 fn interactive_setup(args: &lifecycle::ShedArgs) -> ShResult<TermGuard> {
@@ -254,9 +272,8 @@ fn shed_loop_iter(
   {
     if let Errno::EINTR = errno {
       return Ok(LoopAction::Continue);
-    } else {
-      return Err(sherr!(CleanExit(1), "Failed to set raw mode: {e}"));
     }
+    return Err(sherr!(CleanExit(1), "Failed to set raw mode: {e}"));
   }
   exec_term!(
     TermCtl::SetAttr(BracketPaste(On)),
@@ -290,33 +307,40 @@ fn shed_loop_iter(
     return Ok(LoopAction::Break);
   }
 
-  let (timeout, exec_if_timeout) = get_poll_timeout(readline);
+  let timeout = get_poll_timeout(readline);
   Shed::term_mut(std::io::Write::flush)?;
 
-  match poll(poll_fds, timeout) {
+  match poll(poll_fds, &timeout) {
     Ok(0) => {
       // We timed out. Check if there's a screensaver command
-      if let Some(cmd) = exec_if_timeout
-        && readline.editor().is_empty()
-      {
-        // don't exec screensaver if we have a pending command
-        let prepared = ReadlineEvent::Line(cmd.clone());
-        let _guard = scopeguard::guard(shopt!(core.auto_hist), |opt| {
-          // restores old auto_hist value
-          shopt_mut!(core.auto_hist = opt);
-        });
-        shopt_mut!(core.auto_hist = false); // don't save screensaver command to history
-
-        autocmd!(OnScreensaverExec);
-        let res = {
-          defer!(autocmd!(OnScreensaverReturn));
-          handle_readline_event(readline, Ok(prepared))?
-        };
-
-        if res {
-          return Ok(LoopAction::Break);
+      match timeout {
+        ShedPollTimeout::Override(_) => {
+          // status message or something
+          // let's redraw
+          readline.mark_dirty();
         }
-        return Ok(LoopAction::Continue);
+        ShedPollTimeout::ScreenSaver(_, cmd) => {
+          // don't exec screensaver if we have a pending command
+          let prepared = ReadlineEvent::Line(cmd.clone());
+          let _guard = scopeguard::guard(shopt!(core.auto_hist), |opt| {
+            // restores old auto_hist value
+            shopt_mut!(core.auto_hist = opt);
+          });
+          shopt_mut!(core.auto_hist = false); // don't save screensaver command to history
+
+          autocmd!(OnScreensaverExec);
+          let res = {
+            defer!(autocmd!(OnScreensaverReturn));
+            handle_readline_event(readline, Ok(prepared))?
+          };
+
+          if res {
+            return Ok(LoopAction::Break);
+          }
+          return Ok(LoopAction::Continue);
+        }
+        ShedPollTimeout::Null | ShedPollTimeout::Zero | ShedPollTimeout::PendingKeymap => { /* do nothing */
+        }
       }
     }
     Err(Errno::EINTR) => {

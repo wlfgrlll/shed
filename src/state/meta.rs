@@ -432,7 +432,7 @@ impl PathTable {
     }
   }
   pub fn lookup(&self, cmd: &str) -> Option<&Path> {
-    self.index.get(cmd).map(|p| p.as_path())
+    self.index.get(cmd).map(PathBuf::as_path)
   }
   pub fn insert(&mut self, name: String, path: PathBuf) {
     self.index.insert(name, path);
