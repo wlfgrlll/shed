@@ -194,19 +194,6 @@ pub fn pos_is_escaped(slice: &str, pos: usize) -> bool {
   escaped
 }
 
-pub fn rfind_unescaped(slice: &str, pat: char) -> Option<usize> {
-  let mut last = None;
-  let mut chars = slice.char_indices();
-  while let Some((i, ch)) = chars.next() {
-    if ch == '\\' {
-      chars.next();
-    } else if ch == pat {
-      last = Some(i);
-    }
-  }
-  last
-}
-
 pub fn ends_with_unescaped(slice: &str, pat: &str) -> bool {
   slice.ends_with(pat) && !pos_is_escaped(slice, slice.len() - pat.len())
 }

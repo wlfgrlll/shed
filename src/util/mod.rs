@@ -32,7 +32,7 @@ pub(super) use error::{ShErr, ShErrKind, ShResult, ShResultExt, get_context};
 
 pub(super) use strops::{
   QuoteState, compile_glob, ends_with_unescaped, expand_ansi_c, format_mode, format_size,
-  format_time, has_unescaped, replace_posix_classes, rfind_unescaped, scan_param_exp, scan_parens,
+  format_time, has_unescaped, replace_posix_classes, scan_param_exp, scan_parens,
   split_at_unescaped, split_tk,
 };
 
