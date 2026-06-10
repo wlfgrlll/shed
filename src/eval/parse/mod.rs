@@ -337,10 +337,10 @@ impl ParseStream {
   }
   fn panic_mode(&mut self, span: &mut Option<Span>) {
     while let Some(tk) = self.next_tk() {
-      extend_span!(*span, tk.span);
       if tk.class == TkRule::Sep {
         break;
       }
+      extend_span!(*span, tk.span);
     }
   }
 }
