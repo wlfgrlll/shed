@@ -86,14 +86,15 @@ fn read_input() -> ShResult<String> {
 
 pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {
   let path = path.as_ref();
-  let path_raw = path.to_string_lossy().to_string();
+  let source_path = state::util::display_path(path);
+
   if !path.is_file() {
-    errln!("shed: Failed to open input file: {}", path.display());
+    errln!("shed: Failed to open input file: {source_path}");
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "input file not found",));
   }
   let Ok(input) = std::fs::read_to_string(path) else {
-    errln!("shed: Failed to read input file: {}", path.display());
+    errln!("shed: Failed to read input file: {source_path}");
     QUIT_CODE.store(1, Ordering::SeqCst);
     return Err(sherr!(CleanExit(1), "failed to read input file",));
   };
@@ -109,7 +110,7 @@ pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult
     }
   });
 
-  exec_nonint(input, Some(path_raw.into()))
+  exec_nonint(input, Some(source_path.into()))
 }
 
 #[cfg(test)]
