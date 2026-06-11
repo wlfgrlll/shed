@@ -109,6 +109,7 @@ pub enum Scroll {
   ///
   /// See [`SetRegion`].
   ResetRegion,
+  ResetRegionNoClear, // Same, without clearing the area outside the scroll region
 }
 
 impl Display for Scroll {
@@ -119,7 +120,7 @@ impl Display for Scroll {
       Scroll::Up(n) => write!(f, "\x1b[{n}S"),
       Scroll::Down(n) => write!(f, "\x1b[{n}T"),
       Scroll::SetRegion(top, bottom) => write!(f, "\x1b[{};{}r", (*top).max(1), (*bottom).max(1)),
-      Scroll::ResetRegion => write!(f, "\x1b[r"),
+      Scroll::ResetRegionNoClear | Scroll::ResetRegion => write!(f, "\x1b[r"),
       Scroll::InsertLines(n) => write!(f, "\x1b[{n}L"),
       Scroll::DeleteLines(n) => write!(f, "\x1b[{n}M"),
     }

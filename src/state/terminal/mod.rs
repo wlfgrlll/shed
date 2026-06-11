@@ -142,22 +142,21 @@ impl Terminal {
         self.scroll_region = ScrollRegionState::Set(*top, *bot);
         return Ok(());
       }
-      Ctl::Scroll(Scroll::ResetRegion) => {
+      Ctl::Scroll(reset @ (Scroll::ResetRegion | Scroll::ResetRegionNoClear)) => {
         if let ScrollRegionState::Set(_, bottom) = self.scroll_region {
           let max_row = self.t_rows as u16;
           self.with_saved_cursor(|this| {
-            for row in (bottom + 1)..=max_row {
-              this
-                .execute_control(&TermCtl::Cursor(CursorCtl::Absolute { row, col: 1 }))
-                .ok();
-              this
-                .execute_control(&TermCtl::Clear(ClearCtl::WholeLine))
-                .ok();
+            if matches!(reset, Scroll::ResetRegion) {
+              for row in (bottom + 1)..=max_row {
+                this
+                  .execute_control(&TermCtl::Cursor(CursorCtl::Absolute { row, col: 1 }))
+                  .ok();
+                this
+                  .execute_control(&TermCtl::Clear(ClearCtl::WholeLine))
+                  .ok();
+              }
             }
-            // Emit the bare reset directly — recursing into
-            // `execute_control(&Scroll::ResetRegion)` would re-enter this
-            // arm (scroll_region is still Set at this point) and spiral
-            // into infinite recursion.
+
             write!(this, "{}", TermCtl::Scroll(Scroll::ResetRegion)).ok();
           });
           self.scroll_region = ScrollRegionState::Unset;
@@ -476,11 +475,14 @@ impl Terminal {
     Snapshot::new(guard)
   }
 
-  pub fn yield_terminal(&mut self) -> TermGuard {
+  pub fn yield_terminal(&mut self, clear: bool) -> TermGuard {
     let guard = TermGuard::new().with_scroll_region(self.scroll_region);
-    self
-      .execute_control(&TermCtl::Scroll(Scroll::ResetRegion))
-      .ok();
+    let action = if clear {
+      Scroll::ResetRegion
+    } else {
+      Scroll::ResetRegionNoClear
+    };
+    self.execute_control(&TermCtl::Scroll(action)).ok();
     self.flush().ok(); // ensure the reset reaches the terminal before exec
     guard.activate()
   }
@@ -799,9 +801,7 @@ impl Terminal {
 
     if !keys.is_empty()
       && !shopt!(prompt.idle_timeout).is_zero()
-      && keys
-        .iter()
-        .any(|k| !matches!(k, KeyEvent(KeyCode::MousePos(_, _), _)))
+      && keys.iter().any(|k| k.code().is_keyboard_key())
     {
       // we received some input, so we reset this
       self.last_input = Some(Instant::now());

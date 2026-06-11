@@ -134,6 +134,10 @@ impl KeyEvent {
       seq
     }
   }
+
+  pub fn code(&self) -> &KeyCode {
+    &self.0
+  }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -168,6 +172,24 @@ pub enum KeyCode {
 
   // weird stuff
   ExMode, // keycode emitted by the <cmd> byte alias in vim keymaps
+}
+
+impl KeyCode {
+  pub fn is_keyboard_key(&self) -> bool {
+    !matches!(
+      self,
+      KeyCode::ScrollUp
+        | KeyCode::ScrollDown
+        | KeyCode::MousePos(_, _)
+        | KeyCode::LeftClick(_, _)
+        | KeyCode::RightClick(_, _)
+        | KeyCode::MiddleClick(_, _)
+        | KeyCode::Back
+        | KeyCode::Forward
+        | KeyCode::ExMode
+        | KeyCode::Verbatim(_)
+    )
+  }
 }
 
 bitflags::bitflags! {

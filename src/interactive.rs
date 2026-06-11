@@ -483,7 +483,7 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       Shed::meta_mut(MetaTab::start_timer);
 
-      if let LoopAction::Break = run_prompt_command(input.clone())? {
+      if let LoopAction::Break = run_prompt_command(input.clone(), true)? {
         return Ok(LoopAction::Break);
       }
 
@@ -554,17 +554,33 @@ fn handle_readline_event(
   }
 }
 
-fn run_prompt_command(input: String) -> ShResult<LoopAction> {
+fn run_prompt_command(input: String, clear_prompt: bool) -> ShResult<LoopAction> {
   exec_term!(TermCtl::Osc(ExecStart)).ok();
 
+  let position = (!clear_prompt)
+    .then(|| Shed::term_mut(Terminal::get_cursor_pos))
+    .transpose()?
+    .flatten();
+
   let res = {
-    let _scroll_guard = Shed::term_mut(Terminal::yield_terminal);
+    let _scroll_guard = Shed::term_mut(|t| t.yield_terminal(clear_prompt));
     exec_int(input, Some("<stdin>".into()))
   };
 
+  if let Some((row, col)) = position {
+    exec_term!(TermCtl::Cursor(CursorCtl::Absolute {
+      row: row.0 as u16,
+      col: col.0 as u16
+    }))
+    .ok();
+  }
+
   exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
 
-  Shed::term_mut(Terminal::fix_cursor_column)?;
+  if clear_prompt {
+    Shed::term_mut(Terminal::fix_cursor_column)?;
+  }
+
   if let Err(e) = res {
     match e.kind() {
       ShErrKind::Interrupt => {
