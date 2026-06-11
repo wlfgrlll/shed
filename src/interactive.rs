@@ -17,7 +17,11 @@ use smallvec::SmallVec;
 use crate::{
   exec_term,
   signal::FOCUS_GAINED,
-  state::{logic::AutoCmdKind, util::with_vars},
+  state::{
+    logic::AutoCmdKind,
+    terminal::{CursorCtl, TermCtl},
+    util::with_vars,
+  },
 };
 
 use super::{
@@ -336,7 +340,7 @@ fn shed_loop_iter(
           let saved_status = Shed::get_status();
           let idle_secs = Shed::term_mut(Terminal::last_input_elapsed).as_secs();
 
-          return with_vars(
+          let res = with_vars(
             [("IDLE_SECONDS".to_string(), idle_secs.to_string())],
             || -> ShResult<LoopAction> {
               scopeguard::defer! {
@@ -344,13 +348,16 @@ fn shed_loop_iter(
               }
 
               for cmd in cmds {
-                if let LoopAction::Break = run_prompt_command(cmd.command().to_string())? {
+                if let LoopAction::Break = run_prompt_command(cmd.command().to_string(), false)? {
                   return Ok(LoopAction::Break);
                 }
               }
               Ok(LoopAction::Continue)
             },
           );
+
+          readline.mark_dirty();
+          return res;
         }
         ShedPollTimeout::Null | ShedPollTimeout::Zero | ShedPollTimeout::PendingKeymap => { /* do nothing */
         }
