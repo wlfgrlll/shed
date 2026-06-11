@@ -17,11 +17,7 @@ use smallvec::SmallVec;
 use crate::{
   exec_term,
   signal::FOCUS_GAINED,
-  state::{
-    logic::AutoCmdKind,
-    terminal::{CursorCtl, TermCtl},
-    util::with_vars,
-  },
+  state::{logic::AutoCmdKind, terminal::CursorCtl, util::with_vars},
 };
 
 use super::{
@@ -486,6 +482,8 @@ fn handle_readline_event(
       if let LoopAction::Break = run_prompt_command(input.clone(), true)? {
         return Ok(LoopAction::Break);
       }
+
+      Shed::term_mut(Terminal::reset_last_input);
 
       let command_run_time = cmd_start.elapsed();
       log::info!("Command executed in {command_run_time:.2?}");

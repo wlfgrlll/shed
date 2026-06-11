@@ -38,8 +38,6 @@ use nix::{
   unistd::{Pid, getpgrp, isatty, tcsetpgrp, write},
 };
 
-use crate::keys::KeyCode;
-
 use super::{
   Pos, ShErr, ShErrKind, ShResult, Shed,
   keys::{self, KeyEvent},
@@ -288,6 +286,14 @@ impl Terminal {
       last_bell: None,
       last_input: None,
       test_mode: false,
+    }
+  }
+
+  pub fn reset_last_input(&mut self) {
+    if shopt!(prompt.idle_timeout).is_zero() {
+      self.last_input = None
+    } else {
+      self.last_input = Some(Instant::now());
     }
   }
 
