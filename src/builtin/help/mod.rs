@@ -15,9 +15,7 @@ use crate::state::meta::MetaTab;
 
 use super::{
   super::state::terminal::Terminal,
-  Shed,
-  eval::lex::Span,
-  expand,
+  Shed, expand,
   getopt::{Opt, OptSpec},
   key, keys, match_loop, outln, procio,
   readline::{self, ScoredCandidate},
@@ -64,11 +62,10 @@ impl super::Builtin for Help {
 
     // Join all of the word-split arguments into a single string
     // Preserve the span too
-    let (topic, span) = if arg_vec.peek().is_none() {
-      ("help/help.txt".to_string(), Span::default())
-    } else {
-      super::join_raw_arg_iter(arg_vec)
-    };
+    let topic = arg_vec
+      .peek()
+      .is_some()
+      .then(|| super::join_raw_arg_iter(arg_vec));
 
     if list_tags {
       let tags = get_all_tags()?;
@@ -78,6 +75,10 @@ impl super::Builtin for Help {
       }
       with_status(0)
     } else {
+      let Some((topic, span)) = topic else {
+        // no argument was given. open the index page
+        return open_help_index();
+      };
       match get_help_content(&topic) {
         Some((line, content, filename)) => open_help(&content, line, filename),
         None => Err(sherr!(
@@ -127,6 +128,14 @@ pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   }
 
   Ok(tags)
+}
+
+pub fn open_help_index() -> ShResult<()> {
+  let Some(content) = AutoloadHelp::load("help/help.txt") else {
+    return Err(sherr!(NotFound, "Help index page not found"));
+  };
+
+  open_help(&content, 0, Some("help/help.txt".to_string()))
 }
 
 pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> {
@@ -223,7 +232,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
     return with_status(0);
   }
   let Some(pager) = HelpPager::new(content, line, filename) else {
-    return Ok(()); // means stdout is not a terminal, so return
+    return with_status(0); // means stdout is not a terminal, so return
   };
 
   let mut page_stack = vec![pager];
@@ -231,7 +240,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
 
   // now we use the same input pattern as in main.rs
   let Some(tty) = Shed::term(|t| t.tty().map(|fd| fd.as_raw_fd())) else {
-    return Ok(()); // no tty, just return
+    return with_status(0); // no tty, just return
   };
   let tty_fd = PollFd::new(unsafe { BorrowedFd::borrow_raw(tty) }, PollFlags::POLLIN);
 
@@ -302,7 +311,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
     }
   }
 
-  Ok(())
+  with_status(0)
 }
 
 #[derive(Debug)]
