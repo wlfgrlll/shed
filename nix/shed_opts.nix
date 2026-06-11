@@ -1,553 +1,546 @@
-{ pkgs, lib }:
-
 {
+  pkgs,
+  lib,
+}: {
   enable = lib.mkEnableOption "shed shell";
 
-  package = lib.mkOption {
-    type = lib.types.package;
-    default = pkgs.shed;
-    description = "The shed package to use";
-  };
-
-  aliases = lib.mkOption {
-    type = lib.types.attrsOf lib.types.str;
-    default = {};
-    description = "Aliases to set when shed starts";
-  };
-
-  functions = lib.mkOption {
-    type = lib.types.attrsOf lib.types.str;
-    default = {};
-    description = "Shell functions to set when shed starts";
-  };
-
-  autocmds = lib.mkOption {
-    type = lib.types.listOf (lib.types.submodule {
-      options = {
-        hooks = lib.mkOption {
-          type = lib.types.addCheck (lib.types.listOf (lib.types.enum [
-            "pre-cmd"
-            "post-cmd"
-            "pre-change-dir"
-            "post-change-dir"
-            "on-job-finish"
-            "pre-prompt"
-            "post-prompt"
-            "pre-mode-change"
-            "post-mode-change"
-            "on-exit"
-            "on-history-open"
-            "on-history-close"
-            "on-history-select"
-            "on-completion-start"
-            "on-completion-cancel"
-            "on-completion-select"
-            "on-screensaver-exec"
-            "on-screensaver-return"
-            "on-time-report"
-          ])) (list: list != []);
-          description = "The events that trigger this autocmd";
-        };
-        command = lib.mkOption {
-          type = lib.types.addCheck lib.types.str (cmd: cmd != "");
-          description = "The shell command to execute when the hook is triggered and the pattern (if provided) matches";
-        };
-      };
-
-    });
-    default = [];
-    description = "Custom autocmds to set when shed starts";
-  };
-
-  keymaps = lib.mkOption {
-    type = lib.types.listOf (lib.types.submodule {
-      options = {
-        modes = lib.mkOption {
-          type = lib.types.listOf (lib.types.enum [ "n" "i" "x" "v" "o" "r" ]);
-          default = [];
-          description = "The editing modes this keymap can be used in";
-        };
-        keys = lib.mkOption {
-          type = lib.types.str;
-          default = "";
-          description = "The sequence of keys that trigger this keymap";
-        };
-        command = lib.mkOption {
-          type = lib.types.str;
-          default = "";
-          description = "The sequence of characters to send to the line editor when the keymap is triggered.";
-        };
-      };
-    });
-    default = [];
-    description = "Custom keymaps to set when shed starts";
-  };
-
-  extraCompletion = lib.mkOption {
-    type = lib.types.attrsOf (lib.types.submodule {
-      options = {
-        files = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete file names in the current directory";
-        };
-        dirs = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete directory names in the current directory";
-        };
-        commands = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete executable commands in the PATH";
-        };
-        variables = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete variable names";
-        };
-        users = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete user names from /etc/passwd";
-        };
-        jobs = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete job names or pids from the current shell session";
-        };
-        aliases = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete alias names defined in the current shell session";
-        };
-        signals = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Complete signal names for commands like kill";
-        };
-        wordList = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [];
-          description = "Complete from a custom list of words";
-        };
-        function = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = "Complete using a custom shell function (should be defined in extraCompletionPreConfig)";
-        };
-        noSpace = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Don't append a space after completion";
-        };
-        fallback = lib.mkOption {
-          type = lib.types.enum [ "no" "default" "dirnames" ];
-          default = "no";
-          description = "Fallback behavior when no matches are found: 'no' means no fallback, 'default' means fall back to the default shell completion behavior, and 'directories' means fall back to completing directory names";
-        };
-
-      };
-    });
-    default = {};
-    description = "Additional completion scripts to source when shed starts (e.g. for custom tools or functions)";
-  };
-
-  environmentVars = lib.mkOption {
-    type = lib.types.attrsOf lib.types.str;
-    default = {};
-    description = "Environment variables to set when shed starts";
-  };
-
-  shopts = lib.mkOption {
-    type = lib.types.submodule {
-      options = {
-        line = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              viewport_height = lib.mkOption {
-                type = lib.types.either lib.types.int lib.types.str;
-                default = "50%";
-                description = "Maximum viewport height for the line editor buffer";
-              };
-              scroll_offset = lib.mkOption {
-                type = lib.types.int;
-                default = 1;
-                description = "The minimum number of lines to keep visible above and below the cursor when scrolling (i.e. the 'scrolloff' option in vim)";
-              };
-              tab_width = lib.mkOption {
-                type = lib.types.int;
-                default = 4;
-                description = "The number of spaces a tab character represents in the line editor";
-              };
-              linebreak_on_incomplete = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to automatically insert a newline when the input is incomplete";
-              };
-              line_numbers = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to show line numbers in multiline input";
-              };
-              auto_indent = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to automatically indent new lines in multiline commands";
-              };
-              trim_on_submit = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "If enabled, trims leading/trailing whitespace on submitting a command";
-              };
-              auto_suggest = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to suggest commands from history as commands are typed";
-              };
-              clipboard_cmd = lib.mkOption {
-                type = lib.types.str;
-                default = "";
-                description = "A command to use when text is yanked into the '+' register";
-              };
-            };
-          };
-          default = {};
-          description = "Settings related to the line editor (i.e. the 'shopt line.*' options)";
-        };
-        core = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              dotglob = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to include hidden files in glob patterns";
-              };
-              nullglob = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to expand glob patterns that don't match any files to an empty list instead of leaving them unexpanded";
-              };
-              autocd = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to automatically change into directories when they are entered as commands";
-              };
-              hist_ignore_dupes = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to ignore duplicate entries in the command history";
-              };
-              max_hist = lib.mkOption {
-                type = lib.types.int;
-                default = 10000;
-                description = "The maximum number of entries to keep in the command history";
-              };
-              interactive_comments = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to allow comments in interactive mode";
-              };
-              auto_hist = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to automatically add commands to the history as they are executed";
-              };
-              bell_enabled = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to allow shed to ring the terminal bell on certain events (e.g. command completion, errors, etc.)";
-              };
-              max_recurse_depth = lib.mkOption {
-                type = lib.types.int;
-                default = 1000;
-                description = "The maximum depth to allow when recursively executing shell functions";
-              };
-              xpg_echo = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to have the 'echo' builtin expand escape sequences like \\n and \\t (if false, it will print them verbatim)";
-              };
-              bell_style = lib.mkOption {
-                type = lib.types.enum [ "audible" "visible" "both" ];
-                default = "audible";
-                description = "Whether the terminal bell is audible, visible, or both";
-              };
-            };
-          };
-          default = {};
-          description = "Core settings (i.e. the 'shopt core.*' options)";
-        };
-        set = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              hashall = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Remember the full path of commands to speed up command lookup";
-              };
-              vi = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Enable vi editing mode (currently the only editing mode)";
-              };
-              allexport = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Automatically export all variables that are assigned";
-              };
-              errexit = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Exit immediately if any command exits with a non-zero status (equivalent to set -e)";
-              };
-              noclobber = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Prevent '>' redirections from overwriting existing files (equivalent to set -C)";
-              };
-              monitor = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Run jobs in their own process groups and report status before the next prompt (equivalent to set -m)";
-              };
-              noglob = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Disable filename expansion (globbing) (equivalent to set -f)";
-              };
-              noexec = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Read commands but do not execute them; useful for syntax checking (equivalent to set -n)";
-              };
-              nolog = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Do not write function definitions to command history";
-              };
-              notify = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Print job status info asynchronously when jobs exit or are stopped (equivalent to set -b)";
-              };
-              nounset = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Treat expansion of unset variables as an error (equivalent to set -u)";
-              };
-              verbose = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Write shell input to stderr as it is read (equivalent to set -v)";
-              };
-              xtrace = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Write a trace for each command after expansion but before execution (equivalent to set -x)";
-              };
-              pipefail = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "A pipeline's exit status is the last non-zero status from any stage, instead of just the last stage's status (equivalent to set -o pipefail)";
-              };
-            };
-          };
-          default = {};
-          description = "POSIX set flags (i.e. the 'shopt set.*' options, equivalent to 'set -o')";
-        };
-        prompt = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              leader = lib.mkOption {
-                type = lib.types.str;
-                default = "<Space>";
-                description = "The leader key to use for custom keymaps (e.g. if set to '\\\\', then a keymap with keys='x' would be triggered by '\\x')";
-              };
-              expand_aliases = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to expand aliases in the prompt (i.e. whether to apply alias substitution to the command line before executing it)";
-              };
-              substitute = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to perform substitution (variable, command, etc.) after expanding prompt sequences";
-              };
-              trunc_prompt_path = lib.mkOption {
-                type = lib.types.int;
-                default = 4;
-                description = "The maximum number of path segments to show in the prompt";
-              };
-              comp_limit = lib.mkOption {
-                type = lib.types.int;
-                default = 1000;
-                description = "The maximum number of completion candidates to show before truncating the list";
-              };
-              screensaver_cmd = lib.mkOption {
-                type = lib.types.str;
-                default = "";
-                description = "A shell command to execute after a period of inactivity (i.e. a custom screensaver)";
-              };
-              screensaver_idle_time = lib.mkOption {
-                type = lib.types.int;
-                default = 0;
-                description = "The amount of inactivity time in seconds before the screensaver command is executed";
-              };
-              completion_ignore_case = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Whether to ignore case when completing commands and file names";
-              };
-              complete_style = lib.mkOption {
-                type = lib.types.enum [ "grid" "fuzzy" ];
-                default = "grid";
-                description = "Choose how completion candidates are presented";
-              };
-              hist_cat = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to enable the history concatenation feature. Ctrl/Shift+Up/Down joins sequential commands in history.";
-              };
-            };
-          };
-          default = {};
-          description = "Settings related to the prompt (i.e. the 'shopt prompt.*' options)";
-        };
-        statline = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              enable = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to enable the status line at the bottom of the terminal";
-              };
-              left_string = lib.mkOption {
-                type = lib.types.str;
-                default = "";
-                description = "Prompt-style template for the left-justified portion of the status line";
-              };
-              middle_string = lib.mkOption {
-                type = lib.types.str;
-                default = "";
-                description = "Prompt-style template for the centered portion of the status line";
-              };
-              right_string = lib.mkOption {
-                type = lib.types.str;
-                default = "";
-                description = "Prompt-style template for the right-justified portion of the status line";
-              };
-            };
-          };
-          default = {};
-          description = "Settings related to the status line (i.e. the 'shopt statline.*' options)";
-        };
-        highlight = lib.mkOption {
-          type = lib.types.submodule {
-            options = {
-              enable = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to enable syntax highlighting in the shell";
-              };
-              check_files = lib.mkOption {
-                type = lib.types.bool;
-                default = true;
-                description = "Whether to underline valid paths. Can be slow on network mounts.";
-              };
-              string = lib.mkOption {
-                type = lib.types.str;
-                default = "yellow";
-                description = "Style for string literals (single and double quoted)";
-              };
-              keyword = lib.mkOption {
-                type = lib.types.str;
-                default = "yellow";
-                description = "Style for shell keywords like 'if', 'while', 'for'";
-              };
-              external_command = lib.mkOption {
-                type = lib.types.str;
-                default = "green";
-                description = "Style for commands that exist in PATH, as functions, or as aliases";
-              };
-              function = lib.mkOption {
-                type = lib.types.str;
-                default = "green";
-                description = "Style for function";
-              };
-              alias = lib.mkOption {
-                type = lib.types.str;
-                default = "green";
-                description = "Style for shell commands";
-              };
-              directory = lib.mkOption {
-                type = lib.types.str;
-                default = "green";
-                description = "Style for directories, if autocd is enabled";
-              };
-              builtin = lib.mkOption {
-                type = lib.types.str;
-                default = "green";
-                description = "Style for builtin shell commands";
-              };
-              invalid_command = lib.mkOption {
-                type = lib.types.str;
-                default = "bold red";
-                description = "Style for commands that cannot be found";
-              };
-              control_flow_keyword = lib.mkOption {
-                type = lib.types.str;
-                default = "magenta";
-                description = "Style for control flow keywords like 'break', 'continue', 'return'";
-              };
-              argument = lib.mkOption {
-                type = lib.types.str;
-                default = "white";
-                description = "Style for command arguments";
-              };
-              argument_file = lib.mkOption {
-                type = lib.types.str;
-                default = "underline white";
-                description = "Style for arguments that refer to existing files";
-              };
-              variable = lib.mkOption {
-                type = lib.types.str;
-                default = "cyan";
-                description = ''Style for variable references like $VAR and ''${VAR}'';
-              };
-              operator = lib.mkOption {
-                type = lib.types.str;
-                default = "bold";
-                description = "Style for operators like pipes, redirections, && and ||";
-              };
-              comment = lib.mkOption {
-                type = lib.types.str;
-                default = "italic bright black";
-                description = "Style for comments";
-              };
-              glob = lib.mkOption {
-                type = lib.types.str;
-                default = "bright cyan";
-                description = "Style for glob characters like *, ?, and [...]";
-              };
-            };
-          };
-          default = {};
-          description = "Syntax highlighting color configuration. Values are style descriptions like 'bold green', 'italic bright cyan', '#ff5733', or 'bold red on white'.";
-        };
-      };
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.shed;
+      description = "The shed package to use";
     };
-    default = {};
-  };
 
-  extraPostConfig = lib.mkOption {
-    type = lib.types.str;
-    default = "";
-    description = "Additional configuration to append to the shed configuration file";
-  };
-  extraPreConfig = lib.mkOption {
-    type = lib.types.str;
-    default = "";
-    description = "Additional configuration to prepend to the shed configuration file";
-  };
+    aliases = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {};
+      description = "Aliases to set when shed starts";
+    };
+
+    functions = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {};
+      description = "Shell functions to set when shed starts";
+    };
+
+    autocmds = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          hooks = lib.mkOption {
+            type = lib.types.addCheck (lib.types.listOf (lib.types.enum [
+              "pre-cmd"
+              "post-cmd"
+              "pre-change-dir"
+              "post-change-dir"
+              "on-job-finish"
+              "pre-prompt"
+              "post-prompt"
+              "pre-mode-change"
+              "post-mode-change"
+              "on-exit"
+              "on-history-open"
+              "on-history-close"
+              "on-history-select"
+              "on-completion-start"
+              "on-completion-cancel"
+              "on-completion-select"
+              "on-idle-timeout"
+              "on-time-report"
+            ])) (list: list != []);
+            description = "The events that trigger this autocmd";
+          };
+          command = lib.mkOption {
+            type = lib.types.addCheck lib.types.str (cmd: cmd != "");
+            description = "The shell command to execute when the hook is triggered and the pattern (if provided) matches";
+          };
+        };
+      });
+      default = [];
+      description = "Custom autocmds to set when shed starts";
+    };
+
+    keymaps = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          modes = lib.mkOption {
+            type = lib.types.listOf (lib.types.enum ["n" "i" "x" "v" "o" "r"]);
+            default = [];
+            description = "The editing modes this keymap can be used in";
+          };
+          keys = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "The sequence of keys that trigger this keymap";
+          };
+          command = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "The sequence of characters to send to the line editor when the keymap is triggered.";
+          };
+        };
+      });
+      default = [];
+      description = "Custom keymaps to set when shed starts";
+    };
+
+    extraCompletion = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          files = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete file names in the current directory";
+          };
+          dirs = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete directory names in the current directory";
+          };
+          commands = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete executable commands in the PATH";
+          };
+          variables = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete variable names";
+          };
+          users = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete user names from /etc/passwd";
+          };
+          jobs = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete job names or pids from the current shell session";
+          };
+          aliases = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete alias names defined in the current shell session";
+          };
+          signals = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Complete signal names for commands like kill";
+          };
+          wordList = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [];
+            description = "Complete from a custom list of words";
+          };
+          function = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Complete using a custom shell function (should be defined in extraCompletionPreConfig)";
+          };
+          noSpace = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Don't append a space after completion";
+          };
+          fallback = lib.mkOption {
+            type = lib.types.enum ["no" "default" "dirnames"];
+            default = "no";
+            description = "Fallback behavior when no matches are found: 'no' means no fallback, 'default' means fall back to the default shell completion behavior, and 'directories' means fall back to completing directory names";
+          };
+        };
+      });
+      default = {};
+      description = "Additional completion scripts to source when shed starts (e.g. for custom tools or functions)";
+    };
+
+    environmentVars = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {};
+      description = "Environment variables to set when shed starts";
+    };
+
+    shopts = lib.mkOption {
+      type = lib.types.submodule {
+        options = {
+          line = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                viewport_height = lib.mkOption {
+                  type = lib.types.either lib.types.int lib.types.str;
+                  default = "50%";
+                  description = "Maximum viewport height for the line editor buffer";
+                };
+                scroll_offset = lib.mkOption {
+                  type = lib.types.int;
+                  default = 1;
+                  description = "The minimum number of lines to keep visible above and below the cursor when scrolling (i.e. the 'scrolloff' option in vim)";
+                };
+                tab_width = lib.mkOption {
+                  type = lib.types.int;
+                  default = 4;
+                  description = "The number of spaces a tab character represents in the line editor";
+                };
+                linebreak_on_incomplete = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to automatically insert a newline when the input is incomplete";
+                };
+                line_numbers = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to show line numbers in multiline input";
+                };
+                auto_indent = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to automatically indent new lines in multiline commands";
+                };
+                trim_on_submit = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "If enabled, trims leading/trailing whitespace on submitting a command";
+                };
+                auto_suggest = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to suggest commands from history as commands are typed";
+                };
+                clipboard_cmd = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "A command to use when text is yanked into the '+' register";
+                };
+              };
+            };
+            default = {};
+            description = "Settings related to the line editor (i.e. the 'shopt line.*' options)";
+          };
+          core = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                dotglob = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to include hidden files in glob patterns";
+                };
+                nullglob = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to expand glob patterns that don't match any files to an empty list instead of leaving them unexpanded";
+                };
+                autocd = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to automatically change into directories when they are entered as commands";
+                };
+                hist_ignore_dupes = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to ignore duplicate entries in the command history";
+                };
+                max_hist = lib.mkOption {
+                  type = lib.types.int;
+                  default = 10000;
+                  description = "The maximum number of entries to keep in the command history";
+                };
+                interactive_comments = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to allow comments in interactive mode";
+                };
+                auto_hist = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to automatically add commands to the history as they are executed";
+                };
+                bell_enabled = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to allow shed to ring the terminal bell on certain events (e.g. command completion, errors, etc.)";
+                };
+                max_recurse_depth = lib.mkOption {
+                  type = lib.types.int;
+                  default = 1000;
+                  description = "The maximum depth to allow when recursively executing shell functions";
+                };
+                xpg_echo = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to have the 'echo' builtin expand escape sequences like \\n and \\t (if false, it will print them verbatim)";
+                };
+                bell_style = lib.mkOption {
+                  type = lib.types.enum ["audible" "visible" "both"];
+                  default = "audible";
+                  description = "Whether the terminal bell is audible, visible, or both";
+                };
+              };
+            };
+            default = {};
+            description = "Core settings (i.e. the 'shopt core.*' options)";
+          };
+          set = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                hashall = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Remember the full path of commands to speed up command lookup";
+                };
+                vi = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Enable vi editing mode (currently the only editing mode)";
+                };
+                allexport = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Automatically export all variables that are assigned";
+                };
+                errexit = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Exit immediately if any command exits with a non-zero status (equivalent to set -e)";
+                };
+                noclobber = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Prevent '>' redirections from overwriting existing files (equivalent to set -C)";
+                };
+                monitor = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Run jobs in their own process groups and report status before the next prompt (equivalent to set -m)";
+                };
+                noglob = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Disable filename expansion (globbing) (equivalent to set -f)";
+                };
+                noexec = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Read commands but do not execute them; useful for syntax checking (equivalent to set -n)";
+                };
+                nolog = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Do not write function definitions to command history";
+                };
+                notify = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Print job status info asynchronously when jobs exit or are stopped (equivalent to set -b)";
+                };
+                nounset = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Treat expansion of unset variables as an error (equivalent to set -u)";
+                };
+                verbose = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Write shell input to stderr as it is read (equivalent to set -v)";
+                };
+                xtrace = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Write a trace for each command after expansion but before execution (equivalent to set -x)";
+                };
+                pipefail = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "A pipeline's exit status is the last non-zero status from any stage, instead of just the last stage's status (equivalent to set -o pipefail)";
+                };
+              };
+            };
+            default = {};
+            description = "POSIX set flags (i.e. the 'shopt set.*' options, equivalent to 'set -o')";
+          };
+          prompt = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                leader = lib.mkOption {
+                  type = lib.types.str;
+                  default = "<Space>";
+                  description = "The leader key to use for custom keymaps (e.g. if set to '\\\\', then a keymap with keys='x' would be triggered by '\\x')";
+                };
+                expand_aliases = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to expand aliases in the prompt (i.e. whether to apply alias substitution to the command line before executing it)";
+                };
+                substitute = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to perform substitution (variable, command, etc.) after expanding prompt sequences";
+                };
+                trunc_prompt_path = lib.mkOption {
+                  type = lib.types.int;
+                  default = 4;
+                  description = "The maximum number of path segments to show in the prompt";
+                };
+                comp_limit = lib.mkOption {
+                  type = lib.types.int;
+                  default = 1000;
+                  description = "The maximum number of completion candidates to show before truncating the list";
+                };
+                idle_timeout = lib.mkOption {
+                  type = lib.types.int;
+                  default = 0;
+                  description = "Idle seconds before firing on-idle-timeout autocmds (0 = disabled)";
+                };
+                completion_ignore_case = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Whether to ignore case when completing commands and file names";
+                };
+                complete_style = lib.mkOption {
+                  type = lib.types.enum ["grid" "fuzzy"];
+                  default = "grid";
+                  description = "Choose how completion candidates are presented";
+                };
+                hist_cat = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to enable the history concatenation feature. Ctrl/Shift+Up/Down joins sequential commands in history.";
+                };
+              };
+            };
+            default = {};
+            description = "Settings related to the prompt (i.e. the 'shopt prompt.*' options)";
+          };
+          statline = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                enable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to enable the status line at the bottom of the terminal";
+                };
+                left_string = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "Prompt-style template for the left-justified portion of the status line";
+                };
+                middle_string = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "Prompt-style template for the centered portion of the status line";
+                };
+                right_string = lib.mkOption {
+                  type = lib.types.str;
+                  default = "";
+                  description = "Prompt-style template for the right-justified portion of the status line";
+                };
+              };
+            };
+            default = {};
+            description = "Settings related to the status line (i.e. the 'shopt statline.*' options)";
+          };
+          highlight = lib.mkOption {
+            type = lib.types.submodule {
+              options = {
+                enable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to enable syntax highlighting in the shell";
+                };
+                check_files = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Whether to underline valid paths. Can be slow on network mounts.";
+                };
+                string = lib.mkOption {
+                  type = lib.types.str;
+                  default = "yellow";
+                  description = "Style for string literals (single and double quoted)";
+                };
+                keyword = lib.mkOption {
+                  type = lib.types.str;
+                  default = "yellow";
+                  description = "Style for shell keywords like 'if', 'while', 'for'";
+                };
+                external_command = lib.mkOption {
+                  type = lib.types.str;
+                  default = "green";
+                  description = "Style for commands that exist in PATH, as functions, or as aliases";
+                };
+                function = lib.mkOption {
+                  type = lib.types.str;
+                  default = "green";
+                  description = "Style for function";
+                };
+                alias = lib.mkOption {
+                  type = lib.types.str;
+                  default = "green";
+                  description = "Style for shell commands";
+                };
+                directory = lib.mkOption {
+                  type = lib.types.str;
+                  default = "green";
+                  description = "Style for directories, if autocd is enabled";
+                };
+                builtin = lib.mkOption {
+                  type = lib.types.str;
+                  default = "green";
+                  description = "Style for builtin shell commands";
+                };
+                invalid_command = lib.mkOption {
+                  type = lib.types.str;
+                  default = "bold red";
+                  description = "Style for commands that cannot be found";
+                };
+                control_flow_keyword = lib.mkOption {
+                  type = lib.types.str;
+                  default = "magenta";
+                  description = "Style for control flow keywords like 'break', 'continue', 'return'";
+                };
+                argument = lib.mkOption {
+                  type = lib.types.str;
+                  default = "white";
+                  description = "Style for command arguments";
+                };
+                argument_file = lib.mkOption {
+                  type = lib.types.str;
+                  default = "underline white";
+                  description = "Style for arguments that refer to existing files";
+                };
+                variable = lib.mkOption {
+                  type = lib.types.str;
+                  default = "cyan";
+                  description = ''Style for variable references like $VAR and ''${VAR}'';
+                };
+                operator = lib.mkOption {
+                  type = lib.types.str;
+                  default = "bold";
+                  description = "Style for operators like pipes, redirections, && and ||";
+                };
+                comment = lib.mkOption {
+                  type = lib.types.str;
+                  default = "italic bright black";
+                  description = "Style for comments";
+                };
+                glob = lib.mkOption {
+                  type = lib.types.str;
+                  default = "bright cyan";
+                  description = "Style for glob characters like *, ?, and [...]";
+                };
+              };
+            };
+            default = {};
+            description = "Syntax highlighting color configuration. Values are style descriptions like 'bold green', 'italic bright cyan', '#ff5733', or 'bold red on white'.";
+          };
+        };
+      };
+      default = {};
+    };
+
+    extraPostConfig = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Additional configuration to append to the shed configuration file";
+    };
+    extraPreConfig = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Additional configuration to prepend to the shed configuration file";
+    };
 }

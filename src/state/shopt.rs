@@ -1,8 +1,4 @@
-#![expect(
-  clippy::struct_excessive_bools,
-  clippy::trivially_copy_pass_by_ref,
-  clippy::doc_markdown
-)]
+#![expect(clippy::struct_excessive_bools, clippy::trivially_copy_pass_by_ref)]
 
 use std::{fmt::Display, str::FromStr, time::Duration};
 
@@ -481,13 +477,9 @@ pub(crate) struct ShOptPrompt {
   #[default("<Space>".to_string())]
   pub leader: String,
 
-  /// Command to execute as a screensaver after idle timeout
-  #[default(String::new())]
-  pub screensaver_cmd: String,
-
-  /// Idle time in seconds before running screensaver_cmd (0 = disabled)
+  /// Idle time in seconds before firing on-idle-timeout autocmds (0 = disabled)
   #[default(IdleTime::default())]
-  pub screensaver_idle_time: IdleTime,
+  pub idle_timeout: IdleTime,
 
   /// Choose how completion candidates are presented ('fuzzy' or 'grid')
   #[default(CompleteStyle::Grid)]

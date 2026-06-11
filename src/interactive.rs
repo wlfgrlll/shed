@@ -3,7 +3,7 @@ use std::{
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
   sync::{OnceLock, atomic::Ordering},
-  time::Instant,
+  time::{Duration, Instant},
 };
 
 use nix::{
@@ -12,17 +12,20 @@ use nix::{
   sys::stat::{FchmodatFlags, Mode, fchmodat},
   unistd::{Pid, getppid},
 };
-use scopeguard::defer;
 use smallvec::SmallVec;
 
-use crate::{exec_term, signal::FOCUS_GAINED};
+use crate::{
+  exec_term,
+  signal::FOCUS_GAINED,
+  state::{logic::AutoCmdKind, util::with_vars},
+};
 
 use super::{
   KeyEvent, KeyMapMatch, Prompt, ReadlineEvent, ShErrKind, ShResult, Shed, ShedLine, autocmd,
   errln,
   eval::execute::exec_int,
   lifecycle::{self, first_run_setup},
-  outln, sherr, shopt, shopt_mut,
+  outln, sherr, shopt,
   signal::{
     GOT_SIGUSR1, GOT_SIGWINCH, JOB_DONE, QUIT_CODE, check_signals, sig_setup, signals_pending,
   },
@@ -92,13 +95,13 @@ enum ShedPollTimeout {
   Zero,
   PendingKeymap,
   Override(PollTimeout),
-  ScreenSaver(PollTimeout, String),
+  IdleTimeout(PollTimeout),
 }
 
 impl From<&ShedPollTimeout> for PollTimeout {
   fn from(value: &ShedPollTimeout) -> Self {
     match value {
-      ShedPollTimeout::Override(poll_timeout) | ShedPollTimeout::ScreenSaver(poll_timeout, _) => {
+      ShedPollTimeout::Override(poll_timeout) | ShedPollTimeout::IdleTimeout(poll_timeout) => {
         *poll_timeout
       }
       ShedPollTimeout::Null => PollTimeout::NONE,
@@ -121,15 +124,20 @@ fn get_poll_timeout(readline: &mut ShedLine) -> ShedPollTimeout {
     // the status message.
     ShedPollTimeout::Override(timeout)
   } else {
-    let screensaver_cmd = shopt!(prompt.screensaver_cmd.clone()).trim().to_string();
-    let screensaver_idle_time = shopt!(prompt.screensaver_idle_time);
-    if screensaver_idle_time.is_zero() || screensaver_cmd.is_empty() {
-      // no screensaver stuff, set no timeout
+    let timeout = shopt!(prompt.idle_timeout);
+    if timeout.is_zero() {
       ShedPollTimeout::Null
     } else {
-      let timeout =
-        PollTimeout::try_from(screensaver_idle_time.duration()).unwrap_or(PollTimeout::NONE);
-      ShedPollTimeout::ScreenSaver(timeout, screensaver_cmd)
+      // instead of naively using the timeout given to us, lets compare it to the total time we've spent idle.
+      // if our timeout is 10 seconds, and we've spent 13 seconds idle, then in order to catch the next bus on time,
+      // we need a 7 second timeout.
+      let elapsed = Shed::term_mut(Terminal::last_input_elapsed);
+      let timeout = timeout.duration().saturating_sub(Duration::from_nanos(
+        (elapsed.as_nanos() % timeout.duration().as_nanos()) as u64,
+      ));
+
+      let poll_timeout = PollTimeout::try_from(timeout).unwrap_or(PollTimeout::NONE);
+      ShedPollTimeout::IdleTimeout(poll_timeout)
     }
   }
 }
@@ -312,32 +320,37 @@ fn shed_loop_iter(
 
   match poll(poll_fds, &timeout) {
     Ok(0) => {
-      // We timed out. Check if there's a screensaver command
+      // We timed out. Dispatch based on what kind of timeout fired.
       match timeout {
         ShedPollTimeout::Override(_) => {
           // status message or something
           // let's redraw
           readline.mark_dirty();
         }
-        ShedPollTimeout::ScreenSaver(_, cmd) => {
-          // don't exec screensaver if we have a pending command
-          let prepared = ReadlineEvent::Line(cmd.clone());
-          let _guard = scopeguard::guard(shopt!(core.auto_hist), |opt| {
-            // restores old auto_hist value
-            shopt_mut!(core.auto_hist = opt);
-          });
-          shopt_mut!(core.auto_hist = false); // don't save screensaver command to history
+        ShedPollTimeout::IdleTimeout(_) => {
+          // We have to scaffold the autocmd execution here manually
+          // instead of using `autocmd!`, because the macro executes non-interactively.
+          // IdleTimeout autocmds execute in an interactive context.
+          let cmds = Shed::logic(|l| l.get_autocmds(AutoCmdKind::OnIdleTimeout));
+          Shed::notify_autocmd(AutoCmdKind::OnIdleTimeout);
+          let saved_status = Shed::get_status();
+          let idle_secs = Shed::term_mut(Terminal::last_input_elapsed).as_secs();
 
-          autocmd!(OnScreensaverExec);
-          let res = {
-            defer!(autocmd!(OnScreensaverReturn));
-            handle_readline_event(readline, Ok(prepared))?
-          };
+          return with_vars(
+            [("IDLE_SECONDS".to_string(), idle_secs.to_string())],
+            || -> ShResult<LoopAction> {
+              scopeguard::defer! {
+                Shed::set_status(saved_status);
+              }
 
-          if res {
-            return Ok(LoopAction::Break);
-          }
-          return Ok(LoopAction::Continue);
+              for cmd in cmds {
+                if let LoopAction::Break = run_prompt_command(cmd.command().to_string())? {
+                  return Ok(LoopAction::Break);
+                }
+              }
+              Ok(LoopAction::Continue)
+            },
+          );
         }
         ShedPollTimeout::Null | ShedPollTimeout::Zero | ShedPollTimeout::PendingKeymap => { /* do nothing */
         }
@@ -396,7 +409,7 @@ fn shed_loop_iter(
     for (conn, req) in requests {
       let res = handle_socket_request(conn, req, readline).transpose();
       if let Some(event) = res
-        && handle_readline_event(readline, event)?
+        && let LoopAction::Break = handle_readline_event(readline, event)?
       {
         return Ok(LoopAction::Break);
       }
@@ -407,7 +420,7 @@ fn shed_loop_iter(
   let keys = Shed::term_mut(Terminal::drain_keys);
   let event = readline.process_input(keys);
 
-  if handle_readline_event(readline, event)? {
+  if let LoopAction::Break = handle_readline_event(readline, event)? {
     return Ok(LoopAction::Break);
   }
 
@@ -437,7 +450,7 @@ fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()>
   let mut queue: VecDeque<KeyEvent> = keys.into();
   while let Some(key) = queue.pop_front() {
     let event = readline.process_input(vec![key]);
-    if handle_readline_event(readline, event)? {
+    if let LoopAction::Break = handle_readline_event(readline, event)? {
       return Ok(());
     }
   }
@@ -451,7 +464,7 @@ fn run_script_keys(readline: &mut ShedLine, keys: Vec<KeyEvent>) -> ShResult<()>
 fn handle_readline_event(
   readline: &mut ShedLine,
   event: ShResult<ReadlineEvent>,
-) -> ShResult<bool> {
+) -> ShResult<LoopAction> {
   match event {
     Ok(ReadlineEvent::Line(input)) => {
       let token = shopt!(core.auto_hist)
@@ -463,35 +476,10 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       Shed::meta_mut(MetaTab::start_timer);
 
-      exec_term!(TermCtl::Osc(ExecStart)).ok();
-
-      let res = {
-        let _scroll_guard = Shed::term_mut(Terminal::yield_terminal);
-        exec_int(input.clone(), Some("<stdin>".into()))
-      };
-
-      exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
-
-      Shed::term_mut(Terminal::fix_cursor_column)?;
-      if let Err(e) = res {
-        match e.kind() {
-          ShErrKind::Interrupt => {
-            // We got Ctrl+C during command execution
-            // Just fall through here
-          }
-          ShErrKind::CleanExit(code) => {
-            QUIT_CODE.store(*code, Ordering::SeqCst);
-            return Ok(true);
-          }
-          ShErrKind::ErrInterrupt => {
-            // set -e exit path
-            QUIT_CODE.store(0, Ordering::SeqCst);
-            e.print_error();
-            return Ok(true);
-          }
-          _ => e.print_error(),
-        }
+      if let LoopAction::Break = run_prompt_command(input.clone())? {
+        return Ok(LoopAction::Break);
       }
+
       let command_run_time = cmd_start.elapsed();
       log::info!("Command executed in {command_run_time:.2?}");
       let runtime = Shed::meta_mut(MetaTab::stop_timer);
@@ -536,27 +524,60 @@ fn handle_readline_event(
       readline.reset(true)?;
 
       log::trace!("Readline event handled in {:.2?}", cmd_start.elapsed());
-      Ok(false)
+      Ok(LoopAction::Continue)
     }
     Ok(ReadlineEvent::Eof) => {
       // Ctrl+D on empty line
       QUIT_CODE.store(0, Ordering::SeqCst);
-      Ok(true)
+      Ok(LoopAction::Break)
     }
     Ok(ReadlineEvent::Pending) => {
       // No complete input yet, keep polling
-      Ok(false)
+      Ok(LoopAction::Continue)
     }
     Err(e) => {
       if let ShErrKind::CleanExit(code) = e.kind() {
         QUIT_CODE.store(*code, Ordering::SeqCst);
-        Ok(true)
+        Ok(LoopAction::Break)
       } else {
         e.print_error();
-        Ok(false)
+        Ok(LoopAction::Continue)
       }
     }
   }
+}
+
+fn run_prompt_command(input: String) -> ShResult<LoopAction> {
+  exec_term!(TermCtl::Osc(ExecStart)).ok();
+
+  let res = {
+    let _scroll_guard = Shed::term_mut(Terminal::yield_terminal);
+    exec_int(input, Some("<stdin>".into()))
+  };
+
+  exec_term!(TermCtl::Osc(ExecEnd(Shed::get_status()))).ok();
+
+  Shed::term_mut(Terminal::fix_cursor_column)?;
+  if let Err(e) = res {
+    match e.kind() {
+      ShErrKind::Interrupt => {
+        // We got Ctrl+C during command execution
+        // Just fall through here
+      }
+      ShErrKind::CleanExit(code) => {
+        QUIT_CODE.store(*code, Ordering::SeqCst);
+        return Ok(LoopAction::Break);
+      }
+      ShErrKind::ErrInterrupt => {
+        // set -e exit path
+        QUIT_CODE.store(0, Ordering::SeqCst);
+        e.print_error();
+        return Ok(LoopAction::Break);
+      }
+      _ => e.print_error(),
+    }
+  }
+  Ok(LoopAction::Continue)
 }
 
 fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
@@ -591,6 +612,8 @@ fn resolve_keymap(readline: &mut ShedLine) -> ShResult<()> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::shopt_mut;
+  use crate::state::logic::AutoCmd;
   use crate::tests::testutil::TestGuard;
   use crate::{keys::KeyMap, var};
 
@@ -739,6 +762,40 @@ mod tests {
   }
 
   #[test]
+  fn loop_iter_fires_idle_timeout_autocmd_with_idle_seconds_visible() {
+    let mut h = LoopHarness::emacs();
+
+    // Register an on-idle-timeout autocmd that captures IDLE_SECONDS into
+    // IDLE_FIRED. Asserting on IDLE_FIRED at the end proves both that the
+    // autocmd ran AND that $IDLE_SECONDS was visible to its command body
+    // (an empty value would indicate the variable wasn't exposed).
+    Shed::logic_mut(|l| {
+      l.clear_autocmds(AutoCmdKind::OnIdleTimeout);
+      l.insert_autocmd(AutoCmd::new(
+        AutoCmdKind::OnIdleTimeout,
+        "export IDLE_FIRED=$IDLE_SECONDS".into(),
+      ));
+    });
+
+    // 50ms — long enough for poll to wake on its own timeout, short enough
+    // to keep the test fast.
+    shopt_mut!(prompt.idle_timeout = 0.05.into());
+
+    let action = h.iterate().unwrap();
+    assert!(matches!(action, LoopAction::Continue));
+
+    // For a 50ms idle interval, as_secs() truncates to 0, so IDLE_SECONDS
+    // expands to "0". The non-empty check guards against the regression
+    // where the variable isn't set at all.
+    let fired = var!("IDLE_FIRED");
+    assert!(
+      !fired.is_empty(),
+      "expected IDLE_FIRED to be set by on-idle-timeout autocmd; got empty"
+    );
+    assert_eq!(fired, "0", "IDLE_SECONDS for a sub-second interval is 0");
+  }
+
+  #[test]
   fn loop_iter_buffers_partial_multi_key_keymap() {
     let mut h = LoopHarness::emacs();
     // Register "jk" → <esc>. After typing just "j", pending_keymap should
@@ -787,18 +844,6 @@ mod tests {
     h.g.close_tty_master();
     let action = h.iterate().unwrap();
     assert!(matches!(action, LoopAction::Break));
-  }
-
-  #[test]
-  fn loop_iter_runs_screensaver_after_idle_timeout() {
-    let mut h = LoopHarness::emacs();
-    // Set up the screensaver to fire after 1 second of idle time with a
-    // command that just toggles a variable so we can observe it ran.
-    shopt_mut!(prompt.screensaver_cmd = "export SCREENSAVER_FIRED=1".into());
-    shopt_mut!(prompt.screensaver_idle_time = 0.05.into()); // 50ms
-    let action = h.iterate().unwrap();
-    assert!(matches!(action, LoopAction::Continue));
-    assert_eq!(var!("SCREENSAVER_FIRED"), "1");
   }
 
   // ===================== resolve_keymap =====================
@@ -874,14 +919,14 @@ mod tests {
   fn handle_event_eof_returns_true() {
     let (mut readline, _g) = fresh_readline();
     let should_exit = handle_readline_event(&mut readline, Ok(ReadlineEvent::Eof)).unwrap();
-    assert!(should_exit);
+    assert!(matches!(should_exit, LoopAction::Break));
   }
 
   #[test]
   fn handle_event_pending_returns_false() {
     let (mut readline, _g) = fresh_readline();
     let should_exit = handle_readline_event(&mut readline, Ok(ReadlineEvent::Pending)).unwrap();
-    assert!(!should_exit);
+    assert!(matches!(should_exit, LoopAction::Continue));
   }
 
   #[test]
@@ -889,7 +934,7 @@ mod tests {
     let (mut readline, _g) = fresh_readline();
     let err = ShErr::new(ShErrKind::CleanExit(0), crate::eval::lex::Span::default());
     let should_exit = handle_readline_event(&mut readline, Err(err)).unwrap();
-    assert!(should_exit);
+    assert!(matches!(should_exit, LoopAction::Break));
   }
 
   #[test]
@@ -897,7 +942,7 @@ mod tests {
     let (mut readline, _g) = fresh_readline();
     let err = ShErr::new(ShErrKind::ParseErr, crate::eval::lex::Span::default());
     let should_exit = handle_readline_event(&mut readline, Err(err)).unwrap();
-    assert!(!should_exit);
+    assert!(matches!(should_exit, LoopAction::Continue));
   }
 
   #[test]
@@ -906,7 +951,7 @@ mod tests {
     // A trivial no-op command. Should execute and resume looping.
     let should_exit =
       handle_readline_event(&mut readline, Ok(ReadlineEvent::Line(":".into()))).unwrap();
-    assert!(!should_exit);
+    assert!(matches!(should_exit, LoopAction::Continue));
   }
 
   #[test]
@@ -914,7 +959,7 @@ mod tests {
     let (mut readline, _g) = fresh_readline();
     let should_exit =
       handle_readline_event(&mut readline, Ok(ReadlineEvent::Line(String::new()))).unwrap();
-    assert!(!should_exit);
+    assert!(matches!(should_exit, LoopAction::Continue));
   }
 
   // ===================== run_script_keys =====================

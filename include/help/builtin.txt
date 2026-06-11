@@ -219,8 +219,7 @@ AUTOCMD                                          *builtin-autocmd* *autocmd*
     `on-completion-start`   when tab completion starts
     `on-completion-cancel`  when tab completion is cancelled
     `on-completion-select`  when a completion candidate is selected
-    `on-screensaver-exec`   when the screensaver command starts
-    `on-screensaver-return` when the screensaver command exits
+    `on-idle-timeout`       when the prompt has been idle past `prompt.idle_timeout`
     `on-time-report`        when a timed command reports its duration
     `on-exit`               when the shell exits
 
@@ -1496,8 +1495,7 @@ SHOPT                                            *builtin-shopt* *shopt*
     `expand_aliases`          fish-style alias expansion on the prompt
     `hist_cat`                Shift+Up/Down history concatenation
     `leader`                  leader key sequence for keymap bindings
-    `screensaver_cmd`         command to run as screensaver
-    `screensaver_idle_time`   idle seconds before screensaver (0=off)
+    `idle_timeout`            idle seconds before firing `on-idle-timeout` autocmds (0=off)
     `substitute`              run var/cmd/arith expansion on PS1 after escapes
     `trunc_prompt_path`       max path segments in `\W` prompt escape
     `complete_style`          completion menu style (`grid` or `fuzzy`)

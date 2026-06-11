@@ -169,15 +169,37 @@ behavior without modifying the shell itself.
       Special variables:
         `$COMP_CANDIDATE`  the selected completion candidate
 
-  2.8 Screensaver Events                       *autocmd-screensaver-events*
+  2.8 Idle Timeout Event                       *autocmd-idle-timeout-events*
 
-  `on-screensaver-exec`                        *autocmd-on-screensaver-exec*
+  `on-idle-timeout`                            *autocmd-on-idle-timeout*
 
-      Fires when the screensaver activates after the idle timeout.
+      Fires when the prompt has been idle for at least
+      `prompt.idle_timeout` seconds. Useful for things like
+      automatically closing an inactive session, or registering
+      a screensaver.
 
-  `on-screensaver-return`                      *autocmd-on-screensaver-return*
+      Fires repeatedly at intervals of `prompt.idle_timeout` as
+      long as the prompt stays idle (not just once on the first
+      crossing). The next tick is aligned to the original cadence
+      even if a handler takes time to run, so observed values of
+      `$IDLE_SECONDS` are clean multiples of the configured timeout.
+      Ticks that fall during handler execution are skipped, not
+      queued.
 
-      Fires when the shell returns from the screensaver command.
+      Special variables:
+        `$IDLE_SECONDS`  whole seconds of idleness since the last
+                         keyboard input.
+
+      Example:
+
+          autocmd on-idle-timeout 'idle_handler'
+          idle_handler() {
+            if (( IDLE_SECONDS < 600 )); then
+              refresh_prompt
+            else
+              run_screensaver
+            fi
+          }
 
   2.9 Exit Event                               *autocmd-exit-event*
 

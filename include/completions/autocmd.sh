@@ -15,8 +15,7 @@ _autocmd_comp() {
 	"When starting tab completion"
 	"When closing completion menu"
 	"When choosing a completion candidate"
-	"When screensaver command is executed"
-	"After screensaver command finishes"
+	"When the prompt has been idle past prompt.idle_timeout"
 	"After timed command returns"
 	"When shell exits"
 	)
@@ -36,8 +35,7 @@ _autocmd_comp() {
 		on-completion-start
 		on-completion-cancel
 		on-completion-select
-		on-screensaver-exec
-		on-screensaver-return
+		on-idle-timeout
 		on-time-report
 		on-exit
 	)

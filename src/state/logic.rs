@@ -197,8 +197,7 @@ pub(crate) enum AutoCmdKind {
   OnCompletionStart,
   OnCompletionCancel,
   OnCompletionSelect,
-  OnScreensaverExec,
-  OnScreensaverReturn,
+  OnIdleTimeout,
   OnTimeReport,
   OnExit,
   OnCommandNotFound,
@@ -222,8 +221,7 @@ impl AutoCmdKind {
       Self::OnCompletionStart,
       Self::OnCompletionCancel,
       Self::OnCompletionSelect,
-      Self::OnScreensaverExec,
-      Self::OnScreensaverReturn,
+      Self::OnIdleTimeout,
       Self::OnTimeReport,
       Self::OnExit,
       Self::OnCommandNotFound,
@@ -248,8 +246,7 @@ crate::two_way_display!(AutoCmdKind,
   OnCompletionStart   <=> "on-completion-start";
   OnCompletionCancel  <=> "on-completion-cancel";
   OnCompletionSelect  <=> "on-completion-select";
-  OnScreensaverExec   <=> "on-screensaver-exec";
-  OnScreensaverReturn <=> "on-screensaver-return";
+  OnIdleTimeout       <=> "on-idle-timeout";
   OnTimeReport        <=> "on-time-report";
   OnExit              <=> "on-exit";
   OnCommandNotFound   <=> "on-command-not-found";

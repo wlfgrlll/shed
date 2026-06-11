@@ -85,8 +85,7 @@ _shopt_comp() {
       trunc_prompt_path
       comp_limit
       leader
-      screensaver_cmd
-      screensaver_idle_time
+      idle_timeout
       completion_ignore_case
       complete_style
       hist_cat
@@ -97,8 +96,7 @@ _shopt_comp() {
       "maximum number of path segments in the prompt's expanded CWD"
       "maximum number of completion candidates per tab press"
       "the key sequence that the <leader> key alias refers to"
-      "a command to execute after a certain period of inactivity"
-      "amount of time in seconds before screensaver_cmd is executed"
+      "idle seconds before firing on-idle-timeout autocmds (0=off)"
       "if enabled, tab completion ignores case when matching"
       "choose how completion candidates are presented ('fuzzy' or 'grid')"
       "enables joining history entries together using Ctrl/Shift+Up/Down"

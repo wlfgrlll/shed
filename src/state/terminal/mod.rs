@@ -38,6 +38,8 @@ use nix::{
   unistd::{Pid, getpgrp, isatty, tcsetpgrp, write},
 };
 
+use crate::keys::KeyCode;
+
 use super::{
   Pos, ShErr, ShErrKind, ShResult, Shed,
   keys::{self, KeyEvent},
@@ -109,6 +111,7 @@ pub(crate) struct Terminal {
   scroll_region: ScrollRegionState,
 
   last_bell: Option<Instant>,
+  last_input: Option<Instant>,
 
   /// When set, terminal-capability and cursor-position probes short-circuit
   /// instead of sending escape sequences and waiting for replies. Used by
@@ -284,7 +287,18 @@ impl Terminal {
       t_rows: rows as usize,
       scroll_region: ScrollRegionState::Unset,
       last_bell: None,
+      last_input: None,
       test_mode: false,
+    }
+  }
+
+  pub fn last_input_elapsed(&mut self) -> Duration {
+    match self.last_input {
+      Some(instant) => instant.elapsed(),
+      None => {
+        self.last_input = Some(Instant::now());
+        Duration::ZERO
+      }
     }
   }
 
@@ -782,6 +796,17 @@ impl Terminal {
     while let Some(key) = self.reader.readkey() {
       keys.push(key);
     }
+
+    if !keys.is_empty()
+      && !shopt!(prompt.idle_timeout).is_zero()
+      && keys
+        .iter()
+        .any(|k| !matches!(k, KeyEvent(KeyCode::MousePos(_, _), _)))
+    {
+      // we received some input, so we reset this
+      self.last_input = Some(Instant::now());
+    }
+
     keys
   }
 
