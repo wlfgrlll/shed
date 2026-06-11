@@ -55,6 +55,7 @@ const MISC_SIGNALS: &[Signal] = &[
   Signal::SIGQUIT,
   Signal::SIGFPE,
   Signal::SIGSEGV,
+  Signal::SIGUSR1,
   Signal::SIGUSR2,
   Signal::SIGPIPE,
   Signal::SIGCHLD,
