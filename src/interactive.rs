@@ -334,7 +334,9 @@ fn shed_loop_iter(
           let cmds = Shed::logic(|l| l.get_autocmds(AutoCmdKind::OnIdleTimeout));
           Shed::notify_autocmd(AutoCmdKind::OnIdleTimeout);
           let saved_status = Shed::get_status();
-          let idle_secs = Shed::term_mut(Terminal::last_input_elapsed).as_secs();
+          let idle_secs = Shed::term_mut(Terminal::last_input_elapsed)
+            .as_secs_f64()
+            .round() as u64;
 
           let res = with_vars(
             [("IDLE_SECONDS".to_string(), idle_secs.to_string())],
