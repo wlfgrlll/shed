@@ -167,14 +167,14 @@ impl HelpPager {
       if line_no < scroll || line_no >= scroll + height {
         continue;
       }
-      let screen_row = line_no - scroll; // 1-based terminal rows
+      let screen_row = line_no - scroll; // 0-based offset from top of viewport
       let line_start = c_ref.span().line_start(content_str);
 
       let (prefix_range, _, postfix_range) = c_ref.span().rel_to_line(content_str);
       let line_text = &content_str[line_start..];
 
       let col_start = calc_str_width(&line_text[..prefix_range.start]);
-      let col_end = calc_str_width(&line_text[..postfix_range.end]) + 1; //inclusive
+      let col_end = calc_str_width(&line_text[..postfix_range.end]);
 
       self.click_refs.push(ClickableRef {
         row: screen_row,
@@ -574,6 +574,7 @@ impl HelpPager {
   }
 
   fn handle_hover(&mut self, row: usize, col: usize) -> ShResult<PagerEvent> {
+    let (row, col) = (row.saturating_sub(1), col.saturating_sub(1));
     let new_hover = self.click_ref_from_pos(row, col).map(|cr| cr.ref_idx);
 
     if new_hover != self.hovered {
@@ -585,6 +586,7 @@ impl HelpPager {
   }
 
   fn handle_click(&mut self, row: usize, col: usize) -> PagerEvent {
+    let (row, col) = (row.saturating_sub(1), col.saturating_sub(1));
     if let Some(cr) = self
       .click_refs
       .iter()
