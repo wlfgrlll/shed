@@ -88,6 +88,7 @@ mod jobctl;
 mod keymap;
 mod msg;
 mod pwd;
+mod quote;
 mod read;
 mod resource;
 mod seek;
@@ -198,6 +199,7 @@ register_builtins! {
   "push"     => arrops::Push,
   "pushd"    => dirstack::PushDir,
   "pwd"      => pwd::Pwd,
+  "quote"    => quote::Quote,
   "raise"    => flowctl::Raise,
   "read"     => read::Read,
   "readkey"  => read::ReadKey,
@@ -218,6 +220,7 @@ register_builtins! {
   "ulimit"   => resource::ULimit,
   "umask"    => resource::UMask,
   "unalias"  => alias::Unalias,
+  "unquote"  => quote::Unquote,
   "unset"    => varcmds::Unset,
   "wait"     => jobctl::Wait,
 }
