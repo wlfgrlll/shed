@@ -1,10 +1,10 @@
 use crate::{
   autocmd,
-  builtin::SinkScope,
+  builtin::{self, SinkScope, StdinScope},
   eval::parse::{LabelCtx, node::node_has_only_builtins},
   shopt_mut,
   state::logic::AutoloadKind,
-  util::error::LabelBuilder,
+  util::{error::LabelBuilder, isolation_guard},
 };
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
@@ -389,7 +389,7 @@ impl Dispatcher {
     if is_func(&cmd_word) {
       self.exec_func(node)
     } else if cmd.flags.contains(TkFlags::BUILTIN) || BUILTIN_NAMES.contains(&cmd_word.as_str()) {
-      self.exec_builtin(node, None)
+      self.exec_builtin(node)
     } else if is_arith(cmd_tk) {
       Self::exec_arith(node)
     } else if Shed::shopts(|s| s.core.autocd) && in_cd_path(cmd.clone()) && !is_in_path(cmd.clone())
@@ -1102,6 +1102,11 @@ impl Dispatcher {
 
     let mut spans = vec![];
 
+    // True if the last stage will run inline rather than fork; its exit
+    // status lands in `Shed::get_status()` instead of `wait_fg`'s status
+    // vec, so we need to merge it back in after dispatch_job.
+    let last_is_lastpipe = num_cmds > 1 && !will_fork(&cmds[last]);
+
     let pipes = PipeGenerator::new(num_cmds);
     let cmds_and_pipes = cmds.into_iter().enumerate().zip(pipes);
 
@@ -1157,8 +1162,24 @@ impl Dispatcher {
       }
     }
 
+    // Capture the lastpipe stage's status before dispatch_job, since
+    // wait_fg will overwrite Shed::status with the last forked child's
+    // exit code (which isn't the real last stage).
+    let lastpipe_status = last_is_lastpipe.then(Shed::get_status);
+
     let job = self.job_stack.finalize_job().unwrap();
     let dispatch_result = dispatch_job(job, is_bg, Shed::term(Terminal::interactive));
+
+    if let Some(lp) = lastpipe_status {
+      let waited = Shed::get_status();
+      let merged = if shopt!(set.pipefail) && lp == 0 {
+        waited
+      } else {
+        lp
+      };
+      Shed::set_status(merged);
+    }
+
     result?;
     dispatch_result?;
 
@@ -1182,17 +1203,43 @@ impl Dispatcher {
     let mut prev = None;
     let num_cmds = cmds.len();
     let last = num_cmds.saturating_sub(1);
-    let mut spans = vec![];
+    let mut statuses = vec![];
+    let mut last_nonzero = None;
     let mut result = Ok(());
 
     for (i, cmd) in cmds.into_iter().enumerate() {
       let is_last = i == last;
-      let scope = (!is_last).then(SinkScope::new);
-      spans.push(cmd.get_span());
+      let out_scope = (!is_last).then(SinkScope::new);
+      let _in_scope = prev.take().map(StdinScope::push);
+      let span = cmd.span.clone();
 
-      result = self.exec_builtin(cmd, prev.take());
+      result = match &cmd.class {
+        NdRule::Command { .. } => self.exec_builtin(cmd),
+        NdRule::Subshell { body } => {
+          let _ceiling = isolation_guard(None);
 
-      if let Some(scope) = scope {
+          match self.dispatch_node(*body.clone()) {
+            Err(e) => {
+              if let ShErrKind::CleanExit(code) = e.kind() {
+                Shed::set_status(*code);
+                Ok(())
+              } else {
+                Err(e)
+              }
+            }
+            res => res,
+          }
+        }
+        _ => self.dispatch_node(cmd),
+      };
+
+      let status = Shed::get_status();
+      statuses.push(status.to_string());
+      if status != 0 {
+        last_nonzero = Some((status, span));
+      }
+
+      if let Some(scope) = out_scope {
         prev = Some(scope.take());
       }
 
@@ -1201,19 +1248,31 @@ impl Dispatcher {
       }
     }
 
-    result?;
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "PIPESTATUS",
+        VarKind::Arr(statuses.into()),
+        VarFlags::empty(),
+      )
+    })
+    .ok();
 
-    let blame_span = if shopt!(set.pipefail) {
-      pipefail_span(&spans).or(Some(span))
+    let blame_span = if shopt!(set.pipefail)
+      && let Some((code, pipefail)) = last_nonzero
+    {
+      Shed::set_status(code);
+      Some(pipefail)
     } else {
       Some(span)
     };
+
+    result?;
 
     check_err(flags, None, blame_span, ctx)?;
     Ok(())
   }
 
-  fn exec_builtin(&mut self, cmd: Node, stdin: Option<String>) -> ShResult<()> {
+  fn exec_builtin(&mut self, cmd: Node) -> ShResult<()> {
     let fork_builtins = cmd.flags.contains(NdFlags::FORK_BUILTINS);
     let cmd_raw = cmd
       .get_command()
@@ -1224,6 +1283,8 @@ impl Dispatcher {
       sherr!(NotFound @ cmd.get_span(), "builtin not found: {cmd_raw}").print_error();
       return with_status(127);
     };
+
+    let stdin = builtin::take_stdin();
 
     if fork_builtins {
       log::trace!("Forking builtin: {cmd_raw}");

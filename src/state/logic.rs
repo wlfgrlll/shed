@@ -202,12 +202,6 @@ impl ShFunc {
       )),
     }
   }
-  pub fn is_internal(&self) -> Option<IsInternal> {
-    match self {
-      Self::Defined { is_internal, .. } => *is_internal,
-      Self::Autoload(_) => None,
-    }
-  }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

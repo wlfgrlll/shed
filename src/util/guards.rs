@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use nix::sys::stat;
 use scopeguard::guard;
 
-use crate::{state, try_var, var};
+use crate::{try_var, var};
 
 use super::{
   super::state::scopes::ScopeStack,

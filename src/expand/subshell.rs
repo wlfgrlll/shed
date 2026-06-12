@@ -3,7 +3,7 @@ use std::os::fd::AsRawFd;
 use crate::{
   builtin::SinkScope,
   eval::{ParsedSrc, parse::node::node_has_only_builtins},
-  util::{cwd_guard, isolation_guard, scope_ceiling_guard},
+  util::isolation_guard,
 };
 
 use super::{

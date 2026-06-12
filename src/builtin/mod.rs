@@ -26,6 +26,7 @@ use super::{
 // pipelines nest inside command subs.
 thread_local! {
   pub(crate) static OUT_SINK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+  pub(crate) static IN_SINK: RefCell<Vec<Option<String>>> = const { RefCell::new(Vec::new()) };
 }
 
 fn install_out_sink() {
@@ -36,6 +37,10 @@ fn install_out_sink() {
 
 pub(crate) fn has_out_sink() -> bool {
   OUT_SINK.with(|s| s.borrow().last().is_some())
+}
+
+pub(crate) fn take_stdin() -> Option<String> {
+  IN_SINK.with(|s| s.borrow_mut().last_mut().and_then(|opt| opt.take()))
 }
 
 pub(crate) struct SinkScope {
@@ -62,6 +67,24 @@ impl Drop for SinkScope {
         .with(|s| s.borrow_mut().pop())
         .expect("SinkScope should have an out sink");
     }
+  }
+}
+
+pub(crate) struct StdinScope;
+impl StdinScope {
+  pub fn push(input: String) -> Self {
+    IN_SINK.with(|s| {
+      s.borrow_mut().push(Some(input));
+    });
+    Self
+  }
+}
+
+impl Drop for StdinScope {
+  fn drop(&mut self) {
+    IN_SINK
+      .with(|s| s.borrow_mut().pop())
+      .expect("StdinScope should have an in sink");
   }
 }
 

@@ -2,7 +2,7 @@ use std::{
   collections::{HashMap, VecDeque},
   ffi::CString,
   fmt::Write,
-  os::{fd::OwnedFd, unix::ffi::OsStrExt},
+  os::fd::OwnedFd,
   path::{Path, PathBuf},
   rc::Rc,
   time::{Duration, Instant},

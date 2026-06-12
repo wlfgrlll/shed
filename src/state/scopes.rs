@@ -1,7 +1,5 @@
 use std::collections::{HashMap, VecDeque, hash_map::Entry};
 
-use itertools::Itertools;
-
 use super::{
   ShResult, Shed,
   meta::MetaTab,
@@ -437,24 +435,6 @@ impl ScopeStack {
       }
     }
     Ok(String::new())
-  }
-
-  pub fn bounded_scopes(&self) -> impl Iterator<Item = &VarTab> {
-    let skip = self
-      .scopes
-      .iter()
-      .rposition(|s| s.is_ceiling())
-      .unwrap_or(0);
-    self.scopes.iter().skip(skip)
-  }
-
-  pub fn bounded_scopes_rev(&self) -> impl Iterator<Item = &VarTab> {
-    let skip = self
-      .scopes
-      .iter()
-      .rposition(|s| s.is_ceiling())
-      .unwrap_or(0);
-    self.scopes.iter().skip(skip).rev()
   }
 
   pub fn bounded_scopes_rev_mut(&mut self) -> impl Iterator<Item = &mut VarTab> {

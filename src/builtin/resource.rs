@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use nix::{
   libc::rlim_t,
   sys::{
