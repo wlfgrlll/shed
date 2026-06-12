@@ -25,6 +25,7 @@ Cross-reference links can also be `clicked` directly with the mouse.
   `help autocmd`      Autocmd hooks for shell events               |autocmd|
   `help builtin`      Builtin command reference                    |builtin|
   `help ex`           Ex mode (colon) commands                     |ex|
+  `help functions`    Bundled shell functions                      |functions|
   `help jobs`         Job control and background processes         |jobs|
   `help keybinds`     Vi mode keys, motions, text objects          |keybinds|
   `help prompt`       Prompt configuration, PS1, PSR, echo -p      |prompt|

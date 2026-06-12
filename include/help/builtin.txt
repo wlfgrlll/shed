@@ -40,6 +40,7 @@ The following builtins are available:
   `popd`        pop the directory stack                     |builtin-popd|
   `pushd`       push a directory onto the stack             |builtin-pushd|
   `pwd`         print the working directory                 |builtin-pwd|
+  `quote`       shell-quote arguments for round-tripping    |builtin-quote|
   `read`        read a line of input into a variable        |builtin-read|
   `readkey`     read a single keypress                      |builtin-readkey|
   `readonly`    mark variables as read-only                 |builtin-readonly|
@@ -61,6 +62,7 @@ The following builtins are available:
   `ulimit`      set process resource limits                 |builtin-ulimit|
   `umask`       set the file creation mask                  |builtin-umask|
   `unalias`     remove aliases                              |builtin-unalias|
+  `unquote`     decode shell-quoted input into fields       |builtin-unquote|
   `unset`       remove variables or functions               |builtin-unset|
   `wait`        wait for background jobs to finish          |builtin-wait|
 
@@ -1214,6 +1216,72 @@ PWD                                              *builtin-pwd* *pwd*
   `pwd`
 
   Print the absolute path of the current working directory.
+
+==============================================================================
+QUOTE                                            *builtin-quote* *quote*
+
+  `quote {arg...}`
+
+  Encode each argument as a shell-quoted string and print the results
+  joined by spaces. Output uses the minimal quoting needed for each
+  argument:
+
+    - plain identifiers (no whitespace, shell metacharacters, or
+      control characters) are emitted unchanged
+    - arguments containing whitespace or shell metacharacters are
+      emitted in single quotes (`'...'`), with embedded single quotes
+      escaped as `'\''`
+    - arguments containing control characters (newline, tab, etc.) are
+      emitted as ANSI-C strings (`$'...'`) with backslash escapes
+    - the empty string is emitted as `''`
+
+  All forms are bash-compatible, so the encoded output round-trips
+  losslessly through any byte-clean pipe. Paired with |unquote|, this
+  provides a pipeline-native serialization for shell data containing
+  whitespace, newlines, quotes, or other characters that would
+  otherwise be mangled by word-splitting or IFS expansion.
+
+  Examples:
+
+      `quote hello world`           outputs:  `hello world`
+      `quote "hello world"`         outputs:  `'hello world'`
+      `quote $'foo\nbar'`           outputs:  `$'foo\nbar'`
+      `quote "${arr[@]}"`           encode each array element
+
+      `quote "$(produce)" | filter | unquote`
+      `result=$(quote "${args[@]}")`
+      `eval "args=($result)"`       decode preserving structure
+
+  See also: |unquote|(builtin-unquote)
+
+==============================================================================
+UNQUOTE                                          *builtin-unquote* *unquote*
+
+  `unquote [-v {name} | -a {name}] [{input}]`
+
+  Decode shell-quoted input and emit the original fields. Input is
+  taken from standard input if anything is piped in, otherwise from
+  the command-line arguments joined by spaces.
+
+  With no target option, each decoded field is printed on its own line.
+  With `-v` or `-a`, fields are assigned to a variable instead.
+
+  Options:
+
+    `-v {name}`, `--var {name}`     join decoded fields with spaces and
+                                    assign to scalar variable {name}
+    `-a {name}`, `--array {name}`   assign decoded fields as an array
+                                    to {name}
+
+  Examples:
+
+      `quote $'foo\nbar' | unquote`             round-trip; prints `foo`, `bar`
+      `quote "${arr[@]}" | unquote -a out`      restore an array into $out
+      `quote "$msg" | unquote -v decoded`       decode into a scalar
+      `split : "$PATH" | unquote -a paths`      split `PATH`, preserving structure
+                                              even if some paths have spaces
+
+  See also: |quote|(builtin-quote)
 
 ==============================================================================
 READ                                             *builtin-read* *read*

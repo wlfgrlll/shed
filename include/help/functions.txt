@@ -1,0 +1,83 @@
+*functions* *bundled-functions* *shed-functions*
+
+#SHED FUNCTIONS#
+
+Shed ships with a set of shell functions written in shed's own
+scripting language. They complement the builtins (|builtin-commands|)
+and serve as library-style implementations of common operations.
+
+Bundled functions are autoloaded on first call. The body of any
+function can be inspected with `declare -f`:
+
+    `declare -f split`     show the implementation of `split`
+
+Reading these implementations can provide good examples of idiomatic
+shed scripting. They exercise quoting, error handling,
+parameter expansion, and shed-specific builtins like |quote| and
+|raise| in real, working code rather than synthetic examples.
+
+For the language reference on writing your own functions, see
+|script-functions|(script-functions).
+
+The following functions are bundled:
+
+  `logout`      exit a login shell                          |function-logout|
+  `split`       split a string by a pattern                 |function-split|
+  `version`     print the shed version                      |function-version|
+
+==============================================================================
+LOGOUT                                           *function-logout* *logout*
+
+  `logout`
+
+  Exit the current shell, but only if it's a login shell. Errors with
+  exit status 2 otherwise.
+
+  A shell is considered a login shell when its `$0` begins with `-`,
+  which is the convention by which a parent process indicates the
+  session was started as a login.
+
+  Examples:
+
+      `logout`           exit if this is a login shell
+
+==============================================================================
+SPLIT                                            *function-split* *split*
+
+  `split {pattern} {string}`
+
+  Split {string} on every occurrence of {pattern} and emit each part
+  through |quote|. The output is suitable for decoding with |unquote -a|(builtin-unquote),
+  which will protect fields from shell word splitting and expansion
+  by reading the fields directly into an array.
+
+  Trailing delimiters are stripped before splitting, so an empty
+  final field is never produced. An empty {string} produces no output.
+
+  Examples:
+
+      `split : "$PATH" | unquote -a paths`
+                                split `PATH` into `$paths`, preserving
+                                structure of paths containing whitespace
+
+      `split , "a,b,c" | unquote`
+                                prints `a`, `b`, `c` on three lines
+
+      `split "->" "x->y->z" | unquote -a chain`
+                                multi-character delimiter, into an array
+
+  See also: |quote|(builtin-quote), |unquote|(builtin-unquote)
+
+==============================================================================
+VERSION                                          *function-version* *version*
+
+  `version [-v]`
+
+  Print the shed version. Without options, prints the semantic version
+  (e.g. `0.28.1`). With `-v`, prints the full version triple including
+  architecture and operating system.
+
+  Examples:
+
+      `version`            outputs:  `0.28.1`
+      `version -v`         outputs:  `shed v0.28.1 (x86_64 linux)`
