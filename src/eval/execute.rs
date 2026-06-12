@@ -1214,7 +1214,6 @@ impl Dispatcher {
       let span = cmd.span.clone();
 
       result = match &cmd.class {
-        NdRule::Command { .. } => self.exec_builtin(cmd),
         NdRule::Subshell { body } => {
           let _ceiling = isolation_guard(None);
 
