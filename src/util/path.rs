@@ -1,4 +1,157 @@
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+  collections::HashMap,
+  os::unix::fs::PermissionsExt,
+  path::{Path, PathBuf},
+  time::SystemTime,
+};
+
+use crate::{ShResult, var};
+
+/// Caches the current state of a path-list-style env var (e.g. `$SHED_HPATH`)
+/// so consumers can cheaply detect when either the var's value or any of the
+/// referenced files have changed.
+///
+/// For directory entries in the var, both the directory's own mtime and every
+/// contained file's mtime are tracked. On refresh, the directory mtime is
+/// checked first: if it changed (entry add, remove, or rename), the directory
+/// is re-walked. If it didn't, only existing files' content mtimes are
+/// checked. The common "nothing changed" case costs one stat per directory
+/// plus one stat per cached file.
+pub(crate) struct PathCache {
+  name: String,
+  path_raw: String,
+  entries: HashMap<PathBuf, EntryCache>,
+}
+
+/// Cached state for one entry from the path list. Directory entries hold a
+/// directory mtime plus an mtime for each file directly inside. Subdirectories
+/// are not recursed into; the help system's HPATH layout is one level deep.
+enum EntryCache {
+  Dir {
+    dir_mtime: SystemTime,
+    files: HashMap<PathBuf, SystemTime>,
+  },
+  File(SystemTime),
+}
+
+fn mtime_of(path: &Path) -> SystemTime {
+  std::fs::metadata(path)
+    .and_then(|m| m.modified())
+    .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+fn collect_files_in_dir(path: &Path) -> HashMap<PathBuf, SystemTime> {
+  let mut files = HashMap::new();
+  if let Ok(read) = std::fs::read_dir(path) {
+    for entry in read.flatten() {
+      let p = entry.path();
+      let m = entry
+        .metadata()
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+      files.insert(p, m);
+    }
+  }
+  files
+}
+
+fn build_entry(path: &Path) -> EntryCache {
+  if path.is_dir() {
+    EntryCache::Dir {
+      dir_mtime: mtime_of(path),
+      files: collect_files_in_dir(path),
+    }
+  } else {
+    EntryCache::File(mtime_of(path))
+  }
+}
+
+impl PathCache {
+  pub fn new(name: String) -> Self {
+    let path_raw = var!(&name);
+    let entries = Self::build_entries(&path_raw);
+    Self {
+      name,
+      path_raw,
+      entries,
+    }
+  }
+
+  fn build_entries(path_raw: &str) -> HashMap<PathBuf, EntryCache> {
+    split_path_list(path_raw)
+      .map(|p| {
+        let entry = build_entry(&p);
+        (p, entry)
+      })
+      .collect()
+  }
+
+  /// Refreshes the cache against current disk state. Returns `true` if
+  /// anything changed (var content, any directory's contents, or any file's
+  /// mtime); `false` if everything is identical to the cached state.
+  pub fn update_cache(&mut self) -> bool {
+    let path_raw = var!(&self.name);
+    if path_raw != self.path_raw {
+      self.path_raw = path_raw;
+      self.entries = Self::build_entries(&self.path_raw);
+      return true;
+    }
+
+    let mut changed = false;
+    for (path, entry) in &mut self.entries {
+      let current_top_mtime = mtime_of(path);
+
+      match entry {
+        EntryCache::Dir { dir_mtime, files } => {
+          if current_top_mtime != *dir_mtime {
+            // dir mtime moved, so an entry was added, removed, or renamed.
+            // re-walk picks up fresh mtimes for every file at once, so we
+            // skip the per-file check below.
+            *dir_mtime = current_top_mtime;
+            *files = collect_files_in_dir(path);
+            changed = true;
+          } else {
+            for (file_path, file_mtime) in files.iter_mut() {
+              let current = mtime_of(file_path);
+              if current != *file_mtime {
+                *file_mtime = current;
+                changed = true;
+              }
+            }
+          }
+        }
+        EntryCache::File(mtime) => {
+          if current_top_mtime != *mtime {
+            *mtime = current_top_mtime;
+            changed = true;
+          }
+        }
+      }
+    }
+
+    changed
+  }
+
+  /// Iterates the paths to all currently-tracked files. Directory entries
+  /// yield every contained file; file entries yield the file itself.
+  pub fn files(&self) -> impl Iterator<Item = &Path> {
+    self
+      .entries
+      .values()
+      .flat_map(|entry| -> Box<dyn Iterator<Item = &Path>> {
+        match entry {
+          EntryCache::Dir { files, .. } => Box::new(files.keys().map(PathBuf::as_path)),
+          EntryCache::File(_) => Box::new(std::iter::empty()),
+        }
+      })
+      .chain(
+        self
+          .entries
+          .iter()
+          .filter_map(|(path, entry)| matches!(entry, EntryCache::File(_)).then(|| path.as_path())),
+      )
+  }
+}
 
 pub fn resolve_in_path(path_list: &str, cmd: &str) -> Option<PathBuf> {
   for dir in split_path_list(path_list) {

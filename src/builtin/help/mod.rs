@@ -6,6 +6,7 @@ use markup::StyledHelp;
 use pager::{HelpPager, PagerEvent};
 
 use std::{
+  cell::RefCell,
   collections::HashSet,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
@@ -43,6 +44,33 @@ impl AutoloadHelp {
 }
 
 pub const HELP_PAGE_INSTALL_DIR: Option<&str> = option_env!("SHED_HELP_DIR");
+
+thread_local! {
+  static TAG_CACHE: RefCell<Option<(util::PathCache, Vec<ScoredTag>)>> = const { RefCell::new(None) };
+}
+
+fn cached_tags<F: FnOnce() -> Vec<ScoredTag>>(build: F) -> Vec<ScoredTag> {
+  TAG_CACHE.with(|cache| {
+    let mut borrow = cache.borrow_mut();
+
+    let needs_rebuild = match borrow.as_mut() {
+      Some((path_cache, _)) => path_cache.update_cache(),
+      None => true,
+    };
+
+    if needs_rebuild {
+      let tags = build();
+      let path_cache = borrow
+        .take()
+        .map(|(pc, _)| pc)
+        .unwrap_or_else(|| util::PathCache::new("SHED_HPATH".to_string()));
+      *borrow = Some((path_cache, tags.clone()));
+      tags
+    } else {
+      borrow.as_ref().unwrap().1.clone()
+    }
+  })
+}
 
 pub(super) struct Help;
 impl super::Builtin for Help {
@@ -184,30 +212,29 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   }
 
   // No filename match, fall through to tag scoring across both sources.
-  let mut tags = vec![];
-  for entry in util::path_list_entries(&hpath) {
-    let path = entry.path();
-    if !path.is_file() {
-      continue;
+  let mut tags = cached_tags(|| {
+    let mut tags = vec![];
+    for entry in util::path_list_entries(&hpath) {
+      let path = entry.path();
+      if !path.is_file() {
+        continue;
+      }
+      tags.extend(read_tags_from_file(&path).ok().unwrap_or_default());
     }
-
-    let mut new_tags = read_tags_from_file(&path).ok()?;
-    score_matches(topic, &mut new_tags);
-    tags.append(&mut new_tags);
-  }
-  for page in AutoloadHelp::iter() {
-    if check_hpath_names(&hpath_names, &page) {
-      continue;
+    for page in AutoloadHelp::iter() {
+      if check_hpath_names(&hpath_names, &page) {
+        continue;
+      }
+      let Some(content) = AutoloadHelp::load(&page) else {
+        continue;
+      };
+      tags.extend(read_tags(&content, &page));
     }
-    let Some(content) = AutoloadHelp::load(&page) else {
-      continue;
-    };
-    let mut new_tags = read_tags(&content, &page);
-    score_matches(topic, &mut new_tags);
-    tags.append(&mut new_tags);
-  }
+    tags
+  });
 
-  tags.sort_by_key(ScoredTag::score);
+  score_matches(topic, &mut tags);
+  tags.sort_by_key(ScoredTag::get_score);
   log::debug!("tags: {tags:#?}");
   tags.last().and_then(|best| {
     let ScoredTag { tag: _, line, file } = best;
@@ -314,7 +341,7 @@ pub fn open_help(content: &str, line: usize, filename: Option<String>) -> ShResu
   with_status(0)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ScoredTag {
   tag: ScoredCandidate,
   line: usize,
@@ -332,7 +359,7 @@ impl ScoredTag {
   pub fn fuzzy_score(&mut self, topic: &str) {
     self.tag.fuzzy_score(topic);
   }
-  pub fn score(&self) -> i32 {
+  pub fn get_score(&self) -> i32 {
     self.tag.score.unwrap_or(i32::MIN)
   }
 }
@@ -342,7 +369,7 @@ pub fn score_matches(topic: &str, tags: &mut Vec<ScoredTag>) {
     tag.fuzzy_score(topic);
   }
 
-  tags.retain(|c| c.score() > i32::MIN);
+  tags.retain(|c| c.get_score() > i32::MIN);
 }
 
 pub fn read_tags_from_file(path: &Path) -> ShResult<Vec<ScoredTag>> {
