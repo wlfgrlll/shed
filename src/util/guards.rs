@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
+use nix::sys::stat;
 use scopeguard::guard;
+
+use crate::{state, try_var, var};
 
 use super::{
   super::state::scopes::ScopeStack,
@@ -29,6 +32,17 @@ fn guard_drop(_: ()) {
   Shed::vars_mut(ScopeStack::ascend);
 }
 
+pub fn isolation_guard(args: Option<Vec<(String, Span)>>) -> impl Drop {
+  let ceiling_guard = scope_ceiling_guard(args);
+  let cwd_guard = cwd_guard();
+  let umask_guard = umask_guard();
+  scopeguard::guard((), move |()| {
+    drop(ceiling_guard);
+    drop(cwd_guard);
+    drop(umask_guard);
+  })
+}
+
 /// Descend into a new variable scope, with a new argv that shadows the previous one.
 ///
 /// The `local` builtin uses this scope to store its variables.
@@ -37,6 +51,35 @@ pub fn scope_guard(args: Option<Vec<(String, Span)>>) -> impl Drop {
   let arg_vec = args.map(|a| a.into_iter().map(|(s, _)| s).collect::<Vec<_>>());
   Shed::vars_mut(|v| v.descend(arg_vec));
   guard((), guard_drop)
+}
+
+pub fn scope_ceiling_guard(args: Option<Vec<(String, Span)>>) -> impl Drop {
+  let arg_vec = args.map(|a| a.into_iter().map(|(s, _)| s).collect::<Vec<_>>());
+  Shed::vars_mut(|v| v.descend_with_ceiling(arg_vec));
+  guard((), guard_drop)
+}
+
+pub fn cwd_guard() -> impl Drop {
+  let saved = try_var!("PWD");
+  guard(saved, |saved| {
+    if let Some(cwd) = saved
+      && var!("PWD") != cwd
+    {
+      let _ = std::env::set_current_dir(cwd);
+    }
+  })
+}
+
+pub fn umask_guard() -> impl Drop {
+  let saved = try_var!("UMASK");
+  guard(saved, |saved| {
+    if let Some(umask) = saved
+      && var!("UMASK") != umask
+      && let Ok(bits) = u32::from_str_radix(&umask, 8)
+    {
+      let _ = stat::umask(stat::Mode::from_bits_truncate(bits));
+    }
+  })
 }
 
 /// Descend into a new variable scope, without using a new argv

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use nix::{
   libc::rlim_t,
   sys::{
@@ -6,7 +8,11 @@ use nix::{
   },
 };
 
-use crate::util::ShResultExt;
+use crate::{
+  Shed,
+  state::vars::{VarFlags, VarKind},
+  util::ShResultExt,
+};
 
 use super::{
   ShResult,
@@ -312,7 +318,7 @@ impl super::Builtin for UMask {
         // since the int size varies between Linux/MacOS
         let mode = Mode::from_bits(mode_raw as stat::mode_t)
           .ok_or_else(|| sherr!(ParseErr @ span.clone(), "invalid umask value: {raw}"))?;
-        umask(mode);
+        change_umask(mode.bits());
       } else {
         // Symbolic mode: umask u=rwx,g=rx,o=
         for part in raw.split(',') {
@@ -330,7 +336,7 @@ impl super::Builtin for UMask {
           };
           apply_symbolic(&mut old_bits, who, op, parse_rwx(bits), span)?;
         }
-        umask(Mode::from_bits_truncate(old_bits));
+        change_umask(old_bits);
       }
     } else if symbolic {
       let symbolic = format_symbolic(old_bits);
@@ -341,6 +347,18 @@ impl super::Builtin for UMask {
 
     with_status(0)
   }
+}
+
+fn change_umask(mask: u32) -> Mode {
+  Shed::vars_mut(|v| {
+    v.set_var(
+      "UMASK",
+      VarKind::Str(format!("{mask:04o}")),
+      VarFlags::EXPORT | VarFlags::READONLY,
+    )
+  })
+  .ok();
+  umask(Mode::from_bits_truncate(mask))
 }
 
 #[cfg(test)]

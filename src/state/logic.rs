@@ -101,10 +101,21 @@ impl AutoloadComps {
   }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IsInternal {
+  Yes,
+  No,
+  Checking,
+}
+
 /// A shell function
 #[derive(Clone, Debug)]
 pub enum ShFunc {
-  Defined { logic: Box<Node>, source: Span },
+  Defined {
+    logic: Box<Node>,
+    source: Span,
+    is_internal: Option<IsInternal>,
+  },
   Autoload(AutoloadSrc),
 }
 
@@ -144,6 +155,7 @@ impl ShFunc {
     Self::Defined {
       logic: Box::new(logic),
       source,
+      is_internal: None,
     }
   }
   #[allow(dead_code)]
@@ -177,6 +189,24 @@ impl ShFunc {
   #[allow(dead_code)]
   pub fn is_defined(&self) -> bool {
     matches!(self, Self::Defined { .. })
+  }
+  pub fn set_is_internal(&mut self, is_internal: IsInternal) -> ShResult<()> {
+    match self {
+      Self::Defined { is_internal: i, .. } => {
+        *i = Some(is_internal);
+        Ok(())
+      }
+      Self::Autoload(_) => Err(sherr!(
+        InternalErr,
+        "Cannot set is_internal on autoload function"
+      )),
+    }
+  }
+  pub fn is_internal(&self) -> Option<IsInternal> {
+    match self {
+      Self::Defined { is_internal, .. } => *is_internal,
+      Self::Autoload(_) => None,
+    }
   }
 }
 
@@ -379,8 +409,16 @@ impl LogTab {
       .cloned()
       .collect()
   }
+  pub fn invalidate_internal_cache(&mut self) {
+    for func in self.functions.values_mut() {
+      if let ShFunc::Defined { is_internal, .. } = func {
+        *is_internal = None;
+      }
+    }
+  }
   pub fn insert_func(&mut self, name: &str, src: ShFunc) {
     self.functions.insert(name.into(), src);
+    self.invalidate_internal_cache();
   }
   pub fn insert_trap(&mut self, target: TrapTarget, command: String) {
     self.traps.insert(target, command);
@@ -400,11 +438,19 @@ impl LogTab {
   pub fn get_func(&self, name: &str) -> Option<ShFunc> {
     self.functions.get(name).cloned()
   }
+  pub fn get_func_ref(&self, name: &str) -> Option<&ShFunc> {
+    self.functions.get(name)
+  }
+  pub fn get_func_mut(&mut self, name: &str) -> Option<&mut ShFunc> {
+    self.functions.get_mut(name)
+  }
   pub fn funcs(&self) -> &HashMap<String, ShFunc> {
     &self.functions
   }
-  pub fn remove_func(&mut self, name: &str) {
-    self.functions.remove(name);
+  pub fn remove_func(&mut self, name: &str) -> Option<ShFunc> {
+    let func = self.functions.remove(name);
+    self.invalidate_internal_cache();
+    func
   }
   pub fn take_comp_autoload(&mut self, name: &str) -> Option<AutoloadSrc> {
     self.comp_autoloads.remove(name)

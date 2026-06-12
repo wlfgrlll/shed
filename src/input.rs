@@ -1,9 +1,8 @@
 use std::{path::Path, sync::atomic::Ordering};
 
-use nix::{
-  errno::Errno,
-  unistd::{isatty, read},
-};
+use nix::unistd::isatty;
+
+use crate::procio::read_input;
 
 use super::{
   ShResult, Shed, errln,
@@ -64,24 +63,6 @@ pub(crate) fn read_commands(args: Vec<String>) -> ShResult<()> {
   });
 
   exec_nonint(commands, None)
-}
-
-fn read_input() -> ShResult<String> {
-  let mut input = vec![];
-  let mut read_buf = [0u8; 4096];
-  loop {
-    match read(procio::stdin_fileno(), &mut read_buf) {
-      Ok(0) => break,
-      Ok(n) => input.extend_from_slice(&read_buf[..n]),
-      Err(Errno::EINTR) => (),
-      Err(e) => {
-        QUIT_CODE.store(1, Ordering::SeqCst);
-        return Err(sherr!(CleanExit(1), "error reading from stdin: {e}",));
-      }
-    }
-  }
-
-  Ok(String::from_utf8_lossy(&input).to_string())
 }
 
 pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult<()> {

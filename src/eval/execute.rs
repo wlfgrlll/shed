@@ -1,4 +1,11 @@
-use crate::{autocmd, eval::parse::LabelCtx, shopt_mut, state::logic::AutoloadKind};
+use crate::{
+  autocmd,
+  builtin::SinkScope,
+  eval::parse::{LabelCtx, node::node_has_only_builtins},
+  shopt_mut,
+  state::logic::AutoloadKind,
+  util::error::LabelBuilder,
+};
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
 use crate::state::util::with_vars;
@@ -382,7 +389,7 @@ impl Dispatcher {
     if is_func(&cmd_word) {
       self.exec_func(node)
     } else if cmd.flags.contains(TkFlags::BUILTIN) || BUILTIN_NAMES.contains(&cmd_word.as_str()) {
-      self.exec_builtin(node)
+      self.exec_builtin(node, None)
     } else if is_arith(cmd_tk) {
       Self::exec_arith(node)
     } else if Shed::shopts(|s| s.core.autocd) && in_cd_path(cmd.clone()) && !is_in_path(cmd.clone())
@@ -1055,6 +1062,7 @@ impl Dispatcher {
       unreachable!()
     };
 
+    let has_redirs = !pipeline.redirs.is_empty();
     let is_bg = pipeline_flags.contains(NdFlags::BACKGROUND);
     let interactive = Shed::term(Terminal::interactive);
     let num_cmds = cmds.len();
@@ -1065,8 +1073,14 @@ impl Dispatcher {
     let should_fork_segment = |cmd: &Node| -> bool { is_bg && num_cmds == 1 && !will_fork(cmd) };
 
     if cmds.len() == 1 && !is_bg && runs_inline(&cmds[0]) {
+      // it's a single command. skip the I/O setup
       let cmd = cmds.remove(0);
       return self.exec_one(cmd, should_fork_segment, pipeline_flags);
+    }
+
+    if internal_pipeline(&cmds, is_bg, has_redirs) {
+      // All-builtin pipeline: dispatch in-process, no fork.
+      return self.exec_internal_pipeline(cmds, pipeline_span, pipeline_flags, pipeline_context);
     }
 
     let _cooked_guard = (!is_bg && interactive).then(|| Shed::term_mut(Terminal::prepare_for_exec));
@@ -1081,7 +1095,6 @@ impl Dispatcher {
     self.job_stack.new_job();
     self.fg_job = !is_bg && Shed::term(Terminal::interactive);
 
-    let has_redirs = !pipeline.redirs.is_empty();
     let redirs = RedirSet::from(pipeline.redirs);
 
     let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
@@ -1095,8 +1108,8 @@ impl Dispatcher {
     for ((i, mut cmd), (r, w)) in cmds_and_pipes {
       let has_redirs = has_redirs || (r.is_some() || w.is_some());
 
-      if num_cmds > 1 {
-        // builtins must fork in multi-command pipelines
+      if num_cmds > 1 && i != last {
+        // builtins must fork in the middle of multi-command pipelines
         cmd.flags |= NdFlags::FORK_BUILTINS;
       }
 
@@ -1159,7 +1172,48 @@ impl Dispatcher {
     Ok(())
   }
 
-  fn exec_builtin(&mut self, cmd: Node) -> ShResult<()> {
+  fn exec_internal_pipeline(
+    &mut self,
+    cmds: Vec<Node>,
+    span: Span,
+    flags: NdFlags,
+    ctx: VecDeque<LabelBuilder>,
+  ) -> ShResult<()> {
+    let mut prev = None;
+    let num_cmds = cmds.len();
+    let last = num_cmds.saturating_sub(1);
+    let mut spans = vec![];
+    let mut result = Ok(());
+
+    for (i, cmd) in cmds.into_iter().enumerate() {
+      let is_last = i == last;
+      let scope = (!is_last).then(SinkScope::new);
+      spans.push(cmd.get_span());
+
+      result = self.exec_builtin(cmd, prev.take());
+
+      if let Some(scope) = scope {
+        prev = Some(scope.take());
+      }
+
+      if result.is_err() {
+        break;
+      }
+    }
+
+    result?;
+
+    let blame_span = if shopt!(set.pipefail) {
+      pipefail_span(&spans).or(Some(span))
+    } else {
+      Some(span)
+    };
+
+    check_err(flags, None, blame_span, ctx)?;
+    Ok(())
+  }
+
+  fn exec_builtin(&mut self, cmd: Node, stdin: Option<String>) -> ShResult<()> {
     let fork_builtins = cmd.flags.contains(NdFlags::FORK_BUILTINS);
     let cmd_raw = cmd
       .get_command()
@@ -1174,12 +1228,12 @@ impl Dispatcher {
     if fork_builtins {
       log::trace!("Forking builtin: {cmd_raw}");
       self.run_fork(&cmd_raw, |s| {
-        if let Err(e) = builtin.setup_builtin(cmd, s) {
+        if let Err(e) = builtin.setup_builtin(cmd, s, stdin) {
           e.print_error();
         }
       })?;
       Ok(())
-    } else if let Err(e) = builtin.setup_builtin(cmd, self) {
+    } else if let Err(e) = builtin.setup_builtin(cmd, self, stdin) {
       let code = state::Shed::get_status();
       if code == 0 {
         state::Shed::set_status(1);
@@ -1590,12 +1644,30 @@ pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String,
   Ok(out)
 }
 
+pub fn is_func_node(cmd: &Node) -> bool {
+  cmd
+    .get_command()
+    .map(|cmd_word| is_func(cmd_word.as_str()))
+    .unwrap_or(false)
+}
+
 pub fn is_func(name: &str) -> bool {
   Shed::logic(|l| l.has_command_func(name))
 }
 
 pub fn is_arith(tk: Option<&Tk>) -> bool {
   tk.is_some_and(|tk| tk.flags.contains(TkFlags::IS_ARITH))
+}
+
+fn internal_pipeline(cmds: &[Node], is_bg: bool, has_redirs: bool) -> bool {
+  !is_bg && !has_redirs && node_has_only_builtins(cmds.to_vec())
+}
+
+pub(crate) fn is_builtin(cmd: &Node) -> bool {
+  cmd
+    .get_command()
+    .map(|cmd_word| !is_func(cmd_word.as_str()) && cmd_word.flags.contains(TkFlags::BUILTIN))
+    .unwrap_or(true) // empty argv: assignment-only command
 }
 
 /// Checks if a command will fork on its own or not

@@ -18,7 +18,10 @@ use std::{
 };
 
 use bitflags::bitflags;
-use nix::unistd::{Pid, User, gethostname, getppid, isatty};
+use nix::{
+  sys::stat,
+  unistd::{Pid, User, gethostname, getppid, isatty},
+};
 
 use super::{
   ShResult, Shed,
@@ -33,9 +36,6 @@ use super::{
   terminal::Terminal,
   util::get_separator,
 };
-
-/// a `std::sync::Once` that makes sure we only call `VarTab::init_env()` once.
-static ENV_INIT: std::sync::Once = std::sync::Once::new();
 
 /// Display key/value pairs as '{key}={value}\n'
 ///
@@ -637,6 +637,7 @@ pub(crate) struct VarTab {
   params: HashMap<ShellParam, String>,
   sh_argv: VecDeque<String>, /* Using a VecDeque makes the implementation of `shift` straightforward */
 
+  is_ceiling: bool,
   deferred_cmds: Vec<Node>,
 }
 
@@ -646,6 +647,7 @@ impl VarTab {
       vars: HashMap::new(),
       params: HashMap::new(),
       sh_argv: VecDeque::new(),
+      is_ceiling: false,
       deferred_cmds: Vec::new(),
     }
   }
@@ -656,11 +658,18 @@ impl VarTab {
       vars,
       params,
       sh_argv: VecDeque::new(),
+      is_ceiling: false,
       deferred_cmds: Vec::new(),
     };
     var_tab.init_sh_argv();
     var_tab.init_magic_vars();
     var_tab
+  }
+  pub fn set_is_ceiling(&mut self, is_ceiling: bool) {
+    self.is_ceiling = is_ceiling;
+  }
+  pub fn is_ceiling(&self) -> bool {
+    self.is_ceiling
   }
   fn init_params() -> HashMap<ShellParam, String> {
     let mut params = HashMap::new();
@@ -678,101 +687,99 @@ impl VarTab {
     vars
   }
   fn init_env() -> Vec<(String, Var)> {
-    // The closure below runs exactly one time.
-    // if we spawn any new threads, this won't happen again.
-    ENV_INIT.call_once(|| {
-      let pathbuf_to_string =
-        |pb: Result<PathBuf, std::io::Error>| pb.unwrap_or_default().to_string_lossy().to_string();
-      // First, inherit any env vars from the parent process
-      let term = {
-        if isatty(stdin_fileno()).unwrap_or_default() {
-          if let Ok(term) = std::env::var("TERM") {
-            term
-          } else {
-            "linux".to_string()
-          }
-        } else {
-          "xterm-256color".to_string()
+    let pathbuf_to_string =
+      |pb: Result<PathBuf, std::io::Error>| pb.unwrap_or_default().to_string_lossy().to_string();
+
+    let term = if isatty(stdin_fileno()).unwrap_or_default() {
+      std::env::var("TERM").unwrap_or_else(|_| "linux".to_string())
+    } else {
+      "xterm-256color".to_string()
+    };
+
+    let home_fallback;
+    let username_fallback;
+    let uid;
+    if let Some(user) = User::from_uid(nix::unistd::Uid::current()).ok().flatten() {
+      home_fallback = user.dir;
+      username_fallback = user.name;
+      uid = user.uid;
+    } else {
+      home_fallback = PathBuf::new();
+      username_fallback = "unknown".into();
+      uid = 0.into();
+    }
+    let home_fallback = pathbuf_to_string(Ok(home_fallback));
+    let hostname = gethostname()
+      .map(|hname| hname.to_string_lossy().to_string())
+      .unwrap_or_default();
+
+    // Inherit OS env. Subsequent steps either insert-if-missing (user-set
+    // vars like HOME/USER) or unconditionally override (shed-controlled
+    // vars like UID/PPID/PWD).
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+
+    // Insert-if-missing: prefer the inherited value, fall back otherwise.
+    env
+      .entry("HOME".into())
+      .or_insert_with(|| home_fallback.clone());
+    env
+      .entry("USER".into())
+      .or_insert_with(|| username_fallback.clone());
+    let resolved_home = env["HOME"].clone();
+    let resolved_user = env["USER"].clone();
+
+    let mut data_dir = env
+      .get("XDG_DATA_HOME")
+      .map(PathBuf::from)
+      .unwrap_or_else(|| PathBuf::from(format!("{resolved_home}/.local/share")));
+    data_dir.push("shed");
+    let shed_db = data_dir.join("shed_hist.db");
+
+    env.entry("TMPDIR".into()).or_insert_with(|| "/tmp".into());
+    env.entry("TERM".into()).or_insert_with(|| term);
+    env
+      .entry("LANG".into())
+      .or_insert_with(|| "en_US.UTF-8".into());
+    env.entry("LOGNAME".into()).or_insert(resolved_user);
+    env
+      .entry("SHELL".into())
+      .or_insert_with(|| pathbuf_to_string(std::env::current_exe()));
+    env
+      .entry("SHED_HISTDB".into())
+      .or_insert_with(|| shed_db.display().to_string());
+
+    // SHED_HPATH: prepend install_dir if it isn't already present.
+    if let Some(install_dir) = super::builtin::HELP_PAGE_INSTALL_DIR {
+      let new_hpath = match env.get("SHED_HPATH") {
+        Some(hpath) if !util::split_path_list(hpath).any(|p| p.as_os_str() == install_dir) => {
+          Some(format!("{install_dir}:{hpath}"))
         }
+        None => Some(install_dir.to_string()),
+        _ => None,
       };
-      let home_fallback;
-      let username_fallback;
-      let uid;
-      if let Some(user) = User::from_uid(nix::unistd::Uid::current()).ok().flatten() {
-        home_fallback = user.dir;
-        username_fallback = user.name;
-        uid = user.uid;
-      } else {
-        home_fallback = PathBuf::new();
-        username_fallback = "unknown".into();
-        uid = 0.into();
-      }
-      let home_fallback = pathbuf_to_string(Ok(home_fallback));
-      let hostname = gethostname()
-        .map(|hname| hname.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-      let resolve = |var: &str, fallback: &str| -> String {
-        let val = std::env::var(var).unwrap_or_else(|_| fallback.to_string());
-
-        unsafe { std::env::set_var(var, &val) };
-        val
-      };
-
-      let resolved_home = resolve("HOME", &home_fallback);
-      let resolved_user = resolve("USER", &username_fallback);
-
-      let mut data_dir = std::env::var("XDG_DATA_HOME").ok().map_or_else(
-        || PathBuf::from(format!("{resolved_home}/.local/share")),
-        PathBuf::from,
-      );
-      data_dir.push("shed");
-
-      let shed_db = data_dir.join("shed_hist.db");
-
-      resolve("TMPDIR", "/tmp");
-      resolve("TERM", &term);
-      resolve("LANG", "en_US.UTF-8");
-      resolve("LOGNAME", &resolved_user);
-      resolve("SHELL", &pathbuf_to_string(std::env::current_exe()));
-      resolve("SHED_HISTDB", &shed_db.display().to_string());
-
-      let set_var = |var: &str, val: &str| {
-        unsafe { std::env::set_var(var, val) };
-      };
-
-      if let Some(install_dir) = super::builtin::HELP_PAGE_INSTALL_DIR {
-        match std::env::var("SHED_HPATH").ok() {
-          Some(hpath) if !util::split_path_list(&hpath).any(|p| p.as_os_str() == install_dir) => {
-            set_var("SHED_HPATH", &format!("{install_dir}:{hpath}"));
-          }
-          None => set_var("SHED_HPATH", install_dir),
-
-          _ => { /* hpath is set, and our install path is in it. do nothing */ }
-        }
-      }
-
-      // PWD always set from getcwd()
-      let pwd = pathbuf_to_string(std::env::current_dir());
-      set_var("PWD", &pwd);
-
-      // OLDPWD inherited if set in parent env
-      if let Ok(old) = std::env::var("OLDPWD") {
-        set_var("OLDPWD", &old);
-      }
-
-      set_var("IFS", " \t\n");
-      set_var("UID", &uid.to_string());
-      set_var("PPID", &getppid().to_string());
-      set_var("HOST", &hostname.clone());
-    });
-
-    let mut vars = vec![];
-    for (key, val) in std::env::vars() {
-      if !vars.iter().any(|(k, _)| k == &key) {
-        vars.push((key, Var::env_var(&val)));
+      if let Some(hpath) = new_hpath {
+        env.insert("SHED_HPATH".into(), hpath);
       }
     }
+
+    // Unconditional overrides: shed-controlled values that should not
+    // honor an inherited (potentially spoofed) env entry.
+    env.insert("PWD".into(), pathbuf_to_string(std::env::current_dir()));
+    env.insert("IFS".into(), " \t\n".into());
+    env.insert("UID".into(), uid.to_string());
+    env.insert("PPID".into(), getppid().to_string());
+    env.insert("HOST".into(), hostname);
+
+    let mut vars: Vec<(String, Var)> = env
+      .into_iter()
+      .map(|(k, v)| (k, Var::env_var(&v)))
+      .collect();
+
+    let orig = stat::umask(stat::Mode::empty());
+    let umask = stat::umask(orig);
+    let mut umask_var = Var::env_var(&format!("{umask:04o}"));
+    umask_var.flags |= VarFlags::READONLY;
+    vars.push(("UMASK".to_string(), umask_var));
 
     vars
   }
@@ -848,7 +855,7 @@ impl VarTab {
   pub fn export_var(&mut self, var_name: &str) {
     if let Some(var) = self.vars.get_mut(var_name) {
       var.mark_for_export();
-      unsafe { std::env::set_var(var_name, var.to_string()) };
+      Shed::meta_mut(MetaTab::clear_envp);
     }
   }
   pub fn try_get_local(&self, var_name: &str) -> Option<String> {
@@ -875,7 +882,6 @@ impl VarTab {
       }
     }
     self.vars.remove(var_name);
-    unsafe { std::env::remove_var(var_name) };
     Ok(())
   }
   pub fn set_index(&mut self, var_name: &str, idx: ArrIndex, val: String) -> ShResult<()> {
@@ -953,14 +959,12 @@ impl VarTab {
         }
 
         Shed::meta_mut(MetaTab::clear_envp);
-        unsafe { std::env::set_var(var_name, var.kind.to_string()) };
       }
     } else {
       let mut var = Var::new(val, flags);
       if flags.contains(VarFlags::EXPORT) {
         Shed::meta_mut(MetaTab::clear_envp);
         var.mark_for_export();
-        unsafe { std::env::set_var(var_name, var.to_string()) };
       }
       self.vars.insert(var_name.to_string(), var);
     }

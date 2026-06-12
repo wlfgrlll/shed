@@ -15,8 +15,10 @@ use nix::{
     stat::Mode,
     wait::{WaitPidFlag as WtFlag, WaitStatus as WtStat, waitpid},
   },
-  unistd::{ForkResult, fork, write},
+  unistd::{ForkResult, fork, read, write},
 };
+
+use crate::{Shed, signal, state::terminal::Terminal};
 
 use super::{
   eval::{
@@ -787,6 +789,31 @@ pub(super) fn get_redir_file<P: AsRef<Path>>(class: RedirType, path: P) -> ShRes
     _ => unimplemented!("Unimplemented redir type: {:?}", class),
   };
   Ok(result?)
+}
+
+pub(super) fn read_input() -> ShResult<String> {
+  let _guard = Shed::term_mut(Terminal::prepare_for_exec);
+
+  let mut input = vec![];
+  let mut read_buf = [0u8; 4096];
+
+  loop {
+    match read(stdin_fileno(), &mut read_buf) {
+      Ok(0) => break,
+      Ok(n) => input.extend_from_slice(&read_buf[..n]),
+      Err(Errno::EINTR) => {
+        if signal::sigint_pending() {
+          state::Shed::set_status(130);
+          return Ok(String::new());
+        }
+      }
+      Err(e) => {
+        return Err(sherr!(InternalErr, "error reading from stdin: {e}"));
+      }
+    }
+  }
+
+  Ok(String::from_utf8_lossy(&input).to_string())
 }
 
 #[cfg(test)]

@@ -12,7 +12,9 @@ use std::os::fd::BorrowedFd;
 
 use super::{Shed, eval, expand, match_loop, procio, sherr, state, system_msg, var, write_term};
 
-pub(super) use guards::{scope_guard, shared_scope_guard, var_ctx_guard};
+pub(super) use guards::{
+  cwd_guard, isolation_guard, scope_ceiling_guard, scope_guard, shared_scope_guard, var_ctx_guard,
+};
 pub(super) use path::{
   PathCache, is_executable_file, path_list_entries, resolve_in_path, split_path_list,
 };

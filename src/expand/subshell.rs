@@ -1,5 +1,11 @@
 use std::os::fd::AsRawFd;
 
+use crate::{
+  builtin::SinkScope,
+  eval::{ParsedSrc, parse::node::node_has_only_builtins},
+  util::{cwd_guard, isolation_guard, scope_ceiling_guard},
+};
+
 use super::{
   super::state::terminal::Terminal,
   ShErrKind, ShResult, Shed,
@@ -67,11 +73,40 @@ pub fn expand_proc_sub(raw: &str, is_input: bool) -> ShResult<String> {
   }
 }
 
+pub fn is_internal(raw: &str) -> bool {
+  let mut parser = ParsedSrc::new(raw.into()).with_name("is_internal check".into());
+
+  if parser.parse_src().is_err() {
+    return false;
+  }
+
+  let ast = parser.extract_nodes();
+
+  node_has_only_builtins(ast)
+}
+
+pub fn internal_cmd_sub(raw: &str) -> ShResult<String> {
+  let sink_scope = SinkScope::new();
+  let _ceiling = isolation_guard(None);
+
+  log::debug!("internal_cmd_sub: executing internal command: {raw}");
+
+  if let Err(e) = exec_nonint(raw.into(), Some("command_sub".into())) {
+    e.print_error();
+  }
+
+  Ok(sink_scope.take().trim_end_matches('\n').to_string())
+}
+
 /// Get the command output of a given command input as a String
 pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
   if raw.starts_with('(') && raw.ends_with(')') {
     return expand_arithmetic_wrapped(raw);
   }
+  if is_internal(raw) {
+    return internal_cmd_sub(raw);
+  }
+
   let (rpipe, wpipe) = pipes_high()?;
 
   match unsafe { fork()? } {

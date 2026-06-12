@@ -1,7 +1,11 @@
 use std::collections::{HashMap, VecDeque, hash_map::Entry};
 
+use itertools::Itertools;
+
 use super::{
-  ShResult, sherr,
+  ShResult, Shed,
+  meta::MetaTab,
+  sherr,
   vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab},
 };
 
@@ -38,9 +42,24 @@ impl ScopeStack {
     self.scopes.push(new_vars);
     self.depth += 1;
   }
+  pub fn descend_with_ceiling(&mut self, argv: Option<Vec<String>>) {
+    self.descend(argv);
+    if let Some(scope) = self.scopes.last_mut() {
+      scope.set_is_ceiling(true);
+    }
+  }
   pub fn ascend(&mut self) {
     if self.depth >= 1 {
-      self.scopes.pop();
+      let popped = self.scopes.pop();
+      // Popped exports may have shadowed an outer binding; invalidate the
+      // envp cache so the next fork rebuilds from the remaining scopes.
+      if popped.is_some_and(|s| {
+        s.vars()
+          .values()
+          .any(|v| v.flags().contains(VarFlags::EXPORT))
+      }) {
+        Shed::meta_mut(MetaTab::clear_envp);
+      }
       self.depth -= 1;
     }
   }
@@ -54,7 +73,7 @@ impl ScopeStack {
     self.scopes.last_mut().unwrap()
   }
   pub fn sh_argv(&self) -> &VecDeque<String> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       let argv = scope.sh_argv();
       if !argv.is_empty() {
         return argv;
@@ -80,7 +99,7 @@ impl ScopeStack {
     self.scopes.get(idx).unwrap()
   }
   pub fn unset_var(&mut self, var_name: &str) -> ShResult<()> {
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         return scope.unset_var(var_name);
       }
@@ -88,7 +107,7 @@ impl ScopeStack {
     Err(sherr!(ExecFail, "Variable '{}' not found", var_name,))
   }
   pub fn export_var(&mut self, var_name: &str) {
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         scope.export_var(var_name);
         return;
@@ -96,7 +115,7 @@ impl ScopeStack {
     }
   }
   pub fn var_exists(&self, var_name: &str) -> bool {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name) {
         return true;
       }
@@ -127,7 +146,7 @@ impl ScopeStack {
     }
     // Dynamic scoping: walk scopes from innermost to outermost,
     // update the nearest scope that already has this variable
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         return scope.set_var(var_name, val, flags);
       }
@@ -144,7 +163,7 @@ impl ScopeStack {
   /// LOCAL flag would shadow the original in whatever scope happens to be
   /// current (e.g. a `for`-loop body).
   pub fn update_var(&mut self, var_name: &str, val: VarKind) -> ShResult<()> {
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         return scope.set_var(var_name, val, VarFlags::empty());
       }
@@ -156,12 +175,12 @@ impl ScopeStack {
   /// existing array, in the scope that owns the array. Falls back to
   /// creating in global scope if no binding exists.
   pub fn update_var_indexed(&mut self, var_name: &str, idx: ArrIndex, val: String) -> ShResult<()> {
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         return scope.set_index(var_name, idx, val);
       }
     }
-    let Some(scope) = self.scopes.first_mut() else {
+    let Some(scope) = self.ceiling_mut() else {
       return Ok(());
     };
     scope.set_index(var_name, idx, val)
@@ -180,19 +199,30 @@ impl ScopeStack {
       return scope.set_index(var_name, idx, val);
     }
     // Dynamic scoping: find nearest scope with this variable
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.bounded_scopes_rev_mut() {
       if scope.var_exists(var_name) {
         return scope.set_index(var_name, idx, val);
       }
     }
     // Not found - create in global scope
-    let Some(scope) = self.scopes.first_mut() else {
+    let Some(scope) = self.ceiling_mut() else {
       return Ok(());
     };
     scope.set_index(var_name, idx, val)
   }
+  /// Innermost ceiling scope, or `scopes[0]` if no ceiling exists.
+  /// Used as the fallback target for "create new var" writes so subshell
+  /// writes don't leak past the barrier.
+  fn ceiling_mut(&mut self) -> Option<&mut VarTab> {
+    let pos = self
+      .scopes
+      .iter()
+      .rposition(|s| s.is_ceiling())
+      .unwrap_or(0);
+    self.scopes.get_mut(pos)
+  }
   fn set_var_global(&mut self, var_name: &str, val: VarKind, flags: VarFlags) -> ShResult<()> {
-    let Some(scope) = self.scopes.first_mut() else {
+    let Some(scope) = self.ceiling_mut() else {
       return Ok(());
     };
     scope.set_var(var_name, val, flags)
@@ -204,7 +234,7 @@ impl ScopeStack {
     scope.set_var(var_name, val, flags)
   }
   pub fn try_get_arr_elems(&self, var_name: &str) -> ShResult<Vec<String>> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
@@ -224,7 +254,7 @@ impl ScopeStack {
     self.try_get_arr_elems(var_name).unwrap_or_default()
   }
   pub fn get_arr_mut(&mut self, var_name: &str) -> ShResult<&mut VecDeque<String>> {
-    for scope in self.scopes.iter_mut().rev() {
+    for scope in self.scopes_rev_mut() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars_mut().get_mut(var_name)
       {
@@ -250,7 +280,7 @@ impl ScopeStack {
     slice_start: Option<usize>,
     slice_len: Option<usize>,
   ) -> ShResult<String> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
@@ -365,7 +395,7 @@ impl ScopeStack {
   }
 
   pub fn get_array_keys(&self, var_name: &str, joined: bool) -> ShResult<String> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
@@ -409,12 +439,56 @@ impl ScopeStack {
     Ok(String::new())
   }
 
+  pub fn bounded_scopes(&self) -> impl Iterator<Item = &VarTab> {
+    let skip = self
+      .scopes
+      .iter()
+      .rposition(|s| s.is_ceiling())
+      .unwrap_or(0);
+    self.scopes.iter().skip(skip)
+  }
+
+  pub fn bounded_scopes_rev(&self) -> impl Iterator<Item = &VarTab> {
+    let skip = self
+      .scopes
+      .iter()
+      .rposition(|s| s.is_ceiling())
+      .unwrap_or(0);
+    self.scopes.iter().skip(skip).rev()
+  }
+
+  pub fn bounded_scopes_rev_mut(&mut self) -> impl Iterator<Item = &mut VarTab> {
+    let skip = self
+      .scopes
+      .iter()
+      .rposition(|s| s.is_ceiling())
+      .unwrap_or(0);
+    self.scopes.iter_mut().skip(skip).rev()
+  }
+
+  /// Reverse walk that ignores ceilings. Use for reads that should fall
+  /// through subshell barriers (e.g. `$HOME` inside `$(...)`); for writes
+  /// use `bounded_scopes_rev_mut` instead so subshell mutations stay local.
+  pub fn scopes_rev(&self) -> impl Iterator<Item = &VarTab> {
+    self.scopes.iter().rev()
+  }
+
+  pub fn scopes_rev_mut(&mut self) -> impl Iterator<Item = &mut VarTab> {
+    self.scopes.iter_mut().rev()
+  }
+
+  /// Forward walk (outermost to innermost). Use when emitting all scope
+  /// contents in shadowing order, e.g. building envp.
+  pub fn scopes_iter(&self) -> impl Iterator<Item = &VarTab> {
+    self.scopes.iter()
+  }
+
   pub fn try_get_var(&self, var_name: &str) -> Option<String> {
     if let Ok(param) = var_name.parse::<ShellParam>() {
       let val = self.get_param(param);
       return (!val.is_empty()).then_some(val);
     }
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if let Some(val) = scope.try_get_local(var_name) {
         return Some(val);
       }
@@ -443,7 +517,7 @@ impl ScopeStack {
     self.try_get_var_meta(var_name).unwrap_or_default()
   }
   pub fn try_get_var_meta(&self, var_name: &str) -> Option<Var> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name) {
         return scope.try_get_var_meta(var_name);
       }
@@ -452,7 +526,7 @@ impl ScopeStack {
   }
 
   pub fn try_get_var_kind(&self, var_name: &str) -> Option<VarKind> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
@@ -472,7 +546,7 @@ impl ScopeStack {
   }
   #[cfg(test)]
   pub fn get_var_flags(&self, var_name: &str) -> Option<VarFlags> {
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       if scope.var_exists(var_name) {
         return scope.get_var_flags(var_name);
       }
@@ -493,7 +567,7 @@ impl ScopeStack {
       let scope = self.sh_argv_scope();
       return scope.get_param(param);
     }
-    for scope in self.scopes.iter().rev() {
+    for scope in self.scopes_rev() {
       let val = scope.get_param(param);
       if !val.is_empty() {
         return val;

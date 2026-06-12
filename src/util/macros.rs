@@ -393,33 +393,46 @@ macro_rules! two_way_display {
 #[macro_export]
 macro_rules! outln {
   ($($arg:tt)*) => {{
-    use std::io::Write;
-    writeln!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*).ok();
+    $crate::_write_inner!(out, writeln, $crate::procio::stdout_fileno(), $($arg)*)
   }};
 }
-
-#[macro_export]
-macro_rules! errln {
-  ($($arg:tt)*) => {{
-    use std::io::Write;
-    writeln!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*).ok();
-  }};
-}
-
 #[macro_export]
 macro_rules! out {
   ($($arg:tt)*) => {{
-    use std::io::Write;
-    write!($crate::util::FdWriter($crate::procio::stdout_fileno()), $($arg)*).ok();
+    $crate::_write_inner!(out, write, $crate::procio::stdout_fileno(), $($arg)*)
   }};
 }
-
-/// Not to be confused with sherr!, which creates a `ShErr` struct for error handling, this macro writes directly to stderr, and is intended for printing error messages to the user.
+#[macro_export]
+macro_rules! errln {
+  ($($arg:tt)*) => {{
+    $crate::_write_inner!(err, writeln, $crate::procio::stderr_fileno(), $($arg)*)
+  }};
+}
 #[macro_export]
 macro_rules! err {
   ($($arg:tt)*) => {{
-    use std::io::Write;
-    write!($crate::util::FdWriter($crate::procio::stderr_fileno()), $($arg)*).ok();
+    $crate::_write_inner!(err, write, $crate::procio::stderr_fileno(), $($arg)*)
+  }};
+}
+
+#[macro_export]
+macro_rules! _write_inner {
+  (out, $macro:tt, $fd:expr, $($arg:tt)*) => {{
+    if $crate::builtin::has_out_sink() {
+      use std::fmt::Write;
+      $crate::builtin::OUT_SINK.with(|s| {
+        let mut borrow = s.borrow_mut();
+        let sink = borrow.last_mut().unwrap();
+        $macro!(sink, $($arg)*).ok();
+      })
+    } else {
+      use std::io::Write;
+      $macro!($crate::util::FdWriter($fd), $($arg)*).ok();
+    }
+  }};
+  (err, $macro:tt, $fd:expr, $($arg:tt)*) => {{
+    use ::std::io::Write;
+    $macro!($crate::util::FdWriter($fd), $($arg)*).ok();
   }};
 }
 

@@ -1,7 +1,7 @@
 use ariadne::Span as ASpan;
 use nix::unistd::Pid;
 use scopeguard::defer;
-use std::fmt::Write;
+use std::{cell::RefCell, fmt::Write};
 
 use crate::state::meta::UtilKind;
 
@@ -21,6 +21,49 @@ use super::{
   util::{self, ShErrKind, ShResult, var_ctx_guard, with_status},
   var,
 };
+
+// Stack of output sinks for in-process pipelines; the stack lets internal
+// pipelines nest inside command subs.
+thread_local! {
+  pub(crate) static OUT_SINK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn install_out_sink() {
+  OUT_SINK.with(|s| {
+    s.borrow_mut().push(String::new());
+  });
+}
+
+pub(crate) fn has_out_sink() -> bool {
+  OUT_SINK.with(|s| s.borrow().last().is_some())
+}
+
+pub(crate) struct SinkScope {
+  taken: bool,
+}
+impl SinkScope {
+  pub fn new() -> Self {
+    install_out_sink();
+    Self { taken: false }
+  }
+
+  pub fn take(mut self) -> String {
+    self.taken = true;
+    OUT_SINK
+      .with(|s| s.borrow_mut().pop())
+      .expect("SinkScope should have an out sink")
+  }
+}
+
+impl Drop for SinkScope {
+  fn drop(&mut self) {
+    if !self.taken {
+      OUT_SINK
+        .with(|s| s.borrow_mut().pop())
+        .expect("SinkScope should have an out sink");
+    }
+  }
+}
 
 mod alias;
 mod arrops;
@@ -224,7 +267,12 @@ pub(super) trait Builtin: Sync {
     Ok((argv, opts))
   }
   /// The main entry point for running a builtin. This is responsible for setting up the environment, handling redirections, and catching control flow errors.
-  fn setup_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
+  fn setup_builtin(
+    &self,
+    mut node: Node,
+    dispatcher: &mut Dispatcher,
+    stdin: Option<String>,
+  ) -> ShResult<()> {
     let cmd_raw = node.get_command().unwrap().to_string();
     let context = node.context.clone();
     let NdRule::Command { assignments, argv } = &mut node.class else {
@@ -280,7 +328,7 @@ pub(super) trait Builtin: Sync {
       guard.persist();
     }
 
-    let result = self.run_builtin(node, dispatcher);
+    let result = self.run_builtin(node, dispatcher, stdin);
 
     // Now we inspect the error that we got, if any
     match result {
@@ -316,7 +364,12 @@ pub(super) trait Builtin: Sync {
     }
   }
   /// Parse arguments and options, pack `BuiltinArgs`, run `self.execute()`
-  fn run_builtin(&self, node: Node, _dispatcher: &mut Dispatcher) -> ShResult<()> {
+  fn run_builtin(
+    &self,
+    node: Node,
+    _dispatcher: &mut Dispatcher,
+    stdin: Option<String>,
+  ) -> ShResult<()> {
     let span = node.get_span().clone();
     let no_split = node.flags.contains(NdFlags::NO_SPLIT);
     let NdRule::Command {
@@ -338,6 +391,7 @@ pub(super) trait Builtin: Sync {
       opts,
       span,
       cmd_span,
+      stdin,
     };
 
     self.execute(builtin_args)
@@ -346,12 +400,15 @@ pub(super) trait Builtin: Sync {
 
 /// The arguments for a builtin.
 ///
-/// Contains the argument vector (`argv`), the parsed options (`opts`), and the `span` of the entire command for error reporting.
+/// Contains the argument vector (`argv`), the parsed options (`opts`), the
+/// `span` of the entire command for error reporting, and `stdin` piped in
+/// from a previous builtin in an in-process pipeline.
 pub struct BuiltinArgs {
   argv: Vec<(String, Span)>,
   opts: Vec<Opt>,
   span: Span,     // the entire call
   cmd_span: Span, // just the command
+  stdin: Option<String>,
 }
 
 impl BuiltinArgs {
@@ -361,6 +418,12 @@ impl BuiltinArgs {
   }
   pub fn cmd_span(&self) -> Span {
     self.cmd_span.clone()
+  }
+  pub fn take_stdin(&mut self) -> Option<String> {
+    self.stdin.take()
+  }
+  pub fn has_stdin(&self) -> bool {
+    self.stdin.as_ref().is_some_and(|stdin| !stdin.is_empty())
   }
 }
 
@@ -421,7 +484,12 @@ impl Builtin for BuiltinBuiltin {
   fn execute(&self, _args: BuiltinArgs) -> ShResult<()> {
     unreachable!("this one operates on the node directly")
   }
-  fn setup_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
+  fn setup_builtin(
+    &self,
+    mut node: Node,
+    dispatcher: &mut Dispatcher,
+    stdin: Option<String>,
+  ) -> ShResult<()> {
     let span = node.get_span();
     let NdRule::Command {
       assignments: _,
@@ -442,7 +510,7 @@ impl Builtin for BuiltinBuiltin {
       return with_status(127);
     };
 
-    builtin.setup_builtin(node, dispatcher)
+    builtin.setup_builtin(node, dispatcher, stdin)
   }
 }
 
@@ -451,7 +519,12 @@ impl Builtin for CommandBuiltin {
   fn execute(&self, _args: BuiltinArgs) -> ShResult<()> {
     unreachable!("this one operates on the node directly")
   }
-  fn run_builtin(&self, mut node: Node, dispatcher: &mut Dispatcher) -> ShResult<()> {
+  fn run_builtin(
+    &self,
+    mut node: Node,
+    dispatcher: &mut Dispatcher,
+    _stdin: Option<String>,
+  ) -> ShResult<()> {
     let NdRule::Command {
       assignments: _,
       ref mut argv,

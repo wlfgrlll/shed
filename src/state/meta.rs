@@ -834,13 +834,29 @@ impl MetaTab {
       return Rc::clone(envp);
     }
 
-    let envp: Vec<CString> = std::env::vars_os()
+    // Walk scopes outermost-to-innermost so inner bindings shadow outer
+    // ones in the flat map. Libc env is not consulted, so shell writes
+    // outside this builder can't desync the env children inherit.
+    let mut flat: HashMap<String, String> = HashMap::new();
+    Shed::vars(|v| {
+      for scope in v.scopes_iter() {
+        for (name, var) in scope.vars() {
+          if var.flags().contains(super::vars::VarFlags::EXPORT)
+            && let super::vars::VarKind::Str(s) = var.kind()
+          {
+            flat.insert(name.clone(), s.clone());
+          }
+        }
+      }
+    });
+
+    let envp: Vec<CString> = flat
+      .into_iter()
       .map(|(k, v)| {
         let mut bytes = Vec::with_capacity(k.len() + v.len() + 2);
         bytes.extend_from_slice(k.as_bytes());
         bytes.push(b'=');
         bytes.extend_from_slice(v.as_bytes());
-
         unsafe { CString::from_vec_unchecked(bytes) }
       })
       .collect();
