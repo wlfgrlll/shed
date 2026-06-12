@@ -203,6 +203,17 @@ fn extract_ref_targets(source: &str) -> Vec<Option<String>> {
     }
     '"' => qt_state.toggle_double(),
     '\'' => qt_state.toggle_single(),
+    '`' => {
+      while let Some(inner) = chars.next() {
+        if inner == '\\' {
+          chars.next();
+          continue;
+        }
+        if inner == '`' {
+          break;
+        }
+      }
+    }
     _ if qt_state.in_quote() => {}
     '|' if chars.peek().is_some_and(|c| !c.is_whitespace()) => {
       // find the closer
@@ -441,6 +452,33 @@ mod tests {
   #[test]
   fn invariant_literal_pipes_dont_count() {
     ref_count_invariant("a | b, then |real| and \"|quoted|\"");
+  }
+
+  #[test]
+  fn extract_pipe_inside_backticks_is_literal() {
+    // `||` inside backticks is shell syntax, not a link opener.
+    assert_eq!(extract_ref_targets("`foo || bar`"), vec![]);
+  }
+
+  #[test]
+  fn extract_backticks_dont_swallow_following_links() {
+    // The link AFTER the code span should still parse correctly.
+    assert_eq!(
+      extract_ref_targets("`a | b` then |real|(real-tag)"),
+      vec![Some("real-tag".into())]
+    );
+  }
+
+  #[test]
+  fn extract_backtick_escape_does_not_close_early() {
+    assert_eq!(extract_ref_targets("`a \\` b | c` |real|"), vec![None]);
+  }
+
+  #[test]
+  fn invariant_pipes_inside_backticks() {
+    ref_count_invariant("`shell || syntax` and |real|");
+    ref_count_invariant("`a | b | c` then |t|(target)");
+    ref_count_invariant("`|inline pipes|` and |outside|");
   }
 
   // ─── strip_sgr / visible-to-baked map ────────────────────────────
