@@ -457,8 +457,14 @@ impl ShErr {
       self.default_write(fd);
     }
   }
-  pub fn print_error(&self) {
-    self.print_error_internal(&mut FdWriter(stderr_fileno()));
+  pub fn print_error(self) {
+    let error = if shopt!(core.compact_errors) {
+      self.collapse_context()
+    } else {
+      self
+    };
+
+    error.print_error_internal(&mut FdWriter(stderr_fileno()));
   }
 }
 

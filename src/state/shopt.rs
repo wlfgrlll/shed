@@ -382,6 +382,10 @@ pub(crate) struct ShOptCore {
   #[validate(validate_bell_style)]
   #[default("audible".to_string())]
   pub bell_style: String,
+
+  /// Collapses error reporting stack traces
+  #[default(false)]
+  pub compact_errors: bool,
 }
 
 fn validate_leader(v: &String) -> Result<(), String> {
