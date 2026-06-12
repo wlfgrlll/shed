@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::state::logic::ShFunc;
+use crate::state::logic::{AutoloadKind, ShFunc};
 
 use super::{
   Span, Tk,
@@ -191,6 +191,25 @@ fn declare_introspect(mode: IntrospectMode, argv: &[(String, Span)]) -> ShResult
     }
     IntrospectMode::FunctionsFull => {
       let names: Vec<&str> = argv.iter().map(|(n, _)| n.as_str()).collect();
+
+      // Source any explicitly requested autoload functions so their bodies
+      // become visible to the iteration below; otherwise `declare -f name`
+      // silently skips functions that haven't been called yet.
+      for name in &names {
+        let autoload_src = Shed::logic_mut(|l| {
+          if let Some(ShFunc::Autoload(_)) = l.get_func_ref(name)
+            && let Some(ShFunc::Autoload(src)) = l.remove_func(name)
+          {
+            Some(src)
+          } else {
+            None
+          }
+        });
+        if let Some(src) = autoload_src {
+          src.source(AutoloadKind::Function).ok();
+        }
+      }
+
       let dump = Shed::logic(|l| {
         let mut out = String::new();
         let mut entries: Vec<_> = l
