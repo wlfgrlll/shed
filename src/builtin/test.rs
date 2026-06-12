@@ -40,6 +40,10 @@ pub(crate) enum UnaryOp {
   Terminal,                  // -t
   NonNull,                   // -n
   Null,                      // -z
+
+  // shed extensions
+  IsInteger, // -i
+  IsFloat,   // -F
 }
 
 impl FromStr for UnaryOp {
@@ -67,6 +71,8 @@ impl FromStr for UnaryOp {
       "-t" => Ok(Self::Terminal),
       "-n" => Ok(Self::NonNull),
       "-z" => Ok(Self::Null),
+      "-i" => Ok(Self::IsInteger),
+      "-F" => Ok(Self::IsFloat),
       _ => Err(sherr!(SyntaxErr, "Invalid unary test operator '{s}'")),
     }
   }
@@ -142,6 +148,12 @@ fn eval_unary(op: &UnaryOp, operand: &str) -> bool {
     },
     UnaryOp::NonNull => !operand.is_empty(),
     UnaryOp::Null => operand.is_empty(),
+    UnaryOp::IsInteger => operand.parse::<i64>().is_ok(),
+    UnaryOp::IsFloat => operand
+      .parse::<f64>()
+      .ok()
+      .filter(|n| n.is_finite())
+      .is_some(),
   }
 }
 

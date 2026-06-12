@@ -1695,6 +1695,18 @@ SOURCE                                           *builtin-source* *source*
     `-n {s}`    string is non-empty
     `-z {s}`    string is empty
 
+  Unary numeric operators ~                            *test-numeric*
+
+    `-i {s}`    string parses as a decimal integer (signed, within
+                `i64` range). Rejects hex (`0x...`), octal, and floats
+                like `42.0`.
+    `-F {s}`    string parses as a finite floating-point number
+                (decimal or scientific notation).
+
+    These are `shed` extensions; `bash` and `POSIX` do not provide them.
+    The conventional POSIX idiom for an integer check is
+    `[ "$x" -eq "$x" ] 2>/dev/null`.
+
   Binary operators ~
 
     `{a} == {b}`    strings equal
@@ -1722,6 +1734,8 @@ SOURCE                                           *builtin-source* *source*
       `[[ $x -gt 10 && $x -lt 20 ]]`
       `[[ $name =~ ^[A-Z] ]]`
       `[[ -z $reply ]] && echo "empty"`
+      `[[ -i $port ]] || raise "port must be an integer"`
+      `[[ -F $ratio && -F $threshold ]] || raise "expected numeric inputs"`
 
 ==============================================================================
 TRAP                                             *builtin-trap* *trap*
