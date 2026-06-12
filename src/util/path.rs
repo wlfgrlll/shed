@@ -5,7 +5,7 @@ use std::{
   time::SystemTime,
 };
 
-use crate::{ShResult, var};
+use crate::var;
 
 /// Caches the current state of a path-list-style env var (e.g. `$SHED_HPATH`)
 /// so consumers can cheaply detect when either the var's value or any of the
@@ -130,26 +130,6 @@ impl PathCache {
     }
 
     changed
-  }
-
-  /// Iterates the paths to all currently-tracked files. Directory entries
-  /// yield every contained file; file entries yield the file itself.
-  pub fn files(&self) -> impl Iterator<Item = &Path> {
-    self
-      .entries
-      .values()
-      .flat_map(|entry| -> Box<dyn Iterator<Item = &Path>> {
-        match entry {
-          EntryCache::Dir { files, .. } => Box::new(files.keys().map(PathBuf::as_path)),
-          EntryCache::File(_) => Box::new(std::iter::empty()),
-        }
-      })
-      .chain(
-        self
-          .entries
-          .iter()
-          .filter_map(|(path, entry)| matches!(entry, EntryCache::File(_)).then(|| path.as_path())),
-      )
   }
 }
 
