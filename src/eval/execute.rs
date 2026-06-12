@@ -557,10 +557,8 @@ impl Dispatcher {
     Ok(())
   }
   fn exec_func(&mut self, func: Node) -> ShResult<()> {
-    let mut blame = func.get_span().clone();
-
     // need to do this in a new scope so we can borrow func safely
-    let func_name = {
+    let (func_name, mut blame) = {
       // borrow func.class to avoid partial move
       let NdRule::Command { argv, .. } = &func.class else {
         unreachable!()
@@ -568,17 +566,19 @@ impl Dispatcher {
 
       let Some(func_name) = argv.first() else {
         return Err(sherr!(
-            InternalErr @ blame,
+            InternalErr @ func.get_span(),
             "Expected function name in command position"
         ));
       };
 
-      func_name
+      let name = func_name
         .clone()
         .expand()?
         .get_first_word()
         .map(Into::<Rc<str>>::into)
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+      (name, func_name.span.clone())
     };
 
     let Some(ref mut sh_func) = Shed::logic(|l| l.get_func(&func_name)) else {
