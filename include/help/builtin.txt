@@ -1470,6 +1470,7 @@ SHOPT                                            *builtin-shopt* *shopt*
     `autocd`                navigate to a dir by entering its name
     `auto_hist`             automatically save commands to history
     `bell_enabled`          allow the terminal bell
+    `compact_errors`        collapse error stack traces to a single label
     `dotglob`               include dotfiles in glob patterns
     `hist_ignore_dupes`     skip duplicate consecutive history entries
     `interactive_comments`  allow `#` comments in interactive input

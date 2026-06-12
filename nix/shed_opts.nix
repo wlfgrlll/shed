@@ -271,6 +271,11 @@
                   default = "audible";
                   description = "Whether the terminal bell is audible, visible, or both";
                 };
+                compact_errors = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Collapse error stack traces to a single call-site label, hiding intermediate function-call context";
+                };
               };
             };
             default = {};
