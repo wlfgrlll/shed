@@ -27,7 +27,7 @@ impl super::Builtin for Source {
       }
 
       if let Err(e) = source_file(path)
-        && let ShErrKind::Raised(code) = e.kind()
+        && let ShErrKind::Raised(_, code) = e.kind()
       {
         Shed::set_status(*code);
         return Err(e.force_promote(span));

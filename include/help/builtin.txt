@@ -1326,7 +1326,7 @@ CONTINUE                                         *builtin-continue* *continue*
 ==============================================================================
 RAISE                                            *builtin-raise* *raise*
 
-  `raise [-c | --code {n}] [message]`
+  `raise [-c | --code {n}] [-k | --kind {name}] [-n | --note {text}]... [message [args...]]`
 
   Raise an error from inside a function or sourced script. The error
   propagates upward through the call stack, eventually surfacing at
@@ -1341,7 +1341,34 @@ RAISE                                            *builtin-raise* *raise*
 
   Options:
 
-    `-c {n}`, `--code {n}`    Set the exit status to {n}. Defaults to 1.
+    `-c {n}`, `--code {n}`        Set the exit status to {n}. Defaults to 1.
+    `-k {name}`, `--kind {name}`  Set the error's title to {name} instead
+                                  of the default `"Raised Error"`.
+    `-n {text}`, `--note {text}`  Attach a free-form note to the error.
+                                  May be repeated to attach multiple notes,
+                                  which render in order at the bottom of
+                                  the error report.
+
+  Format specifiers ~                                       *raise-format*
+
+    The message can contain `%N` placeholders, where {N} is a digit
+    sequence. Each `%N` consumes the next argument and renders it in
+    the {N}th palette color. Multiple `%N` markers sharing the same
+    {N} share the same color, so values that are semantically related
+    can be visually linked even when their textual values differ.
+
+    Use `%%` to insert a literal `%`. A trailing `%` with no following
+    character is treated as a literal `%`.
+
+    Examples (color shown as bracketed style):
+
+      `raise "expected '%1', got '%2'" int string`
+                      `----      ----  --- ------`
+                       `int` and `string` are different colors
+
+      `raise "removing '%1', '%1', and '%1'" main dev prod`
+                      `----  ----      ----`
+                       `main`, `dev`, and `prod` all share a color
 
   Examples:
 
@@ -1356,6 +1383,16 @@ RAISE                                            *builtin-raise* *raise*
       `safe_cd() {`
       `  [[ -d "$1" ]] || raise --code 2 "not a directory: $1"`
       `  builtin cd "$1"`
+      `}`
+
+      `validate_port() {`
+      `  local port="$1"`
+      `  [ -i "$port" ] || raise "expected port, found '%1'" "$port"` (see |test-numeric|)
+      `  if (( port < 1024 || port > 65535 )); then`
+      `    raise -k "bad port" \\`
+      `          -n "must be in range 1024..65535" \\`
+      `          "port '%1' is out of range" "$port"`
+      `  fi`
       `}`
 
   See also: |try|(script-try), |return|(builtin-return)

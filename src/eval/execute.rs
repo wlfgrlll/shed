@@ -659,7 +659,7 @@ impl Dispatcher {
           state::Shed::set_status(*code);
           Ok(())
         }
-        ShErrKind::Raised(code) => {
+        ShErrKind::Raised(_, code) => {
           state::Shed::set_status(*code);
           if Shed::meta(MetaTab::func_depth) <= 1 {
             // raise builtin has been called

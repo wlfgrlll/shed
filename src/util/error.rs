@@ -397,12 +397,7 @@ impl ShErr {
         .with_tab_width(shopt!(line.tab_width))
         .with_color(true),
     );
-    let msg = if self.notes.is_empty() {
-      self.kind.to_string()
-    } else {
-      format!("{} - {}", self.kind, self.notes.first().unwrap())
-    };
-    report = report.with_message(msg);
+    report = report.with_message(self.kind.to_string());
 
     for (_, label) in group_labels(self.labels.clone()) {
       report = report.with_label(label);
@@ -531,7 +526,7 @@ pub enum ShErrKind {
   FuncReturn(i32),
   LoopContinue(i32),
   LoopBreak(i32),
-  Raised(i32),
+  Raised(Option<String>, i32),
   ErrInterrupt, // used for set -e
   Interrupt,    // used for Ctrl+C on loops
 }
@@ -567,11 +562,17 @@ impl Display for ShErrKind {
       Self::NotFound => "Not Found",
       Self::TryFailed => "Try Failed",
       Self::CleanExit(_) | Self::Interrupt => "",
-      Self::Raised(_) => "Raised Error",
       Self::InvalidAssignment => "Invalid Assignment",
       Self::ErrInterrupt => "errexit",
       Self::SyntaxErr | Self::FuncReturn(_) | Self::LoopContinue(_) | Self::LoopBreak(_) => {
         "Syntax Error"
+      }
+      Self::Raised(kind, _) => {
+        if let Some(kind) = kind {
+          return kind.fmt(f);
+        } else {
+          return write!(f, "Raised Error");
+        }
       }
     };
     write!(f, "{output}")

@@ -292,7 +292,7 @@ pub(super) trait Builtin: Sync {
         let kind = e.kind_mut();
         let should_propagate = match kind {
           ShErrKind::CleanExit(_) => true, // this one always goes
-          ShErrKind::Raised(_) => true,
+          ShErrKind::Raised(_, _) => true,
           ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
             state::Shed::meta(MetaTab::in_loop)
           }
@@ -327,8 +327,18 @@ pub(super) trait Builtin: Sync {
       unreachable!()
     };
 
+    let cmd_span = argv
+      .first()
+      .map(|tk| tk.span.clone())
+      .unwrap_or_else(|| span.clone());
+
     let (argv, opts) = self.get_argv_and_opts(argv, no_split)?;
-    let builtin_args = BuiltinArgs { argv, opts, span };
+    let builtin_args = BuiltinArgs {
+      argv,
+      opts,
+      span,
+      cmd_span,
+    };
 
     self.execute(builtin_args)
   }
@@ -340,13 +350,17 @@ pub(super) trait Builtin: Sync {
 pub struct BuiltinArgs {
   argv: Vec<(String, Span)>,
   opts: Vec<Opt>,
-  span: Span,
+  span: Span,     // the entire call
+  cmd_span: Span, // just the command
 }
 
 impl BuiltinArgs {
   pub fn span(&self) -> Span {
     // cloning spans is cheap
     self.span.clone()
+  }
+  pub fn cmd_span(&self) -> Span {
+    self.cmd_span.clone()
   }
 }
 

@@ -1,4 +1,9 @@
-use crate::builtin::getopt::OptSpec;
+use std::collections::HashMap;
+use std::fmt::Write;
+
+use yansi::Paint;
+
+use crate::{builtin::getopt::OptSpec, match_loop};
 
 use super::{
   getopt::Opt,
@@ -122,30 +127,140 @@ impl super::Builtin for Raise {
     true
   }
   fn opts(&self) -> Vec<super::getopt::OptSpec> {
-    vec![OptSpec::single_arg('c'), OptSpec::single_arg("code")]
+    vec![
+      OptSpec::single_arg('c'),
+      OptSpec::single_arg("code"),
+      OptSpec::single_arg('k'),
+      OptSpec::single_arg("kind"),
+      OptSpec::single_arg('n'),
+      OptSpec::single_arg("note"),
+    ]
   }
   fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
     let mut code = 1;
+    let mut kind = None;
+    let mut notes = vec![];
+    let span = args.cmd_span();
 
     for opt in &args.opts {
       match opt {
-        Opt::LongWithArg(_, code_arg) | Opt::ShortWithArg('c', code_arg) => {
+        Opt::LongWithArg(name, arg) => match name.as_str() {
+          "code" => {
+            let Ok(code_arg) = arg.parse::<i32>() else {
+              return Err(sherr!(
+                  SyntaxErr @ args.span(),
+                  "Invalid exit code: expected a number, got '{arg}'",
+              ));
+            };
+            code = code_arg;
+          }
+          "kind" => {
+            kind = Some(arg.clone());
+          }
+          "note" => {
+            notes.push(arg.clone());
+          }
+          _ => {
+            return Err(sherr!(
+              SyntaxErr @ args.span(),
+              "Unknown option '--{name}'",
+            ));
+          }
+        },
+
+        Opt::ShortWithArg('k', kind_arg) => {
+          kind = Some(kind_arg.clone());
+        }
+
+        Opt::ShortWithArg('n', note_arg) => {
+          notes.push(note_arg.clone());
+        }
+
+        Opt::ShortWithArg('c', code_arg) => {
           let Ok(code_arg) = code_arg.parse::<i32>() else {
             return Err(sherr!(
               SyntaxErr @ args.span(),
-              "Invalid exit code: expected a number, got '{code}'",
+              "Invalid exit code: expected a number, got '{code_arg}'",
             ));
           };
           code = code_arg;
         }
-        _ => {}
+        opt => {
+          return Err(sherr!(
+            SyntaxErr @ args.span(),
+            "Unknown option '{opt}'"
+          ));
+        }
       }
     }
 
-    let span = args.span();
-    let (message, _) = super::join_raw_args(args.argv);
+    let mut message_parts = vec![];
+    let mut part = String::new();
+    let mut color_map: HashMap<u32, yansi::Color> = HashMap::new();
+    let mut arg_iter = args.argv.into_iter();
 
-    Err(ShErr::at(ShErrKind::Raised(code), span, message))
+    while let Some((arg, span)) = arg_iter.next() {
+      let mut chars = arg.chars().peekable();
+      match_loop!(chars.next() => ch, {
+        '%' => {
+          let Some(n_ch) = chars.next() else {
+            part.push('%');
+            break;
+          };
+          let mut color_id = String::new();
+          match n_ch {
+            '%' => part.push('%'),
+            _ if n_ch.is_ascii_digit() => {
+              color_id.push(n_ch);
+
+              while let Some(&next_ch) = chars.peek()
+                && next_ch.is_ascii_digit()
+              {
+                chars.next();
+                color_id.push(next_ch);
+              }
+
+              let color_id = color_id.parse::<u32>().map_err(|_| {
+                sherr!(
+                  SyntaxErr @ span.clone(),
+                  "Invalid color code: expected a number, got '{color_id}'",
+                )
+              })?;
+              color_map.entry(color_id).or_insert_with(crate::util::error::next_color);
+
+              let Some((arg,_)) = arg_iter.next() else {
+                return Err(sherr!(
+                  SyntaxErr @ span,
+                  "missing format arg for '%{color_id}'",
+                ));
+              };
+
+              let color = color_map.get(&color_id).unwrap();
+              let painted = arg.paint(*color);
+
+              write!(&mut part, "{painted}").ok();
+            }
+            _ => {
+              return Err(sherr!(
+                SyntaxErr @ span,
+                "Invalid format specifier: '%{n_ch}'",
+              ).with_note("'raise' only takes digits or '%' after '%'").with_note("to include a literal '%', use '%%'"));
+            }
+          }
+        }
+        _ => part.push(ch),
+      });
+      message_parts.push(std::mem::take(&mut part));
+    }
+
+    let message = message_parts.join(" ");
+    let mut error = ShErr::at(ShErrKind::Raised(kind, code), span, message);
+
+    for note in notes {
+      error = error.with_note(note);
+    }
+
+    Err(error)
   }
 }
 
