@@ -485,7 +485,7 @@ mod open_help_tests {
     let (line, content, filename) = get_help_content("builtin-alias").unwrap();
     assert!(content.contains("builtin-alias"));
     assert_eq!(filename, Some("help/builtin.txt".to_string()));
-    assert_eq!(line, 64);
+    assert_eq!(line, 65);
   }
 
   #[test]

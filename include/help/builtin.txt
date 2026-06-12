@@ -46,6 +46,7 @@ The following builtins are available:
   `return`      return from a function                      |builtin-return|
   `break`       exit a loop                                 |builtin-break|
   `continue`    skip to the next loop iteration             |builtin-continue|
+  `raise`       raise a user-facing error from a function   |builtin-raise|
   `seek`        seek a file descriptor to a byte offset     |builtin-seek|
   `set`         set shell options and positional parameters |builtin-set|
   `stash`       save and recall command snippets            |builtin-stash|
@@ -1321,6 +1322,43 @@ CONTINUE                                         *builtin-continue* *continue*
   Examples:
 
       `for i in 1 2 3; do [[ $i == 2 ]] && continue; echo $i; done`
+
+==============================================================================
+RAISE                                            *builtin-raise* *raise*
+
+  `raise [-c | --code {n}] [message]`
+
+  Raise an error from inside a function or sourced script. The error
+  propagates upward through the call stack, eventually surfacing at
+  the top level and pointing at the offending function call.
+
+  Status (`$?`) is set to {n} upon being caught, either by `try` or
+  surfacing at the top level.
+
+  In contrast with `return 1`, errors created by `raise` use `shed`'s
+  internal error reporting machinery, and they propagate upward until
+  caught by a |try|(script-try) block, or reaching the top level.
+
+  Options:
+
+    `-c {n}`, `--code {n}`    Set the exit status to {n}. Defaults to 1.
+
+  Examples:
+
+      `logout() {`
+      `  if [[ "$0" == -* ]]; then`
+      `    exit 0`
+      `  else`
+      `    raise -c 2 "the current session is not a login shell"`
+      `  fi`
+      `}`
+
+      `safe_cd() {`
+      `  [[ -d "$1" ]] || raise --code 2 "not a directory: $1"`
+      `  builtin cd "$1"`
+      `}`
+
+  See also: |try|(script-try), |return|(builtin-return)
 
 ==============================================================================
 SEEK                                             *builtin-seek* *seek*
