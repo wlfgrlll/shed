@@ -1,4 +1,7 @@
+use crate::builtin::getopt::OptSpec;
+
 use super::{
+  getopt::Opt,
   sherr,
   util::{ShErr, ShErrKind, ShResult, ShResultExt},
 };
@@ -110,6 +113,39 @@ impl FlowCtl for Exit {
   }
   fn flow_control(&self, code: i32) -> ShErr {
     ShErr::simple(ShErrKind::CleanExit(code), "")
+  }
+}
+
+pub(super) struct Raise;
+impl super::Builtin for Raise {
+  fn is_special(&self) -> bool {
+    true
+  }
+  fn opts(&self) -> Vec<super::getopt::OptSpec> {
+    vec![OptSpec::single_arg('c'), OptSpec::single_arg("code")]
+  }
+  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+    let mut code = 1;
+
+    for opt in &args.opts {
+      match opt {
+        Opt::LongWithArg(_, code_arg) | Opt::ShortWithArg('c', code_arg) => {
+          let Ok(code_arg) = code_arg.parse::<i32>() else {
+            return Err(sherr!(
+              SyntaxErr @ args.span(),
+              "Invalid exit code: expected a number, got '{code}'",
+            ));
+          };
+          code = code_arg;
+        }
+        _ => {}
+      }
+    }
+
+    let span = args.span();
+    let (message, _) = super::join_raw_args(args.argv);
+
+    Err(ShErr::at(ShErrKind::Raised(code), span, message))
   }
 }
 

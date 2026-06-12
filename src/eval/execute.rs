@@ -659,6 +659,17 @@ impl Dispatcher {
           state::Shed::set_status(*code);
           Ok(())
         }
+        ShErrKind::Raised(code) => {
+          state::Shed::set_status(*code);
+          if Shed::meta(MetaTab::func_depth) <= 1 {
+            // raise builtin has been called
+            // set the status, attach the function call span
+            return Err(e.collapse_context());
+          }
+
+          // nested raise, continue propagating
+          Err(e)
+        }
         ShErrKind::ErrInterrupt => {
           // set -e caught an error
           Err(e.with_context(func_body.context.clone()))

@@ -1,4 +1,3 @@
-use ariadne::Label;
 use bitflags::bitflags;
 use std::{
   collections::VecDeque,
@@ -22,6 +21,8 @@ mod util;
 
 #[cfg(test)]
 pub mod tests;
+
+use crate::util::error::LabelBuilder;
 
 use super::{
   lex::{self, LexFlags, LexStream, Span, Tk, TkFlags, TkRule, clean_input},
@@ -154,7 +155,7 @@ impl Ast {
   }
 }
 
-pub(crate) type LabelCtx = VecDeque<(Span, Label<Span>)>;
+pub(crate) type LabelCtx = VecDeque<LabelBuilder>;
 
 bitflags! {
   #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,Hash,PartialOrd,Ord)]

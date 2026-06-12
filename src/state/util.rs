@@ -640,14 +640,13 @@ pub fn source_file(path: PathBuf) -> ShResult<()> {
 
   match exec_nonint(buf, Some(source_display.into())) {
     Ok(()) => Ok(()),
-    Err(e) => {
-      if let ShErrKind::FuncReturn(code) = e.kind() {
+    Err(e) => match e.kind() {
+      ShErrKind::FuncReturn(code) => {
         Shed::set_status(*code);
         Ok(())
-      } else {
-        Err(e)
       }
-    }
+      _ => Err(e),
+    },
   }
 }
 

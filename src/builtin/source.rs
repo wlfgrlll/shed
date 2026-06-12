@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::{ShErrKind, Shed};
+
 use super::{ShResult, sherr, state::util::source_file};
 
 pub(super) struct Source;
@@ -24,7 +26,12 @@ impl super::Builtin for Source {
         ));
       }
 
-      source_file(path)?;
+      if let Err(e) = source_file(path)
+        && let ShErrKind::Raised(code) = e.kind()
+      {
+        Shed::set_status(*code);
+        return Err(e.force_promote(span));
+      }
     }
 
     Ok(())

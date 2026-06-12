@@ -84,17 +84,26 @@ pub(crate) fn last_color() -> Color {
   COLOR_RNG.with(|rng| rng.borrow_mut().last_color())
 }
 
-pub fn get_context(msg: String, span: Span) -> (Span, Label<Span>) {
+pub fn get_context(msg: String, span: Span) -> LabelBuilder {
   let color = last_color();
-  let label = Label::new(span.clone()).with_color(color).with_message(msg);
-  (span, label)
+  LabelBuilder::new(span.clone())
+    .with_color(color)
+    .with_message(msg)
 }
 
-fn group_labels(labels: Vec<(Span, Label<Span>)>) -> Vec<(Span, Label<Span>)> {
+fn group_labels(labels: Vec<LabelBuilder>) -> Vec<(Span, Label<Span>)> {
   let n = labels.len();
   if n == 0 {
-    return labels;
+    return labels
+      .into_iter()
+      .map(|label| (label.span(), label.into()))
+      .collect();
   }
+
+  let labels: Vec<(Span, Label<Span>)> = labels
+    .into_iter()
+    .map(|label| (label.span(), label.into()))
+    .collect();
 
   let mut chain_id: Vec<usize> = (0..n).collect();
   for i in 0..n {
@@ -165,12 +174,53 @@ impl<T> ShResultExt for Result<T, ShErr> {
   }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct LabelBuilder {
+  span: Span,
+  message: Option<String>,
+  color: Option<Color>,
+}
+
+impl LabelBuilder {
+  pub fn new(span: Span) -> Self {
+    Self {
+      span,
+      message: None,
+      color: None,
+    }
+  }
+  pub fn with_message(mut self, message: impl Into<String>) -> Self {
+    self.message = Some(message.into());
+    self
+  }
+  pub fn with_color(mut self, color: Color) -> Self {
+    self.color = Some(color);
+    self
+  }
+  pub fn span(&self) -> Span {
+    self.span.clone()
+  }
+}
+
+impl From<LabelBuilder> for ariadne::Label<Span> {
+  fn from(val: LabelBuilder) -> Self {
+    let mut label = ariadne::Label::new(val.span);
+    if let Some(message) = val.message {
+      label = label.with_message(message);
+    }
+    if let Some(color) = val.color {
+      label = label.with_color(color);
+    }
+    label
+  }
+}
+
 /// The shell's main error type.
 #[derive(Debug)]
 pub(crate) struct ShErr {
   kind: ShErrKind,
   src_span: Option<Span>,
-  labels: Vec<(Span, ariadne::Label<Span>)>,
+  labels: Vec<LabelBuilder>,
   notes: Vec<String>,
 
   /// If we propagate through a redirect boundary, we take ownership of
@@ -218,9 +268,41 @@ impl ShErr {
     }
   }
   /// Promotes a shell error from a simple error to an error that blames a span
-  pub fn promote(mut self, span: Span) -> Self {
+  pub fn promote(self, span: Span) -> Self {
+    self.promote_inner(span, Self::try_blame)
+  }
+
+  pub fn force_promote(self, span: Span) -> Self {
+    self.promote_inner(span, Self::blame)
+  }
+
+  /// Collapse nested labels
+  ///
+  /// Takes the span of the outer-most label, and the message/color of the inner-most label
+  /// and combines them into one, discarding all intermediate labels.
+  pub fn collapse_context(self) -> Self {
+    if self.labels.is_empty() {
+      return self;
+    }
+
+    let Self { labels, .. } = self;
+
+    let LabelBuilder { message, color, .. } = labels.first().cloned().unwrap();
+    let LabelBuilder { span, .. } = labels.last().cloned().unwrap();
+    let collapsed = LabelBuilder {
+      span,
+      message,
+      color,
+    };
+
+    let labels = vec![collapsed];
+
+    Self { labels, ..self }
+  }
+
+  fn promote_inner<F: FnOnce(Self, Span) -> Self>(mut self, span: Span, blame_func: F) -> Self {
     if self.notes.is_empty() {
-      return self.try_blame(span);
+      return blame_func(self, span);
     }
     let first = self.notes[0].clone();
     if self.notes.len() > 1 {
@@ -229,7 +311,7 @@ impl ShErr {
       self.notes = vec![];
     }
 
-    self.try_blame(span.clone()).labeled(span, first)
+    blame_func(self, span.clone()).labeled(span, first)
   }
   /// Persist all io guards, closing saved fds without restoring them.
   /// Use this when an error is being converted to a control flow signal
@@ -250,18 +332,18 @@ impl ShErr {
   pub fn at(kind: ShErrKind, span: Span, msg: impl Into<String>) -> Self {
     let msg: String = msg.into();
     let color = last_color();
-    let label = ariadne::Label::new(span.clone())
+    let label = LabelBuilder::new(span.clone())
       .with_message(msg)
       .with_color(color);
-    Self::new(kind, span.clone()).with_label(span, label)
+    Self::new(kind, span.clone()).with_label(label)
   }
   pub fn labeled(self, span: Span, msg: impl Into<String>) -> Self {
     let msg: String = msg.into();
     let color = last_color();
-    let label = ariadne::Label::new(span.clone())
+    let label = LabelBuilder::new(span.clone())
       .with_message(msg)
       .with_color(color);
-    self.with_label(span, label)
+    self.with_label(label)
   }
   pub fn blame(mut self, span: Span) -> Self {
     self.src_span = Some(span);
@@ -285,11 +367,11 @@ impl ShErr {
   pub fn set_kind(&mut self, kind: ShErrKind) {
     self.kind = kind;
   }
-  pub fn with_label(mut self, span: Span, label: ariadne::Label<Span>) -> Self {
-    self.labels.push((span, label));
+  pub fn with_label(mut self, label: LabelBuilder) -> Self {
+    self.labels.push(label);
     self
   }
-  pub fn with_context(mut self, ctx: VecDeque<(Span, ariadne::Label<Span>)>) -> Self {
+  pub fn with_context(mut self, ctx: VecDeque<LabelBuilder>) -> Self {
     for entry in ctx {
       self.labels.push(entry);
     }
@@ -339,7 +421,7 @@ impl ShErr {
         .entry(src.clone())
         .or_insert_with(|| src.content().to_string());
     }
-    for (span, _) in &self.labels {
+    for span in self.labels.iter().map(|label| label.span()) {
       let src = span.span_source().clone();
       source_map
         .entry(src.clone())
@@ -443,6 +525,7 @@ pub enum ShErrKind {
   FuncReturn(i32),
   LoopContinue(i32),
   LoopBreak(i32),
+  Raised(i32),
   ErrInterrupt, // used for set -e
   Interrupt,    // used for Ctrl+C on loops
 }
@@ -478,6 +561,7 @@ impl Display for ShErrKind {
       Self::NotFound => "Not Found",
       Self::TryFailed => "Try Failed",
       Self::CleanExit(_) | Self::Interrupt => "",
+      Self::Raised(_) => "Raised Error",
       Self::InvalidAssignment => "Invalid Assignment",
       Self::ErrInterrupt => "errexit",
       Self::SyntaxErr | Self::FuncReturn(_) | Self::LoopContinue(_) | Self::LoopBreak(_) => {

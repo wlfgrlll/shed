@@ -915,6 +915,7 @@ impl ShedLine {
       if self.macro_record.is_recording() {
         if let KeyEvent(KeyCode::Char('q'), ModKeys::NONE) = key {
           self.repeat_macro = self.macro_record.commit_recording();
+          self.mark_dirty();
           continue;
         }
         self.macro_record.feed_key_event(key.clone());
@@ -1325,6 +1326,7 @@ impl ShedLine {
       cmd.register.write_to_register(RegisterContent::Empty);
 
       self.macro_record.start_recording(cmd.register);
+      self.mark_dirty();
       return Ok(None);
     }
 

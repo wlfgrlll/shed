@@ -155,6 +155,7 @@ register_builtins! {
   "push"     => arrops::Push,
   "pushd"    => dirstack::PushDir,
   "pwd"      => pwd::Pwd,
+  "raise"    => flowctl::Raise,
   "read"     => read::Read,
   "readkey"  => read::ReadKey,
   "readonly" => varcmds::Readonly,
@@ -291,6 +292,7 @@ pub(super) trait Builtin: Sync {
         let kind = e.kind_mut();
         let should_propagate = match kind {
           ShErrKind::CleanExit(_) => true, // this one always goes
+          ShErrKind::Raised(_) => true,
           ShErrKind::LoopBreak(_) | ShErrKind::LoopContinue(_) => {
             state::Shed::meta(MetaTab::in_loop)
           }

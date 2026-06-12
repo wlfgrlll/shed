@@ -1,4 +1,4 @@
-use crate::ShResult;
+use crate::{ShResult, util::error::LabelBuilder};
 
 use super::{
   LabelCtx,
@@ -6,7 +6,7 @@ use super::{
   procio::RedirSpec,
   two_way_display,
 };
-use ariadne::{Label, Span as AriadneSpan};
+use ariadne::Span as AriadneSpan;
 use bitflags::bitflags;
 
 pub(crate) trait NodeVecUtils<Node> {
@@ -184,7 +184,7 @@ impl Node {
       self.flags.insert(NdFlags::IS_ERR);
     }
   }
-  pub fn propagate_context(&mut self, ctx: &(Span, Label<Span>)) {
+  pub fn propagate_context(&mut self, ctx: &LabelBuilder) {
     self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
   }
   pub fn get_span(&self) -> Span {
