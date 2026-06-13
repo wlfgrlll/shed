@@ -43,6 +43,7 @@ prompt_pwd_line() {
 
 }
 prompt_ssh_line() {
+  [ -z "$SSH_CONNECTION" ] && return
 	local ssh_server="$(echo $SSH_CONNECTION | cut -f3 -d' ')"
 	[ -n "$ssh_server" ] && echo -n "\e[1;34m┃ \e[1;39m🌐 $ssh_server\e[0m\n"
 
