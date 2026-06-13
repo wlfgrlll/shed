@@ -1,11 +1,13 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, os::fd::BorrowedFd, time::Duration};
 
 use bitflags::bitflags;
 use nix::{
   errno::Errno,
   poll::{PollFd, PollFlags, PollTimeout, poll},
-  unistd::read,
+  unistd::{self, read},
 };
+
+use crate::match_loop;
 
 use super::{
   super::state::terminal::Terminal,
@@ -22,6 +24,8 @@ use super::{
   },
   util::{ShErrKind, ShResult, ShResultExt, with_status},
 };
+
+const CHUNK_SIZE: usize = 4096; // 4kb
 
 bitflags! {
   pub struct ReadFlags: u32 {
@@ -45,7 +49,7 @@ impl super::Builtin for Read {
       OptSpec::single_arg('d'),
     ]
   }
-  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+  fn execute(&self, mut args: super::BuiltinArgs) -> ShResult<()> {
     let mut flags = ReadFlags::empty();
     let mut prompt = None;
     let mut timeout = None;
@@ -85,13 +89,16 @@ impl super::Builtin for Read {
     } else {
       Shed::term_mut(Terminal::cooked_mode_guard)?
     };
-    let input = read_bytes(
-      delim,
-      !flags.contains(ReadFlags::NO_ESCAPES),
-      timeout,
-      max_bytes,
-    )
-    .promote_err(args.span())?;
+    let input = if let Some(stdin) = args.take_stdin() {
+      stdin
+    } else {
+      do_read(
+        delim,
+        !flags.contains(ReadFlags::NO_ESCAPES),
+        timeout,
+        max_bytes,
+      )?
+    };
 
     if let Some(arr) = array_name {
       field_split_arr(&input, &arr).promote_err(args.span())
@@ -101,7 +108,23 @@ impl super::Builtin for Read {
   }
 }
 
-fn read_bytes(
+fn do_read(
+  delim: u8,
+  escape_aware: bool,
+  timeout: Option<i32>,
+  max_bytes: Option<usize>,
+) -> ShResult<String> {
+  let fd = stdin_fileno();
+
+  if timeout.is_none() && unistd::lseek(fd, 0, unistd::Whence::SeekCur).is_ok() {
+    seeking_read(fd, delim, escape_aware, max_bytes)
+  } else {
+    walking_read(fd, delim, escape_aware, timeout, max_bytes)
+  }
+}
+
+fn walking_read(
+  fd: BorrowedFd,
   delim: u8,
   escape_aware: bool,
   timeout: Option<i32>,
@@ -109,7 +132,7 @@ fn read_bytes(
 ) -> ShResult<String> {
   let mut buf = vec![];
   let mut escaped = false;
-  let poll_fd = PollFd::new(stdin_fileno(), PollFlags::POLLIN);
+  let poll_fd = PollFd::new(fd, PollFlags::POLLIN);
   let timeout = timeout
     .map(PollTimeout::try_from)
     .and_then(Result::ok)
@@ -133,7 +156,7 @@ fn read_bytes(
     }
 
     let mut in_buf = [0u8; 1];
-    match read(stdin_fileno(), &mut in_buf) {
+    match read(fd, &mut in_buf) {
       Ok(0) => {
         state::Shed::set_status(1);
         let ret =
@@ -141,14 +164,22 @@ fn read_bytes(
         return Ok(ret); // EOF
       }
       Ok(_) => {
-        if in_buf[0] == delim && !(escape_aware && escaped) {
+        if escape_aware && escaped {
+          escaped = false;
+          if in_buf[0] != delim {
+            buf.push(in_buf[0]);
+            if let Some(max) = max_bytes
+              && buf.len() >= max
+            {
+              break;
+            }
+          }
+        } else if in_buf[0] == delim {
           break;
         } else if escape_aware && in_buf[0] == b'\\' {
           escaped = true;
         } else {
-          escaped = false;
           buf.push(in_buf[0]);
-
           if let Some(max) = max_bytes
             && buf.len() >= max
           {
@@ -168,6 +199,133 @@ fn read_bytes(
 
   state::Shed::set_status(0);
   String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))
+}
+
+fn delim_scan(delim: u8, slice: &[u8], escape_aware: bool) -> Option<usize> {
+  if !escape_aware {
+    return slice.iter().position(|&b| b == delim);
+  }
+
+  let mut byte_enum = slice.iter().enumerate();
+  match_loop!(byte_enum.next() => (i,&byte) => byte, {
+    b'\\' => {
+      byte_enum.next();
+    },
+    _ if byte == delim => return Some(i),
+    _ => {}
+  });
+  None
+}
+
+fn seeking_read(
+  fd: BorrowedFd,
+  delim: u8,
+  escape_aware: bool,
+  max_bytes: Option<usize>,
+) -> ShResult<String> {
+  let mut buf = [0u8; CHUNK_SIZE];
+  let mut line = Vec::new();
+  let mut last_was_escaped = false;
+
+  loop {
+    let scan_start = if last_was_escaped && escape_aware {
+      1
+    } else {
+      0
+    };
+
+    let n = match read(fd, &mut buf) {
+      Ok(0) => {
+        if line.is_empty() {
+          state::Shed::set_status(1);
+          return Ok(String::new());
+        }
+        return finalize(line, escape_aware);
+      }
+      Ok(n) => n,
+
+      Err(Errno::EINTR) => {
+        if signal::sigint_pending() {
+          // we got ctrl+c
+          state::Shed::set_status(130);
+          return Ok(String::new());
+        }
+        continue;
+      }
+      Err(e) => return Err(e.into()),
+    };
+
+    let chunk = &buf[..n];
+    let scan_slice = &chunk[scan_start..];
+
+    if let Some(pos_in_scan) = delim_scan(delim, scan_slice, escape_aware) {
+      let pos = scan_start + pos_in_scan;
+      line.extend_from_slice(&chunk[..pos]);
+      let consumed = pos + 1; // include the delimiter
+      let leftover = n - consumed;
+      if leftover > 0 {
+        // lseek backwards to the delimiter's position
+        // next read starts there
+        unistd::lseek(fd, -(leftover as i64), unistd::Whence::SeekCur)?;
+      }
+      return finalize(line, escape_aware);
+    } else {
+      line.extend_from_slice(chunk);
+
+      if escape_aware && n > 0 {
+        let mut escaped = false;
+        let mut i = n;
+
+        while i > scan_start {
+          i -= 1;
+          if chunk[i] != b'\\' {
+            break;
+          }
+          escaped = !escaped;
+        }
+
+        last_was_escaped = escaped;
+      } else {
+        last_was_escaped = false;
+      }
+
+      if let Some(max) = max_bytes
+        && line.len() >= max
+      {
+        let leftover = line.len() - max;
+        if leftover > 0 {
+          unistd::lseek(fd, -(leftover as i64), unistd::Whence::SeekCur)?;
+          line.truncate(max);
+        }
+        return finalize(line, escape_aware);
+      }
+    }
+  }
+}
+
+fn finalize(mut line: Vec<u8>, escape_aware: bool) -> ShResult<String> {
+  state::Shed::set_status(0);
+  if escape_aware {
+    line = unescape(&line);
+  }
+  String::from_utf8(line).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}"))
+}
+
+fn unescape(line: &[u8]) -> Vec<u8> {
+  let mut out = Vec::with_capacity(line.len());
+  let mut byte_enum = line.iter();
+
+  match_loop!(byte_enum.next() => &byte => byte, {
+    b'\\' => {
+      match byte_enum.next() {
+        Some(&b'\n') | None => {}
+        Some(&next) => out.push(next),
+      }
+    },
+    _ => out.push(byte)
+  });
+
+  out
 }
 
 fn field_split_vars(input: &str, vars: &[(String, Span)]) -> ShResult<()> {
