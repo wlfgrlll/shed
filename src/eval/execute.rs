@@ -1521,6 +1521,42 @@ impl Dispatcher {
         }
         op
         @ (AssignKind::PlusEq | AssignKind::MinusEq | AssignKind::MultEq | AssignKind::DivEq) => {
+          if matches!(op, AssignKind::PlusEq)
+            && indexed.is_none()
+            && matches!(behavior, AssignBehavior::Set)
+          {
+            let took_fast = Shed::vars_mut(|v| -> ShResult<bool> {
+              let Ok(items) = v.get_arr_mut(var_name) else {
+                return Ok(false);
+              };
+              match &val {
+                VarKind::Int(n) => items.push_back(n.to_string()),
+                VarKind::Str(s) => items.push_back(s.clone()),
+                VarKind::Arr(other) => items.extend(other.iter().cloned()),
+                VarKind::Magic(n) => {
+                  if let Some(s) = n() {
+                    items.push_back(s);
+                  }
+                }
+                VarKind::AssocArr(_) => {
+                  return Err(sherr!(
+                    InvalidAssignment @ span.clone(),
+                    "cannot append associative array to indexed array"
+                  ));
+                }
+              }
+              Ok(true)
+            })?;
+            if took_fast {
+              if param_expansion_failed {
+                state::Shed::set_status(1);
+              } else {
+                state::Shed::set_status(old_status);
+              }
+              continue;
+            }
+          }
+
           let mut var = if let Some((name, idx)) = &indexed {
             Shed::vars(|v| v.index_var(name, idx))?.into()
           } else {
