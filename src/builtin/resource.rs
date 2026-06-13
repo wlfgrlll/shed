@@ -347,7 +347,7 @@ impl super::Builtin for UMask {
   }
 }
 
-fn change_umask(mask: u32) -> Mode {
+fn change_umask(mask: stat::mode_t) -> Mode {
   Shed::vars_mut(|v| {
     v.set_var(
       "UMASK",

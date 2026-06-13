@@ -75,7 +75,7 @@ pub fn umask_guard() -> impl Drop {
   guard(saved, |saved| {
     if let Some(umask) = saved
       && var!("UMASK") != umask
-      && let Ok(bits) = u32::from_str_radix(&umask, 8)
+      && let Ok(bits) = stat::mode_t::from_str_radix(&umask, 8)
     {
       let _ = stat::umask(stat::Mode::from_bits_truncate(bits));
     }
