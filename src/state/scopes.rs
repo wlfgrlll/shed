@@ -4,7 +4,7 @@ use super::{
   ShResult, Shed,
   meta::MetaTab,
   sherr,
-  vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarName, VarTab},
+  vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarKindTag, VarName, VarTab},
 };
 
 #[derive(Clone, Default, Debug)]
@@ -282,7 +282,7 @@ impl ScopeStack {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
-        let idx = idx.clone().resolve_for(var.kind())?;
+        let idx = idx.clone().resolve_for(var.kind().tag())?;
         match var.kind() {
           VarKind::Arr(items) => {
             match idx {
@@ -511,6 +511,15 @@ impl ScopeStack {
         && let Some(var) = scope.vars().get(var_name)
       {
         return Some(var.kind().clone());
+      }
+    }
+    None
+  }
+
+  pub fn try_get_var_kind_tag(&self, var_name: &str) -> Option<VarKindTag> {
+    for scope in self.scopes_rev() {
+      if let Some(tag) = scope.try_get_var_kind_tag(var_name) {
+        return Some(tag);
       }
     }
     None

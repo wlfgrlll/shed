@@ -36,7 +36,7 @@ use super::{
     logic::{ShFunc, TrapTarget},
     meta::CmdTimer,
     shopt::xtrace_print,
-    vars::{ShellParam, Var, VarFlags, VarKind},
+    vars::{ShellParam, Var, VarFlags, VarKind, VarKindTag},
   },
   try_var,
   util::{
@@ -1505,12 +1505,8 @@ impl Dispatcher {
         .transpose()?;
 
       let indexed = if let Some((name, idx)) = indexed {
-        let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
-        let resolved = match kind {
-          Some(k) => idx.resolve_for(&k)?,
-          None => idx.resolve_for(&VarKind::Arr(VecDeque::default()))?,
-        };
-        Some((name, resolved))
+        let tag = Shed::vars(|v| v.try_get_var_kind_tag(&name)).unwrap_or(VarKindTag::Arr);
+        Some((name, idx.resolve_for(tag)?))
       } else {
         None
       };
@@ -1635,12 +1631,8 @@ impl Dispatcher {
           }
 
           let indexed = if let Some((name, idx)) = indexed {
-            let kind = Shed::vars(|v| v.try_get_var_meta(&name).map(|var| var.kind().clone()));
-            let resolved = match kind {
-              Some(k) => idx.resolve_for(&k)?,
-              None => idx.resolve_for(&VarKind::Arr(VecDeque::default()))?,
-            };
-            Some((name, resolved))
+            let tag = Shed::vars(|v| v.try_get_var_kind_tag(&name)).unwrap_or(VarKindTag::Arr);
+            Some((name, idx.resolve_for(tag)?))
           } else {
             None
           };

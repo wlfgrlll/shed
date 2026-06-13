@@ -253,11 +253,9 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
   let mut parsed = VarName::parse(&var_name, allow_side_effects)?;
 
   if matches!(parsed.index(), Some(ArrIndex::Raw(_))) {
-    // Brief Shed::vars to grab just the kind (cloned), then the borrow
-    // releases before we do any expansion work.
-    let kind = Shed::vars(|v| v.try_get_var_kind(parsed.name()));
-    if let Some(kind) = kind {
-      let resolved = parsed.index().unwrap().clone().resolve_for(&kind)?;
+    let tag = Shed::vars(|v| v.try_get_var_kind_tag(parsed.name()));
+    if let Some(tag) = tag {
+      let resolved = parsed.index().unwrap().clone().resolve_for(tag)?;
       parsed.set_index(resolved);
     }
   }

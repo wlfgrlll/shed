@@ -194,19 +194,19 @@ impl ArrIndex {
 }
 
 impl ArrIndex {
-  pub fn resolve_for(self, kind: &VarKind) -> ShResult<Self> {
+  pub fn resolve_for(self, tag: VarKindTag) -> ShResult<Self> {
     match self {
-      Self::Raw(s) => match kind {
-        VarKind::Arr(_) | VarKind::Str(_) | VarKind::Int(_) | VarKind::Magic(_) => {
+      Self::Raw(s) => match tag {
+        VarKindTag::AssocArr => Ok(Self::Key(s)),
+        VarKindTag::Arr | VarKindTag::Str | VarKindTag::Int | VarKindTag::Magic => {
           let evaluated = expand_arithmetic(&s)?;
           let n: usize = evaluated
             .parse()
             .map_err(|_| sherr!(ParseErr, "Invalid array index '{s}': not a number"))?;
           Ok(Self::Literal(n))
         }
-        VarKind::AssocArr(_) => Ok(Self::Key(s)),
       },
-      Self::Literal(n) if matches!(kind, VarKind::AssocArr(_)) => Ok(Self::Key(n.to_string())),
+      Self::Literal(n) if matches!(tag, VarKindTag::AssocArr) => Ok(Self::Key(n.to_string())),
       _ => Ok(self),
     }
   }
@@ -374,6 +374,27 @@ pub(crate) enum VarKind {
 impl Default for VarKind {
   fn default() -> Self {
     Self::Str(String::new())
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VarKindTag {
+  Str,
+  Int,
+  Arr,
+  AssocArr,
+  Magic,
+}
+
+impl VarKind {
+  pub fn tag(&self) -> VarKindTag {
+    match self {
+      Self::Str(_) => VarKindTag::Str,
+      Self::Int(_) => VarKindTag::Int,
+      Self::Arr(_) => VarKindTag::Arr,
+      Self::AssocArr(_) => VarKindTag::AssocArr,
+      Self::Magic(_) => VarKindTag::Magic,
+    }
   }
 }
 
@@ -863,6 +884,9 @@ impl VarTab {
   }
   pub fn try_get_var_meta(&self, var: &str) -> Option<Var> {
     self.vars.get(var).cloned()
+  }
+  pub fn try_get_var_kind_tag(&self, var: &str) -> Option<VarKindTag> {
+    self.vars.get(var).map(|v| v.kind().tag())
   }
   #[cfg(test)]
   pub fn get_var_flags(&self, var_name: &str) -> Option<VarFlags> {
@@ -1385,8 +1409,8 @@ mod set_index_tests {
     tab
       .set_var("h", VarKind::AssocArr(vec![]), VarFlags::empty())
       .unwrap();
-    let kind = tab.try_get_var_meta("h").unwrap().kind().clone();
-    let resolved = ArrIndex::Literal(7).resolve_for(&kind).unwrap();
+    let tag = tab.try_get_var_kind_tag("h").unwrap();
+    let resolved = ArrIndex::Literal(7).resolve_for(tag).unwrap();
     tab.set_index("h", resolved, "v".into()).unwrap();
     assert_eq!(
       assoc_items(&tab, "h"),
