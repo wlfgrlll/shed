@@ -1,6 +1,5 @@
 use std::{
   cmp::Ordering,
-  collections::HashMap,
   env,
   sync::{Arc, LazyLock, RwLock},
   time::{Duration, SystemTime, UNIX_EPOCH},
@@ -17,6 +16,7 @@ use super::{
   sherr, shopt, state,
   util::ShResult,
 };
+use crate::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct HistEntry {
@@ -31,11 +31,13 @@ pub struct HistEntry {
 type HistTables = HashMap<String, Vec<HistEntry>>;
 
 static HIST_ENTRIES: LazyLock<Arc<RwLock<HistTables>>> =
-  LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+  LazyLock::new(|| Arc::new(RwLock::new(HashMap::default())));
+
 static SEARCH_ENTRIES: LazyLock<Arc<RwLock<HistTables>>> =
-  LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+  LazyLock::new(|| Arc::new(RwLock::new(HashMap::default())));
+
 static SEARCH_WATERMARKS: LazyLock<Arc<RwLock<HashMap<String, i64>>>> =
-  LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+  LazyLock::new(|| Arc::new(RwLock::new(HashMap::default())));
 
 fn num_entries(table: &str) -> usize {
   HIST_ENTRIES
@@ -182,7 +184,7 @@ impl History {
         // Merge helper: drop loaded entries shadowed by in-session pushes,
         // then prepend the rest so pushes stay at the end (newest).
         let merge = |existing: &mut Vec<HistEntry>, loaded: Vec<HistEntry>| {
-          let pushed_cmds: std::collections::HashSet<String> =
+          let pushed_cmds: crate::HashSet<String> =
             existing.iter().map(|e| e.command.clone()).collect();
           let mut merged: Vec<HistEntry> = loaded
             .into_iter()

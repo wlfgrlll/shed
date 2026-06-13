@@ -1,11 +1,10 @@
 use std::{
-  collections::HashMap,
   os::unix::fs::PermissionsExt,
   path::{Path, PathBuf},
   time::SystemTime,
 };
 
-use crate::var;
+use crate::{HashMap, var};
 
 /// Caches the current state of a path-list-style env var (e.g. `$SHED_HPATH`)
 /// so consumers can cheaply detect when either the var's value or any of the
@@ -41,7 +40,7 @@ fn mtime_of(path: &Path) -> SystemTime {
 }
 
 fn collect_files_in_dir(path: &Path) -> HashMap<PathBuf, SystemTime> {
-  let mut files = HashMap::new();
+  let mut files = HashMap::default();
   if let Ok(read) = std::fs::read_dir(path) {
     for entry in read.flatten() {
       let p = entry.path();

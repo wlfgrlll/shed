@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use super::{
   eval::lex::{LexFlags, LexStream, Tk, TkFlags},
@@ -6,6 +6,7 @@ use super::{
   shopt,
   state::Shed,
 };
+use crate::HashSet;
 
 struct AliasExpander<'a> {
   input: String,
@@ -86,12 +87,12 @@ impl<'a> AliasExpander<'a> {
 ///
 /// Recursively calls itself until all aliases are expanded
 pub fn expand_aliases(input: String) -> String {
-  let mut seen = HashSet::new();
+  let mut seen = HashSet::default();
   AliasExpander::new(input, &mut seen).expand().0
 }
 
 pub fn expand_alias_with_pos(input: String) -> (String, Option<usize>) {
-  let mut seen = HashSet::new();
+  let mut seen = HashSet::default();
   AliasExpander::new(input, &mut seen).expand()
 }
 

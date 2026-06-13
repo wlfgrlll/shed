@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs::OpenOptions, io::Write, path::PathBuf};
+use std::{fs::OpenOptions, io::Write, path::PathBuf};
 
 use itertools::Itertools;
 use nix::libc::STDIN_FILENO;
@@ -19,11 +19,12 @@ use super::{
   state::{Shed, vars::VarFlags, vars::VarKind},
   status_msg, system_msg, try_var,
 };
-use crate::{state, verb};
 use crate::{
+  HashSet,
   state::terminal::Terminal,
   util::{format_size, var_ctx_guard},
 };
+use crate::{state, verb};
 
 impl super::LineBuf {
   pub(super) fn dispatch_ex_node(&mut self, cmd: &EditCmd) -> ShResult<()> {
@@ -108,7 +109,7 @@ impl super::LineBuf {
   ) -> ShResult<()> {
     let line_nums = self.lines_for_address(range)?;
 
-    let re = match Shed::meta_mut(|m| m.get_regex(old.to_string())) {
+    let re = match Shed::meta_mut(|m| m.get_regex(old)) {
       Ok(re) => re,
       Err(e) => {
         status_msg!("{e}");
@@ -570,7 +571,7 @@ impl super::LineBuf {
   }
 
   fn run_shell_cmd(&mut self, sh_cmd: &str, stdin: Option<&str>) -> ShResult<Option<String>> {
-    let mut vars = HashSet::new();
+    let mut vars = HashSet::default();
     vars.insert("BUFFER".into());
     vars.insert("CURSOR".into());
     vars.insert("ANCHOR".into());

@@ -1,4 +1,5 @@
 use crate::{
+  HashMap,
   eval::lex::TkFlags,
   expand::Expander,
   match_loop,
@@ -8,7 +9,7 @@ use crate::{
 use super::{meta::MetaTab, scopes::ScopeStack};
 
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::VecDeque,
   fmt::{self, Display},
   ops::Deref,
   path::PathBuf,
@@ -411,7 +412,7 @@ impl VarKind {
     let raw = raw[1..raw.len() - 1].to_string();
 
     let tokens: VecDeque<String> = LexStream::new(raw.into(), LexFlags::empty())
-      .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
+      .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
       .try_fold(String::new(), |mut acc, wrds| {
         match wrds {
           Ok(wrds) => {
@@ -665,8 +666,8 @@ pub(crate) struct VarTab {
 impl VarTab {
   pub fn bare() -> Self {
     Self {
-      vars: HashMap::new(),
-      params: HashMap::new(),
+      vars: HashMap::default(),
+      params: HashMap::default(),
       sh_argv: VecDeque::new(),
       is_ceiling: false,
       deferred_cmds: Vec::new(),
@@ -693,14 +694,14 @@ impl VarTab {
     self.is_ceiling
   }
   fn init_params() -> HashMap<ShellParam, String> {
-    let mut params = HashMap::new();
+    let mut params = HashMap::default();
     params.insert(ShellParam::ArgCount, "0".into()); // Number of positional parameters
     params.insert(ShellParam::ShPid, Pid::this().to_string()); // PID of the shell
     params.insert(ShellParam::LastJob, String::new()); // PID of the last background job (if any)
     params
   }
   fn init_sh_vars() -> HashMap<String, Var> {
-    let mut vars = HashMap::new();
+    let mut vars = HashMap::default();
     vars.insert("COMP_WORDBREAKS".into(), " \t\n\"'@><=;|&(:".into());
     vars.insert("OPTIND".into(), "1".into());
     let env_vars = Self::init_env();

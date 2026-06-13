@@ -1,5 +1,5 @@
+use crate::HashSet;
 use std::{
-  collections::HashSet,
   fmt::{Debug, Display},
   os::unix::fs::PermissionsExt,
   path::{Path, PathBuf},
@@ -899,7 +899,7 @@ impl BashCompSpec {
     }
   }
   pub fn exec_comp_func(&self, ctx: &CompContext) -> ShResult<Vec<Candidate>> {
-    let mut vars_to_unset = HashSet::new();
+    let mut vars_to_unset = HashSet::default();
     for var in [
       "COMP_WORDS",
       "COMP_CWORD",

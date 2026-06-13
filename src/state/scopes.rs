@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque, hash_map::Entry};
+use std::collections::{VecDeque, hash_map::Entry};
 
 use super::{
   ShResult, Shed,
@@ -6,6 +6,7 @@ use super::{
   sherr,
   vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarKindTag, VarName, VarTab},
 };
+use crate::HashMap;
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
@@ -124,7 +125,7 @@ impl ScopeStack {
     false
   }
   pub fn flatten_vars(&self) -> HashMap<String, Var> {
-    let mut flat_vars = HashMap::new();
+    let mut flat_vars = HashMap::default();
     for scope in &self.scopes {
       for (var_name, var) in scope.vars() {
         flat_vars.insert(var_name.clone(), var.clone());
@@ -505,6 +506,7 @@ impl ScopeStack {
     None
   }
 
+  #[cfg(test)]
   pub fn try_get_var_kind(&self, var_name: &str) -> Option<VarKind> {
     for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
@@ -525,7 +527,7 @@ impl ScopeStack {
     None
   }
   pub fn all_vars(&self) -> HashMap<String, Var> {
-    let mut vars = HashMap::new();
+    let mut vars = HashMap::default();
     for scope in &self.scopes {
       for (k, v) in scope.vars() {
         vars.insert(k.clone(), v.clone());

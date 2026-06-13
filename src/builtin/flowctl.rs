@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::HashMap;
 use std::fmt::Write;
 
 use yansi::Paint;
@@ -196,7 +196,7 @@ impl super::Builtin for Raise {
 
     let mut message_parts = vec![];
     let mut part = String::new();
-    let mut color_map: HashMap<u32, yansi::Color> = HashMap::new();
+    let mut color_map: HashMap<u32, yansi::Color> = HashMap::default();
     let mut arg_iter = args.argv.into_iter();
 
     while let Some((arg, span)) = arg_iter.next() {

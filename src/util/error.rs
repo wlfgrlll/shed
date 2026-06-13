@@ -3,11 +3,10 @@ use ariadne::{Report, ReportKind};
 use nix::errno::Errno;
 use rand::TryRng;
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Display};
 use std::io::Write;
 
-use crate::shopt;
+use crate::{HashMap, shopt};
 
 use super::{
   FdWriter,
@@ -407,7 +406,7 @@ impl ShErr {
     Some(report.finish())
   }
   fn collect_sources(&self) -> HashMap<SpanSource, String> {
-    let mut source_map = HashMap::new();
+    let mut source_map = HashMap::default();
     if let Some(span) = &self.src_span {
       let src = span.span_source().clone();
       source_map

@@ -1,11 +1,16 @@
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::VecDeque,
   ffi::CString,
   fmt::Write,
   os::fd::OwnedFd,
   path::{Path, PathBuf},
   rc::Rc,
   time::{Duration, Instant},
+};
+
+use crate::{
+  HashMap,
+  util::{count_unescaped, ends_with_unescaped, has_any_unescaped, starts_with_unescaped},
 };
 
 use super::{
@@ -562,8 +567,6 @@ pub(crate) struct MetaTab {
   path_cache: PathTable,
   regexes: HashMap<String, Rc<Regex>>,
   globs: HashMap<String, Pattern>,
-  // regex cache - patterns we have seen before
-  regexes: HashMap<String, Regex>,
   // envp cache - environment variables for execve
   envp_cache: Option<Rc<[CString]>>,
   // programmable completion specs

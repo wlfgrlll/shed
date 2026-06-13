@@ -1,5 +1,5 @@
 use std::{
-  collections::{HashMap, VecDeque},
+  collections::VecDeque,
   sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
 };
 
@@ -27,6 +27,8 @@ use super::{
   system_msg,
   util::ShResult,
 };
+
+use crate::HashMap;
 
 static SIGNALS: AtomicU64 = AtomicU64::new(0);
 
@@ -409,7 +411,8 @@ pub fn child_exited(pid: Pid, status: WtStat) -> ShResult<()> {
       Var::new(VarKind::Str(last_status), VarFlags::empty()),
     ),
   ]
-  .into();
+  .into_iter()
+  .collect();
 
   with_vars(post_job_vars, || autocmd!(OnJobFinish));
 

@@ -1,9 +1,8 @@
-use crate::{state::logic::ShFunc, util::ShErrKind};
+use crate::{HashMap, state::logic::ShFunc, util::ShErrKind};
 
 use super::{SHED, Shed, try_var};
 
 use std::{
-  collections::HashMap,
   fs::OpenOptions,
   io::{Read, Write},
   path::{Path, PathBuf},
@@ -130,10 +129,10 @@ pub fn query_db<T, F: FnOnce(Arc<Connection>) -> ShResult<T>>(f: F) -> ShResult<
 pub fn with_vars<F, H, V, T>(vars: H, f: F) -> T
 where
   F: FnOnce() -> T,
-  H: Into<HashMap<String, V>>,
+  H: IntoIterator<Item = (String, V)>,
   V: Into<Var>,
 {
-  let vars = vars.into();
+  let vars: HashMap<String, V> = vars.into_iter().collect();
   let restores: Vec<(String, Option<(VarKind, VarFlags)>)> = vars
     .keys()
     .map(|k| {
@@ -186,8 +185,8 @@ pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) 
 
   with_vars(
     [
-      ("NEW_DIR".into(), dir_raw.as_str()),
-      ("OLD_DIR".into(), current_dir.as_str()),
+      ("NEW_DIR".to_string(), dir_raw.as_str()),
+      ("OLD_DIR".to_string(), current_dir.as_str()),
     ],
     || autocmd!(PreChangeDir),
   );
@@ -1355,8 +1354,7 @@ mod set_ver_info_tests {
     let kind = Shed::vars(|v| v.try_get_var_kind("SHED_VER_INFO"));
     match kind {
       Some(VarKind::AssocArr(items)) => {
-        let keys: std::collections::HashSet<String> =
-          items.iter().map(|(k, _)| k.clone()).collect();
+        let keys: crate::HashSet<String> = items.iter().map(|(k, _)| k.clone()).collect();
         assert_eq!(keys.len(), 5, "got: {keys:?}");
         for expected in ["major", "minor", "patch", "arch", "os"] {
           assert!(

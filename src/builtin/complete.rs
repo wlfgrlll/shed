@@ -802,7 +802,7 @@ mod tests {
     test_input("compadd -A m").unwrap();
     let cands = take_comp_candidates();
     assert_eq!(cands.len(), 2);
-    let map: std::collections::HashMap<&str, Option<&str>> =
+    let map: crate::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
     assert_eq!(map["alpha"], Some("first letter"));
     assert_eq!(map["beta"], Some("second letter"));
@@ -826,7 +826,7 @@ mod tests {
     test_input("declare -A m=([n]=normal [i]=insert)").unwrap();
     test_input("compadd -P '-' -S 'X' -A m").unwrap();
     let cands = take_comp_candidates();
-    let map: std::collections::HashMap<&str, Option<&str>> =
+    let map: crate::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
     assert_eq!(map["-nX"], Some("normal"));
     assert_eq!(map["-iX"], Some("insert"));
@@ -842,7 +842,7 @@ mod tests {
     test_input("compadd -a words -d descs -A m").unwrap();
     let cands = take_comp_candidates();
     assert_eq!(cands.len(), 4);
-    let map: std::collections::HashMap<&str, Option<&str>> =
+    let map: crate::HashMap<&str, Option<&str>> =
       cands.iter().map(|c| (c.content(), c.desc())).collect();
     assert_eq!(map["p"], Some("P desc"));
     assert_eq!(map["q"], Some("Q desc"));
@@ -858,7 +858,7 @@ mod tests {
     test_input("compadd -A m maybe").unwrap();
     let cands = take_comp_candidates();
     assert_eq!(cands.len(), 3);
-    let contents: std::collections::HashSet<&str> = collect_contents(&cands).into_iter().collect();
+    let contents: crate::HashSet<&str> = collect_contents(&cands).into_iter().collect();
     assert!(contents.contains("y"));
     assert!(contents.contains("n"));
     assert!(contents.contains("maybe"));

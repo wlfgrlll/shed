@@ -1,9 +1,7 @@
-use std::collections::HashSet;
-
 use nix::sys::stat;
 use scopeguard::guard;
 
-use crate::{try_var, var};
+use crate::{HashSet, try_var, var};
 
 use super::{
   super::state::scopes::ScopeStack,

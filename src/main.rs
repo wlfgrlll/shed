@@ -19,6 +19,8 @@ use expand::expand_keymap;
 use keys::KeyEvent;
 use nix::sys::wait::WaitStatus as WtStat;
 use readline::{Hint, LineData, Lines, Prompt, ReadlineEvent, ShedLine};
+use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::FxHashSet as HashSet;
 use signal::QUIT_CODE;
 use util::{ShErrKind, ShResult};
 

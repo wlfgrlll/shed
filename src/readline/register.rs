@@ -1,8 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Display};
+use std::{cell::RefCell, fmt::Display};
 
 use itertools::Itertools;
 
-use crate::readline::linebuf::MotionKind;
+use crate::{HashMap, readline::linebuf::MotionKind};
 
 use super::{
   super::keys::KeyEvent,
@@ -160,7 +160,7 @@ pub struct Registers(HashMap<char, Register>);
 
 impl Registers {
   pub fn new() -> Self {
-    let mut regs = HashMap::new();
+    let mut regs = HashMap::default();
     for c in 'a'..='z' {
       regs.insert(c, Register::default());
     }

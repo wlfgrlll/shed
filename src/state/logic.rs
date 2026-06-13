@@ -1,13 +1,12 @@
 use nix::sys::signal::Signal;
 
 use std::{
-  collections::HashMap,
   fmt::{self, Display},
   path::PathBuf,
   str::FromStr,
 };
 
-use crate::{ShResult, eval::execute::exec_nonint, sherr, util};
+use crate::{HashMap, ShResult, eval::execute::exec_nonint, sherr, util};
 
 use super::{
   ShErr,

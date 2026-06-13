@@ -1,6 +1,5 @@
 use std::{
   cmp::Ordering,
-  collections::HashMap,
   env,
   os::fd::{AsFd, AsRawFd, OwnedFd},
   path::PathBuf,
@@ -13,6 +12,8 @@ use nix::{
   sys::termios::{OutputFlags, SetArg, tcgetattr, tcsetattr},
   unistd::pipe,
 };
+
+use crate::HashMap;
 
 #[macro_export]
 macro_rules! assert_output {

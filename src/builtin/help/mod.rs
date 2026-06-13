@@ -7,12 +7,11 @@ use pager::{HelpPager, PagerEvent};
 
 use std::{
   cell::RefCell,
-  collections::HashSet,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
 };
 
-use crate::state::meta::MetaTab;
+use crate::{HashSet, state::meta::MetaTab};
 
 use super::{
   super::state::terminal::Terminal,
@@ -130,7 +129,7 @@ pub fn get_all_tags() -> ShResult<Vec<ScoredTag>> {
   let mut tags = vec![];
 
   let hpath = var!("SHED_HPATH");
-  let mut hpath_names: HashSet<String> = HashSet::new();
+  let mut hpath_names: HashSet<String> = HashSet::default();
 
   for entry in util::path_list_entries(&hpath) {
     let path = entry.path();
@@ -179,7 +178,7 @@ pub fn get_help_content(topic: &str) -> Option<(usize, String, Option<String>)> 
   }
 
   let hpath = var!("SHED_HPATH");
-  let mut hpath_names: HashSet<String> = HashSet::new();
+  let mut hpath_names: HashSet<String> = HashSet::default();
 
   for entry in util::path_list_entries(&hpath) {
     let path = entry.path();
