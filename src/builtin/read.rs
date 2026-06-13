@@ -116,7 +116,18 @@ fn read_bytes(
     .unwrap_or(PollTimeout::NONE);
 
   loop {
-    if poll(&mut [poll_fd.clone()], timeout)? == 0 {
+    let ready = match poll(&mut [poll_fd.clone()], timeout) {
+      Ok(n) => n,
+      Err(Errno::EINTR) => {
+        if signal::sigint_pending() {
+          state::Shed::set_status(130);
+          return Ok(String::new());
+        }
+        continue; // benign signal (e.g. SIGWINCH), retry the poll
+      }
+      Err(e) => return Err(e.into()),
+    };
+    if ready == 0 {
       state::Shed::set_status(1);
       return String::from_utf8(buf).map_err(|e| sherr!(ExecFail, "read: invalid UTF-8: {e}")); // timeout
     }
