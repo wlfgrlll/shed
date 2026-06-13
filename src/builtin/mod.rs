@@ -278,7 +278,7 @@ pub(super) trait Builtin: Sync {
   }
 
   /// The way that the builtin parses its options. Some of them are weird, like `set`
-  fn get_argv_and_opts(&self, argv: Vec<Tk>, no_split: bool) -> ShResult<(ArgVector, Vec<Opt>)> {
+  fn get_argv_and_opts(&self, argv: &[Tk], no_split: bool) -> ShResult<(ArgVector, Vec<Opt>)> {
     let opts = self.opts();
     let (mut argv, opts) = if opts.is_empty() {
       (prepare_argv_with(argv, no_split)?, vec![])
@@ -295,13 +295,13 @@ pub(super) trait Builtin: Sync {
   /// The main entry point for running a builtin. This is responsible for setting up the environment, handling redirections, and catching control flow errors.
   fn setup_builtin(
     &self,
-    mut node: Node,
+    node: &Node,
     dispatcher: &mut Dispatcher,
     stdin: Option<String>,
   ) -> ShResult<()> {
     let cmd_raw = node.get_command().unwrap().to_string();
     let context = node.context.clone();
-    let NdRule::Command { assignments, argv } = &mut node.class else {
+    let NdRule::Command { assignments, argv } = &node.class else {
       unreachable!()
     };
     let assign_behavior = if self.is_special() {
@@ -310,7 +310,7 @@ pub(super) trait Builtin: Sync {
       AssignBehavior::Export
     };
 
-    let vars = Dispatcher::set_assignments(std::mem::take(assignments), assign_behavior)?;
+    let vars = Dispatcher::set_assignments(assignments, assign_behavior)?;
     let _var_guard = var_ctx_guard(vars.into_iter().collect());
     let fork_builtins = node.flags.contains(NdFlags::FORK_BUILTINS);
 
@@ -324,7 +324,7 @@ pub(super) trait Builtin: Sync {
     }
 
     // Set up redirections here so we can attach the guard to propagated errors.
-    let redirs: RedirSet = RedirSet::from(std::mem::take(&mut node.redirs));
+    let redirs: RedirSet = RedirSet::from(&node.redirs);
     let guard = redirs.apply()?;
 
     if fork_builtins {
@@ -381,9 +381,9 @@ pub(super) trait Builtin: Sync {
 
         if should_propagate {
           Shed::set_status(1);
-          Err(e.with_context(context))
+          Err(e.with_context(context.iter()))
         } else {
-          e.with_context(context).print_error();
+          e.with_context(context.iter()).print_error();
           with_status(1)
         }
       }
@@ -392,7 +392,7 @@ pub(super) trait Builtin: Sync {
   /// Parse arguments and options, pack `BuiltinArgs`, run `self.execute()`
   fn run_builtin(
     &self,
-    node: Node,
+    node: &Node,
     _dispatcher: &mut Dispatcher,
     stdin: Option<String>,
   ) -> ShResult<()> {
@@ -401,7 +401,7 @@ pub(super) trait Builtin: Sync {
     let NdRule::Command {
       assignments: _,
       argv,
-    } = node.class
+    } = &node.class
     else {
       unreachable!()
     };
@@ -512,23 +512,19 @@ impl Builtin for BuiltinBuiltin {
   }
   fn setup_builtin(
     &self,
-    mut node: Node,
+    node: &Node,
     dispatcher: &mut Dispatcher,
     stdin: Option<String>,
   ) -> ShResult<()> {
     let span = node.get_span();
     let NdRule::Command {
       assignments: _,
-      ref mut argv,
-    } = node.class
+      argv,
+    } = &node.class
     else {
       unreachable!()
     };
-    *argv = argv
-      .iter_mut()
-      .skip(1)
-      .map(|tk| tk.clone())
-      .collect::<Vec<Tk>>();
+    let argv = argv.iter().skip(1).cloned().collect::<Vec<Tk>>();
 
     let cmd = argv.first().map_or("", Tk::as_str);
     let Some(builtin) = lookup_builtin(cmd) else {
@@ -547,17 +543,15 @@ impl Builtin for CommandBuiltin {
   }
   fn run_builtin(
     &self,
-    mut node: Node,
+    node: &Node,
     dispatcher: &mut Dispatcher,
     _stdin: Option<String>,
   ) -> ShResult<()> {
-    let NdRule::Command {
-      assignments: _,
-      ref mut argv,
-    } = node.class
-    else {
+    let NdRule::Command { assignments, argv } = &node.class else {
       unreachable!()
     };
+    let mut argv = argv.to_vec();
+
     if !argv.is_empty() {
       argv.remove(0);
     }
@@ -567,7 +561,7 @@ impl Builtin for CommandBuiltin {
     let mut print_type = false;
     let mut seen_dd = false;
 
-    let iter = std::mem::take(argv).into_iter();
+    let iter = argv.into_iter();
     let mut rest = vec![];
 
     for tk in iter {
@@ -601,7 +595,15 @@ impl Builtin for CommandBuiltin {
       return with_status(0);
     }
 
-    *argv = rest;
+    argv = rest;
+
+    let node = Node {
+      class: NdRule::Command {
+        assignments: assignments.clone(),
+        argv,
+      },
+      ..node.clone()
+    };
 
     if use_default_path {
       let Some(default_path) = state::util::get_default_path() else {
@@ -617,10 +619,10 @@ impl Builtin for CommandBuiltin {
       }
       state::util::with_vars([("PATH".to_string(), default_path)], || {
         Shed::meta_mut(MetaTab::rehash_path_cache);
-        Self::execute_inner(print_path, print_type, node, dispatcher)
+        Self::execute_inner(print_path, print_type, &node, dispatcher)
       })
     } else {
-      Self::execute_inner(print_path, print_type, node, dispatcher)
+      Self::execute_inner(print_path, print_type, &node, dispatcher)
     }
   }
 }
@@ -629,7 +631,7 @@ impl CommandBuiltin {
   fn execute_inner(
     print_path: bool,
     print_type: bool,
-    node: Node,
+    node: &Node,
     dispatcher: &mut Dispatcher,
   ) -> ShResult<()> {
     let NdRule::Command { argv, .. } = &node.class else {

@@ -107,27 +107,28 @@ impl OptSpec {
 }
 
 type GetOptResult = ShResult<(Vec<(String, Span)>, Vec<Opt>)>;
-pub(crate) fn get_opts_from_tokens_strict(tokens: Vec<Tk>, opt_specs: &[OptSpec]) -> GetOptResult {
+pub(crate) fn get_opts_from_tokens_strict(tokens: &[Tk], opt_specs: &[OptSpec]) -> GetOptResult {
   sort_tks(tokens, opt_specs, true)
 }
 
-pub(crate) fn get_opts_from_tokens(tokens: Vec<Tk>, opt_specs: &[OptSpec]) -> GetOptResult {
+pub(crate) fn get_opts_from_tokens(tokens: &[Tk], opt_specs: &[OptSpec]) -> GetOptResult {
   sort_tks(tokens, opt_specs, false)
 }
 
 /// Variant that returns raw Tk values for callsites that need
 /// pre-expansion token operations (e.g. `split_tk_at`).
 pub(crate) fn get_opts_from_tokens_raw(
-  tokens: Vec<Tk>,
+  tokens: &[Tk],
   opt_specs: &[OptSpec],
 ) -> ShResult<(Vec<Tk>, Vec<Opt>)> {
   sort_tks_raw(tokens, opt_specs, false)
 }
 
-pub(crate) fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> GetOptResult {
+pub(crate) fn sort_tks(tokens: &[Tk], opt_specs: &[OptSpec], strict: bool) -> GetOptResult {
   // Expand tokens and flatten via get_words, preserving spans
   let mut words: Vec<(String, Span)> = vec![];
   for tk in tokens {
+    let tk = tk.clone();
     let span = tk.span.clone();
     let expanded = tk.expand()?;
     for word in expanded.get_words() {
@@ -224,12 +225,12 @@ pub(crate) fn sort_tks(tokens: Vec<Tk>, opt_specs: &[OptSpec], strict: bool) -> 
 }
 
 fn sort_tks_raw(
-  tokens: Vec<Tk>,
+  tokens: &[Tk],
   opt_specs: &[OptSpec],
   strict: bool,
 ) -> ShResult<(Vec<Tk>, Vec<Opt>)> {
   let mut tokens_iter = tokens
-    .into_iter()
+    .iter()
     .map(Tk::expand)
     .collect::<ShResult<Vec<_>>>()?
     .into_iter()
@@ -388,7 +389,7 @@ mod tests {
       },
     ];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     let mut opts = opts.into_iter();
     assert!(opts.any(|o| o == Opt::Short('v') || o == Opt::Long("help".into())));
@@ -408,7 +409,7 @@ mod tests {
       takes_arg: OptArg::Single,
     }];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(opts, vec![Opt::ShortWithArg('o', "output.txt".into())]);
     let non_opts: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
@@ -424,7 +425,7 @@ mod tests {
       takes_arg: OptArg::Single,
     }];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(
       opts,
@@ -449,7 +450,7 @@ mod tests {
       },
     ];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(opts, vec![Opt::Short('v')]);
     let non_opts: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
@@ -476,7 +477,7 @@ mod tests {
       },
     ];
 
-    let (_non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (_non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(
       opts,
@@ -493,7 +494,7 @@ mod tests {
       takes_arg: OptArg::None,
     }];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(opts, vec![Opt::Short('v')]);
     // -x is not in spec, so its token goes to non_opts
@@ -520,7 +521,7 @@ mod tests {
       },
     ];
 
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &opt_spec).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &opt_spec).unwrap();
 
     assert_eq!(
       opts,
@@ -616,7 +617,7 @@ mod tests {
   fn raw_parses_bare_flag() {
     let tokens = lex_clean("-v");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert!(non_opts.is_empty());
     assert_eq!(opts, vec![Opt::Short('v')]);
   }
@@ -625,7 +626,7 @@ mod tests {
   fn raw_parses_flag_with_single_arg() {
     let tokens = lex_clean("-o out.txt");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert!(non_opts.is_empty());
     assert_eq!(opts, vec![Opt::ShortWithArg('o', "out.txt".into())]);
   }
@@ -634,7 +635,7 @@ mod tests {
   fn raw_separates_double_dash_terminates_opts() {
     let tokens = lex_clean("-v -- -not-a-flag plain");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert_eq!(opts, vec![Opt::Short('v')]);
     let strs: Vec<String> = non_opts.iter().map(ToString::to_string).collect();
     assert_eq!(strs, vec!["-not-a-flag", "plain"]);
@@ -644,7 +645,7 @@ mod tests {
   fn raw_bare_double_dash_at_end_kept_in_non_opts() {
     let tokens = lex_clean("-v --");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert_eq!(opts, vec![Opt::Short('v')]);
     assert_eq!(non_opts.len(), 1);
     assert_eq!(non_opts[0].to_string(), "--");
@@ -654,7 +655,7 @@ mod tests {
   fn raw_unknown_opt_non_strict_goes_to_non_opts() {
     let tokens = lex_clean("-z");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert!(opts.is_empty());
     assert_eq!(non_opts.len(), 1);
   }
@@ -663,7 +664,7 @@ mod tests {
   fn raw_unknown_opt_strict_errors() {
     let tokens = lex_clean("-z");
     let strict_specs = raw_specs_v_flag_and_single();
-    let result = super::sort_tks_raw(tokens, &strict_specs, true);
+    let result = super::sort_tks_raw(&tokens, &strict_specs, true);
     assert!(result.is_err());
   }
 
@@ -671,7 +672,7 @@ mod tests {
   fn raw_plain_arg_goes_to_non_opts() {
     let tokens = lex_clean("hello");
     let (non_opts, opts) =
-      get_opts_from_tokens_raw(tokens, &raw_specs_v_flag_and_single()).unwrap();
+      get_opts_from_tokens_raw(&tokens, &raw_specs_v_flag_and_single()).unwrap();
     assert!(opts.is_empty());
     assert_eq!(non_opts.len(), 1);
     assert_eq!(non_opts[0].to_string(), "hello");
@@ -681,7 +682,7 @@ mod tests {
   fn raw_exact_arg_count_consumes_n_args() {
     let tokens = lex_clean("-s name buf cur extra");
     let specs = vec![OptSpec::exact_args('s', 3)];
-    let (non_opts, opts) = get_opts_from_tokens_raw(tokens, &specs).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens_raw(&tokens, &specs).unwrap();
     match &opts[..] {
       [Opt::ShortWithList('s', args)] => {
         assert_eq!(args.len(), 3);
@@ -699,7 +700,7 @@ mod tests {
   fn raw_exact_arg_count_too_few_errors() {
     let tokens = lex_clean("-s only_one_arg");
     let specs = vec![OptSpec::exact_args('s', 3)];
-    let result = get_opts_from_tokens_raw(tokens, &specs);
+    let result = get_opts_from_tokens_raw(&tokens, &specs);
     assert!(result.is_err());
   }
 
@@ -732,7 +733,7 @@ mod tests {
     })
     .unwrap();
     let tokens = lex("$GETOPT_ARGS");
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &specs_v_and_o_single()).unwrap();
     assert_eq!(
       opts,
       vec![Opt::Short('v'), Opt::ShortWithArg('o', "out.txt".into()),]
@@ -747,7 +748,7 @@ mod tests {
     let _g = TestGuard::new();
     Shed::vars_mut(|v| v.set_var("BAD", VarKind::Str("-z".into()), VarFlags::empty())).unwrap();
     let tokens = lex("$BAD");
-    let res = get_opts_from_tokens_strict(tokens, &specs_v_and_o_single());
+    let res = get_opts_from_tokens_strict(&tokens, &specs_v_and_o_single());
     assert!(res.is_err());
   }
 
@@ -764,7 +765,7 @@ mod tests {
     })
     .unwrap();
     let tokens = lex("$SEP");
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &specs_v_and_o_single()).unwrap();
     assert_eq!(opts, vec![Opt::Short('v')]);
     let strs: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
     assert_eq!(strs, vec!["-not-an-opt"]);
@@ -775,7 +776,7 @@ mod tests {
   #[test]
   fn sort_tks_bare_trailing_double_dash_kept_in_non_opts() {
     let tokens = lex("-v --");
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &specs_v_and_o_single()).unwrap();
     assert_eq!(opts, vec![Opt::Short('v')]);
     let strs: Vec<String> = non_opts.into_iter().map(|(s, _)| s).collect();
     assert_eq!(strs, vec!["--"]);
@@ -787,7 +788,7 @@ mod tests {
   fn sort_tks_exact_arg_count_consumes_n_args() {
     let tokens = lex("-s a b c extra");
     let specs = vec![OptSpec::exact_args('s', 3)];
-    let (non_opts, opts) = get_opts_from_tokens(tokens, &specs).unwrap();
+    let (non_opts, opts) = get_opts_from_tokens(&tokens, &specs).unwrap();
     match &opts[..] {
       [Opt::ShortWithList('s', args)] => {
         assert_eq!(
@@ -806,7 +807,7 @@ mod tests {
   fn sort_tks_exact_arg_count_too_few_errors() {
     let tokens = lex("-s only");
     let specs = vec![OptSpec::exact_args('s', 3)];
-    let res = get_opts_from_tokens(tokens, &specs);
+    let res = get_opts_from_tokens(&tokens, &specs);
     assert!(res.is_err());
   }
 
@@ -815,7 +816,7 @@ mod tests {
   #[test]
   fn sort_tks_single_arg_missing_uses_empty_string() {
     let tokens = lex("-o");
-    let (_non_opts, opts) = get_opts_from_tokens(tokens, &specs_v_and_o_single()).unwrap();
+    let (_non_opts, opts) = get_opts_from_tokens(&tokens, &specs_v_and_o_single()).unwrap();
     assert_eq!(opts, vec![Opt::ShortWithArg('o', String::new())]);
   }
 }

@@ -1,6 +1,6 @@
 use crate::{state::logic::ShFunc, util::ShErrKind};
 
-use super::{super::eval::lex::Tk, SHED, Shed, try_var};
+use super::{SHED, Shed, try_var};
 
 use std::{
   collections::HashMap,
@@ -35,6 +35,9 @@ use super::{
 
 /// Parse `arr[idx]` into (name, `raw_index_expr`). Pure parsing, no expansion.
 pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
+  if !var_name.contains('[') {
+    return None;
+  }
   let mut chars = var_name.chars();
   let mut name = String::new();
   let mut idx_raw = String::new();
@@ -76,7 +79,7 @@ pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
 /// Expand the raw index expression and parse it into an `ArrIndex`.
 pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<ArrIndex> {
   let expanded = LexStream::new(idx_raw.into(), LexFlags::empty())
-    .map(|tk| tk.and_then(Tk::expand).map(|tk| tk.get_words()))
+    .map(|tk| tk.and_then(|tk| tk.expand()).map(|tk| tk.get_words()))
     .try_fold(vec![], |mut acc, wrds| {
       match wrds {
         Ok(wrds) => acc.extend(wrds),

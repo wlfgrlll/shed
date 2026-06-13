@@ -22,7 +22,7 @@ mod util;
 #[cfg(test)]
 pub mod tests;
 
-use crate::util::error::LabelBuilder;
+use crate::eval::parse::node::LabelCtx;
 
 use super::{
   lex::{self, LexFlags, LexStream, Span, Tk, TkFlags, TkRule, clean_input},
@@ -62,7 +62,7 @@ impl ParsedSrc {
       ast: Ast::new(vec![]),
       lex_flags: LexFlags::empty(),
       parse_flags: ParseFlags::empty(),
-      context: VecDeque::new(),
+      context: VecDeque::new().into(),
       block_depth: 0,
     }
   }
@@ -154,8 +154,6 @@ impl Ast {
     &mut self.0
   }
 }
-
-pub(crate) type LabelCtx = VecDeque<LabelBuilder>;
 
 bitflags! {
   #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,Hash,PartialOrd,Ord)]

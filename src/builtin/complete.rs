@@ -110,7 +110,7 @@ impl super::Builtin for CompGen {
   }
   fn run_builtin(
     &self,
-    node: Node,
+    node: &Node,
     _dispatcher: &mut Dispatcher,
     _stdin: Option<String>,
   ) -> ShResult<()> {
@@ -119,7 +119,7 @@ impl super::Builtin for CompGen {
     let NdRule::Command {
       assignments: _,
       argv,
-    } = node.class
+    } = &node.class
     else {
       unreachable!()
     };

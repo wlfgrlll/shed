@@ -34,41 +34,66 @@ pub(crate) const PARAMETERS: [char; 8] = ['-', '@', '*', '#', '$', '?', '!', '0'
 
 impl Tk {
   /// Create a new expanded token
-  pub fn expand(self) -> ShResult<Self> {
+  pub fn expand(&self) -> ShResult<Self> {
     if let TkRule::Expanded { .. } = self.class {
-      return Ok(self);
+      return Ok(self.clone());
     }
+    if self.is_literal() {
+      let raw = self.span.as_str().to_string();
+      let class = TkRule::Expanded { exp: vec![raw] };
+      return Ok(Self {
+        class,
+        ..self.clone()
+      });
+    }
+
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(&self).expand().promote_err(span.clone())?;
+    let exp = Expander::new(self).expand().promote_err(span.clone())?;
     let class = TkRule::Expanded { exp };
     Ok(Self { class, span, flags })
   }
-  pub fn expand_to_words(self) -> ShResult<Vec<String>> {
-    if let TkRule::Expanded { exp } = self.class {
-      return Ok(exp);
+  pub fn expand_to_words(&self) -> ShResult<Vec<String>> {
+    if let TkRule::Expanded { exp } = &self.class {
+      return Ok(exp.clone());
+    }
+    if self.is_literal() {
+      return Ok(vec![self.span.as_str().to_string()]);
     }
     let span = self.span.clone();
-    Expander::new(&self).expand().promote_err(span)
+    Expander::new(self).expand().promote_err(span)
   }
-  pub fn expand_no_side_effects(self) -> ShResult<Self> {
+  pub fn expand_no_side_effects(&self) -> ShResult<Self> {
     if let TkRule::Expanded { .. } = self.class {
-      return Ok(self);
+      return Ok(self.clone());
     }
+    if self.is_literal() {
+      let raw = self.span.as_str().to_string();
+      let class = TkRule::Expanded { exp: vec![raw] };
+      return Ok(Self {
+        class,
+        ..self.clone()
+      });
+    }
+
     let flags = self.flags;
     let span = self.span.clone();
-    let exp = Expander::new(&self)
+    let exp = Expander::new(self)
       .expand_no_side_effects()
       .promote_err(span.clone())?;
     let class = TkRule::Expanded { exp: vec![exp] };
     Ok(Self { class, span, flags })
   }
-  pub fn expand_no_split(self) -> ShResult<String> {
+  pub fn expand_no_split(&self) -> ShResult<String> {
     if let TkRule::Expanded { exp } = &self.class {
       return Ok(exp.join(" "));
     }
+    if self.is_literal() {
+      return Ok(self.span.as_str().to_string());
+    }
+
     let span = self.span.clone();
-    let exp = Expander::new(&self)
+    let exp = Expander::new(self)
       .no_glob()
       .no_split()
       .expand_no_split()

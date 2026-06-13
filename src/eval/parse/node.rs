@@ -1,3 +1,5 @@
+use std::{collections::VecDeque, rc::Rc};
+
 use crate::{
   ShResult, Shed,
   eval::execute::{is_builtin, is_func_node},
@@ -6,7 +8,6 @@ use crate::{
 };
 
 use super::{
-  LabelCtx,
   lex::{Span, Tk},
   procio::RedirSpec,
   two_way_display,
@@ -33,6 +34,49 @@ impl NodeVecUtils<Node> for Vec<Node> {
       }
     }
     None
+  }
+}
+
+#[derive(Debug)]
+pub enum LabelCtx {
+  Mut(VecDeque<LabelBuilder>),
+  Frozen(Rc<VecDeque<LabelBuilder>>),
+}
+
+impl Default for LabelCtx {
+  fn default() -> Self {
+    Self::Mut(VecDeque::new())
+  }
+}
+
+impl Clone for LabelCtx {
+  fn clone(&self) -> Self {
+    match self {
+      LabelCtx::Mut(queue) => LabelCtx::Frozen(Rc::new(queue.clone())),
+      LabelCtx::Frozen(rc_queue) => LabelCtx::Frozen(rc_queue.clone()),
+    }
+  }
+}
+
+impl LabelCtx {
+  pub fn push_back(&mut self, label: LabelBuilder) {
+    match self {
+      LabelCtx::Mut(queue) => queue.push_back(label),
+      LabelCtx::Frozen(rc_queue) => Rc::make_mut(rc_queue).push_back(label),
+    }
+  }
+
+  pub fn iter(&self) -> impl Iterator<Item = &LabelBuilder> {
+    match self {
+      LabelCtx::Mut(queue) => queue.iter(),
+      LabelCtx::Frozen(rc_queue) => rc_queue.iter(),
+    }
+  }
+}
+
+impl From<VecDeque<LabelBuilder>> for LabelCtx {
+  fn from(queue: VecDeque<LabelBuilder>) -> Self {
+    LabelCtx::Mut(queue)
   }
 }
 
@@ -189,8 +233,17 @@ impl Node {
       self.flags.insert(NdFlags::IS_ERR);
     }
   }
+  pub fn freeze_context(&mut self) {
+    self.walk_tree(&mut |nd| {
+      if let LabelCtx::Mut(deque) = std::mem::take(&mut nd.context) {
+        nd.context = LabelCtx::Frozen(Rc::new(deque));
+      }
+    });
+  }
   pub fn propagate_context(&mut self, ctx: &LabelBuilder) {
-    self.walk_tree(&mut |nd| nd.context.push_back(ctx.clone()));
+    self.walk_tree(&mut |nd| {
+      nd.context.push_back(ctx.clone());
+    });
   }
   pub fn get_span(&self) -> Span {
     self.span.clone()

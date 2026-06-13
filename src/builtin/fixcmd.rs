@@ -61,15 +61,15 @@ pub struct FixCmdOpts {
   reverse: bool,
 }
 
-pub fn parse_fc_args(args: Vec<Tk>) -> ShResult<(Vec<(String, Span)>, FixCmdOpts)> {
-  let mut args = args.into_iter();
+pub fn parse_fc_args(args: &[Tk]) -> ShResult<(Vec<(String, Span)>, FixCmdOpts)> {
+  let mut args = args.iter();
   args.next(); // skip "fc" command itself
 
   let mut words: Vec<(String, Span)> = vec![];
   let mut opts = FixCmdOpts::default();
   for tk in args {
     let span = tk.span.clone();
-    let expanded = tk.expand()?;
+    let expanded = tk.clone().expand()?;
     for word in expanded.get_words() {
       words.push((word, span.clone()));
     }
@@ -161,7 +161,7 @@ impl super::Builtin for FixCmd {
   }
   fn run_builtin(
     &self,
-    node: Node,
+    node: &Node,
     _dispatcher: &mut Dispatcher,
     _stdin: Option<String>,
   ) -> ShResult<()> {
@@ -169,7 +169,7 @@ impl super::Builtin for FixCmd {
     let NdRule::Command {
       assignments: _,
       argv,
-    } = node.class
+    } = &node.class
     else {
       unreachable!()
     };
@@ -345,7 +345,7 @@ mod tests {
 
   fn parse(input: &str) -> (Vec<(String, Span)>, FixCmdOpts) {
     let tks = lex_fc(input);
-    parse_fc_args(tks).expect("parse should succeed")
+    parse_fc_args(&tks).expect("parse should succeed")
   }
 
   // ─── Boolean flags ────────────────────────────────────────────────────
@@ -426,7 +426,7 @@ mod tests {
   fn fc_dash_e_without_arg_errors() {
     let _g = TestGuard::new();
     let tks = lex_fc("fc -e");
-    let result = parse_fc_args(tks);
+    let result = parse_fc_args(&tks);
     assert!(result.is_err());
   }
 

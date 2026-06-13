@@ -258,7 +258,7 @@ impl HistQuery {
 
     match &self.matches {
       (Some(pat), not) => {
-        let re = match Shed::meta_mut(|m| m.get_regex(pat.clone())) {
+        let re = match Shed::meta_mut(|m| m.get_regex(pat)) {
           Ok(re) => re,
           Err(e) => return Err(sherr!(ParseErr, "{e}")),
         };

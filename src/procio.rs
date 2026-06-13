@@ -548,6 +548,17 @@ impl RedirSet {
   }
 }
 
+impl From<&[RedirSpec]> for RedirSet {
+  fn from(value: &[RedirSpec]) -> Self {
+    Self(value.to_vec())
+  }
+}
+
+impl From<&Vec<RedirSpec>> for RedirSet {
+  fn from(value: &Vec<RedirSpec>) -> Self {
+    Self(value.to_vec())
+  }
+}
 impl From<Vec<RedirSpec>> for RedirSet {
   fn from(value: Vec<RedirSpec>) -> Self {
     Self(value)

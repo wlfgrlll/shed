@@ -371,10 +371,8 @@ impl ShErr {
     self.labels.push(label);
     self
   }
-  pub fn with_context(mut self, ctx: VecDeque<LabelBuilder>) -> Self {
-    for entry in ctx {
-      self.labels.push(entry);
-    }
+  pub fn with_context<'a>(mut self, ctx: impl Iterator<Item = &'a LabelBuilder>) -> Self {
+    self.labels.extend(ctx.cloned());
     self
   }
   pub fn with_note(mut self, note: impl Into<String>) -> Self {

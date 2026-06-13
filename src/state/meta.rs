@@ -465,6 +465,78 @@ impl Drop for FuncGuard {
   }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum Pattern {
+  Any, // bare *, matches anything
+  Equal(Rc<str>),
+  Contains(Rc<str>),
+  StartsWith(Rc<str>),
+  EndsWith(Rc<str>),
+  Regex(Rc<Regex>),
+}
+
+impl Pattern {
+  pub fn compile(mut pattern: &str) -> Self {
+    if pattern.chars().all(|c| c == '*') {
+      return Self::Any;
+    }
+
+    // collapse leading and trailing stars
+    while starts_with_unescaped(pattern, "*") && pattern.starts_with("**") {
+      pattern = &pattern[1..];
+    }
+    while ends_with_unescaped(pattern, "*") && pattern.ends_with("**") {
+      pattern = &pattern[..pattern.len() - 1];
+    }
+
+    // something like *foo*b[aA]r*b?z or something
+    // let regex figure it out
+    if count_unescaped(pattern, "*") > 2 || has_any_unescaped(pattern, &["?", "[", "{"]) {
+      return Self::Regex(glob_to_regex(pattern, false).into());
+    }
+
+    let strip_glob_escapes = |s: &str| -> String {
+      let mut out = String::with_capacity(s.len());
+      let mut chars = s.chars();
+      match_loop!(chars.next() => ch, {
+        '\\' => {
+          if let Some(next) = chars.next() {
+            out.push(next);
+          }
+        }
+        _ => out.push(ch),
+      });
+      out
+    };
+
+    match (
+      starts_with_unescaped(pattern, "*"),
+      ends_with_unescaped(pattern, "*"),
+    ) {
+      (true, false) => Self::EndsWith(strip_glob_escapes(&pattern[1..]).into()),
+      (false, true) => Self::StartsWith(strip_glob_escapes(&pattern[..pattern.len() - 1]).into()),
+      (true, true) => Self::Contains(strip_glob_escapes(&pattern[1..pattern.len() - 1]).into()),
+      (false, false) => Self::Equal(strip_glob_escapes(pattern).into()),
+    }
+  }
+  pub fn is_match(&self, text: &str) -> bool {
+    match self {
+      Pattern::Any => true,
+      Pattern::Equal(s) => text == &**s,
+      Pattern::Contains(s) => text.contains(&**s),
+      Pattern::StartsWith(s) => text.starts_with(&**s),
+      Pattern::EndsWith(s) => text.ends_with(&**s),
+      Pattern::Regex(regex) => regex.is_match(text),
+    }
+  }
+}
+
+impl From<Regex> for Pattern {
+  fn from(value: Regex) -> Self {
+    Self::Regex(value.into())
+  }
+}
+
 /// Miscellaneous global data storage
 #[derive(Debug)]
 pub(crate) struct MetaTab {
@@ -488,6 +560,8 @@ pub(crate) struct MetaTab {
   old_path: Option<String>,
   // utility cache - commands, functions, aliases, etc
   path_cache: PathTable,
+  regexes: HashMap<String, Rc<Regex>>,
+  globs: HashMap<String, Pattern>,
   // regex cache - patterns we have seen before
   regexes: HashMap<String, Regex>,
   // envp cache - environment variables for execve
@@ -530,6 +604,7 @@ impl Clone for MetaTab {
       envp_cache: self.envp_cache.clone(),
       comp_add_candidates: self.comp_add_candidates.clone(),
       regexes: self.regexes.clone(),
+      globs: self.globs.clone(),
       path_cache: self.path_cache.clone(),
       comp_specs: self.comp_specs.clone(),
       pending_widget_keys: self.pending_widget_keys.clone(),
@@ -559,9 +634,10 @@ impl Default for MetaTab {
       envp_cache: None,
       procsub_stack: vec![],
       comp_add_candidates: vec![],
-      regexes: HashMap::new(),
+      regexes: HashMap::default(),
+      globs: HashMap::default(),
       path_cache: PathTable::new(),
-      comp_specs: HashMap::new(),
+      comp_specs: HashMap::default(),
       pending_widget_keys: vec![],
       last_was_func_def: false,
       main_loop_timeout: None,
@@ -748,26 +824,21 @@ impl MetaTab {
     let exp = expand_keymap(keys);
     self.pending_widget_keys = exp;
   }
-  pub fn get_regex(&mut self, pat: String) -> Result<Regex, String> {
-    if let Some(regex) = self.regexes.get(&pat) {
-      Ok(regex.clone())
-    } else {
-      let regex = match Regex::new(&pat) {
-        Ok(re) => re,
-        Err(e) => return Err(e.to_string()),
-      };
-      self.regexes.insert(pat, regex.clone());
-      Ok(regex)
+  pub fn get_regex(&mut self, pat: &str) -> Result<Rc<Regex>, String> {
+    if let Some(rx) = self.regexes.get(pat) {
+      return Ok(Rc::clone(rx));
     }
+    let rx = Rc::new(Regex::new(pat).map_err(|e| e.to_string())?);
+    self.regexes.insert(pat.to_string(), Rc::clone(&rx));
+    Ok(rx)
   }
-  pub fn get_glob_regex(&mut self, pat: String, anchored: bool) -> Regex {
-    if let Some(regex) = self.regexes.get(&pat) {
-      regex.clone()
-    } else {
-      let regex = glob_to_regex(&pat, anchored);
-      self.regexes.insert(pat, regex.clone());
-      regex
+  pub fn get_glob(&mut self, pat: &str) -> Pattern {
+    if let Some(p) = self.globs.get(pat) {
+      return p.clone();
     }
+    let p = Pattern::compile(pat);
+    self.globs.insert(pat.to_string(), p.clone());
+    p
   }
   pub fn take_pending_widget_keys(&mut self) -> Option<Vec<KeyEvent>> {
     if self.pending_widget_keys.is_empty() {
@@ -837,7 +908,7 @@ impl MetaTab {
     // Walk scopes outermost-to-innermost so inner bindings shadow outer
     // ones in the flat map. Libc env is not consulted, so shell writes
     // outside this builder can't desync the env children inherit.
-    let mut flat: HashMap<String, String> = HashMap::new();
+    let mut flat: HashMap<String, String> = HashMap::default();
     Shed::vars(|v| {
       for scope in v.scopes_iter() {
         for (name, var) in scope.vars() {
@@ -949,7 +1020,7 @@ impl MetaTab {
     let path = var!("PATH");
     let paths = util::path_list_entries(&path);
 
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = crate::HashSet::default();
     let mut cmds = vec![];
 
     for entry in paths {

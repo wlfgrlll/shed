@@ -1,7 +1,7 @@
-use crate::util::error::get_context;
+use crate::{eval::parse::node::LabelCtx, util::error::get_context};
 
 use super::{
-  LabelCtx, NdFlags, NdRule, Node, ParseStream, ShResult, Span, Tk, TkFlags, TkRule,
+  NdFlags, NdRule, Node, ParseStream, ShResult, Span, Tk, TkFlags, TkRule,
   node::{AssignKind, NodeVecUtils},
   procio::{RedirBldr, RedirSpec, RedirTarget, RedirType},
   sherr,
@@ -29,7 +29,7 @@ impl ParseStream {
           ParseErr @ redir_tk.span.clone(),
           "Invalid redirection operator"
         )
-        .with_context(context),
+        .with_context(context.iter()),
       );
       // LCOV_EXCL_STOP
     };
@@ -40,7 +40,7 @@ impl ParseStream {
           ParseErr @ redir_tk.span.clone(),
           "Expected a filename after this redirection",
         )
-        .with_context(context),
+        .with_context(context.iter()),
       );
       // LCOV_EXCL_STOP
     };
@@ -216,9 +216,8 @@ impl ParseStream {
         // If we have assignments but no command word,
         // return the assignment-only command without parsing more tokens
         self.commit(tk_counter);
-        let mut context = self.context.clone();
         let assignments_span = assignments.get_span().unwrap();
-        context.push_back(get_context(
+        self.context.push_back(get_context(
           "in variable assignment defined here".to_string(),
           assignments_span,
         ));

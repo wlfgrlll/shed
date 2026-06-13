@@ -1,10 +1,10 @@
 use crate::{
   autocmd,
   builtin::{self, SinkScope, StdinScope},
-  eval::parse::{LabelCtx, node::node_has_only_builtins},
+  eval::parse::node::{LabelCtx, node_has_only_builtins},
   shopt_mut,
   state::logic::AutoloadKind,
-  util::{error::LabelBuilder, isolation_guard},
+  util::isolation_guard,
 };
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
 
@@ -121,7 +121,7 @@ pub struct ExecArgs {
 }
 
 impl ExecArgs {
-  pub fn new(argv: Vec<Tk>) -> ShResult<Option<Self>> {
+  pub fn new(argv: &[Tk]) -> ShResult<Option<Self>> {
     let argv = prepare_argv(argv)?;
 
     Ok((!argv.is_empty()).then(|| Self::from_expanded(argv)))
@@ -187,6 +187,10 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
   }
 
   let mut nodes = parser.extract_nodes();
+
+  for node in nodes.iter_mut() {
+    node.freeze_context();
+  }
 
   // Single simple command: exec directly without forking.
   // The parser wraps single commands as Conjunction -> Pipeline -> Command.
@@ -304,11 +308,11 @@ impl Dispatcher {
   pub fn begin_dispatch(&mut self) -> ShResult<()> {
     while let Some(node) = self.nodes.pop_front() {
       let blame = node.get_span();
-      self.dispatch_node(node).try_blame(blame)?;
+      self.dispatch_node(&node).try_blame(blame)?;
     }
     Ok(())
   }
-  pub fn dispatch_node(&mut self, node: Node) -> ShResult<()> {
+  pub fn dispatch_node(&mut self, node: &Node) -> ShResult<()> {
     stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
       let _guard = Shed::meta_mut(MetaTab::push_procsub_frame);
 
@@ -341,8 +345,8 @@ impl Dispatcher {
       }
     })
   }
-  pub fn exec_list(&mut self, node: Node) -> ShResult<()> {
-    let NdRule::List { commands } = node.class else {
+  pub fn exec_list(&mut self, node: &Node) -> ShResult<()> {
+    let NdRule::List { commands } = &node.class else {
       unreachable!()
     };
     for node in commands {
@@ -352,7 +356,7 @@ impl Dispatcher {
 
     Ok(())
   }
-  pub fn dispatch_cmd(&mut self, node: Node) -> ShResult<()> {
+  pub fn dispatch_cmd(&mut self, node: &Node) -> ShResult<()> {
     if Shed::shopts(|o| o.set.noexec) {
       return Ok(());
     }
@@ -400,12 +404,12 @@ impl Dispatcher {
       self.exec_cmd(node)
     }
   }
-  pub fn exec_defer(node: Node) -> ShResult<()> {
-    let NdRule::DeferNode { mut body } = node.class else {
+  pub fn exec_defer(node: &Node) -> ShResult<()> {
+    let NdRule::DeferNode { body } = &node.class else {
       unreachable!()
     };
+    let mut body = body.clone();
 
-    // we have to eagerly expand the tokens of this command
     // something like `defer eval "$(shopt core.nullglob)"`
     // needs to expand at registration time, and not at
     // execution time.
@@ -422,12 +426,12 @@ impl Dispatcher {
       return Err(e);
     }
 
-    Shed::vars_mut(|v| v.cur_scope_mut().defer_cmd(*body));
+    Shed::vars_mut(|v| v.cur_scope_mut().defer_cmd(*body.clone()));
     Ok(())
   }
-  pub fn exec_try(&mut self, node: Node) -> ShResult<()> {
+  pub fn exec_try(&mut self, node: &Node) -> ShResult<()> {
     let try_blame = node.get_span();
-    let NdRule::TryNode { body, err, catch } = node.class else {
+    let NdRule::TryNode { body, err, catch } = &node.class else {
       unreachable!()
     };
     let context = body.context.clone();
@@ -440,7 +444,7 @@ impl Dispatcher {
     defer!(shopt_mut!(set.errexit = errexit));
     defer!(shopt_mut!(set.pipefail = pipefail));
 
-    match self.dispatch_node(*body) {
+    match self.dispatch_node(body) {
       Ok(()) => Ok(()),
       Err(e) => {
         if e.is_flow_control() {
@@ -457,12 +461,12 @@ impl Dispatcher {
           let msg = msg_parts.join(" ");
 
           ShErr::at(ShErrKind::TryFailed, blame, msg)
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
         }
 
         if let Some(catch) = catch
-          && let Err(e) = self.dispatch_node(*catch)
+          && let Err(e) = self.dispatch_node(catch)
         {
           if e.is_flow_control() {
             return Err(e);
@@ -475,29 +479,29 @@ impl Dispatcher {
       }
     }
   }
-  pub fn exec_negated(&mut self, node: Node) -> ShResult<()> {
-    let NdRule::Negate { cmd } = node.class else {
+  pub fn exec_negated(&mut self, node: &Node) -> ShResult<()> {
+    let NdRule::Negate { cmd } = &node.class else {
       unreachable!()
     };
-    self.dispatch_node(*cmd)?;
+    self.dispatch_node(cmd)?;
     let status = state::Shed::get_status();
     state::Shed::set_status_from_bool(status != 0);
 
     Ok(())
   }
-  pub fn exec_timed(&mut self, node: Node) -> ShResult<()> {
-    let NdRule::Timed { cmd } = node.class else {
+  pub fn exec_timed(&mut self, node: &Node) -> ShResult<()> {
+    let NdRule::Timed { cmd } = &node.class else {
       unreachable!();
     };
 
     self.timer_stack.push(Some(CmdTimer::new()?));
-    let res = self.dispatch_node(*cmd);
+    let res = self.dispatch_node(cmd);
     self.timer_stack.pop();
     res
   }
-  pub fn exec_conjunction(&mut self, conjunction: Node) -> ShResult<()> {
+  pub fn exec_conjunction(&mut self, conjunction: &Node) -> ShResult<()> {
     let span = conjunction.get_span().clone();
-    let NdRule::Conjunction { elements } = conjunction.class else {
+    let NdRule::Conjunction { elements } = &conjunction.class else {
       unreachable!()
     };
 
@@ -506,12 +510,12 @@ impl Dispatcher {
       errln!("{command}");
     }
 
-    let mut elem_iter = elements.into_iter();
+    let mut elem_iter = elements.iter();
     let mut skip = false;
     while let Some(element) = elem_iter.next() {
       let ConjunctNode { cmd, operator } = element;
       if !skip {
-        self.dispatch_node(*cmd)?;
+        self.dispatch_node(cmd)?;
       }
 
       let status = state::Shed::get_status();
@@ -523,8 +527,8 @@ impl Dispatcher {
     }
     Ok(())
   }
-  fn exec_arith(arith: Node) -> ShResult<()> {
-    let NdRule::Arithmetic { body } = arith.class else {
+  fn exec_arith(arith: &Node) -> ShResult<()> {
+    let NdRule::Arithmetic { body } = &arith.class else {
       unreachable!()
     };
     let result = expand_arithmetic_wrapped(body.as_str())?;
@@ -532,13 +536,17 @@ impl Dispatcher {
     state::Shed::set_status_from_bool(val != 0.0);
     Ok(())
   }
-  pub fn exec_func_def(func_def: Node) -> ShResult<()> {
+  pub fn exec_func_def(func_def: &Node) -> ShResult<()> {
     let blame = func_def.get_span();
     let ctx = func_def.context.clone();
-    let NdRule::FuncDef { name, mut body } = func_def.class else {
+    let NdRule::FuncDef { name, body } = &func_def.class else {
       unreachable!()
     };
-    body.context.extend(ctx);
+    let mut body = body.clone();
+    for label in ctx.iter() {
+      body.context.push_back(label.clone());
+    }
+
     let func_name = name
       .span
       .as_str()
@@ -563,7 +571,7 @@ impl Dispatcher {
     state::Shed::set_status(0);
     Ok(())
   }
-  fn exec_func(&mut self, func: Node) -> ShResult<()> {
+  fn exec_func(&mut self, func: &Node) -> ShResult<()> {
     // need to do this in a new scope so we can borrow func safely
     let (func_name, mut blame) = {
       // borrow func.class to avoid partial move
@@ -609,7 +617,7 @@ impl Dispatcher {
     };
 
     // now we take ownership
-    let NdRule::Command { assignments, argv } = func.class
+    let NdRule::Command { assignments, argv } = &func.class
     // not borrowed
     else {
       unreachable!()
@@ -633,7 +641,7 @@ impl Dispatcher {
     let env_vars = Self::set_assignments(assignments, AssignBehavior::Export)?;
     let _var_guard = var_ctx_guard(env_vars.into_iter().collect());
 
-    let redirs = RedirSet::from(func.redirs);
+    let redirs = RedirSet::from(&func.redirs);
     let _guard = redirs.apply()?;
 
     blame.rename(func_name.clone());
@@ -659,7 +667,7 @@ impl Dispatcher {
     func_body.flags = func.flags;
 
     let _timer = self.take_timer();
-    match self.dispatch_node((**func_body).clone()) {
+    match self.dispatch_node(&*func_body) {
       Ok(()) => Ok(()),
       Err(e) => match e.kind() {
         ShErrKind::FuncReturn(code) => {
@@ -679,7 +687,7 @@ impl Dispatcher {
         }
         ShErrKind::ErrInterrupt => {
           // set -e caught an error
-          Err(e.with_context(func_body.context.clone()))
+          Err(e.with_context(func_body.context.iter()))
         }
         _ => Err(e),
       },
@@ -691,7 +699,7 @@ impl Dispatcher {
   fn run_compound<F>(
     &mut self,
     name: &str,
-    redirs: Vec<RedirSpec>,
+    redirs: &[RedirSpec],
     flags: NdFlags,
     blame: Span,
     logic: F,
@@ -718,35 +726,35 @@ impl Dispatcher {
         .map_err(|e| e.with_redirs(guard))
     }
   }
-  fn exec_brc_grp(&mut self, brc_grp: Node) -> ShResult<()> {
+  fn exec_brc_grp(&mut self, brc_grp: &Node) -> ShResult<()> {
     let blame = brc_grp.get_span().clone();
-    let NdRule::BraceGrp { body } = brc_grp.class else {
+    let NdRule::BraceGrp { body } = &brc_grp.class else {
       unreachable!()
     };
 
     let _timer = self.take_timer();
     let brc_grp_logic = |s: &mut Self| -> ShResult<()> {
       let _guard = shared_scope_guard();
-      s.dispatch_node(*body)?;
+      s.dispatch_node(&*body)?;
 
       Ok(())
     };
 
     self.run_compound(
       "brace_group",
-      brc_grp.redirs,
+      &brc_grp.redirs,
       brc_grp.flags,
       blame,
       brc_grp_logic,
     )
   }
-  fn exec_subsh(&mut self, subsh: Node) -> ShResult<()> {
-    let NdRule::Subshell { body } = subsh.class else {
+  fn exec_subsh(&mut self, subsh: &Node) -> ShResult<()> {
+    let NdRule::Subshell { body } = &subsh.class else {
       unreachable!()
     };
     let span = body.get_span();
 
-    let redirs = RedirSet::from(subsh.redirs);
+    let redirs = RedirSet::from(&subsh.redirs);
     let _guard = redirs.apply()?;
 
     let body_raw = span.as_str();
@@ -754,7 +762,7 @@ impl Dispatcher {
     let name = format!("( {body_display} )");
 
     self.run_fork(&name, |s| {
-      if let Err(e) = s.dispatch_node(*body.clone()) {
+      if let Err(e) = s.dispatch_node(&*body) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
         }
@@ -764,12 +772,12 @@ impl Dispatcher {
 
     Ok(())
   }
-  fn exec_case(&mut self, case_stmt: Node) -> ShResult<()> {
+  fn exec_case(&mut self, case_stmt: &Node) -> ShResult<()> {
     let blame = case_stmt.get_span().clone();
     let NdRule::CaseNode {
       pattern,
       case_blocks,
-    } = case_stmt.class
+    } = &case_stmt.class
     else {
       unreachable!()
     };
@@ -790,14 +798,14 @@ impl Dispatcher {
           if pattern_exp.is_empty() {
             if pattern_raw.is_empty() {
               let _guard = shared_scope_guard();
-              s.dispatch_node(*body)?;
+              s.dispatch_node(body)?;
               break 'outer;
             }
           } else {
-            let pattern_regex = Shed::meta_mut(|m| m.get_glob_regex(pattern_exp.clone(), false));
-            if pattern_regex.is_match(&pattern_raw) {
+            let pattern = Shed::meta_mut(|m| m.get_glob(&pattern_exp));
+            if pattern.is_match(&pattern_raw) {
               let _guard = shared_scope_guard();
-              s.dispatch_node(*body)?;
+              s.dispatch_node(body)?;
               break 'outer;
             }
           }
@@ -807,11 +815,17 @@ impl Dispatcher {
       Ok(())
     };
 
-    self.run_compound("case", case_stmt.redirs, case_stmt.flags, blame, case_logic)
+    self.run_compound(
+      "case",
+      &case_stmt.redirs,
+      case_stmt.flags,
+      blame,
+      case_logic,
+    )
   }
-  fn exec_loop(&mut self, loop_stmt: Node) -> ShResult<()> {
+  fn exec_loop(&mut self, loop_stmt: &Node) -> ShResult<()> {
     let blame = loop_stmt.get_span().clone();
-    let NdRule::LoopNode { kind, cond_node } = loop_stmt.class else {
+    let NdRule::LoopNode { kind, cond_node } = &loop_stmt.class else {
       unreachable!();
     };
 
@@ -825,14 +839,14 @@ impl Dispatcher {
       let CondNode { cond, body } = cond_node;
       let _guard = shared_scope_guard();
       'outer: loop {
-        if let Err(e) = s.dispatch_node(*cond.clone()) {
+        if let Err(e) = s.dispatch_node(cond) {
           state::Shed::set_status(1);
           return Err(e);
         }
 
         let status = state::Shed::get_status();
-        if keep_going(kind, status) {
-          if let Err(e) = s.dispatch_node(*(body.clone())) {
+        if keep_going(*kind, status) {
+          if let Err(e) = s.dispatch_node(body) {
             match e.kind() {
               ShErrKind::LoopBreak(code) => {
                 state::Shed::set_status(*code);
@@ -854,27 +868,33 @@ impl Dispatcher {
     };
 
     let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
-    self.run_compound("loop", loop_stmt.redirs, loop_stmt.flags, blame, loop_logic)
+    self.run_compound(
+      "loop",
+      &loop_stmt.redirs,
+      loop_stmt.flags,
+      blame,
+      loop_logic,
+    )
   }
-  fn exec_for_arith(&mut self, for_stmt: Node) -> ShResult<()> {
+  fn exec_for_arith(&mut self, for_stmt: &Node) -> ShResult<()> {
     let blame = for_stmt.get_span().clone();
     let NdRule::ForArith {
       init,
       cond,
       step,
       body,
-    } = for_stmt.class
+    } = &for_stmt.class
     else {
       unreachable!();
     };
     let for_logic = |s: &mut Self| -> ShResult<()> {
       if let Some(init_node) = init {
-        s.dispatch_node(*init_node)?;
+        s.dispatch_node(init_node)?;
       }
 
       'outer: loop {
-        if let Some(cond_node) = cond.clone() {
-          if let Err(e) = s.dispatch_node(*cond_node) {
+        if let Some(cond_node) = cond {
+          if let Err(e) = s.dispatch_node(cond_node) {
             state::Shed::set_status(1);
             return Err(e);
           }
@@ -886,7 +906,7 @@ impl Dispatcher {
         }
         let _guard = shared_scope_guard();
 
-        if let Err(e) = s.dispatch_node(*(body.clone())) {
+        if let Err(e) = s.dispatch_node(&*body) {
           match e.kind() {
             ShErrKind::LoopBreak(code) => {
               state::Shed::set_status(*code);
@@ -900,8 +920,8 @@ impl Dispatcher {
           }
         }
 
-        if let Some(step_node) = step.clone()
-          && let Err(e) = s.dispatch_node(*step_node)
+        if let Some(step_node) = step
+          && let Err(e) = s.dispatch_node(step_node)
         {
           state::Shed::set_status(1);
           return Err(e);
@@ -912,19 +932,19 @@ impl Dispatcher {
     };
 
     let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
-    self.run_compound("c_for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
+    self.run_compound("c_for", &for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
-  fn exec_for_arr(&mut self, for_stmt: Node) -> ShResult<()> {
+  fn exec_for_arr(&mut self, for_stmt: &Node) -> ShResult<()> {
     let blame = for_stmt.get_span().clone();
-    let NdRule::ForNode { vars, arr, body } = for_stmt.class else {
+    let NdRule::ForNode { vars, arr, body } = &for_stmt.class else {
       unreachable!();
     };
 
     let for_logic = |s: &mut Self| -> ShResult<()> {
-      let to_expanded_strings = |tks: Vec<Tk>| -> ShResult<Vec<String>> {
+      let to_expanded_strings = |tks: &[Tk]| -> ShResult<Vec<String>> {
         Ok(
           tks
-            .into_iter()
+            .iter()
             .map(Tk::expand_to_words)
             .collect::<ShResult<Vec<Vec<String>>>>()?
             .into_iter()
@@ -954,7 +974,7 @@ impl Dispatcher {
 
         let _guard = shared_scope_guard();
 
-        if let Err(e) = s.dispatch_node(*(body.clone())) {
+        if let Err(e) = s.dispatch_node(&*body) {
           match e.kind() {
             ShErrKind::LoopBreak(code) => {
               state::Shed::set_status(*code);
@@ -972,14 +992,14 @@ impl Dispatcher {
     };
 
     let _loop_guard = Shed::meta_mut(MetaTab::enter_loop);
-    self.run_compound("for", for_stmt.redirs, for_stmt.flags, blame, for_logic)
+    self.run_compound("for", &for_stmt.redirs, for_stmt.flags, blame, for_logic)
   }
-  fn exec_if(&mut self, if_stmt: Node) -> ShResult<()> {
+  fn exec_if(&mut self, if_stmt: &Node) -> ShResult<()> {
     let blame = if_stmt.get_span().clone();
     let NdRule::IfNode {
       cond_nodes,
       else_block,
-    } = if_stmt.class
+    } = &if_stmt.class
     else {
       unreachable!();
     };
@@ -990,14 +1010,14 @@ impl Dispatcher {
         let CondNode { cond, body } = node;
         let _guard = shared_scope_guard();
 
-        if let Err(e) = s.dispatch_node(*cond) {
+        if let Err(e) = s.dispatch_node(cond) {
           state::Shed::set_status(1);
           return Err(e);
         }
 
         if state::Shed::get_status() == 0 {
           matched = true;
-          s.dispatch_node(*body)?;
+          s.dispatch_node(body)?;
           break; // Don't check remaining elif conditions
         }
       }
@@ -1005,7 +1025,7 @@ impl Dispatcher {
       if !matched {
         if let Some(body) = else_block {
           let _guard = shared_scope_guard();
-          s.dispatch_node(*body)?;
+          s.dispatch_node(body)?;
         } else {
           state::Shed::set_status(0);
         }
@@ -1014,12 +1034,12 @@ impl Dispatcher {
       Ok(())
     };
 
-    self.run_compound("if", if_stmt.redirs, if_stmt.flags, blame, if_logic)
+    self.run_compound("if", &if_stmt.redirs, if_stmt.flags, blame, if_logic)
   }
 
   fn exec_one(
     &mut self,
-    cmd: Node,
+    cmd: &Node,
     should_fork: impl Fn(&Node) -> bool,
     flags: NdFlags,
   ) -> ShResult<()> {
@@ -1029,7 +1049,7 @@ impl Dispatcher {
     // just thread it through dispatch_node directly.
     // this avoids the stdio setup that follows this
     self.job_stack.new_job();
-    let res = if should_fork(&cmd) {
+    let res = if should_fork(cmd) {
       let name = cmd
         .get_command()
         .map(ToString::to_string)
@@ -1054,11 +1074,11 @@ impl Dispatcher {
     res
   }
 
-  fn exec_pipeline(&mut self, pipeline: Node) -> ShResult<()> {
+  fn exec_pipeline(&mut self, pipeline: &Node) -> ShResult<()> {
     let pipeline_span = pipeline.get_span().clone();
     let pipeline_flags = pipeline.flags;
     let pipeline_context = pipeline.context.clone();
-    let NdRule::Pipeline { mut cmds } = pipeline.class else {
+    let NdRule::Pipeline { cmds } = &pipeline.class else {
       unreachable!()
     };
 
@@ -1074,11 +1094,10 @@ impl Dispatcher {
 
     if cmds.len() == 1 && !is_bg && runs_inline(&cmds[0]) {
       // it's a single command. skip the I/O setup
-      let cmd = cmds.remove(0);
-      return self.exec_one(cmd, should_fork_segment, pipeline_flags);
+      return self.exec_one(&cmds[0], should_fork_segment, pipeline_flags);
     }
 
-    if internal_pipeline(&cmds, is_bg, has_redirs) {
+    if internal_pipeline(cmds, is_bg, has_redirs) {
       // All-builtin pipeline: dispatch in-process, no fork.
       return self.exec_internal_pipeline(cmds, pipeline_span, pipeline_flags, pipeline_context);
     }
@@ -1095,7 +1114,7 @@ impl Dispatcher {
     self.job_stack.new_job();
     self.fg_job = !is_bg && Shed::term(Terminal::interactive);
 
-    let redirs = RedirSet::from(pipeline.redirs);
+    let redirs = RedirSet::from(&pipeline.redirs);
 
     let (mut in_rdrs, mut out_rdrs) = redirs.split_by_channel();
     let mut result = Ok(());
@@ -1108,9 +1127,10 @@ impl Dispatcher {
     let last_is_lastpipe = num_cmds > 1 && !will_fork(&cmds[last]);
 
     let pipes = PipeGenerator::new(num_cmds);
-    let cmds_and_pipes = cmds.into_iter().enumerate().zip(pipes);
+    let cmds_and_pipes = cmds.iter().enumerate().zip(pipes);
 
-    for ((i, mut cmd), (r, w)) in cmds_and_pipes {
+    for ((i, cmd), (r, w)) in cmds_and_pipes {
+      let mut cmd = cmd.clone(); // TODO: handle this in a way that doesnt clone it
       let has_redirs = has_redirs || (r.is_some() || w.is_some());
 
       if num_cmds > 1 && i != last {
@@ -1144,12 +1164,12 @@ impl Dispatcher {
           .unwrap_or_default();
 
         self.run_fork(&name, |s| {
-          if let Err(e) = s.dispatch_node(cmd) {
+          if let Err(e) = s.dispatch_node(&cmd) {
             e.print_error();
           }
         })
       } else {
-        self.dispatch_node(cmd)
+        self.dispatch_node(&cmd)
       };
 
       if !tty_attached && let Some(pgid) = tty_controller(self) {
@@ -1195,10 +1215,10 @@ impl Dispatcher {
 
   fn exec_internal_pipeline(
     &mut self,
-    cmds: Vec<Node>,
+    cmds: &[Node],
     span: Span,
     flags: NdFlags,
-    ctx: VecDeque<LabelBuilder>,
+    ctx: LabelCtx,
   ) -> ShResult<()> {
     let mut prev = None;
     let num_cmds = cmds.len();
@@ -1207,7 +1227,7 @@ impl Dispatcher {
     let mut last_nonzero = None;
     let mut result = Ok(());
 
-    for (i, cmd) in cmds.into_iter().enumerate() {
+    for (i, cmd) in cmds.iter().enumerate() {
       let is_last = i == last;
       let out_scope = (!is_last).then(SinkScope::new);
       let _in_scope = prev.take().map(StdinScope::push);
@@ -1217,7 +1237,7 @@ impl Dispatcher {
         NdRule::Subshell { body } => {
           let _ceiling = isolation_guard(None);
 
-          match self.dispatch_node(*body.clone()) {
+          match self.dispatch_node(body) {
             Err(e) => {
               if let ShErrKind::CleanExit(code) = e.kind() {
                 Shed::set_status(*code);
@@ -1271,7 +1291,7 @@ impl Dispatcher {
     Ok(())
   }
 
-  fn exec_builtin(&mut self, cmd: Node) -> ShResult<()> {
+  fn exec_builtin(&mut self, cmd: &Node) -> ShResult<()> {
     let fork_builtins = cmd.flags.contains(NdFlags::FORK_BUILTINS);
     let cmd_raw = cmd
       .get_command()
@@ -1304,10 +1324,10 @@ impl Dispatcher {
     }
   }
   #[expect(clippy::too_many_lines)]
-  pub fn exec_cmd(&mut self, cmd: Node) -> ShResult<()> {
+  pub fn exec_cmd(&mut self, cmd: &Node) -> ShResult<()> {
     let blame = cmd.get_span().clone();
     let context = cmd.context.clone();
-    let NdRule::Command { assignments, argv } = cmd.class else {
+    let NdRule::Command { assignments, argv } = &cmd.class else {
       unreachable!(
         "found node class '{:?}' in exec_cmd",
         cmd.class.as_nd_kind()
@@ -1336,7 +1356,7 @@ impl Dispatcher {
 
     let no_fork = cmd.flags.contains(NdFlags::NO_FORK);
 
-    let redirs = RedirSet::from(cmd.redirs);
+    let redirs = RedirSet::from(&cmd.redirs);
     let _guard = redirs.apply()?;
     let existing_pgid = self.job_stack.curr_job_mut().unwrap().pgid();
 
@@ -1359,7 +1379,7 @@ impl Dispatcher {
         }
         Err(e) => {
           sherr!(ExecFail @ blame, "{e}")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
           unsafe { nix::libc::_exit(1) };
         }
@@ -1386,7 +1406,7 @@ impl Dispatcher {
       match e {
         Errno::ENOENT => {
           sherr!(NotFound @ span, "command not found")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
           with_vars([("CMD".into(), cmd.to_str().unwrap_or_default())], || {
             autocmd!(OnCommandNotFound);
@@ -1396,25 +1416,25 @@ impl Dispatcher {
         }
         Errno::EACCES => {
           sherr!(BadPermission @ span, "permission denied")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
           unsafe { nix::libc::_exit(126) };
         }
         Errno::EISDIR => {
           sherr!(ExecFail @ span, "is a directory")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
           unsafe { nix::libc::_exit(126) };
         }
         Errno::ENOEXEC => {
           sherr!(ExecFail @ span, "exec format error")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
           unsafe { nix::libc::_exit(126) };
         }
         _ => {
           sherr!(Errno(e) @ span, "{e}")
-            .with_context(context)
+            .with_context(context.iter())
             .print_error();
         }
       }
@@ -1474,7 +1494,7 @@ impl Dispatcher {
     self.timer_stack.last_mut().and_then(Option::take)
   }
   #[expect(clippy::too_many_lines)]
-  pub fn set_assignments(assigns: Vec<Node>, behavior: AssignBehavior) -> ShResult<Vec<String>> {
+  pub fn set_assignments(assigns: &[Node], behavior: AssignBehavior) -> ShResult<Vec<String>> {
     let mut new_env_vars = vec![];
     let mut flags = match behavior {
       AssignBehavior::Export => VarFlags::EXPORT,
@@ -1487,13 +1507,13 @@ impl Dispatcher {
     for assign in assigns {
       let is_arr = assign.flags.contains(NdFlags::ARR_ASSIGN);
       let span = assign.get_span();
-      let NdRule::Assignment { kind, var, val } = assign.class else {
+      let NdRule::Assignment { kind, var, val } = &assign.class else {
         unreachable!()
       };
       let old_status = state::Shed::get_status();
       let var_name = var.span.as_str();
       let val = if is_arr {
-        VarKind::arr_from_tk(&val)?
+        VarKind::arr_from_tk(val)?
       } else {
         VarKind::Str(val.expand_to_words()?.join(" "))
       };
@@ -1696,7 +1716,7 @@ impl Dispatcher {
   }
 }
 
-pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
+pub fn prepare_argv(argv: &[Tk]) -> ShResult<Vec<(String, Span)>> {
   prepare_argv_with(argv, false)
 }
 
@@ -1704,7 +1724,7 @@ pub fn prepare_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
 /// `no_split` is set by `parse_cmd` for `[[`/`]]` commands so operands like
 /// `$unset` survive expansion as the empty string instead of vanishing
 /// from argv (bash `[[ ]]` semantics).
-pub fn prepare_argv_with(argv: Vec<Tk>, no_split: bool) -> ShResult<Vec<(String, Span)>> {
+pub fn prepare_argv_with(argv: &[Tk], no_split: bool) -> ShResult<Vec<(String, Span)>> {
   let mut out = Vec::with_capacity(argv.len());
 
   for arg in argv {
@@ -1825,18 +1845,18 @@ pub fn check_err(
       if let Some(mut e) = err {
         e.set_kind(ShErrKind::ErrInterrupt);
         e.persist_redirs();
-        return Err(e.with_context(context));
+        return Err(e.with_context(context.iter()));
       } else if let Some(span) = span {
         return Err(
           sherr!(
               ErrInterrupt @ span,
               "Command returned non-zero exit status",
           )
-          .with_context(context),
+          .with_context(context.iter()),
         );
       }
       return Err(
-        sherr!(ErrInterrupt, "Command returned non-zero exit status",).with_context(context),
+        sherr!(ErrInterrupt, "Command returned non-zero exit status",).with_context(context.iter()),
       );
     }
   }

@@ -67,7 +67,7 @@ impl super::LineBuf {
       LineAddr::Last => Ok(Some(self.lines.len().saturating_sub(1))),
       LineAddr::Offset(i) => Ok(Some(self.row().saturating_add_signed(*i))),
       dir @ (LineAddr::Pattern(re) | LineAddr::PatternRev(re)) => {
-        let reg = match Shed::meta_mut(|m| m.get_regex(re.clone())) {
+        let reg = match Shed::meta_mut(|m| m.get_regex(re)) {
           Ok(re) => re,
           Err(e) => {
             status_msg!("{e}");
@@ -132,7 +132,7 @@ impl super::LineBuf {
     let Motion::Search(pat, dir) = motion else {
       return None;
     };
-    let re = match Shed::meta_mut(|m| m.get_regex(pat.clone())) {
+    let re = match Shed::meta_mut(|m| m.get_regex(pat)) {
       Ok(re) => re,
       Err(e) => {
         status_msg!("{e}");

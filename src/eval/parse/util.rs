@@ -123,7 +123,7 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     span: init_tk.span,
-    context: VecDeque::default(),
+    context: VecDeque::default().into(),
   }));
 
   let Some(cond_tk) = tks.next() else {
@@ -136,7 +136,7 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     span: cond_tk.span,
-    context: VecDeque::default(),
+    context: VecDeque::default().into(),
   }));
 
   let Some(step_tk) = tks.next() else {
@@ -149,12 +149,12 @@ pub(super) fn split_for_arith_tk(
     flags: NdFlags::empty(),
     redirs: vec![],
     span: step_tk.span,
-    context: VecDeque::default(),
+    context: VecDeque::default().into(),
   }));
 
   Ok((init, cond, step))
 }
 
 pub(super) fn parse_err_full(reason: &str, blame: &Span, context: LabelCtx) -> ShErr {
-  sherr!(ParseErr @ blame.clone(), "{reason}").with_context(context)
+  sherr!(ParseErr @ blame.clone(), "{reason}").with_context(context.iter())
 }

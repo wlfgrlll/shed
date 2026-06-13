@@ -20,7 +20,7 @@ use super::{
 /// which treats `(` as a subshell opener and strips parens, breaking array
 /// assignment via `local`/`readonly`/`export`. Tokens that look like array
 /// literals are passed through verbatim so `arr_from_raw` can parse them.
-pub fn prepare_assignment_argv(argv: Vec<Tk>) -> ShResult<Vec<(String, Span)>> {
+pub fn prepare_assignment_argv(argv: &[Tk]) -> ShResult<Vec<(String, Span)>> {
   let mut out = vec![];
   for tk in argv {
     let raw = tk.span.as_str();
@@ -132,11 +132,11 @@ impl super::Builtin for Declare {
   }
   fn get_argv_and_opts(
     &self,
-    argv: Vec<Tk>,
+    argv: &[Tk],
     _no_split: bool,
   ) -> ShResult<(super::ArgVector, Vec<Opt>)> {
     let (raw_argv, opts) = get_opts_from_tokens_raw(argv, &self.opts())?;
-    let mut argv = prepare_assignment_argv(raw_argv)?;
+    let mut argv = prepare_assignment_argv(&raw_argv)?;
     if !argv.is_empty() {
       argv.remove(0);
     }
@@ -262,7 +262,7 @@ impl super::Builtin for Readonly {
 
   fn get_argv_and_opts(
     &self,
-    argv: Vec<Tk>,
+    argv: &[Tk],
     _no_split: bool,
   ) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
@@ -318,7 +318,7 @@ impl super::Builtin for Export {
 
   fn get_argv_and_opts(
     &self,
-    argv: Vec<Tk>,
+    argv: &[Tk],
     _no_split: bool,
   ) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let mut argv = prepare_assignment_argv(argv)?;
@@ -362,11 +362,11 @@ impl super::Builtin for Local {
   }
   fn get_argv_and_opts(
     &self,
-    argv: Vec<Tk>,
+    argv: &[Tk],
     _no_split: bool,
   ) -> ShResult<(Vec<(String, Span)>, Vec<Opt>)> {
     let (raw_argv, opts) = get_opts_from_tokens_raw(argv, &self.opts())?;
-    let mut argv = prepare_assignment_argv(raw_argv)?;
+    let mut argv = prepare_assignment_argv(&raw_argv)?;
     if !argv.is_empty() {
       argv.remove(0);
     }

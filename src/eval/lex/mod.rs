@@ -27,7 +27,7 @@ pub trait TkVecUtils<Tk> {
   fn get_span(&self) -> Option<Span>;
 }
 
-impl TkVecUtils<Tk> for Vec<Tk> {
+impl TkVecUtils<Tk> for &[Tk] {
   fn get_span(&self) -> Option<Span> {
     if let Some(first_tk) = self.first() {
       self.last().map(|last_tk| {
@@ -39,6 +39,12 @@ impl TkVecUtils<Tk> for Vec<Tk> {
     } else {
       None
     }
+  }
+}
+
+impl TkVecUtils<Tk> for Vec<Tk> {
+  fn get_span(&self) -> Option<Span> {
+    self.as_slice().get_span()
   }
 }
 
@@ -271,6 +277,14 @@ impl Tk {
     let mut content = self.span.source.content().to_string();
     content.replace_range(self.span.range(), other);
     content
+  }
+  pub fn is_literal(&self) -> bool {
+    self.filter_meta()
+      && self
+        .span
+        .as_str()
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))
   }
   pub fn as_str(&self) -> &str {
     self.span.as_str()

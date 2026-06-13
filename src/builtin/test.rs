@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, fs::metadata, os::fd::BorrowedFd, path::PathBuf, str::FromStr};
 
-use crate::util::replace_posix_classes;
+use crate::{eval::lex::Tk, util::replace_posix_classes};
 
 use super::{
   Shed,
@@ -192,7 +192,7 @@ fn eval_binary(op: &BinaryOp, lhs: &(String, Span), rhs: &(String, Span)) -> ShR
     }
     BinaryOp::RegexMatch => {
       let cleaned = replace_posix_classes(&rhs.0);
-      let re = Shed::meta_mut(|m| m.get_regex(cleaned))
+      let re = Shed::meta_mut(|m| m.get_regex(&cleaned))
         .map_err(|e| sherr!(SyntaxErr @ rhs.1.clone(), "Invalid regex: {e}"))?;
       if let Some(caps) = re.captures(&lhs.0) {
         let groups: VecDeque<String> = caps
@@ -332,7 +332,7 @@ impl super::Builtin for Test {
   /// hand the operands-only argv to `execute`.
   fn get_argv_and_opts(
     &self,
-    argv: Vec<super::Tk>,
+    argv: &[Tk],
     no_split: bool,
   ) -> ShResult<(super::ArgVector, Vec<super::Opt>)> {
     let span = argv.get_span().unwrap();
