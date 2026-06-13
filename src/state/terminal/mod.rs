@@ -129,6 +129,12 @@ impl Clone for Terminal {
   }
 }
 
+const COOKED_TEARDOWN: [TermCtl; 3] = [
+  TermCtl::SetAttr(Attr::BracketPaste(Toggle::Off)),
+  TermCtl::SetAttr(Attr::FocusReport(Toggle::Off)),
+  TermCtl::SetAttr(Attr::KittyKbdProto(Toggle::Off)),
+];
+
 impl Terminal {
   pub fn execute_control(&mut self, ctl: &TermCtl) -> ShResult<()> {
     use TermCtl as Ctl;
@@ -818,14 +824,18 @@ impl Terminal {
 
   pub fn cooked_mode_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.execute_control(&TermCtl::SetAttr(Attr::BracketPaste(Toggle::Off)))?;
+    for action in COOKED_TEARDOWN {
+      self.execute_control(&action)?;
+    }
     self.edit_termios(enable_cooked_mode)?;
     Ok(guard.activate())
   }
 
   pub fn cooked_no_echo_guard(&mut self) -> ShResult<TermGuard> {
     let guard = self.save_state();
-    self.execute_control(&TermCtl::SetAttr(Attr::BracketPaste(Toggle::Off)))?;
+    for action in COOKED_TEARDOWN {
+      self.execute_control(&action)?;
+    }
     self.edit_termios(|t| {
       enable_cooked_mode(t);
       t.local_flags.remove(termios::LocalFlags::ECHO);
