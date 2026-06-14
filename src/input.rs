@@ -125,6 +125,7 @@ mod dispatch_input_tests {
       stdin,
       login_shell: false,
       welcome: false,
+      noexec: false,
       rc_path: None,
       no_rc: true,
       set: vec![],

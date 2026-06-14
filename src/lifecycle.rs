@@ -71,6 +71,10 @@ pub(super) struct ShedArgs {
   #[arg(short = 'o', value_name = "OPTION", value_parser = Self::SET_OPTS)]
   pub(super) set: Vec<String>,
 
+  /// Read and parse commands but do not execute them. Equivalent to `-o noexec`.
+  #[arg(short = 'n')]
+  pub(super) noexec: bool,
+
   /// Input is read as a keymap for the line editor to execute
   /// instead of raw shell commands. Used to script the line editor
   #[arg(long)]
@@ -127,6 +131,10 @@ pub(super) fn setup() -> Option<ShedArgs> {
     if let Err(e) = source_env() {
       e.print_error();
     }
+  }
+
+  if args.noexec {
+    args.set.push("noexec".to_string());
   }
 
   for set_opt in &args.set {
