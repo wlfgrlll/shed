@@ -220,17 +220,18 @@ impl ParseStream {
         // return the assignment-only command without parsing more tokens
         self.commit(tk_counter);
         let assignments_span = assignments.get_span().unwrap();
-        self.context.push_back(get_context(
-          "in variable assignment defined here".to_string(),
-          assignments_span,
-        ));
-        return Ok(Some(node!(
+        let mut nd = node!(
           self,
           span.clone(),
           NdRule::Command { assignments, argv },
           redirs,
           flags
-        )));
+        );
+        nd.context.push_back(get_context(
+          "in variable assignment defined here".to_string(),
+          assignments_span,
+        ));
+        return Ok(Some(nd));
       }
       loop {
         let Some(tk) = tk_iter.next() else {

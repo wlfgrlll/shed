@@ -517,22 +517,23 @@ impl Builtin for BuiltinBuiltin {
     stdin: Option<String>,
   ) -> ShResult<()> {
     let span = node.get_span();
-    let NdRule::Command {
-      assignments: _,
-      argv,
-    } = &node.class
-    else {
+    let NdRule::Command { assignments, argv } = &node.class else {
       unreachable!()
     };
-    let argv = argv.iter().skip(1).cloned().collect::<Vec<Tk>>();
+    let inner_argv = argv.iter().skip(1).cloned().collect::<Vec<Tk>>();
 
-    let cmd = argv.first().map_or("", Tk::as_str);
+    let cmd = inner_argv.first().map_or("", Tk::as_str);
     let Some(builtin) = lookup_builtin(cmd) else {
       sherr!(NotFound @ span, "builtin not found: {cmd}").print_error();
       return with_status(127);
     };
 
-    builtin.setup_builtin(node, dispatcher, stdin)
+    let mut forwarded = node.clone();
+    forwarded.class = NdRule::Command {
+      assignments: assignments.clone(),
+      argv: inner_argv,
+    };
+    builtin.setup_builtin(&forwarded, dispatcher, stdin)
   }
 }
 
