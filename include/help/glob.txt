@@ -53,9 +53,9 @@ names. If no files match, the pattern is left unchanged.
       `echo .*`                  # only hidden files
       `echo .* *`               # hidden and non-hidden files
 
-  The `dotglob` shell option changes this behavior:
+  The `dotglob` |shopt| changes this behavior:
 
-      `shopt core.dotglob true`
+      `shopt core.dotglob=true`
 
   When enabled, `*` and `?` will also match files starting with `.`.
 
@@ -145,7 +145,7 @@ names. If no files match, the pattern is left unchanged.
   `~uid`                                       *tilde-uid*
 
       Expands to the home directory of the user with numeric uid {uid}.
-      This is a shed-specific extension.
+      This is a shed extension, and is not portable between POSIX shells.
 
       Example:
         `echo ~0`                # /root (uid 0)
