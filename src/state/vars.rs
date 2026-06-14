@@ -709,9 +709,7 @@ impl VarKind {
         }
       }
 
-      log::debug!("Raw associative array key: '{key}'");
       let expanded_key = Expander::from_raw(&key, TkFlags::empty()).expand_no_split()?;
-      log::debug!("Expanded associative array key: '{expanded_key}'");
 
       // Expect '=' immediately after ']'.
       if chars.next() != Some('=') {

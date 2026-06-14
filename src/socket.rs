@@ -22,7 +22,7 @@ use nix::{
   unistd::{Pid, write},
 };
 
-use crate::{state::vars::VarStr, util};
+use crate::{state::vars::VarStr, try_var, util};
 
 use super::{
   Hint, LineData, Lines, ReadlineEvent, ShResult, Shed, ShedLine, expand_keymap,
@@ -51,7 +51,12 @@ pub(crate) static PRIVATE_TOKEN: LazyLock<String> =
 
 /// Write something to the socket as a client.
 pub(crate) fn send_to_socket(msg: &str) -> ShResult<()> {
-  let path = ShedSocket::path();
+  let Some(path) = try_var!("SHED_SOCK") else {
+    return Err(sherr!(
+      InternalErr,
+      "SHED_SOCK environment variable not set."
+    ));
+  };
   let mut stream = UnixStream::connect(path)?;
 
   let mut payload = String::with_capacity(msg.len() + 1);

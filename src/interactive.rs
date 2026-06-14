@@ -442,6 +442,14 @@ fn shed_loop_iter(
     return Ok(LoopAction::Break);
   }
 
+  let requests = Shed::read_socket();
+  if !requests.is_empty() {
+    for (conn, req) in requests {
+      handle_socket_request(conn, req, readline).ok();
+    }
+    readline.print_line(false)?;
+  }
+
   // check the socket mode
   let curr_socket_mode = ShedSocket::mode();
 
@@ -560,7 +568,9 @@ fn handle_readline_event(
         QUIT_CODE.store(*code, Ordering::SeqCst);
         Ok(LoopAction::Break)
       } else {
-        e.print_error();
+        let err = e.to_string();
+        Shed::post_system_msg(err);
+        readline.reset(true)?;
         Ok(LoopAction::Continue)
       }
     }
