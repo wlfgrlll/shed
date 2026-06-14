@@ -63,6 +63,7 @@ stacker = "0.1.24"
 rustc-hash = "2.1.2"
 smol_str = "0.3.6"
 itoa = "1.0.18"
+compact_str = "0.9.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

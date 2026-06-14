@@ -1,6 +1,8 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
+use crate::util;
+
 use super::{
   CmdReplay, CmdState, E, EditMode, K, M, ModeReport, ParseResult, ViParser, common_cmds,
   editcmd::{CmdFlags, EditCmd, Motion, TextObj, Verb},
@@ -56,7 +58,7 @@ impl ViNormal {
     }
   }
   pub fn parse_count(chars: &mut Peekable<Chars<'_>>) -> Option<usize> {
-    let mut count = String::new();
+    let mut count = util::scratch_buf();
     let Some(_digit @ '1'..='9') = chars.peek() else {
       return None;
     };

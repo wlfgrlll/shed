@@ -24,7 +24,7 @@ use nix::{
   sys::stat,
   unistd::{Pid, User, gethostname, getppid, isatty},
 };
-use smol_str::SmolStr;
+use smol_str::{SmolStr, SmolStrBuilder};
 
 use super::{
   ShResult, Shed,
@@ -429,6 +429,22 @@ impl From<VarStr> for Rc<str> {
   }
 }
 
+impl FromIterator<char> for VarStr {
+  fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
+    let mut builder = SmolStrBuilder::new();
+    for ch in iter {
+      builder.push(ch);
+    }
+    Self(builder.finish())
+  }
+}
+
+impl From<compact_str::CompactString> for VarStr {
+  fn from(value: compact_str::CompactString) -> Self {
+    Self(SmolStr::new(value.as_str()))
+  }
+}
+
 impl From<Var> for VarStr {
   fn from(value: Var) -> Self {
     Self::from(&value)
@@ -503,6 +519,12 @@ impl PartialEq<String> for VarStr {
 impl Display for VarStr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     self.0.fmt(f)
+  }
+}
+
+impl From<&mut str> for VarStr {
+  fn from(s: &mut str) -> Self {
+    Self(SmolStr::new(s))
   }
 }
 
@@ -665,7 +687,7 @@ impl VarKind {
       }
 
       // Read until the matching ']'.
-      let mut key = String::new();
+      let mut key = util::scratch_buf();
       let mut depth = 1usize;
       loop {
         let Some(c) = chars.next() else {

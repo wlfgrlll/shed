@@ -1,6 +1,11 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
+use smol_str::format_smolstr;
+
+use crate::state::vars::VarStr;
+use crate::util;
+
 // Credit to Rustyline for the design ideas in this module
 // https://github.com/kkawakam/rustyline
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -8,8 +13,8 @@ pub struct KeyEvent(pub KeyCode, pub ModKeys);
 
 impl KeyEvent {
   #[expect(clippy::too_many_lines)]
-  pub fn as_vim_seq(&self) -> String {
-    let mut seq = String::new();
+  pub fn as_vim_seq(&self) -> VarStr {
+    let mut seq = util::scratch_buf();
     let KeyEvent(event, mods) = self;
     let mut needs_angle_bracket = false;
 
@@ -129,9 +134,9 @@ impl KeyEvent {
     }
 
     if needs_angle_bracket {
-      format!("<{seq}>")
+      format_smolstr!("<{seq}>").into()
     } else {
-      seq
+      seq.into()
     }
   }
 
@@ -244,7 +249,7 @@ mod tests {
   use super::*;
   use crate::expand::expand_keymap;
 
-  fn seq_of(code: KeyCode, mods: ModKeys) -> String {
+  fn seq_of(code: KeyCode, mods: ModKeys) -> VarStr {
     KeyEvent(code, mods).as_vim_seq()
   }
 

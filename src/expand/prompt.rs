@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::shopt_mut;
+use crate::{shopt_mut, state::vars::VarStr, util};
 
 use super::{
   ShResult,
@@ -13,14 +13,15 @@ use super::{
 };
 
 use nix::sys::wait::WaitStatus as WtStat;
+use smol_str::format_smolstr;
 
 #[derive(Debug)]
 pub enum PromptTk {
   AsciiOct(i32),
-  Text(String),
-  AnsiSeq(String),
-  Color(String),    // plain english color descriptions
-  Function(String), // Expands to the output of any defined shell function
+  Text(VarStr),
+  AnsiSeq(VarStr),
+  Color(VarStr),    // plain english color descriptions
+  Function(VarStr), // Expands to the output of any defined shell function
   RuntimeMillis,
   RuntimeFormatted,
   Pwd,
@@ -36,14 +37,14 @@ pub enum PromptTk {
 #[expect(clippy::too_many_lines)]
 fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
   let mut chars = raw.chars().peekable();
-  let mut tk_text = String::new();
+  let mut tk_text = util::scratch_buf();
   let mut tokens = vec![];
 
   match_loop!(chars.next() => ch, {
     '\\' => {
       // Push any accumulated text as a token
       if !tk_text.is_empty() {
-        tokens.push(PromptTk::Text(std::mem::take(&mut tk_text)));
+        tokens.push(PromptTk::Text(std::mem::take(&mut tk_text).into()));
       }
 
       // Handle the escape sequence
@@ -74,15 +75,15 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
             continue;
           };
           chars.next(); // consume the '{'
-          let mut desc = String::new();
+          let mut desc = util::scratch_buf();
           match_loop!(chars.next() => ch, {
             '}' => break,
             _ => desc.push(ch)
           });
-          tokens.push(PromptTk::Color(desc));
+          tokens.push(PromptTk::Color(desc.into()));
         }
         '@' => {
-          let mut func_name = String::new();
+          let mut func_name = util::scratch_buf();
           let is_braced = chars.peek() == Some(&'{');
           let mut handled = false;
           match_loop!(chars.peek() => &ch => ch, {
@@ -99,14 +100,14 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
               handled = true;
               if is_braced {
                 // Invalid character in braced function name
-                tokens.push(PromptTk::Text(format!("\\@{{{func_name}")));
+                tokens.push(PromptTk::Text(format_smolstr!("\\@{{{func_name}").into()));
               } else {
                 // End of unbraced function name
                 let func_exists = Shed::logic(|l| l.get_func(&func_name).is_some());
                 if func_exists {
-                  tokens.push(PromptTk::Function(func_name.clone()));
+                  tokens.push(PromptTk::Function(func_name.clone().into()));
                 } else {
-                  tokens.push(PromptTk::Text(format!("\\@{func_name}")));
+                  tokens.push(PromptTk::Text(format_smolstr!("\\@{func_name}").into()));
                 }
               }
               break;
@@ -116,15 +117,15 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
           if !handled && !func_name.is_empty() {
             let func_exists = Shed::logic(|l| l.get_func(&func_name).is_some());
             if func_exists {
-              tokens.push(PromptTk::Function(func_name));
+              tokens.push(PromptTk::Function(func_name.into()));
             } else {
-              tokens.push(PromptTk::Text(format!("\\@{func_name}")));
+              tokens.push(PromptTk::Text(format_smolstr!("\\@{func_name}").into()));
             }
           }
         }
         'e' => {
           if chars.next() == Some('[') {
-            let mut params = String::new();
+            let mut params = util::scratch_buf();
 
             // Collect parameters and final character
             match_loop!(chars.next() => ch, {
@@ -136,12 +137,12 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
               }
               _ => {
                 // Invalid character in ANSI sequence
-                tokens.push(PromptTk::Text(format!("\x1b[{params}")));
+                tokens.push(PromptTk::Text(format_smolstr!("\x1b[{params}").into()));
                 break;
               }
             });
 
-            tokens.push(PromptTk::AnsiSeq(format!("\x1b[{params}")));
+            tokens.push(PromptTk::AnsiSeq(format_smolstr!("\x1b[{params}").into()));
           } else {
             // Handle case where 'e' is not followed by '['
             tokens.push(PromptTk::Text("\\e".into()));
@@ -149,7 +150,7 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
         }
         '0'..='7' => {
           // Handle octal escape
-          let mut octal_str = String::new();
+          let mut octal_str = util::scratch_buf();
           octal_str.push(ch);
 
           // Collect up to 2 more octal digits
@@ -170,12 +171,12 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
             tokens.push(PromptTk::AsciiOct(octal));
           } else {
             // Fallback: treat as raw text
-            tokens.push(PromptTk::Text(format!("\\{octal_str}")));
+            tokens.push(PromptTk::Text(format_smolstr!("\\{octal_str}").into()));
           }
         }
         _ => {
           // Unknown escape sequence: treat as raw text
-          tokens.push(PromptTk::Text(format!("\\{ch}")));
+          tokens.push(PromptTk::Text(format_smolstr!("\\{ch}").into()));
         }
       }
     }
@@ -186,7 +187,7 @@ fn tokenize_prompt(raw: &str) -> Vec<PromptTk> {
   });
   // Push any remaining text as a token
   if !tk_text.is_empty() {
-    tokens.push(PromptTk::Text(tk_text));
+    tokens.push(PromptTk::Text(tk_text.into()));
   }
 
   tokens

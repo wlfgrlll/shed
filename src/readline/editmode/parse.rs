@@ -1,5 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
+use crate::util;
+
 use super::{
   CmdState,
   editcmd::{Anchor, Bound, Cmd, CmdFlags, Dest, Direction, EditCmd, Motion, TextObj, Verb, Word},
@@ -128,7 +130,7 @@ impl ViParser {
     {
       return None;
     }
-    let mut count = String::new();
+    let mut count = util::scratch_buf();
 
     while chars.peek().is_some_and(char::is_ascii_digit) {
       count.push(chars.next().unwrap());

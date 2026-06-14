@@ -2,7 +2,7 @@ use std::{cell::RefCell, fmt::Display};
 
 use itertools::Itertools;
 
-use crate::{HashMap, readline::linebuf::MotionKind};
+use crate::{HashMap, readline::linebuf::MotionKind, state::vars::VarStr, util};
 
 use super::{
   super::keys::KeyEvent,
@@ -240,7 +240,13 @@ impl Register {
         C::Span(a) | C::Line(a) | C::Block(a),
         C::Macro(b),
       ) => {
-        let rendered: String = b.iter().map(KeyEvent::as_vim_seq).collect();
+        let rendered: VarStr = b
+          .iter()
+          .fold(util::scratch_buf(), |mut buf, key| {
+            buf.push_str(key.as_vim_seq().as_str());
+            buf
+          })
+          .into();
         let mut line = crate::readline::linebuf::Line::default();
         line.push_str(&rendered);
         a.push(line);

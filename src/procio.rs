@@ -18,7 +18,7 @@ use nix::{
   unistd::{ForkResult, fork, read, write},
 };
 
-use crate::{Shed, signal, state::terminal::Terminal};
+use crate::{Shed, signal, state::terminal::Terminal, util};
 
 use super::{
   eval::{
@@ -227,8 +227,8 @@ impl FromStr for RedirBldr {
   type Err = ShErr;
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     let mut chars = s.chars().peekable();
-    let mut src_fd = String::new();
-    let mut tgt_fd = String::new();
+    let mut src_fd = util::scratch_buf();
+    let mut tgt_fd = util::scratch_buf();
     let mut redir = RedirBldr::new();
 
     match_loop!(chars.next() => ch, {

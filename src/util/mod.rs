@@ -12,6 +12,7 @@ use std::os::fd::BorrowedFd;
 
 use super::{Shed, eval, expand, match_loop, procio, sherr, state, system_msg, var, write_term};
 
+use compact_str::CompactString;
 pub(super) use guards::{isolation_guard, scope_guard, shared_scope_guard, var_ctx_guard};
 pub(super) use path::{
   PathCache, is_executable_file, path_list_entries, resolve_in_path, split_path_list,
@@ -47,6 +48,15 @@ impl std::io::Write for FdWriter<'_> {
   fn flush(&mut self) -> std::io::Result<()> {
     Ok(())
   }
+}
+
+/// Returns a default `CompactString` with capacity 24
+///
+/// Used for temporary buffers that are ideally put together via `push` or `push_str`
+/// like variable names and stuff for instance.
+/// Buffers under 24 bytes in length remain on the stack.
+pub(super) fn scratch_buf() -> CompactString {
+  CompactString::with_capacity(24)
 }
 
 /// Given two things that implement Ord, make sure that the left is less than the right

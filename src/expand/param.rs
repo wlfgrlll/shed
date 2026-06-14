@@ -2,12 +2,12 @@ use crate::eval::lex::TkFlags;
 use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
-use crate::match_loop;
 use crate::state::vars::VarStr;
 use crate::state::{
   Shed, scopes::ScopeStack, vars::ArrIndex, vars::VarFlags, vars::VarKind, vars::VarName,
 };
 use crate::util::{ShResult, compile_glob};
+use crate::{match_loop, util};
 use crate::{sherr, shopt, var};
 
 #[derive(Debug)]
@@ -158,8 +158,8 @@ pub fn parse_pos_len(s: &str, allow_side_effects: bool) -> Option<(usize, Option
 #[expect(clippy::too_many_lines, clippy::single_match_else)]
 pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<VarStr> {
   let mut chars = raw.chars();
-  let mut var_name = String::new();
-  let mut rest = String::new();
+  let mut var_name = util::scratch_buf();
+  let mut rest = util::scratch_buf();
   if raw.starts_with('#') {
     let var_spec = raw.strip_prefix('#').unwrap();
     let parsed = VarName::parse(var_spec, allow_side_effects)?;
@@ -205,7 +205,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
       let is_first_bracket = !seen_bracket;
       seen_bracket = true;
       var_name.push(ch);
-      let mut idx_content = String::new();
+      let mut idx_content = util::scratch_buf();
       let mut bracket_depth = 1;
       match_loop!(chars.next() => bc, {
         '[' => { bracket_depth += 1; var_name.push(bc); idx_content.push(bc); }

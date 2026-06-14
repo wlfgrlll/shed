@@ -1,4 +1,4 @@
-use crate::HashMap;
+use crate::{HashMap, util};
 use std::fmt::Write;
 
 use yansi::Paint;
@@ -207,7 +207,7 @@ impl super::Builtin for Raise {
             part.push('%');
             break;
           };
-          let mut color_id = String::new();
+          let mut color_id = util::scratch_buf();
           match n_ch {
             '%' => part.push('%'),
             _ if n_ch.is_ascii_digit() => {

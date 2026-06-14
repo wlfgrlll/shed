@@ -1,4 +1,7 @@
-use crate::{eval::parse::node::LabelCtx, util::error::get_context};
+use crate::{
+  eval::parse::node::LabelCtx,
+  util::{self, error::get_context},
+};
 
 use super::{
   NdFlags, NdRule, Node, ParseStream, ShResult, Span, Tk, TkFlags, TkRule,
@@ -319,9 +322,9 @@ impl ParseStream {
   #[expect(clippy::too_many_lines)]
   fn parse_assignment(&self, token: &Tk) -> Option<Node> {
     let mut chars = token.span.as_str().chars();
-    let mut var_name = String::new();
+    let mut var_name = util::scratch_buf();
     let mut name_range = token.span.range().start..token.span.range().start;
-    let mut var_val = String::new();
+    let mut var_val = util::scratch_buf();
     let mut val_range = token.span.range().end..token.span.range().end;
     let mut assign_kind = None;
     let mut pos = token.span.range().start;

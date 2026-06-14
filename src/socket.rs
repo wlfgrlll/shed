@@ -22,6 +22,8 @@ use nix::{
   unistd::{Pid, write},
 };
 
+use crate::{state::vars::VarStr, util};
+
 use super::{
   Hint, LineData, Lines, ReadlineEvent, ShResult, Shed, ShedLine, expand_keymap,
   keys::KeyEvent,
@@ -186,7 +188,7 @@ impl FromStr for SocketRequest {
     }
 
     let rest = s[request_kind.len()..].trim();
-    let mut sep = String::new();
+    let mut sep = util::scratch_buf();
     let mut rest_chars = rest.chars().peekable();
 
     // collect the separator
@@ -198,8 +200,8 @@ impl FromStr for SocketRequest {
         break;
       }
     }
-    let rest = rest_chars.collect::<String>();
-    let mut args = rest.split(&sep);
+    let rest = rest_chars.collect::<VarStr>();
+    let mut args = rest.split(&*sep);
 
     match request_kind.trim() {
       "msg" => {

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::state::vars::VarStr;
+use crate::{state::vars::VarStr, util};
 
 use super::{
   ShErr, ShResult,
@@ -162,14 +162,14 @@ impl ArithTk {
       ' ' | '\t' => { chars.next(); }
 
       '0'..='9' => {
-        let mut num = String::new();
+        let mut num = util::scratch_buf();
         let first = chars.next().unwrap();
         num.push(first);
 
         // Hex (0x... / 0X...) or octal (0NNN); otherwise decimal.
         let parsed: i64 = if first == '0' && matches!(chars.peek(), Some('x' | 'X')) {
           chars.next(); // consume x/X
-          let mut hex = String::new();
+          let mut hex = util::scratch_buf();
           while let Some(&d) = chars.peek() {
             if d.is_ascii_hexdigit() {
               hex.push(d);
@@ -186,7 +186,7 @@ impl ArithTk {
           ))?
         } else if first == '0' && chars.peek().is_some_and(char::is_ascii_digit) {
           // Octal, collect remaining octal digits.
-          let mut oct = String::new();
+          let mut oct = util::scratch_buf();
           while let Some(&d) = chars.peek() {
             if matches!(d, '0'..='7') {
               oct.push(d);

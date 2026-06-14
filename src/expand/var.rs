@@ -1,10 +1,11 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
+use compact_str::CompactString;
 use nix::unistd::{Uid, User};
 use smol_str::format_smolstr;
 
-use crate::state::vars::VarStr;
+use crate::{state::vars::VarStr, util};
 
 use super::{
   PARAMETERS, ShResult,
@@ -25,7 +26,7 @@ pub fn expand_raw_inner(
 
   match_loop!(chars.next() => ch, {
     markers::TILDE_SUB => {
-      let mut username = String::new();
+      let mut username = util::scratch_buf();
       while chars.peek().is_some_and(|ch| *ch != '/') {
         let ch = chars.next().unwrap();
         username.push(ch);
@@ -59,7 +60,7 @@ pub fn expand_raw_inner(
       }
     }
     markers::PROC_SUB_OUT if allow_side_effects => {
-      let mut inner = String::new();
+      let mut inner = util::scratch_buf();
       match_loop!(chars.next() => ch, {
         markers::PROC_SUB_OUT => break,
         _ => inner.push(ch),
@@ -68,7 +69,7 @@ pub fn expand_raw_inner(
       result.push_str(&fd_path);
     }
     markers::PROC_SUB_IN if allow_side_effects => {
-      let mut inner = String::new();
+      let mut inner = util::scratch_buf();
       match_loop!(chars.next() => ch, {
         markers::PROC_SUB_IN => break,
         _ => inner.push(ch),
@@ -91,7 +92,7 @@ pub fn expand_raw(chars: &mut Peekable<Chars<'_>>) -> ShResult<String> {
 }
 
 pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> ShResult<VarStr> {
-  let mut var_name = String::new();
+  let mut var_name = util::scratch_buf();
   let mut brace_depth: i32 = 0;
   let mut inner_brace_depth: i32 = 0;
   let mut prev_was_dollar = false;
@@ -99,7 +100,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
   match_loop!(chars.peek() => &ch => ch, {
     markers::SUBSH if var_name.is_empty() => {
       chars.next(); // now safe to consume
-      let mut subsh_body = String::new();
+      let mut subsh_body = util::scratch_buf();
       let mut found_end = false;
       match_loop!(chars.next() => c, {
         markers::SUBSH => {
@@ -170,11 +171,13 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     }
     ch if var_name.is_empty() && (PARAMETERS.contains(&ch) || ch.is_ascii_digit()) => {
       chars.next();
-      let parameter = ch.to_string();
-      let val = var!(&parameter);
+      let mut buf = [0u8; 4];
+      let parameter = ch.encode_utf8(&mut buf);
+      let val = var!(parameter);
 
       if (ch == '@' || ch == '*') && val.is_empty() {
-        return Ok(markers::NULL_EXPAND.to_string().into());
+        let mut buf = [0u8; 4];
+        return Ok(VarStr::from(markers::NULL_EXPAND.encode_utf8(&mut buf)));
       }
 
       return Ok(val);

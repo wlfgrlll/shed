@@ -1,7 +1,7 @@
 use crate::{
   HashMap,
   state::{logic::ShFunc, vars::VarStr},
-  util::ShErrKind,
+  util::{self, ShErrKind},
 };
 
 use super::{SHED, Shed, try_var};
@@ -37,13 +37,13 @@ use super::{
 };
 
 /// Parse `arr[idx]` into (name, `raw_index_expr`). Pure parsing, no expansion.
-pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
+pub fn parse_arr_bracket(var_name: &str) -> Option<(VarStr, VarStr)> {
   if !var_name.contains('[') {
     return None;
   }
   let mut chars = var_name.chars();
-  let mut name = String::new();
-  let mut idx_raw = String::new();
+  let mut name = util::scratch_buf();
+  let mut idx_raw = util::scratch_buf();
   let mut bracket_depth = 0;
 
   match_loop!(chars.next() => ch, {
@@ -75,7 +75,7 @@ pub fn parse_arr_bracket(var_name: &str) -> Option<(String, String)> {
   if name.is_empty() || idx_raw.is_empty() {
     None
   } else {
-    Some((name, idx_raw))
+    Some((name.into(), idx_raw.into()))
   }
 }
 

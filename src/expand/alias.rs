@@ -6,7 +6,7 @@ use super::{
   shopt,
   state::Shed,
 };
-use crate::HashSet;
+use crate::{HashSet, util};
 
 struct AliasExpander<'a> {
   input: String,
@@ -107,7 +107,7 @@ pub fn expand_keymap(s: &str) -> Vec<KeyEvent> {
         }
       }
       '<' => {
-        let mut alias = String::new();
+        let mut alias = util::scratch_buf();
         while let Some(a_ch) = chars.pop_front() {
           match a_ch {
             '\\' => {

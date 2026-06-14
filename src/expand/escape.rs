@@ -5,6 +5,8 @@ use std::str::Chars;
 
 use bitflags::bitflags;
 
+use crate::util;
+
 use super::{QuoteState, ShResult, markers, match_loop, sherr, try_var, util::is_var_name_ch};
 
 bitflags! {
@@ -364,7 +366,7 @@ pub fn read_stty_escape(chars: &mut Peekable<Chars>, result: &mut String) {
 }
 
 pub fn read_octal(chars: &mut Peekable<Chars>, result: &mut String, first: Option<char>) {
-  let mut oct = String::new();
+  let mut oct = util::scratch_buf();
   if let Some(first) = first {
     oct.push(first);
   }
@@ -388,7 +390,7 @@ pub fn read_octal(chars: &mut Peekable<Chars>, result: &mut String, first: Optio
 }
 
 pub fn read_hex(chars: &mut Peekable<Chars>, result: &mut String) {
-  let mut hex = String::new();
+  let mut hex = util::scratch_buf();
   if let Some(h1) = chars.next() {
     hex.push(h1);
   } else {

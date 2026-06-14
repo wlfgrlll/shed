@@ -7,6 +7,8 @@ use std::{
 
 use bitflags::bitflags;
 
+use crate::{state::vars::VarStr, util};
+
 use super::{
   Shed,
   builtin::BUILTIN_NAMES,
@@ -379,7 +381,7 @@ pub fn clean_input(input: &str) -> String {
   let mut output = String::new();
   let mut in_squote = false;
   // FIFO queue: heredocs on the same line are consumed in order
-  let mut heredoc_queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+  let mut heredoc_queue: std::collections::VecDeque<VarStr> = std::collections::VecDeque::new();
   match_loop!(chars.next() => (i,ch) => ch, {
     '\'' => {
       in_squote = !in_squote;
@@ -440,7 +442,7 @@ pub fn clean_input(input: &str) -> String {
         }
 
         // Collect delimiter word, stripping quotes for the match key
-        let mut delim = String::new();
+        let mut delim = util::scratch_buf();
         if tab_strip {
           delim.push('-');
         }
@@ -461,7 +463,7 @@ pub fn clean_input(input: &str) -> String {
           chars.next();
         }
         if !delim.trim_start_matches('-').is_empty() {
-          heredoc_queue.push_back(delim);
+          heredoc_queue.push_back(delim.into());
         }
       }
     }
@@ -795,7 +797,7 @@ impl LexStream {
     let slice = source.get(pos..).unwrap_or_default();
     let span_start = pos;
     let mut chars = slice.chars().peekable();
-    let mut delim = String::new();
+    let mut delim = util::scratch_buf();
     let mut flags = TkFlags::empty();
     let mut first_char = true;
     // Parse the delimiter word, stripping quotes

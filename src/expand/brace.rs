@@ -1,6 +1,7 @@
 use crate::expand::expand_raw;
-use crate::match_loop;
+use crate::state::vars::VarStr;
 use crate::util::QuoteState;
+use crate::{match_loop, util};
 
 /// Check if a string contains valid brace expansion patterns.
 /// Returns true if there's a valid {a,b} or {1..5} pattern at the outermost
@@ -100,7 +101,7 @@ fn expand_one_brace(word: &str) -> Vec<String> {
   let parts = split_brace_inner(&inner);
 
   // If we got back a single part with no expansion, treat as literal
-  if parts.len() == 1 && parts[0] == inner {
+  if parts.len() == 1 && inner == parts[0] {
     // Check if it's a range
     if let Some(range_parts) = try_expand_range(&inner) {
       return range_parts
@@ -120,9 +121,9 @@ fn expand_one_brace(word: &str) -> Vec<String> {
 
 /// Extract prefix, inner, and suffix from a brace expression.
 /// "pre{a,b}post" -> Some(("pre", "a,b", "post"))
-fn get_brace_parts(word: &str) -> Option<(String, String, String)> {
+fn get_brace_parts(word: &str) -> Option<(VarStr, VarStr, VarStr)> {
   let mut chars = word.chars().peekable();
-  let mut prefix = String::new();
+  let mut prefix = util::scratch_buf();
   let mut qt_state = QuoteState::default();
 
   // Find the opening brace
@@ -149,7 +150,7 @@ fn get_brace_parts(word: &str) -> Option<(String, String, String)> {
 
   // Find matching closing brace
   let mut depth = 1;
-  let mut inner = String::new();
+  let mut inner = util::scratch_buf();
   qt_state = QuoteState::default();
 
   match_loop!(chars.next() => ch, {
@@ -186,9 +187,9 @@ fn get_brace_parts(word: &str) -> Option<(String, String, String)> {
   }
 
   // Collect suffix
-  let suffix: String = chars.collect();
+  let suffix: VarStr = chars.collect();
 
-  Some((prefix, inner, suffix))
+  Some((prefix.into(), inner.into(), suffix))
 }
 
 #[expect(clippy::doc_link_with_quotes)]
