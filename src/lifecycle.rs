@@ -6,12 +6,9 @@ use super::{
   ShResult, Shed, autocmd,
   eval::execute::{Dispatcher, exec_nonint},
   outln,
-  procio::{
-    self, MIN_INTERNAL_FD, RedirType, do_something_that_opens_fds_that_we_cant_access_hack,
-  },
+  procio::{self, RedirType},
   signal::QUIT_CODE,
   state::{
-    self,
     jobs::JobTab,
     logic::TrapTarget,
     meta::MetaTab,
@@ -144,8 +141,6 @@ pub(super) fn setup() -> Option<ShedArgs> {
     }
     Shed::shopts_mut(|o| o.query(&format!("set.{set_opt}=true"))).ok();
   }
-
-  do_something_that_opens_fds_that_we_cant_access_hack(MIN_INTERNAL_FD, state::util::init_db_conn);
 
   Some(args)
 }

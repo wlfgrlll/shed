@@ -121,13 +121,10 @@ pub fn expand_arr_index(idx_raw: &str, allow_side_effects: bool) -> ShResult<Arr
 /// * Err(e) is your function's `ShErr`
 /// * Ok(Some(T)) means the connection exists and your function succeeded.
 pub fn query_db<T, F: FnOnce(Arc<Connection>) -> ShResult<T>>(f: F) -> ShResult<Option<T>> {
-  SHED.with(|shed| {
-    let Some(Some(conn)) = shed.db_conn.get() else {
-      return Ok(None);
-    };
-
-    f(Arc::clone(conn)).map(Some)
-  })
+  let Some(conn) = get_db_conn() else {
+    return Ok(None);
+  };
+  f(conn).map(Some)
 }
 
 pub fn with_vars<F, H, V, T>(vars: H, f: F) -> T
@@ -721,8 +718,24 @@ pub fn set_sh_lvl() -> ShResult<()> {
 }
 
 /// Get a clone of the shared database connection, if available.
+#[expect(clippy::arc_with_non_send_sync)]
 pub fn get_db_conn() -> Option<Arc<Connection>> {
-  SHED.with(|shed| shed.db_conn.get().cloned().flatten())
+  SHED.with(|shed| {
+    shed
+      .db_conn
+      .get_or_init(|| {
+        crate::procio::do_something_that_opens_fds_that_we_cant_access_hack(
+          crate::procio::MIN_INTERNAL_FD,
+          || {
+            let conn = open_db_conn().ok()?;
+            conn.execute_batch("PRAGMA journal_mode=WAL").ok()?;
+            conn.execute_batch("PRAGMA case_sensitive_like = 1").ok()?;
+            Some(Arc::new(conn))
+          },
+        )
+      })
+      .clone()
+  })
 }
 
 /// Initialize the shared database connection with an in-memory sqlite
@@ -735,24 +748,6 @@ pub fn init_test_db_conn() {
     let _ = shed
       .db_conn
       .set(Connection::open_in_memory().ok().map(std::sync::Arc::new));
-  });
-}
-
-/// Initialize the shared database connection on the `Shed` struct.
-pub fn init_db_conn() {
-  SHED.with(|shed| match open_db_conn().ok() {
-    Some(conn) => {
-      let Ok(()) = conn.execute_batch("PRAGMA journal_mode=WAL") else {
-        return;
-      };
-      let Ok(()) = conn.execute_batch("PRAGMA case_sensitive_like = 1") else {
-        return;
-      };
-      let _ = shed.db_conn.set(Some(conn.into()));
-    }
-    None => {
-      let _ = shed.db_conn.set(None);
-    }
   });
 }
 
