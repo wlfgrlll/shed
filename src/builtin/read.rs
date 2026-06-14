@@ -7,7 +7,7 @@ use nix::{
   unistd::{self, read},
 };
 
-use crate::match_loop;
+use crate::{builtin::quote, match_loop};
 
 use super::{
   super::state::terminal::Terminal,
@@ -29,11 +29,12 @@ const CHUNK_SIZE: usize = 4096; // 4kb
 
 bitflags! {
   pub struct ReadFlags: u32 {
-    const NO_ESCAPES = 	0b0000_0001;
-    const NO_ECHO = 		0b0000_0010; // TODO: unused
+    const NO_ESCAPE = 	0b0000_0001;
+    const NO_ECHO = 		0b0000_0010;
     const ARRAY = 			0b0000_0100;
     const N_CHARS = 		0b0000_1000;
     const TIMEOUT = 		0b0001_0000;
+    const QUOTED  = 		0b0010_0000;
   }
 }
 pub(super) struct Read;
@@ -42,6 +43,8 @@ impl super::Builtin for Read {
     vec![
       OptSpec::flag('r'),
       OptSpec::flag('s'),
+      OptSpec::flag('q'),
+      OptSpec::flag("quoted"),
       OptSpec::single_arg('a'),
       OptSpec::single_arg('n'),
       OptSpec::single_arg('t'),
@@ -59,8 +62,15 @@ impl super::Builtin for Read {
 
     for opt in &args.opts {
       match opt {
-        Opt::Short('r') => flags |= ReadFlags::NO_ESCAPES,
+        Opt::Long(opt) => match opt.as_str() {
+          "quoted" => flags |= ReadFlags::QUOTED,
+          _ => {
+            return Err(sherr!(ExecFail, "read: Unexpected flag '{opt}'")).promote_err(args.span);
+          }
+        },
+        Opt::Short('r') => flags |= ReadFlags::NO_ESCAPE,
         Opt::Short('s') => flags |= ReadFlags::NO_ECHO,
+        Opt::Short('q') => flags |= ReadFlags::QUOTED,
         Opt::ShortWithArg('a', a) => array_name = Some(a.clone()),
         Opt::ShortWithArg('p', p) => prompt = Some(p),
         Opt::ShortWithArg('d', d) => delim = d.chars().map(|c| c as u8).next().unwrap_or(b'\n'),
@@ -94,16 +104,24 @@ impl super::Builtin for Read {
     } else {
       do_read(
         delim,
-        !flags.contains(ReadFlags::NO_ESCAPES),
+        !flags.contains(ReadFlags::NO_ESCAPE),
         timeout,
         max_bytes,
       )?
     };
 
     if let Some(arr) = array_name {
-      field_split_arr(&input, &arr).promote_err(args.span())
+      if flags.contains(ReadFlags::QUOTED) {
+        field_split_arr_quoted(&input, &arr).promote_err(args.span())
+      } else {
+        field_split_arr(&input, &arr).promote_err(args.span())
+      }
     } else {
-      field_split_vars(&input, &args.argv).promote_err(args.span())
+      if flags.contains(ReadFlags::QUOTED) {
+        field_split_vars_quoted(&input, &args.argv).promote_err(args.span())
+      } else {
+        field_split_vars(&input, &args.argv).promote_err(args.span())
+      }
     }
   }
 }
@@ -352,6 +370,40 @@ fn field_split_arr(input: &str, arr_name: &str) -> ShResult<()> {
 
   let sep = state::util::get_separators();
   let fields: VecDeque<&str> = input.split(|c| sep.contains(c)).collect();
+
+  Shed::vars_mut(|v| v.set_var(arr_name, VarKind::arr(fields), VarFlags::empty()))
+}
+
+fn field_split_vars_quoted(input: &str, vars: &[(String, Span)]) -> ShResult<()> {
+  let fields = quote::unquote_raw(input)?;
+
+  if vars.is_empty() {
+    let joined = fields.join(" ");
+    Shed::vars_mut(|v| v.set_var("REPLY", VarKind::string(joined), VarFlags::empty()))?;
+    return Ok(());
+  }
+
+  for (i, (name, _)) in vars.iter().enumerate() {
+    let value = if i + 1 == vars.len() {
+      fields[i..].join(" ")
+    } else if i < fields.len() {
+      fields[i].clone()
+    } else {
+      String::new()
+    };
+
+    Shed::vars_mut(|v| v.set_var(name, VarKind::string(value), VarFlags::empty()))?;
+  }
+
+  Ok(())
+}
+
+fn field_split_arr_quoted(input: &str, arr_name: &str) -> ShResult<()> {
+  if arr_name.is_empty() {
+    return Err(sherr!(ExecFail, "read: Array name cannot be empty"));
+  }
+
+  let fields = quote::unquote_raw(input)?;
 
   Shed::vars_mut(|v| v.set_var(arr_name, VarKind::arr(fields), VarFlags::empty()))
 }
