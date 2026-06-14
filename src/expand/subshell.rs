@@ -90,8 +90,6 @@ pub fn internal_cmd_sub(raw: &str) -> ShResult<VarStr> {
   let sink_scope = SinkScope::new();
   let _ceiling = isolation_guard(None);
 
-  log::debug!("internal_cmd_sub: executing internal command: {raw}");
-
   if let Err(e) = exec_nonint(raw.into(), Some("command_sub".into())) {
     e.print_error();
   }

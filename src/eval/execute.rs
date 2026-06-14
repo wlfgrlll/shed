@@ -2,7 +2,7 @@ use crate::{
   autocmd,
   builtin::{self, SinkScope, StdinScope},
   eval::parse::node::{LabelCtx, node_has_only_builtins},
-  shopt_mut,
+  shopt_mut, socket,
   state::{logic::AutoloadKind, vars::VarStr},
   util::isolation_guard,
 };
@@ -269,7 +269,7 @@ pub fn exec_input(mut input: String, source_name: Option<Rc<str>>) -> ShResult<(
   } else {
     super::lex::LexFlags::empty()
   };
-  let source_name = source_name.unwrap_or("<stdin>".into());
+  let source_name = source_name.unwrap_or("<unknown>".into());
   let mut parser = ParsedSrc::new(input.into())
     .with_lex_flags(lex_flags)
     .with_name(source_name.clone());
@@ -1388,11 +1388,18 @@ impl Dispatcher {
       };
 
       // execvpe only returns on error
+      let print_error = |err: ShErr| {
+        // try to write the error message back to the parent's socket
+        if socket::send_to_socket(&format!("msg/system/{err}")).is_err() {
+          // if that failed, just print the error ourselves
+          err.print_error();
+        }
+      };
       match e {
         Errno::ENOENT => {
-          sherr!(NotFound @ span, "command not found")
-            .with_context(context.iter())
-            .print_error();
+          let err = sherr!(NotFound @ span, "command not found").with_context(context.iter());
+          print_error(err);
+
           with_vars([("CMD".into(), cmd.to_str().unwrap_or_default())], || {
             autocmd!(OnCommandNotFound);
           });
@@ -1400,31 +1407,27 @@ impl Dispatcher {
           unsafe { nix::libc::_exit(127) };
         }
         Errno::EACCES => {
-          sherr!(BadPermission @ span, "permission denied")
-            .with_context(context.iter())
-            .print_error();
+          let err = sherr!(BadPermission @ span, "permission denied").with_context(context.iter());
+          print_error(err);
+
           unsafe { nix::libc::_exit(126) };
         }
         Errno::EISDIR => {
-          sherr!(ExecFail @ span, "is a directory")
-            .with_context(context.iter())
-            .print_error();
+          let err = sherr!(ExecFail @ span, "is a directory").with_context(context.iter());
+          print_error(err);
           unsafe { nix::libc::_exit(126) };
         }
         Errno::ENOEXEC => {
-          sherr!(ExecFail @ span, "exec format error")
-            .with_context(context.iter())
-            .print_error();
+          let err = sherr!(ExecFail @ span, "exec format error").with_context(context.iter());
+          print_error(err);
           unsafe { nix::libc::_exit(126) };
         }
         _ => {
-          sherr!(Errno(e) @ span, "{e}")
-            .with_context(context.iter())
-            .print_error();
+          let err = sherr!(Errno(e) @ span, "{e}").with_context(context.iter());
+          print_error(err);
+          unsafe { nix::libc::_exit(e as i32) }
         }
       }
-
-      unsafe { nix::libc::_exit(e as i32) }
     };
 
     if no_fork {

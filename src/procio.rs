@@ -4,6 +4,7 @@ use std::{
   fs::{File, OpenOptions},
   os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
   path::Path,
+  rc::Rc,
   str::FromStr,
 };
 
@@ -700,7 +701,11 @@ pub(super) fn read_fd_to_string(fd: OwnedFd) -> ShResult<String> {
   String::from_utf8(buf).map_err(|e| sherr!(InternalErr, "Failed to read fd: {}", e))
 }
 
-pub(super) fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String> {
+pub(super) fn capture_command(
+  cmd: &str,
+  stdin: Option<&str>,
+  name: Option<Rc<str>>,
+) -> ShResult<String> {
   let (rpipe, wpipe) = pipes_high()?;
   let stdin_pipes = if stdin.is_some() {
     Some(pipes_high()?)
@@ -723,7 +728,7 @@ pub(super) fn capture_command(cmd: &str, stdin: Option<&str>) -> ShResult<String
       let redirs: RedirSet = specs.into();
       let _guard = redirs.apply()?;
 
-      if let Err(e) = exec_nonint(cmd.to_string(), Some("command_sub".into())) {
+      if let Err(e) = exec_nonint(cmd.to_string(), name) {
         if let ShErrKind::CleanExit(code) = e.kind() {
           std::process::exit(*code);
         }
@@ -999,7 +1004,7 @@ pub mod tests {
   #[test]
   fn capture_simple_echo() {
     let _g = TestGuard::new();
-    let out = capture_command("echo hello", None).unwrap();
+    let out = capture_command("echo hello", None, None).unwrap();
     assert_eq!(out, "hello");
   }
 
@@ -1007,21 +1012,21 @@ pub mod tests {
   fn capture_strips_trailing_newlines() {
     let _g = TestGuard::new();
     // The function does trim_end on the captured output.
-    let out = capture_command("printf 'foo\\n\\n\\n'", None).unwrap();
+    let out = capture_command("printf 'foo\\n\\n\\n'", None, None).unwrap();
     assert_eq!(out, "foo");
   }
 
   #[test]
   fn capture_preserves_internal_newlines() {
     let _g = TestGuard::new();
-    let out = capture_command("printf 'one\\ntwo\\nthree'", None).unwrap();
+    let out = capture_command("printf 'one\\ntwo\\nthree'", None, None).unwrap();
     assert_eq!(out, "one\ntwo\nthree");
   }
 
   #[test]
   fn capture_empty_output() {
     let _g = TestGuard::new();
-    let out = capture_command("true", None).unwrap();
+    let out = capture_command("true", None, None).unwrap();
     assert_eq!(out, "");
   }
 
@@ -1030,7 +1035,7 @@ pub mod tests {
     let _g = TestGuard::new();
     // `false` exits 1; capture_command should propagate that into
     // Shed::get_status while still returning captured output (empty).
-    let out = capture_command("false", None).unwrap();
+    let out = capture_command("false", None, None).unwrap();
     assert_eq!(out, "");
     assert_ne!(state::Shed::get_status(), 0);
   }
@@ -1039,7 +1044,7 @@ pub mod tests {
   fn capture_nonzero_status_still_captures_output() {
     let _g = TestGuard::new();
     // Multi-statement: prints output then fails.
-    let out = capture_command("echo before-fail; false", None).unwrap();
+    let out = capture_command("echo before-fail; false", None, None).unwrap();
     assert_eq!(out, "before-fail");
     assert_ne!(state::Shed::get_status(), 0);
   }
@@ -1052,7 +1057,7 @@ pub mod tests {
     if !has_cmd("cat") {
       return;
     }
-    let out = capture_command("cat", Some("piped input")).unwrap();
+    let out = capture_command("cat", Some("piped input"), None).unwrap();
     assert_eq!(out, "piped input");
   }
 
@@ -1062,7 +1067,7 @@ pub mod tests {
     if !has_cmd("cat") {
       return;
     }
-    let out = capture_command("cat", Some("line1\nline2\nline3\n")).unwrap();
+    let out = capture_command("cat", Some("line1\nline2\nline3\n"), None).unwrap();
     assert_eq!(out, "line1\nline2\nline3");
   }
 
@@ -1071,7 +1076,7 @@ pub mod tests {
     let _g = TestGuard::new();
     // The child's `read` builtin should successfully consume the
     // stdin we feed.
-    let out = capture_command("read x; echo \"got=$x\"", Some("hello world\n")).unwrap();
+    let out = capture_command("read x; echo \"got=$x\"", Some("hello world\n"), None).unwrap();
     assert_eq!(out, "got=hello world");
   }
 

@@ -1,4 +1,10 @@
-use std::{fs::OpenOptions, io::Write, path::PathBuf};
+use std::{
+  fs::OpenOptions,
+  io::Write,
+  path::PathBuf,
+  rc::Rc,
+  sync::atomic::{AtomicUsize, Ordering},
+};
 
 use itertools::Itertools;
 use nix::libc::STDIN_FILENO;
@@ -21,10 +27,22 @@ use super::{
 };
 use crate::{
   HashSet,
-  state::terminal::Terminal,
   util::{format_size, var_ctx_guard},
 };
 use crate::{state, verb};
+
+thread_local! {
+  static EX_MODE_ENTRIES: AtomicUsize = const { AtomicUsize::new(1) };
+}
+
+fn get_entry_id() -> usize {
+  EX_MODE_ENTRIES.with(|counter| counter.fetch_add(1, Ordering::SeqCst))
+}
+
+fn get_entry_name() -> Rc<str> {
+  let id = get_entry_id();
+  format!("ex_entry #{id}").into()
+}
 
 impl super::LineBuf {
   pub(super) fn dispatch_ex_node(&mut self, cmd: &EditCmd) -> ShResult<()> {
@@ -515,7 +533,7 @@ impl super::LineBuf {
       ReadSrc::Cmd(cmd) => {
         autocmd!(PreCmd);
         defer!(autocmd!(PostCmd));
-        match capture_command(cmd, None) {
+        match capture_command(cmd, None, Some(get_entry_name())) {
           Ok(out) => out,
           Err(e) => {
             e.print_error();
@@ -538,7 +556,7 @@ impl super::LineBuf {
       let args = paths.iter().map(|p| format!("{}", p.display())).join(" ");
       let input = format!("$EDITOR {args}");
 
-      exec_int(input, Some("ex edit".into()))
+      exec_int(input, Some(get_entry_name()))
     }
   }
 
@@ -599,11 +617,15 @@ impl super::LineBuf {
     let output = if let Some(stdin) = stdin {
       defer!(autocmd!(PostCmd));
       let _guard = Shed::term_mut(|t| t.yield_terminal(false));
-      Some(capture_command(sh_cmd, Some(stdin))?)
+      Some(capture_command(
+        sh_cmd,
+        Some(stdin),
+        Some(get_entry_name()),
+      )?)
     } else {
       defer!(autocmd!(PostCmd));
       let _guard = Shed::term_mut(|t| t.yield_terminal(false));
-      exec_int(sh_cmd.to_string(), Some("<ex-mode-cmd>".into()))?;
+      exec_int(sh_cmd.to_string(), Some(get_entry_name()))?;
       None
     };
 

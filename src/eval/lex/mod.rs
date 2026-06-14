@@ -84,7 +84,8 @@ impl SpanSource {
 
 impl Display for SpanSource {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.name)
+    use yansi::Paint;
+    write!(f, "{}", self.name.cyan().bold().underline())
   }
 }
 

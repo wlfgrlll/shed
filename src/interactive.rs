@@ -2,7 +2,11 @@ use std::{
   collections::VecDeque,
   os::fd::{AsRawFd, BorrowedFd},
   path::Path,
-  sync::{OnceLock, atomic::Ordering},
+  rc::Rc,
+  sync::{
+    OnceLock,
+    atomic::{AtomicUsize, Ordering},
+  },
   time::{Duration, Instant},
 };
 
@@ -40,6 +44,15 @@ use super::{
 };
 
 static PARENT_PROCESS_ID: OnceLock<Pid> = OnceLock::new();
+
+thread_local! {
+  static REPL_ENTRIES: AtomicUsize = const { AtomicUsize::new(1) };
+}
+
+fn get_repl_entry_name() -> Rc<str> {
+  let id = REPL_ENTRIES.with(|c| c.fetch_add(1, Ordering::SeqCst));
+  format!("repl_entry #{id}").into()
+}
 
 fn was_reparented() -> bool {
   let Some(&ppid) = PARENT_PROCESS_ID.get() else {
@@ -564,7 +577,7 @@ fn run_prompt_command(input: String, clear_prompt: bool) -> ShResult<LoopAction>
 
   let res = {
     let _scroll_guard = Shed::term_mut(|t| t.yield_terminal(clear_prompt));
-    exec_int(input, Some("<stdin>".into()))
+    exec_int(input, Some(get_repl_entry_name()))
   };
 
   if let Some((row, col)) = position {
