@@ -527,3 +527,40 @@ macro_rules! shopt_mut {
     $crate::state::Shed::shopts_mut(|o| o.$($path)*)
   };
 }
+
+#[macro_export]
+macro_rules! assert_sorted {
+  ($arr:expr) => {
+    // credit goes to fish shell for this idea. very nice pattern
+    // at compile time, checks to see if the given const array is sorted alphabetically
+    // if not, compiler error
+    const _: () = {
+      let mut i = 1;
+      while i < $arr.len() {
+        let prev = $arr[i - 1].as_bytes();
+        let curr = $arr[i].as_bytes();
+        let len = if prev.len() < curr.len() {
+          prev.len()
+        } else {
+          curr.len()
+        };
+        let mut j = 0;
+        while j < len {
+          if prev[j] > curr[j] {
+            panic!("Array must be in alphabetical order");
+          }
+          if prev[j] < curr[j] {
+            break;
+          }
+          j += 1;
+        }
+
+        if j == len && prev.len() >= curr.len() {
+          panic!("Array must be in alphabetical order");
+        }
+
+        i += 1;
+      }
+    };
+  };
+}

@@ -7,7 +7,7 @@ use std::{
 
 use bitflags::bitflags;
 
-use crate::{state::vars::VarStr, util};
+use crate::{assert_sorted, state::vars::VarStr, util};
 
 use super::{
   Shed,
@@ -17,9 +17,11 @@ use super::{
 };
 
 pub const KEYWORDS: [&str; 21] = [
-  "if", "then", "elif", "else", "fi", "while", "until", "select", "for", "in", "do", "done",
-  "case", "esac", "!", "not", "time", "function", "try", "catch", "defer",
+  "!", "case", "catch", "defer", "do", "done", "elif", "else", "esac", "fi", "for", "function",
+  "if", "in", "not", "select", "then", "time", "try", "until", "while",
 ];
+
+assert_sorted!(KEYWORDS);
 
 pub const MIDDLES: [&str; 3] = ["elif", "else", "catch"];
 
@@ -1281,7 +1283,7 @@ impl LexStream {
         }
         _ => {
           new_tk.flags |= TkFlags::IS_CMD;
-          if BUILTIN_NAMES.contains(&text) {
+          if BUILTIN_NAMES.binary_search(&text).is_ok() {
             new_tk.mark(TkFlags::BUILTIN);
           }
           self.set_next_is_cmd(false);
@@ -1618,7 +1620,7 @@ pub fn is_field_sep(ch: char) -> bool {
 }
 
 pub fn is_keyword(slice: &str) -> bool {
-  KEYWORDS.contains(&slice)
+  KEYWORDS.binary_search(&slice).is_ok()
 }
 
 pub fn is_cmd_sub(slice: &str) -> bool {

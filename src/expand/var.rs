@@ -1,7 +1,6 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use compact_str::CompactString;
 use nix::unistd::{Uid, User};
 use smol_str::format_smolstr;
 

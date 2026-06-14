@@ -138,37 +138,7 @@ macro_rules! register_builtins {
       $($name),*
     ];
 
-    // credit goes to fish shell for this idea. very nice pattern
-    // at compile time, checks to see if the name list is sorted alphabetically
-    // if not, compiler error
-    const _: () = {
-      let mut i = 1;
-      while i < BUILTIN_NAMES.len() {
-        let prev = BUILTIN_NAMES[i - 1].as_bytes();
-        let curr = BUILTIN_NAMES[i].as_bytes();
-        let len = if prev.len() < curr.len() {
-          prev.len()
-        } else {
-          curr.len()
-        };
-        let mut j = 0;
-        while j < len {
-          if prev[j] > curr[j] {
-            panic!("Builtin names must be in alphabetical order");
-          }
-          if prev[j] < curr[j] {
-            break;
-          }
-          j += 1;
-        }
-
-        if j == len && prev.len() >= curr.len() {
-          panic!("Builtin names must be in alphabetical order");
-        }
-
-        i += 1;
-      }
-    };
+    $crate::assert_sorted!(BUILTIN_NAMES);
   };
 }
 
