@@ -3,6 +3,7 @@ use std::os::fd::AsRawFd;
 use crate::{
   builtin::SinkScope,
   eval::{ParsedSrc, parse::node::node_has_only_builtins},
+  state::vars::VarStr,
   util::isolation_guard,
 };
 
@@ -85,7 +86,7 @@ pub fn is_internal(raw: &str) -> bool {
   node_has_only_builtins(ast)
 }
 
-pub fn internal_cmd_sub(raw: &str) -> ShResult<String> {
+pub fn internal_cmd_sub(raw: &str) -> ShResult<VarStr> {
   let sink_scope = SinkScope::new();
   let _ceiling = isolation_guard(None);
 
@@ -95,11 +96,11 @@ pub fn internal_cmd_sub(raw: &str) -> ShResult<String> {
     e.print_error();
   }
 
-  Ok(sink_scope.take().trim_end_matches('\n').to_string())
+  Ok(sink_scope.take().trim_end_matches('\n').into())
 }
 
 /// Get the command output of a given command input as a String
-pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
+pub fn expand_cmd_sub(raw: &str) -> ShResult<VarStr> {
   if raw.starts_with('(') && raw.ends_with(')') {
     return expand_arithmetic_wrapped(raw);
   }
@@ -144,7 +145,7 @@ pub fn expand_cmd_sub(raw: &str) -> ShResult<String> {
       match status {
         WtStat::Exited(_, code) => {
           state::Shed::set_status(code);
-          Ok(output.trim_end_matches('\n').to_string())
+          Ok(output.trim_end_matches('\n').into())
         }
         _ => Err(sherr!(InternalErr, "Command sub failed")),
       }

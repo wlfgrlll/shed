@@ -58,7 +58,7 @@ pub(crate) fn read_commands(args: Vec<String>) -> ShResult<()> {
     scope.sh_argv_mut().clear();
     scope.bpush_arg(zero);
     for arg in args {
-      scope.bpush_arg(arg);
+      scope.bpush_arg(arg.into());
     }
   });
 
@@ -85,9 +85,9 @@ pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult
     v.set_param(state::vars::ShellParam::ShellName, &path_str); // $0
     let scope = v.cur_scope_mut();
     scope.sh_argv_mut().clear();
-    scope.bpush_arg(path_str.clone());
+    scope.bpush_arg(path_str.into());
     for arg in args {
-      scope.bpush_arg(arg);
+      scope.bpush_arg(arg.into());
     }
   });
 

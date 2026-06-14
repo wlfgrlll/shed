@@ -289,9 +289,9 @@ impl super::Builtin for Dirs {
 
 pub fn truncate_home_path(path: String) -> String {
   if let Some(home) = try_var!("HOME")
-    && path.starts_with(&home)
+    && path.starts_with(&*home)
   {
-    let new = path.strip_prefix(&home).unwrap();
+    let new = path.strip_prefix(&*home).unwrap();
     return format!("~{new}");
   }
   path

@@ -351,7 +351,7 @@ fn change_umask(mask: stat::mode_t) -> Mode {
   Shed::vars_mut(|v| {
     v.set_var(
       "UMASK",
-      VarKind::Str(format!("{mask:04o}")),
+      VarKind::string(format!("{mask:04o}")),
       VarFlags::EXPORT | VarFlags::READONLY,
     )
   })

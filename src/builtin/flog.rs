@@ -36,15 +36,15 @@ impl super::Builtin for Flog {
 
     let level = stylize_loglevel(level);
 
-    let mut prefix_fmt = try_var!("FLOG_FMT").unwrap_or_else(|| "[{level}]".to_string());
+    let mut prefix_fmt = try_var!("FLOG_FMT").unwrap_or_else(|| "[{level}]".into());
 
     for opt in args.opts {
       match &opt {
         Opt::ShortWithArg('p', arg) => {
-          prefix_fmt.clone_from(arg);
+          prefix_fmt = arg.into();
         }
         Opt::LongWithArg(flag, arg) if flag.as_str() == "prefix" => {
-          prefix_fmt.clone_from(arg);
+          prefix_fmt = arg.into();
         }
         _ => {}
       }

@@ -400,7 +400,7 @@ mod open_help_tests {
   use super::*;
   use crate::state::Shed;
   use crate::state::terminal::Terminal;
-  use crate::state::vars::{VarFlags, VarKind};
+  use crate::state::vars::{VarFlags, VarKind, VarStr};
   use crate::tests::testutil::TestGuard;
 
   const SAMPLE: &str =
@@ -519,7 +519,8 @@ mod open_help_tests {
     let _g = TestGuard::new();
     let dir = tempfile::TempDir::new().unwrap();
     let dir_raw = dir.path().display().to_string();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(dir_raw), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(dir_raw.into()), VarFlags::EXPORT))
+      .unwrap();
     let file_path = dir.path().join("some_help_file.txt");
     std::fs::write(
       &file_path,
@@ -537,7 +538,8 @@ mod open_help_tests {
     let _g = TestGuard::new();
     let dir = tempfile::TempDir::new().unwrap();
     let dir_raw = dir.path().display().to_string();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(dir_raw), VarFlags::EXPORT)).unwrap();
+    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(dir_raw.into()), VarFlags::EXPORT))
+      .unwrap();
     let file_path = dir.path().join("some_help_file.txt");
 
     let body = "This is some help content\nmore content  *more-content*\nfoo bar biz";
@@ -557,8 +559,14 @@ mod open_help_tests {
   fn get_help_content_direct_absolute_file_path() {
     let _g = TestGuard::new();
     // Wipe HPATH so we don't accidentally match a system file.
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     let file_path = dir.path().join("mytopic.txt");
     std::fs::write(&file_path, "direct file body").unwrap();
@@ -579,7 +587,7 @@ mod open_help_tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_HPATH",
-        VarKind::Str(hpath_dir.path().display().to_string()),
+        VarKind::Str(hpath_dir.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })
@@ -599,8 +607,14 @@ mod open_help_tests {
   #[test]
   fn get_help_content_builtin_page_prefix_match() {
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
     // "help/help" is a prefix of the bundled "help/help.txt" page name.
     let (line, _content, filename) = get_help_content("help/help").unwrap();
     assert_eq!(line, 0);
@@ -612,8 +626,14 @@ mod open_help_tests {
     // The prefix "help/" matches every bundled page, but we return the
     // first one — "help/arith.txt" is the first entry in HELP_PAGES.
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
     let (_, _, filename) = get_help_content("help/").unwrap();
     assert_eq!(filename, Some("help/arith.txt".to_string()));
   }
@@ -623,8 +643,14 @@ mod open_help_tests {
   #[test]
   fn get_help_content_no_match_returns_none() {
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
     // A long random topic ensures fuzzy_score returns i32::MIN for every
     // tag (some char in the topic won't appear in any tag), so tags is
     // empty after score_matches retains, and tags.last() yields None.
@@ -662,7 +688,7 @@ mod open_help_tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_HPATH",
-        VarKind::Str(dir.path().display().to_string()),
+        VarKind::Str(dir.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })
@@ -677,8 +703,14 @@ mod open_help_tests {
     // Passing a directory path means `is_file()` is false, so direct
     // lookup is skipped and we proceed to the HPATH/HELP_PAGES loops.
     let _g = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT))
-      .unwrap();
+    Shed::vars_mut(|v| {
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+    })
+    .unwrap();
     let dir = tempfile::TempDir::new().unwrap();
     // The dir path won't match anything; expect None (no tags will
     // fuzzy-match a full /tmp/... path either).
@@ -768,7 +800,7 @@ mod help_execute_tests {
 #[cfg(test)]
 mod get_all_tags_tests {
   use super::*;
-  use crate::state::vars::{VarFlags, VarKind};
+  use crate::state::vars::{VarFlags, VarKind, VarStr};
   use crate::tests::testutil::TestGuard;
 
   #[test]
@@ -776,8 +808,12 @@ mod get_all_tags_tests {
     let _g = TestGuard::new();
     // Empty HPATH so only the builtin HELP_PAGES contribute.
     Shed::vars_mut(|v| {
-      v.set_var("SHED_HPATH", VarKind::Str(String::new()), VarFlags::EXPORT)
-        .unwrap();
+      v.set_var(
+        "SHED_HPATH",
+        VarKind::Str(VarStr::default()),
+        VarFlags::EXPORT,
+      )
+      .unwrap();
     });
     let tags = get_all_tags().unwrap();
     assert!(
@@ -799,7 +835,7 @@ mod get_all_tags_tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_HPATH",
-        VarKind::Str(dir.path().to_string_lossy().to_string()),
+        VarKind::Str(dir.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
       .unwrap();
@@ -839,7 +875,7 @@ mod get_all_tags_tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_HPATH",
-        VarKind::Str(dir.path().to_string_lossy().to_string()),
+        VarKind::Str(dir.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
       .unwrap();

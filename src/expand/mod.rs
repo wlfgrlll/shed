@@ -184,7 +184,7 @@ impl Expander {
     let mut glob_words = Vec::with_capacity(words.len());
 
     for word in words {
-      if !word.contains(['*', '?', '[']) {
+      if !var::might_be_glob(&word) {
         glob_words.push(escape::strip_escape_markers(word));
         continue;
       }
@@ -337,7 +337,7 @@ mod tests {
 
   use crate::state::{
     Shed,
-    vars::{ArrIndex, VarFlags, VarKind},
+    vars::{ArrIndex, VarFlags, VarKind, VarStr},
   };
   use crate::tests::testutil::{TestGuard, test_input};
 
@@ -377,7 +377,8 @@ mod tests {
   #[test]
   fn word_split_empty_ifs() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("IFS", VarKind::Str(VarStr::default()), VarFlags::empty()))
+      .unwrap();
 
     let mut exp = Expander {
       allow_side_effects: true,
@@ -462,14 +463,7 @@ mod tests {
   #[test]
   fn array_index_first() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "arr",
-        VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::empty(),
-      )
-    })
-    .unwrap();
+    Shed::vars_mut(|v| v.set_var("arr", VarKind::arr(["a", "b", "c"]), VarFlags::empty())).unwrap();
 
     let val = Shed::vars(|v| v.index_var("arr", &ArrIndex::Literal(0))).unwrap();
     assert_eq!(val, "a");
@@ -478,14 +472,7 @@ mod tests {
   #[test]
   fn array_index_second() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "arr",
-        VarKind::arr_from_vec(vec!["x".into(), "y".into(), "z".into()]),
-        VarFlags::empty(),
-      )
-    })
-    .unwrap();
+    Shed::vars_mut(|v| v.set_var("arr", VarKind::arr(["x", "y", "z"]), VarFlags::empty())).unwrap();
 
     let val = Shed::vars(|v| v.index_var("arr", &ArrIndex::Literal(1))).unwrap();
     assert_eq!(val, "y");
@@ -494,14 +481,7 @@ mod tests {
   #[test]
   fn array_all_elems() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "arr",
-        VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::empty(),
-      )
-    })
-    .unwrap();
+    Shed::vars_mut(|v| v.set_var("arr", VarKind::arr(["a", "b", "c"]), VarFlags::empty())).unwrap();
 
     let elems = Shed::vars(|v| v.try_get_arr_elems("arr")).unwrap();
     assert_eq!(elems, vec!["a", "b", "c"]);
@@ -510,14 +490,7 @@ mod tests {
   #[test]
   fn array_elem_count() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "arr",
-        VarKind::arr_from_vec(vec!["a".into(), "b".into(), "c".into()]),
-        VarFlags::empty(),
-      )
-    })
-    .unwrap();
+    Shed::vars_mut(|v| v.set_var("arr", VarKind::arr(["a", "b", "c"]), VarFlags::empty())).unwrap();
 
     let elems = Shed::vars(|v| v.try_get_arr_elems("arr")).unwrap();
     assert_eq!(elems.len(), 3);

@@ -2,7 +2,7 @@ use std::{fmt::Write, str::FromStr};
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::state::shopt::ShOptSet;
+use crate::state::{shopt::ShOptSet, vars::VarStrSliceExt};
 
 use super::{
   super::state::scopes::ScopeStack,
@@ -213,7 +213,7 @@ pub fn build_set_call(readable: bool) -> String {
         .into_iter()
         .skip(1)
         .collect::<Vec<_>>()
-        .join(" ")
+        .join_with(" ")
     });
 
     if !on_chars.is_empty() {
@@ -342,7 +342,7 @@ impl super::Builtin for Set {
         let cur_scope = v.cur_scope_mut();
         cur_scope.clear_args();
         for arg in pos_args {
-          cur_scope.bpush_arg(arg);
+          cur_scope.bpush_arg(arg.into());
         }
       });
     }
@@ -451,6 +451,7 @@ mod tests {
   // ===================== Set::execute =====================
 
   mod execute {
+    use crate::state::vars::VarStr;
     use crate::state::{self, Shed};
     use crate::tests::testutil::{TestGuard, test_input};
 
@@ -561,7 +562,7 @@ mod tests {
     fn positional_args_replace_argv() {
       let _g = TestGuard::new();
       test_input("set -- one two three").unwrap();
-      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      let args: Vec<VarStr> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
       assert_eq!(args, vec!["one", "two", "three"]);
     }
 
@@ -570,7 +571,7 @@ mod tests {
       // Without `--`, positional non-polarity args still get pushed.
       let _g = TestGuard::new();
       test_input("set foo bar").unwrap();
-      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      let args: Vec<VarStr> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
       assert_eq!(args, vec!["foo", "bar"]);
     }
 
@@ -579,7 +580,7 @@ mod tests {
       let _g = TestGuard::new();
       test_input("set -- a b c").unwrap();
       test_input("set --").unwrap();
-      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      let args: Vec<VarStr> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
       assert_eq!(args, Vec::<String>::new());
     }
 
@@ -589,7 +590,7 @@ mod tests {
       let _g = TestGuard::new();
       test_input("set -e -- foo bar").unwrap();
       assert!(Shed::shopts(|o| o.set.errexit));
-      let args: Vec<String> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
+      let args: Vec<VarStr> = Shed::vars(|v| v.sh_argv().clone().into_iter().skip(1).collect());
       assert_eq!(args, vec!["foo", "bar"]);
     }
 

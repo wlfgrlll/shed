@@ -79,11 +79,11 @@ impl super::Builtin for Unquote {
         }
       }
       Some(UnquoteTarget::Array(name)) => {
-        let var = VarKind::Arr(fields.into());
+        let var = VarKind::arr(fields);
         Shed::vars_mut(|v| v.set_var(&name, var, VarFlags::empty()))?;
       }
       Some(UnquoteTarget::Var(name)) => {
-        let var = VarKind::Str(fields.join(" "));
+        let var = VarKind::string(fields.join(" "));
         Shed::vars_mut(|v| v.set_var(&name, var, VarFlags::empty()))?;
       }
     }

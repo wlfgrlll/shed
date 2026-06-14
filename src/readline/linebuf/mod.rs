@@ -218,19 +218,19 @@ impl LineBuf {
     Shed::vars_mut(|v| {
       v.set_var(
         "EDITOR_LINES",
-        VarKind::Str(num_lines.to_string()),
+        VarKind::string(num_lines.to_string()),
         VarFlags::READONLY,
       )?;
       v.set_var(
         "EDITOR_LINE",
-        VarKind::Str((cursor_line + 1).to_string()),
+        VarKind::string((cursor_line + 1).to_string()),
         VarFlags::READONLY,
       )
     })?;
 
     if let Some(file) = &self.open_file {
       let display = state::util::display_path(file);
-      Shed::vars_mut(|v| v.set_var("EDITOR_FILE", VarKind::Str(display), VarFlags::READONLY))?;
+      Shed::vars_mut(|v| v.set_var("EDITOR_FILE", VarKind::string(display), VarFlags::READONLY))?;
     }
 
     if self.is_empty() {

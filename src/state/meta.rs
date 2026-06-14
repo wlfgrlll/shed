@@ -10,6 +10,7 @@ use std::{
 
 use crate::{
   HashMap,
+  state::vars::VarStr,
   util::{count_unescaped, ends_with_unescaped, has_any_unescaped, starts_with_unescaped},
 };
 
@@ -24,6 +25,7 @@ use super::{
   sherr, system_msg,
   util::query_db,
   var,
+  vars::{VarFlags, VarKind},
 };
 use nix::{
   libc::time_t,
@@ -562,7 +564,7 @@ pub(crate) struct MetaTab {
   // getopts char offset for opts like -abc
   getopts_offset: usize,
 
-  old_path: Option<String>,
+  old_path: Option<VarStr>,
   // utility cache - commands, functions, aliases, etc
   path_cache: PathTable,
   regexes: HashMap<String, Rc<Regex>>,
@@ -915,10 +917,10 @@ impl MetaTab {
     Shed::vars(|v| {
       for scope in v.scopes_iter() {
         for (name, var) in scope.vars() {
-          if var.flags().contains(super::vars::VarFlags::EXPORT)
-            && let super::vars::VarKind::Str(s) = var.kind()
+          if var.flags().contains(VarFlags::EXPORT)
+            && let VarKind::Str(s) = var.kind()
           {
-            flat.insert(name.clone(), s.clone());
+            flat.insert(name.clone(), s.to_string());
           }
         }
       }

@@ -6,7 +6,10 @@ use super::{
   sherr,
   vars::{ArrIndex, ShellParam, Var, VarFlags, VarKind, VarKindTag, VarName, VarTab},
 };
-use crate::HashMap;
+use crate::{
+  HashMap,
+  state::vars::{VarStr, VarStrSliceExt},
+};
 
 #[derive(Clone, Default, Debug)]
 pub struct ScopeStack {
@@ -18,7 +21,7 @@ pub struct ScopeStack {
   depth: u32,
 
   // Global parameters such as $!, $$, etc
-  global_params: HashMap<ShellParam, String>,
+  global_params: HashMap<ShellParam, VarStr>,
 }
 
 impl ScopeStack {
@@ -28,14 +31,16 @@ impl ScopeStack {
     let shell_name = std::env::args()
       .next()
       .unwrap_or_else(|| "shed".to_string());
-    new.global_params.insert(ShellParam::ShellName, shell_name);
+    new
+      .global_params
+      .insert(ShellParam::ShellName, shell_name.into());
     new
   }
   pub fn descend(&mut self, argv: Option<Vec<String>>) {
     let mut new_vars = VarTab::bare();
     if let Some(argv) = argv {
       for arg in argv {
-        new_vars.bpush_arg(arg);
+        new_vars.bpush_arg(arg.into());
       }
     }
     self.scopes.push(new_vars);
@@ -71,7 +76,7 @@ impl ScopeStack {
   pub fn cur_scope_mut(&mut self) -> &mut VarTab {
     self.scopes.last_mut().unwrap()
   }
-  pub fn sh_argv(&self) -> &VecDeque<String> {
+  pub fn sh_argv(&self) -> &VecDeque<VarStr> {
     for scope in self.scopes_rev() {
       let argv = scope.sh_argv();
       if !argv.is_empty() {
@@ -133,7 +138,7 @@ impl ScopeStack {
     }
     for var in std::env::vars() {
       if let Entry::Vacant(e) = flat_vars.entry(var.0) {
-        e.insert(Var::new(VarKind::Str(var.1), VarFlags::EXPORT));
+        e.insert(Var::new(VarKind::string(var.1), VarFlags::EXPORT));
       }
     }
 
@@ -232,7 +237,7 @@ impl ScopeStack {
     };
     scope.set_var(var_name, val, flags)
   }
-  pub fn try_get_arr_elems(&self, var_name: &str) -> ShResult<Vec<String>> {
+  pub fn try_get_arr_elems(&self, var_name: &str) -> ShResult<Vec<VarStr>> {
     for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
@@ -249,10 +254,10 @@ impl ScopeStack {
     }
     Err(sherr!(ExecFail, "Variable '{}' not found", var_name,))
   }
-  pub fn get_arr_elems(&self, var_name: &str) -> Vec<String> {
+  pub fn get_arr_elems(&self, var_name: &str) -> Vec<VarStr> {
     self.try_get_arr_elems(var_name).unwrap_or_default()
   }
-  pub fn get_arr_mut(&mut self, var_name: &str) -> ShResult<&mut VecDeque<String>> {
+  pub fn get_arr_mut(&mut self, var_name: &str) -> ShResult<&mut VecDeque<VarStr>> {
     for scope in self.scopes_rev_mut() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars_mut().get_mut(var_name)
@@ -267,7 +272,7 @@ impl ScopeStack {
     }
     Err(sherr!(ExecFail, "Variable '{var_name}' not found"))
   }
-  pub fn index_var(&self, var_name: &str, idx: &ArrIndex) -> ShResult<String> {
+  pub fn index_var(&self, var_name: &str, idx: &ArrIndex) -> ShResult<VarStr> {
     self.index_var_sliced(var_name, idx, None, None)
   }
 
@@ -278,7 +283,7 @@ impl ScopeStack {
     idx: &ArrIndex,
     slice_start: Option<usize>,
     slice_len: Option<usize>,
-  ) -> ShResult<String> {
+  ) -> ShResult<VarStr> {
     for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
@@ -291,34 +296,36 @@ impl ScopeStack {
                 let arg_sep = crate::expand::markers::ARG_SEP.to_string();
                 let start = slice_start.unwrap_or(0);
                 let end = start + slice_len.unwrap_or(items.len().saturating_sub(start));
-                let sliced = &items
+                let sliced = items
                   .iter()
                   .skip(start)
                   .take(end - start)
                   .cloned()
-                  .collect::<Vec<_>>();
-                return Ok(sliced.join(&arg_sep));
+                  .collect::<Vec<_>>()
+                  .join_with(&arg_sep);
+                return Ok(sliced);
               }
               ArrIndex::AllJoined => {
                 let ifs = self
                   .try_get_var("IFS")
-                  .unwrap_or_else(|| " \t\n".to_string())
+                  .unwrap_or_else(|| " \t\n".into())
                   .chars()
                   .next()
                   .unwrap_or(' ')
                   .to_string();
                 let start = slice_start.unwrap_or(0);
                 let end = start + slice_len.unwrap_or(items.len().saturating_sub(start));
-                let sliced = &items
+                let sliced = items
                   .iter()
                   .skip(start)
                   .take(end - start)
                   .cloned()
-                  .collect::<Vec<_>>();
-                return Ok(sliced.join(&ifs));
+                  .collect::<Vec<_>>()
+                  .join_with(&ifs);
+                return Ok(sliced);
               }
               ArrIndex::ArgCount => {
-                return Ok(items.len().to_string());
+                return Ok(items.len().to_string().into());
               }
               _ => {}
             }
@@ -357,22 +364,22 @@ impl ScopeStack {
           VarKind::AssocArr(items) => match idx {
             ArrIndex::AllSplit => {
               let arg_sep = crate::expand::markers::ARG_SEP.to_string();
-              let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
-              return Ok(values.join(&arg_sep));
+              let values: Vec<&VarStr> = items.iter().map(|(_, v)| v).collect();
+              return Ok(values.join_with(&arg_sep));
             }
             ArrIndex::AllJoined => {
               let ifs = self
                 .try_get_var("IFS")
-                .unwrap_or_else(|| " \t\n".to_string())
+                .unwrap_or_else(|| " \t\n".into())
                 .chars()
                 .next()
                 .unwrap_or(' ')
                 .to_string();
-              let values: Vec<String> = items.iter().map(|(_, v)| v.clone()).collect();
-              return Ok(values.join(&ifs));
+              let values: Vec<&VarStr> = items.iter().map(|(_, v)| v).collect();
+              return Ok(values.join_with(&ifs));
             }
             ArrIndex::ArgCount => {
-              return Ok(items.len().to_string());
+              return Ok(items.len().to_string().into());
             }
             ArrIndex::Key(key) => {
               for (k, v) in items {
@@ -380,7 +387,7 @@ impl ScopeStack {
                   return Ok(v.clone());
                 }
               }
-              return Ok(String::new());
+              return Ok(VarStr::default());
             }
             _ => unreachable!("resolve_for guarantees Key/AllSplit/AllJoined/ArgCount on AssocArr"),
           },
@@ -390,21 +397,21 @@ impl ScopeStack {
         }
       }
     }
-    Ok(String::new())
+    Ok(VarStr::default())
   }
 
-  pub fn get_array_keys(&self, var_name: &str, joined: bool) -> ShResult<String> {
+  pub fn get_array_keys(&self, var_name: &str, joined: bool) -> ShResult<VarStr> {
     for scope in self.scopes_rev() {
       if scope.var_exists(var_name)
         && let Some(var) = scope.vars().get(var_name)
       {
         match var.kind() {
           VarKind::Arr(items) => {
-            let indices: Vec<String> = (0..items.len()).map(|i| i.to_string()).collect();
+            let indices: Vec<VarStr> = (0..items.len()).map(|i| i.to_string().into()).collect();
             let sep = if joined {
               self
                 .try_get_var("IFS")
-                .unwrap_or_else(|| " \t\n".to_string())
+                .unwrap_or_else(|| " \t\n".into())
                 .chars()
                 .next()
                 .unwrap_or(' ')
@@ -412,14 +419,14 @@ impl ScopeStack {
             } else {
               crate::expand::markers::ARG_SEP.to_string()
             };
-            return Ok(indices.join(&sep));
+            return Ok(indices.join_with(&sep));
           }
           VarKind::AssocArr(items) => {
-            let keys: Vec<String> = items.iter().map(|(k, _)| k.clone()).collect();
+            let keys: Vec<&VarStr> = items.iter().map(|(k, _)| k).collect();
             let sep = if joined {
               self
                 .try_get_var("IFS")
-                .unwrap_or_else(|| " \t\n".to_string())
+                .unwrap_or_else(|| " \t\n".into())
                 .chars()
                 .next()
                 .unwrap_or(' ')
@@ -427,7 +434,7 @@ impl ScopeStack {
             } else {
               crate::expand::markers::ARG_SEP.to_string()
             };
-            return Ok(keys.join(&sep));
+            return Ok(keys.join_with(&sep));
           }
           _ => {
             return Err(sherr!(ExecFail, "Variable '{}' is not an array", var_name,));
@@ -435,7 +442,7 @@ impl ScopeStack {
         }
       }
     }
-    Ok(String::new())
+    Ok(VarStr::default())
   }
 
   pub fn bounded_scopes_rev_mut(&mut self) -> impl Iterator<Item = &mut VarTab> {
@@ -464,7 +471,7 @@ impl ScopeStack {
     self.scopes.iter()
   }
 
-  pub fn try_get_var(&self, var_name: &str) -> Option<String> {
+  pub fn try_get_var(&self, var_name: &str) -> Option<VarStr> {
     if let Ok(param) = var_name.parse::<ShellParam>() {
       let val = self.get_param(param);
       return (!val.is_empty()).then_some(val);
@@ -477,7 +484,7 @@ impl ScopeStack {
     None
   }
   /// Resolve a pre-parsed `VarName`, handling array indexes and slicing if present.
-  pub fn resolve_var(&self, var: &VarName) -> Option<String> {
+  pub fn resolve_var(&self, var: &VarName) -> Option<VarStr> {
     if let Some(idx) = var.index() {
       self
         .index_var_sliced(var.name(), idx, var.slice_start(), var.slice_len())
@@ -486,12 +493,12 @@ impl ScopeStack {
       self.try_get_var(var.name())
     }
   }
-  pub fn take_var(&mut self, var_name: &str) -> String {
+  pub fn take_var(&mut self, var_name: &str) -> VarStr {
     let var = self.get_var(var_name);
     self.unset_var(var_name).ok();
     var
   }
-  pub fn get_var(&self, var_name: &str) -> String {
+  pub fn get_var(&self, var_name: &str) -> VarStr {
     self.try_get_var(var_name).unwrap_or_default()
   }
   pub fn get_var_meta(&self, var_name: &str) -> Var {
@@ -544,7 +551,7 @@ impl ScopeStack {
     }
     None
   }
-  pub fn get_param(&self, param: ShellParam) -> String {
+  pub fn get_param(&self, param: ShellParam) -> VarStr {
     if param.is_global()
       && let Some(val) = self.global_params.get(&param)
     {
@@ -565,13 +572,13 @@ impl ScopeStack {
       }
     }
     // Fallback to empty string
-    String::new()
+    VarStr::new()
   }
   /// Set a shell parameter
   pub fn set_param(&mut self, param: ShellParam, val: &str) {
     match param {
       ShellParam::ShPid | ShellParam::LastJob | ShellParam::ShellName => {
-        self.global_params.insert(param, val.to_string());
+        self.global_params.insert(param, val.into());
       }
       ShellParam::Pos(_) | ShellParam::AllArgs | ShellParam::AllArgsStr | ShellParam::ArgCount => {
         let scope = self.sh_argv_scope_mut();
@@ -592,7 +599,7 @@ mod index_var_sliced_tests {
   fn set_arr(name: &str, items: &[&str]) {
     let vec: VecDeque<String> = items.iter().map(ToString::to_string).collect();
     Shed::vars_mut(|v| {
-      v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
+      v.set_var(name, VarKind::arr(vec), VarFlags::empty())
         .unwrap();
     });
   }
@@ -603,7 +610,7 @@ mod index_var_sliced_tests {
       .map(|(k, v)| (k.to_string(), v.to_string()))
       .collect();
     Shed::vars_mut(|v| {
-      v.set_var(name, VarKind::AssocArr(vec), VarFlags::empty())
+      v.set_var(name, VarKind::assoc_arr(vec), VarFlags::empty())
         .unwrap();
     });
   }
@@ -620,7 +627,7 @@ mod index_var_sliced_tests {
     idx: &ArrIndex,
     slice_start: Option<usize>,
     slice_len: Option<usize>,
-  ) -> ShResult<String> {
+  ) -> ShResult<VarStr> {
     Shed::vars(|v| v.index_var_sliced(name, idx, slice_start, slice_len))
   }
 
@@ -835,7 +842,7 @@ mod get_array_keys_tests {
   fn set_arr(name: &str, items: &[&str]) {
     let vec: VecDeque<String> = items.iter().map(ToString::to_string).collect();
     Shed::vars_mut(|v| {
-      v.set_var(name, VarKind::Arr(vec), VarFlags::empty())
+      v.set_var(name, VarKind::arr(vec), VarFlags::empty())
         .unwrap();
     });
   }
@@ -846,7 +853,7 @@ mod get_array_keys_tests {
       .map(|(k, v)| (k.to_string(), v.to_string()))
       .collect();
     Shed::vars_mut(|v| {
-      v.set_var(name, VarKind::AssocArr(vec), VarFlags::empty())
+      v.set_var(name, VarKind::assoc_arr(vec), VarFlags::empty())
         .unwrap();
     });
   }
@@ -858,7 +865,7 @@ mod get_array_keys_tests {
     });
   }
 
-  fn get_keys(name: &str, joined: bool) -> ShResult<String> {
+  fn get_keys(name: &str, joined: bool) -> ShResult<VarStr> {
     Shed::vars(|v| v.get_array_keys(name, joined))
   }
 

@@ -14,7 +14,6 @@ pub(crate) const SUBSH: Marker = '\u{e10a}';
 pub(crate) const VAR_SUB: Marker = '\u{e10c}';
 pub(crate) const ESCAPE: Marker = '\u{e116}';
 
-// other
 pub(crate) const RESET: Marker = '\u{e11a}';
 
 /* Expansion Markers */

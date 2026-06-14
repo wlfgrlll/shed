@@ -30,9 +30,9 @@ impl super::Builtin for Pwd {
     let dir = if logical {
       try_var!("PWD")
         .filter(|p| is_same_dir_as_cwd(p))
-        .or_else(|| physical_cwd().map(|p| p.display().to_string()))
+        .or_else(|| physical_cwd().map(|p| p.to_string_lossy().into()))
     } else {
-      physical_cwd().map(|p| p.display().to_string())
+      physical_cwd().map(|p| p.to_string_lossy().into())
     };
 
     let Some(dir) = dir else {
@@ -138,7 +138,7 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "PWD",
-        VarKind::Str(link.display().to_string()),
+        VarKind::Str(link.to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })

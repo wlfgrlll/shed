@@ -998,7 +998,11 @@ fn run_comp_func_with_args(cmd: &str, cword: &str, pword: &str) -> (String, Stri
     shell_quote(pword),
   );
   test_input(input).unwrap();
-  (var!("CAP1"), var!("CAP2"), var!("CAP3"))
+  (
+    var!("CAP1").to_string(),
+    var!("CAP2").to_string(),
+    var!("CAP3").to_string(),
+  )
 }
 
 #[test]
@@ -1630,10 +1634,8 @@ mod bash_comp_spec_tests {
     // a fresh var name avoids collisions with whatever TestGuard or the host
     // already set for HOME / TMPDIR / etc.
     let dir_path = dir.path().to_string_lossy().to_string();
-    state::Shed::vars_mut(|v| {
-      v.set_var("TESTDIR", VarKind::Str(dir_path.clone()), VarFlags::EXPORT)
-    })
-    .unwrap();
+    state::Shed::vars_mut(|v| v.set_var("TESTDIR", VarKind::string(&dir_path), VarFlags::EXPORT))
+      .unwrap();
 
     let spec = BashCompSpec::new().files(true).dirs(true);
     let ctx = CompContext {

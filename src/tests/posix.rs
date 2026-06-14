@@ -38,8 +38,8 @@ macro_rules! __test_setup_params {
       v.set_param($crate::state::vars::ShellParam::ShellName, "test_input");
       let scope = v.cur_scope_mut();
       scope.sh_argv_mut().clear();
-      scope.bpush_arg("test_input".to_string()); // $0
-      $(scope.bpush_arg($value.to_string());)*
+      scope.bpush_arg("test_input".into()); // $0
+      $(scope.bpush_arg($value.into());)*
     });
   };
 }
@@ -812,7 +812,7 @@ mod word_expansions_2_6 {
       setup: {
         Shed::vars_mut(|v| v.set_var(
           "HOME",
-          VarKind::Str("/home/test".to_string()),
+          VarKind::string("/home/test"),
           VarFlags::EXPORT,
         )).unwrap();
       },
@@ -833,7 +833,7 @@ mod word_expansions_2_6 {
       setup: {
         Shed::vars_mut(|v| v.set_var(
           "HOME",
-          VarKind::Str("/home with spaces".to_string()),
+          VarKind::string("/home with spaces"),
           VarFlags::EXPORT,
         )).unwrap();
       },
@@ -845,7 +845,7 @@ mod word_expansions_2_6 {
       setup: {
         Shed::vars_mut(|v| v.set_var(
           "HOME",
-          VarKind::Str("/home/test".to_string()),
+          VarKind::string("/home/test"),
           VarFlags::EXPORT,
         )).unwrap();
       },

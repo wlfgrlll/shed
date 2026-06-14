@@ -577,16 +577,20 @@ impl super::LineBuf {
     vars.insert("ANCHOR".into());
     let _guard = var_ctx_guard(vars);
 
-    let mut buf = self.to_string();
+    let mut buf = self.to_string().into();
     let cursor_raw = self.cursor_to_flat();
-    let mut cursor = cursor_raw.to_string();
+    let mut cursor = cursor_raw.to_string().into();
     let mut anchor = self.anchor_to_flat();
 
     Shed::vars_mut(|v| -> ShResult<()> {
-      v.set_var("BUFFER", VarKind::Str(buf.clone()), VarFlags::EXPORT)?;
-      v.set_var("CURSOR", VarKind::Str(cursor.clone()), VarFlags::EXPORT)?;
+      v.set_var("BUFFER", VarKind::string(&buf), VarFlags::EXPORT)?;
+      v.set_var("CURSOR", VarKind::string(&cursor), VarFlags::EXPORT)?;
       if let Some(anchor) = anchor {
-        v.set_var("ANCHOR", VarKind::Str(anchor.to_string()), VarFlags::EXPORT)?;
+        v.set_var(
+          "ANCHOR",
+          VarKind::string(anchor.to_string()),
+          VarFlags::EXPORT,
+        )?;
       }
       Ok(())
     })?;

@@ -1,4 +1,4 @@
-use crate::HashSet;
+use crate::{HashSet, state::vars::VarStr};
 use std::{
   fmt::{Debug, Display},
   os::unix::fs::PermissionsExt,
@@ -332,6 +332,16 @@ impl From<String> for Candidate {
   }
 }
 
+impl From<VarStr> for Candidate {
+  fn from(value: VarStr) -> Self {
+    Self {
+      content: value.to_string(),
+      desc: None,
+      id: None,
+    }
+  }
+}
+
 impl From<Rc<Utility>> for Candidate {
   fn from(value: Rc<Utility>) -> Self {
     From::from(&*value)
@@ -570,7 +580,7 @@ pub(crate) fn complete_vars_raw(raw: &str) -> Vec<Candidate> {
       .keys()
       .map(|k| {
         if let Some(val) = try_var!(k) {
-          Candidate::from(k.clone()).with_desc(val)
+          Candidate::from(k.clone()).with_desc(val.to_string())
         } else {
           Candidate::from(k.clone())
         }
@@ -919,25 +929,19 @@ impl BashCompSpec {
     } = ctx;
 
     let raw_words = words.clone();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "COMP_WORDS",
-        VarKind::arr_from_vec(raw_words),
-        VarFlags::READONLY,
-      )
-    })?;
+    Shed::vars_mut(|v| v.set_var("COMP_WORDS", VarKind::arr(raw_words), VarFlags::READONLY))?;
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_CWORD",
-        VarKind::Str(cword.to_string()),
+        VarKind::string(cword.to_string()),
         VarFlags::READONLY,
       )
     })?;
-    Shed::vars_mut(|v| v.set_var("COMP_LINE", VarKind::Str(line.clone()), VarFlags::READONLY))?;
+    Shed::vars_mut(|v| v.set_var("COMP_LINE", VarKind::string(line), VarFlags::READONLY))?;
     Shed::vars_mut(|v| {
       v.set_var(
         "COMP_POINT",
-        VarKind::Str(cursor_pos.to_string()),
+        VarKind::string(cursor_pos.to_string()),
         VarFlags::READONLY,
       )
     })?;

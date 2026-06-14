@@ -4,7 +4,7 @@ use std::{
   time::SystemTime,
 };
 
-use crate::{HashMap, var};
+use crate::{HashMap, state::vars::VarStr, var};
 
 /// Caches the current state of a path-list-style env var (e.g. `$SHED_HPATH`)
 /// so consumers can cheaply detect when either the var's value or any of the
@@ -18,7 +18,7 @@ use crate::{HashMap, var};
 /// plus one stat per cached file.
 pub(crate) struct PathCache {
   name: String,
-  path_raw: String,
+  path_raw: VarStr,
   entries: HashMap<PathBuf, EntryCache>,
 }
 

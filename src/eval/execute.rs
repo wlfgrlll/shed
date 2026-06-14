@@ -3,7 +3,7 @@ use crate::{
   builtin::{self, SinkScope, StdinScope},
   eval::parse::node::{LabelCtx, node_has_only_builtins},
   shopt_mut,
-  state::logic::AutoloadKind,
+  state::{logic::AutoloadKind, vars::VarStr},
   util::isolation_guard,
 };
 use std::{collections::VecDeque, ffi::CString, os::unix::fs::PermissionsExt, path::Path, rc::Rc};
@@ -156,7 +156,11 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
   let stdin = procio::stdin_fileno();
   let is_tty = isatty(stdin).unwrap_or(false);
   let _guard = Shed::term_mut(|t| t.interactive_guard(is_tty));
-  let name = args.first().cloned().unwrap_or("<shed -c>".into());
+  let name = args
+    .first()
+    .cloned()
+    .map(VarStr::from)
+    .unwrap_or("<shed -c>".into());
 
   Shed::vars_mut(|v| {
     v.set_param(ShellParam::ShellName, &name); // $0
@@ -169,7 +173,7 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
       if i == 0 {
         continue;
       }
-      scope.bpush_arg(arg);
+      scope.bpush_arg(arg.into());
     }
   });
 
@@ -362,13 +366,7 @@ impl Dispatcher {
     }
 
     let (line, _) = node.get_span().clone().line_and_col();
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "LINENO",
-        VarKind::Str((line + 1).to_string()),
-        VarFlags::empty(),
-      )
-    })?;
+    Shed::vars_mut(|v| v.set_var("LINENO", VarKind::Int((line + 1) as i32), VarFlags::empty()))?;
 
     let Some(cmd) = node.get_command() else {
       return self.exec_cmd(node); // Argv is empty, probably an assignment
@@ -966,9 +964,7 @@ impl Dispatcher {
           .zip(chunk.iter().chain(std::iter::repeat(&empty)));
 
         for (var, val) in chunk_iter {
-          Shed::vars_mut(|v| {
-            v.set_var(var.as_str(), VarKind::Str(val.clone()), VarFlags::empty())
-          })?;
+          Shed::vars_mut(|v| v.set_var(var.as_str(), VarKind::string(val), VarFlags::empty()))?;
           for_guard.insert(var.clone());
         }
 
@@ -1267,14 +1263,7 @@ impl Dispatcher {
       }
     }
 
-    Shed::vars_mut(|v| {
-      v.set_var(
-        "PIPESTATUS",
-        VarKind::Arr(statuses.into()),
-        VarFlags::empty(),
-      )
-    })
-    .ok();
+    Shed::vars_mut(|v| v.set_var("PIPESTATUS", VarKind::arr(statuses), VarFlags::empty())).ok();
 
     let blame_span = if shopt!(set.pipefail)
       && let Some((code, pipefail)) = last_nonzero
@@ -1515,7 +1504,7 @@ impl Dispatcher {
       let val = if is_arr {
         VarKind::arr_from_tk(val)?
       } else {
-        VarKind::Str(val.expand_to_words()?.join(" "))
+        VarKind::string(val.expand_to_words()?.join(" "))
       };
       let param_expansion_failed = state::Shed::get_status() != 0;
 
@@ -1550,7 +1539,7 @@ impl Dispatcher {
                 return Ok(false);
               };
               match &val {
-                VarKind::Int(n) => items.push_back(n.to_string()),
+                VarKind::Int(n) => items.push_back(n.to_string().into()),
                 VarKind::Str(s) => items.push_back(s.clone()),
                 VarKind::Arr(other) => items.extend(other.iter().cloned()),
                 VarKind::Magic(n) => {
@@ -1584,7 +1573,7 @@ impl Dispatcher {
               let kind = if is_arr {
                 VarKind::Arr(VecDeque::new())
               } else {
-                VarKind::Str(String::new())
+                VarKind::string(String::new())
               };
               Var::new(kind, VarFlags::empty())
             })
@@ -1617,10 +1606,10 @@ impl Dispatcher {
                 if let Ok(n) = s.parse::<i32>()
                   && let Ok(other) = val.to_string().parse::<i32>()
                 {
-                  *s = (n + other).to_string();
+                  *s = (n + other).to_string().into();
                 } else {
                   let other = val.to_string();
-                  *s = [s.clone(), other].join("");
+                  *s = [s.as_str(), &other].join("").into();
                 }
               } else {
                 let n = s.parse::<i32>().map_err(
@@ -1629,9 +1618,9 @@ impl Dispatcher {
                 let other = parse_rhs(&span)?;
                 check_div_zero(other, &span)?;
                 *s = match op {
-                  AssignKind::MinusEq => (n - other).to_string(),
-                  AssignKind::MultEq => (n * other).to_string(),
-                  AssignKind::DivEq => (n / other).to_string(),
+                  AssignKind::MinusEq => (n - other).to_string().into(),
+                  AssignKind::MultEq => (n * other).to_string().into(),
+                  AssignKind::DivEq => (n / other).to_string().into(),
                   _ => unreachable!(),
                 };
               }
@@ -1650,7 +1639,7 @@ impl Dispatcher {
             VarKind::Arr(items) => {
               if matches!(op, AssignKind::PlusEq) {
                 match &val {
-                  VarKind::Int(n) => items.push_back(n.to_string()),
+                  VarKind::Int(n) => items.push_back(n.to_string().into()),
                   VarKind::Str(s) => items.push_back(s.clone()),
                   VarKind::Arr(other) => items.extend(other.clone()),
                   VarKind::Magic(n) => {

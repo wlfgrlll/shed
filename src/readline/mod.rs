@@ -545,7 +545,7 @@ impl ShedLine {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_EDIT_MODE",
-        VarKind::Str(new.mode.report_mode().to_string()),
+        VarKind::string(new.mode.report_mode().to_string()),
         VarFlags::empty(),
       )
     })?;
@@ -627,7 +627,7 @@ impl ShedLine {
       v.set_var("EDITOR_LINE", VarKind::Int(1), VarFlags::READONLY)?;
       v.set_var(
         "EDITOR_FILE",
-        VarKind::Str(String::new()),
+        VarKind::string(String::new()),
         VarFlags::READONLY,
       )
     })?;
@@ -744,7 +744,7 @@ impl ShedLine {
         Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
-            VarKind::Str(self.mode.report_mode().to_string()),
+            VarKind::string(self.mode.report_mode().to_string()),
             VarFlags::empty(),
           )
         })
@@ -763,7 +763,7 @@ impl ShedLine {
         Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
-            VarKind::Str(self.mode.report_mode().to_string()),
+            VarKind::string(self.mode.report_mode().to_string()),
             VarFlags::empty(),
           )
         })
@@ -790,7 +790,7 @@ impl ShedLine {
       Shed::vars_mut(|v| {
         v.set_var(
           "SHED_EDIT_MODE",
-          VarKind::Str(this.mode.report_mode().to_string()),
+          VarKind::string(this.mode.report_mode().to_string()),
           VarFlags::empty(),
         )
       })
@@ -824,7 +824,7 @@ impl ShedLine {
         Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
-            VarKind::Str(self.mode.report_mode().to_string()),
+            VarKind::string(self.mode.report_mode().to_string()),
             VarFlags::empty(),
           )
         })
@@ -928,7 +928,7 @@ impl ShedLine {
       Shed::vars_mut(|v| {
         v.set_var(
           "SHED_EDIT_MODE",
-          VarKind::Str(self.mode.report_mode().to_string()),
+          VarKind::string(self.mode.report_mode().to_string()),
           VarFlags::empty(),
         )
       })
@@ -1086,7 +1086,7 @@ impl ShedLine {
         Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
-            VarKind::Str(self.mode.report_mode().to_string()),
+            VarKind::string(self.mode.report_mode().to_string()),
             VarFlags::empty(),
           )
         })
@@ -1111,7 +1111,7 @@ impl ShedLine {
           Shed::vars_mut(|v| {
             v.set_var(
               "SHED_EDIT_MODE",
-              VarKind::Str("COMPLETE".to_string()),
+              VarKind::string("COMPLETE"),
               VarFlags::empty(),
             )
           })
@@ -1168,7 +1168,7 @@ impl ShedLine {
         Shed::vars_mut(|v| {
           v.set_var(
             "SHED_EDIT_MODE",
-            VarKind::Str("SEARCH".to_string()),
+            VarKind::string("SEARCH"),
             VarFlags::empty(),
           )
         })
@@ -2082,7 +2082,7 @@ impl ShedLine {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_EDIT_MODE",
-        VarKind::Str(self.mode.report_mode().to_string()),
+        VarKind::string(self.mode.report_mode().to_string()),
         VarFlags::empty(),
       )
     })
@@ -2179,7 +2179,7 @@ impl ShedLine {
       Shed::vars_mut(|v| {
         v.set_var(
           "SHED_EDIT_MODE",
-          VarKind::Str(self.mode.report_mode().to_string()),
+          VarKind::string(self.mode.report_mode().to_string()),
           VarFlags::empty(),
         )
       })?;
@@ -2217,7 +2217,7 @@ impl ShedLine {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_EDIT_MODE",
-        VarKind::Str(self.mode.report_mode().to_string()),
+        VarKind::string(self.mode.report_mode().to_string()),
         VarFlags::empty(),
       )
     })?;

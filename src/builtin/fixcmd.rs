@@ -199,7 +199,7 @@ impl super::Builtin for FixCmd {
 
 fn fc_edit(hist: &History, opts: FixCmdOpts) -> ShResult<()> {
   let editor = if let Some(editor) = opts.editor {
-    editor
+    editor.into()
   } else if let Some(editor) = try_var!("FCEDIT") {
     editor
   } else if let Some(editor) = try_var!("EDITOR") {

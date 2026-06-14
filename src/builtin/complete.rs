@@ -183,26 +183,27 @@ impl super::Builtin for Compadd {
       }
     }
 
-    let make_candidate = |mut a| {
+    let make_candidate = |a: &str| -> Candidate {
       if let Some(p) = &prefix {
-        a = format!("{p}{a}");
+        return format!("{p}{a}").into();
       }
       if let Some(s) = &suffix {
-        a = format!("{a}{s}");
+        return format!("{a}{s}").into();
       }
       Candidate::from(a)
     };
 
     let mut candidates: Vec<Candidate> = args
       .argv
-      .into_iter()
-      .map(|(s, _)| s)
+      .iter()
+      .map(|(s, _)| s.as_str())
       .map(make_candidate)
       .collect();
 
     if let Some(cand_arr) = cand_arr {
       let elems: Vec<Candidate> = Shed::vars(|v| v.get_arr_elems(&cand_arr))
-        .into_iter()
+        .iter()
+        .map(|s| s.as_str())
         .map(make_candidate)
         .collect();
 
@@ -220,7 +221,7 @@ impl super::Builtin for Compadd {
       .into_iter()
       .zip_longest(descriptions)
       .filter_map(|pair| match pair {
-        EitherOrBoth::Both(cand, desc) => Some(cand.with_desc(desc)),
+        EitherOrBoth::Both(cand, desc) => Some(cand.with_desc(desc.to_string())),
         EitherOrBoth::Left(cand) => Some(cand),
         EitherOrBoth::Right(_) => None,
       })
@@ -231,7 +232,7 @@ impl super::Builtin for Compadd {
       && let VarKind::AssocArr(arr) = assoc_arr.kind()
     {
       for (cand, desc) in arr {
-        let cand = make_candidate(cand.clone()).with_desc(desc.clone());
+        let cand = make_candidate(cand.as_str()).with_desc(desc.to_string());
 
         described.push(cand);
       }

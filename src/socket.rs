@@ -456,7 +456,7 @@ impl ShedSocket {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_SOCK",
-        VarKind::Str(sock_path.display().to_string()),
+        VarKind::string(sock_path.to_string_lossy()),
         VarFlags::EXPORT,
       )
     })
@@ -616,7 +616,7 @@ pub(super) fn handle_socket_request(
         write(&conn, b"\n").ok();
       }
       QueryHeader::SetVar(var, val, flags) => {
-        Shed::vars_mut(|v| v.set_var(&var, VarKind::Str(val), flags)).ok();
+        Shed::vars_mut(|v| v.set_var(&var, VarKind::string(val), flags)).ok();
         write(&conn, b"ok\n").ok();
       }
       QueryHeader::Status(headers) => {

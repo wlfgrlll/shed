@@ -96,7 +96,7 @@ fn apply_var_decl(opts: &[Opt], argv: Vec<(String, Span)>, base_flags: VarFlags)
     let (name, raw_val) = split_assignment_raw(arg);
     let val = match (kind, raw_val.as_deref()) {
       (DeclareKind::Str, Some(v)) => VarKind::parse(v),
-      (DeclareKind::Str, None) => VarKind::Str(String::new()),
+      (DeclareKind::Str, None) => VarKind::string(String::new()),
       (DeclareKind::Int, Some(v)) => {
         let evaluated = expand_arithmetic(v).promote_err(span.clone())?;
         let n = evaluated

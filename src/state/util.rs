@@ -1,4 +1,8 @@
-use crate::{HashMap, state::logic::ShFunc, util::ShErrKind};
+use crate::{
+  HashMap,
+  state::{logic::ShFunc, vars::VarStr},
+  util::ShErrKind,
+};
 
 use super::{SHED, Shed, try_var};
 
@@ -179,7 +183,7 @@ pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) 
     .or_else(|| {
       std::env::current_dir()
         .ok()
-        .map(|p| p.display().to_string())
+        .map(|p| p.to_string_lossy().into())
     })
     .unwrap_or_default();
 
@@ -200,12 +204,8 @@ pub fn change_dir_with_pwd<P: AsRef<Path>>(dir: P, logical_pwd: Option<String>) 
   });
 
   Shed::vars_mut(|v| {
-    v.set_var(
-      "OLDPWD",
-      VarKind::Str(current_dir.clone()),
-      VarFlags::EXPORT,
-    )?;
-    v.set_var("PWD", VarKind::Str(new_pwd), VarFlags::EXPORT)
+    v.set_var("OLDPWD", VarKind::Str(current_dir), VarFlags::EXPORT)?;
+    v.set_var("PWD", VarKind::string(new_pwd), VarFlags::EXPORT)
   })?;
 
   Ok(())
@@ -236,31 +236,27 @@ pub fn lex_normalize_path(path: &Path) -> PathBuf {
   }
 }
 
-pub fn get_comp_wordbreaks() -> String {
-  try_var!("COMP_WORDBREAKS").unwrap_or_else(|| String::from("\"'><;|=&(:"))
+pub fn get_comp_wordbreaks() -> VarStr {
+  try_var!("COMP_WORDBREAKS").unwrap_or_else(|| "\"'><;|=&(:".into())
 }
 
 /// Get the first char of IFS
 ///
 /// Used mainly for joining strings
-pub fn get_separator() -> String {
+pub fn get_separator() -> VarStr {
   let separators = get_separators();
-  separators
-    .graphemes(true)
-    .next()
-    .unwrap_or_default()
-    .to_string()
+  separators.graphemes(true).next().unwrap_or_default().into()
 }
 
 /// Get the entire IFS variable
 ///
 /// Used mainly for splitting strings
-pub fn get_separators() -> String {
-  try_var!("IFS").unwrap_or(String::from(" \t\n"))
+pub fn get_separators() -> VarStr {
+  try_var!("IFS").unwrap_or_else(|| " \t\n".into())
 }
 
-pub fn get_time_fmt() -> String {
-  try_var!("TIMEFMT").unwrap_or_else(|| String::from("\nreal\t%*E\nuser\t%*U\nsys\t%*S"))
+pub fn get_time_fmt() -> VarStr {
+  try_var!("TIMEFMT").unwrap_or_else(|| "\nreal\t%*E\nuser\t%*U\nsys\t%*S".into())
 }
 
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
@@ -656,7 +652,7 @@ pub fn display_path<P: AsRef<Path>>(path: P) -> String {
   let s = path.as_ref().to_string_lossy().into_owned();
   if let Some(home) = get_home_str()
     && !home.is_empty()
-    && let Some(rest) = s.strip_prefix(&home)
+    && let Some(rest) = s.strip_prefix(&*home)
   {
     format!("~{rest}")
   } else {
@@ -709,7 +705,7 @@ pub fn set_sh_lvl() -> ShResult<()> {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHLVL",
-        VarKind::Str((lvl + 1).to_string()),
+        VarKind::string((lvl + 1).to_string()),
         VarFlags::EXPORT,
       )
     })?;
@@ -760,10 +756,10 @@ pub fn open_db_conn() -> ShResult<Connection> {
   let db_path = if let Some(var) = try_var!("SHED_HISTDB") {
     var
   } else {
-    let home = try_var!("HOME").unwrap_or_else(|| ".".to_string());
+    let home = try_var!("HOME").unwrap_or_else(|| ".".into());
     dirs::data_dir().map_or_else(
-      || format!("{home}/.local/share/shed/shed_hist.db"),
-      |p| p.to_string_lossy().to_string(),
+      || format!("{home}/.local/share/shed/shed_hist.db").into(),
+      |p| p.to_string_lossy().into(),
     )
   };
 
@@ -829,11 +825,11 @@ pub fn get_home() -> Option<PathBuf> {
     .or_else(|| User::from_uid(getuid()).ok().flatten().map(|u| u.dir))
 }
 
-pub fn get_home_str() -> Option<String> {
-  get_home().map(|h| h.to_string_lossy().to_string())
+pub fn get_home_str() -> Option<VarStr> {
+  get_home().map(|h| h.to_string_lossy().into())
 }
 
-pub fn get_exec_wrappers() -> Vec<String> {
+pub fn get_exec_wrappers() -> Vec<VarStr> {
   let mut wrappers = vec![
     "sudo".into(),
     "doas".into(),
@@ -1017,7 +1013,7 @@ mod generate_default_rc_tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "SHED_RC",
-        VarKind::Str(p.to_string_lossy().to_string()),
+        VarKind::string(p.to_string_lossy()),
         VarFlags::empty(),
       )
       .unwrap();
@@ -1354,11 +1350,11 @@ mod set_ver_info_tests {
     let kind = Shed::vars(|v| v.try_get_var_kind("SHED_VER_INFO"));
     match kind {
       Some(VarKind::AssocArr(items)) => {
-        let keys: crate::HashSet<String> = items.iter().map(|(k, _)| k.clone()).collect();
+        let keys: crate::HashSet<&VarStr> = items.iter().map(|(k, _)| k).collect();
         assert_eq!(keys.len(), 5, "got: {keys:?}");
         for expected in ["major", "minor", "patch", "arch", "os"] {
           assert!(
-            keys.contains(expected),
+            keys.contains(&VarStr::from(expected)),
             "missing key {expected}, got: {keys:?}"
           );
         }

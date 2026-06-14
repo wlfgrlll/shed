@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::state::vars::VarStr;
+
 use super::{
   super::state::meta::MetaTab,
   eval::lex::Span,
@@ -105,9 +107,9 @@ impl super::Builtin for GetOpts {
 
     let opts_spec = GetOptsSpec::from_str(&arg_string.0).promote_err(arg_string.1.clone())?;
 
-    let explicit_args: Vec<String> = arg_vec.map(|s| s.0).collect();
+    let explicit_args: Vec<VarStr> = arg_vec.map(|s| s.0.into()).collect();
     if explicit_args.is_empty() {
-      let pos_params: Vec<String> = Shed::vars(|v| v.sh_argv().iter().skip(1).cloned().collect());
+      let pos_params: Vec<VarStr> = Shed::vars(|v| v.sh_argv().iter().skip(1).cloned().collect());
       getopts_inner(&opts_spec, &opt_var.0, &pos_params, &span)
     } else {
       getopts_inner(&opts_spec, &opt_var.0, &explicit_args, &span)
@@ -119,7 +121,7 @@ fn advance_optind(opt_index: usize, amount: usize) -> ShResult<()> {
   Shed::vars_mut(|v| {
     v.set_var(
       "OPTIND",
-      VarKind::Str((opt_index + amount).to_string()),
+      VarKind::Str((opt_index + amount).to_string().into()),
       VarFlags::LOCAL,
     )
   })
@@ -128,7 +130,7 @@ fn advance_optind(opt_index: usize, amount: usize) -> ShResult<()> {
 fn getopts_inner(
   opts_spec: &GetOptsSpec,
   opt_var: &str,
-  argv: &[String],
+  argv: &[VarStr],
   blame: &Span,
 ) -> ShResult<()> {
   let opt_index = var!("OPTIND").parse::<usize>().unwrap_or(1);
@@ -185,7 +187,13 @@ fn getopts_inner(
       advance_one_char(last_char_in_arg)?;
       if opts_spec.silent_err {
         Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str("?".into()), VarFlags::empty()))?;
-        Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::Str(ch.to_string()), VarFlags::empty()))?;
+        Shed::vars_mut(|v| {
+          v.set_var(
+            "OPTARG",
+            VarKind::Str(ch.to_string().into()),
+            VarFlags::empty(),
+          )
+        })?;
       } else {
         Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str("?".into()), VarFlags::empty()))?;
         sherr!(
@@ -198,7 +206,13 @@ fn getopts_inner(
     }
     OptMatch::IsMatch => {
       advance_one_char(last_char_in_arg)?;
-      Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str(ch.to_string()), VarFlags::empty()))?;
+      Shed::vars_mut(|v| {
+        v.set_var(
+          opt_var,
+          VarKind::Str(ch.to_string().into()),
+          VarFlags::empty(),
+        )
+      })?;
       state::Shed::set_status(0);
     }
     OptMatch::WantsArg => {
@@ -207,18 +221,24 @@ fn getopts_inner(
       if !last_char_in_arg {
         // Remaining chars in this arg are the argument: -bVALUE
         let optarg: String = opt_str.chars().skip(char_idx + 1).collect();
-        Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::Str(optarg), VarFlags::empty()))?;
+        Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::string(optarg), VarFlags::empty()))?;
         advance_optind(opt_index, 1)?;
       } else if let Some(next_arg) = argv.get(arr_idx + 1) {
         // Next arg is the argument
-        Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::Str(next_arg.clone()), VarFlags::empty()))?;
+        Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::string(next_arg), VarFlags::empty()))?;
         // Skip both the option arg and its value
         advance_optind(opt_index, 2)?;
       } else {
         // Missing required argument
         if opts_spec.silent_err {
           Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str(":".into()), VarFlags::empty()))?;
-          Shed::vars_mut(|v| v.set_var("OPTARG", VarKind::Str(ch.to_string()), VarFlags::empty()))?;
+          Shed::vars_mut(|v| {
+            v.set_var(
+              "OPTARG",
+              VarKind::Str(ch.to_string().into()),
+              VarFlags::empty(),
+            )
+          })?;
         } else {
           Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str("?".into()), VarFlags::empty()))?;
           sherr!(
@@ -231,7 +251,13 @@ fn getopts_inner(
         return with_status(0);
       }
 
-      Shed::vars_mut(|v| v.set_var(opt_var, VarKind::Str(ch.to_string()), VarFlags::empty()))?;
+      Shed::vars_mut(|v| {
+        v.set_var(
+          opt_var,
+          VarKind::Str(ch.to_string().into()),
+          VarFlags::empty(),
+        )
+      })?;
     }
   }
 

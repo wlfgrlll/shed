@@ -3,6 +3,7 @@ use crate::expand::Expander;
 use crate::expand::util::glob_to_regex;
 use crate::expand::var::expand_raw_inner;
 use crate::match_loop;
+use crate::state::vars::VarStr;
 use crate::state::{
   Shed, scopes::ScopeStack, vars::ArrIndex, vars::VarFlags, vars::VarKind, vars::VarName,
 };
@@ -155,7 +156,7 @@ pub fn parse_pos_len(s: &str, allow_side_effects: bool) -> Option<(usize, Option
 }
 
 #[expect(clippy::too_many_lines, clippy::single_match_else)]
-pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<String> {
+pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<VarStr> {
   let mut chars = raw.chars();
   let mut var_name = String::new();
   let mut rest = String::new();
@@ -172,12 +173,13 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
               VarKind::AssocArr(items) => items.len(),
               _ => 0,
             }
-            .to_string(),
+            .to_string()
+            .into(),
           );
         }
         _ => {
           let val = Shed::vars(|v| v.index_var(parsed.name(), idx))?;
-          return Ok(val.len().to_string());
+          return Ok(val.len().to_string().into());
         }
       }
     }
@@ -189,7 +191,8 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         VarKind::Arr(items) => items.len(),
         VarKind::AssocArr(items) => items.len(),
       }
-      .to_string(),
+      .to_string()
+      .into(),
     );
   }
 
@@ -278,7 +281,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let value = Shed::vars(get);
         let new = value.to_uppercase();
         compare(&value, &new);
-        Ok(new)
+        Ok(new.into())
       }
       ParamExp::ToUpperFirst => {
         let value = Shed::vars(get);
@@ -290,13 +293,13 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
 
         let new = first + chars.as_str();
         compare(&value, &new);
-        Ok(new)
+        Ok(new.into())
       }
       ParamExp::ToLowerAll => {
         let value = Shed::vars(get);
         let new = value.to_lowercase();
         compare(&value, &new);
-        Ok(new)
+        Ok(new.into())
       }
       ParamExp::ToLowerFirst => {
         let value = Shed::vars(get);
@@ -307,17 +310,21 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           .unwrap_or_default();
         let new = first + chars.as_str();
         compare(&value, &new);
-        Ok(new)
+        Ok(new.into())
       }
       ParamExp::DefaultUnsetOrNull(default) => {
         match Shed::vars(try_get).filter(|v| !v.is_empty()) {
           Some(val) => Ok(val),
-          None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
+          None => {
+            expand_raw_inner(&mut default.chars().peekable(), allow_side_effects).map(VarStr::from)
+          }
         }
       }
       ParamExp::DefaultUnset(default) => match Shed::vars(try_get) {
         Some(val) => Ok(val),
-        None => expand_raw_inner(&mut default.chars().peekable(), allow_side_effects),
+        None => {
+          expand_raw_inner(&mut default.chars().peekable(), allow_side_effects).map(VarStr::from)
+        }
       },
       ParamExp::SetDefaultUnsetOrNull(default) => {
         match Shed::vars(try_get).filter(|v| !v.is_empty()) {
@@ -326,14 +333,10 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
             let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
             if allow_side_effects {
               Shed::vars_mut(|v| {
-                v.set_var(
-                  parsed.name(),
-                  VarKind::Str(expanded.clone()),
-                  VarFlags::empty(),
-                )
+                v.set_var(parsed.name(), VarKind::string(&expanded), VarFlags::empty())
               })?;
             }
-            Ok(expanded)
+            Ok(expanded.into())
           }
         }
       }
@@ -343,29 +346,29 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let expanded = expand_raw_inner(&mut default.chars().peekable(), allow_side_effects)?;
           if allow_side_effects {
             Shed::vars_mut(|v| {
-              v.set_var(
-                parsed.name(),
-                VarKind::Str(expanded.clone()),
-                VarFlags::empty(),
-              )
+              v.set_var(parsed.name(), VarKind::string(&expanded), VarFlags::empty())
             })?;
           }
-          Ok(expanded)
+          Ok(expanded.into())
         }
       },
       ParamExp::AltSetNotNull(alt) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
-        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
-        None => Ok(String::new()),
+        Some(_) => {
+          expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects).map(VarStr::from)
+        }
+        None => Ok(VarStr::new()),
       },
       ParamExp::AltNotNull(alt) => match Shed::vars(try_get) {
-        Some(_) => expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects),
-        None => Ok(String::new()),
+        Some(_) => {
+          expand_raw_inner(&mut alt.chars().peekable(), allow_side_effects).map(VarStr::from)
+        }
+        None => Ok(VarStr::new()),
       },
       ParamExp::ErrUnsetOrNull(err) => match Shed::vars(try_get).filter(|v| !v.is_empty()) {
         Some(val) => Ok(val),
         None => {
           if !allow_side_effects {
-            return Ok(String::new());
+            return Ok(VarStr::new());
           }
           let expanded = expand_raw_inner(&mut err.chars().peekable(), allow_side_effects)?;
           Err(sherr!(ExecFail, "{expanded}"))
@@ -375,7 +378,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         Some(val) => Ok(val),
         None => {
           if !allow_side_effects {
-            return Ok(String::new());
+            return Ok(VarStr::new());
           }
           let expanded = expand_raw_inner(&mut err.chars().peekable(), allow_side_effects)?;
           Err(sherr!(ExecFail, "{expanded}"))
@@ -385,7 +388,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let value = Shed::vars(get);
         if let Some(substr) = value.get(pos..) {
           Shed::set_status(0);
-          Ok(substr.to_string())
+          Ok(substr.into())
         } else {
           Shed::set_status(1);
           Ok(value)
@@ -396,7 +399,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         let end = pos.saturating_add(len);
         if let Some(substr) = value.get(pos..end) {
           Shed::set_status(0);
-          Ok(substr.to_string())
+          Ok(substr.into())
         } else {
           Shed::set_status(1);
           Ok(value)
@@ -412,7 +415,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[..i];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(value[i..].to_string());
+            return Ok(value[i..].into());
           }
         }
         Shed::set_status(1);
@@ -428,7 +431,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[..i];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(value[i..].to_string());
+            return Ok(value[i..].into());
           }
         }
         Shed::set_status(1);
@@ -444,7 +447,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[i..];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(value[..i].to_string());
+            return Ok(value[..i].into());
           }
         }
         Shed::set_status(1);
@@ -460,7 +463,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[i..];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(value[..i].to_string());
+            return Ok(value[..i].into());
           }
         }
         Shed::set_status(1);
@@ -481,7 +484,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let after = &value[mat.end()..];
           let result = format!("{before}{expanded_replace}{after}");
           Shed::set_status(0);
-          Ok(result)
+          Ok(result.into())
         } else {
           Shed::set_status(1);
           Ok(value)
@@ -508,7 +511,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
         // Append the rest of the string
         result.push_str(&value[last_match_end..]);
         compare(&value, &result);
-        Ok(result)
+        Ok(result.into())
       }
       ParamExp::ReplacePrefix(search, replace) => {
         let value = Shed::vars(get);
@@ -523,7 +526,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[..i];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(format!("{}{}", expanded_replace, &value[i..]));
+            return Ok(format!("{}{}", expanded_replace, &value[i..]).into());
           }
         }
         Shed::set_status(1);
@@ -542,7 +545,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           let sliced = &value[i..];
           if pattern.matches(sliced) {
             Shed::set_status(0);
-            return Ok(format!("{}{}", &value[..i], expanded_replace));
+            return Ok(format!("{}{}", &value[..i], expanded_replace).into());
           }
         }
         Shed::set_status(1);
@@ -555,7 +558,7 @@ pub fn perform_param_expansion(raw: &str, allow_side_effects: bool) -> ShResult<
           .filter(|var| var.starts_with(&prefix))
           .cloned()
           .collect();
-        Ok(match_vars.join(" "))
+        Ok(match_vars.join(" ").into())
       }
       ParamExp::ExpandInnerVar(inner) => {
         if inner.contains("[@]") || inner.contains("[*]") {
@@ -592,7 +595,7 @@ mod tests {
     parse_param_exp(val, true).unwrap()
   }
 
-  fn test_param_expansion(val: &str) -> ShResult<String> {
+  fn test_param_expansion(val: &str) -> ShResult<VarStr> {
     perform_param_expansion(val, true)
   }
 
@@ -736,7 +739,8 @@ mod tests {
   #[test]
   fn param_default_unset_or_null_null() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::string(String::new()), VarFlags::empty()))
+      .unwrap();
 
     let result = test_param_expansion("EMPTY:-fallback").unwrap();
     assert_eq!(result, "fallback");
@@ -754,7 +758,8 @@ mod tests {
   #[test]
   fn param_default_unset_only() {
     let _guard = TestGuard::new();
-    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::Str(String::new()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var("EMPTY", VarKind::string(String::new()), VarFlags::empty()))
+      .unwrap();
 
     // ${EMPTY-fallback} - EMPTY is set (even if null), so returns null
     let result = test_param_expansion("EMPTY-fallback").unwrap();

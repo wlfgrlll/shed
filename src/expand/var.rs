@@ -2,6 +2,9 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 use nix::unistd::{Uid, User};
+use smol_str::format_smolstr;
+
+use crate::state::vars::VarStr;
 
 use super::{
   PARAMETERS, ShResult,
@@ -35,16 +38,16 @@ pub fn expand_raw_inner(
         && let Some(user) = result
       {
         // username expansion like '~user'
-        (user.dir.to_string_lossy().to_string(), true)
+        (user.dir.to_string_lossy().into(), true)
       } else if let Ok(id) = username.parse::<u32>()
         && let Ok(result) = User::from_uid(Uid::from_raw(id))
           && let Some(user) = result
       {
         // uid expansion like '~1000'
         // shed only feature btw B)
-        (user.dir.to_string_lossy().to_string(), true)
+        (user.dir.to_string_lossy().into(), true)
       } else {
-        (format!("~{username}"), false)
+        (format_smolstr!("~{username}").into(), false)
       };
 
       if expanded {
@@ -87,7 +90,7 @@ pub fn expand_raw(chars: &mut Peekable<Chars<'_>>) -> ShResult<String> {
   expand_raw_inner(chars, true)
 }
 
-pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> ShResult<String> {
+pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> ShResult<VarStr> {
   let mut var_name = String::new();
   let mut brace_depth: i32 = 0;
   let mut inner_brace_depth: i32 = 0;
@@ -108,13 +111,13 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       if !found_end {
         // if there isnt a closing SUBSH, we are probably in some tab completion context
         // and we got passed some unfinished input. Just treat it as literal text
-        return Ok(format!("$({subsh_body}"));
+        return Ok(format_smolstr!("$({subsh_body}").into());
       }
       if allow_side_effects {
         let expanded = expand_cmd_sub(&subsh_body)?;
         return Ok(expanded);
       }
-      return Ok(subsh_body);
+      return Ok(subsh_body.into());
     }
     '{' if var_name.is_empty() && brace_depth == 0 => {
       chars.next(); // consume the brace
@@ -171,7 +174,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
       let val = var!(&parameter);
 
       if (ch == '@' || ch == '*') && val.is_empty() {
-        return Ok(markers::NULL_EXPAND.to_string());
+        return Ok(markers::NULL_EXPAND.to_string().into());
       }
 
       return Ok(val);
@@ -189,7 +192,7 @@ pub fn expand_var(chars: &mut Peekable<Chars<'_>>, allow_side_effects: bool) -> 
     }
   });
   if var_name.is_empty() {
-    Ok(String::new())
+    Ok(VarStr::new())
   } else {
     let val = try_var!(&var_name);
     if val.is_none() && shopt!(set.nounset) {
@@ -209,10 +212,26 @@ pub fn restore_glob_prefix(pattern: &str, mut result: String) -> String {
   result
 }
 
+/// Quick structural check: only return true if the string could plausibly be a glob.
+/// A lone `[` or `]` (e.g. from `[ ... ]` test command) is not a valid pattern.
+pub(super) fn might_be_glob(s: &str) -> bool {
+  let mut open_bracket = false;
+  let mut close_bracket = false;
+  for b in s.bytes() {
+    match b {
+      b'*' | b'?' => return true,
+      b'[' => open_bracket = true,
+      b']' => close_bracket = true,
+      _ => {}
+    }
+  }
+  open_bracket && close_bracket
+}
+
 pub fn expand_glob(raw: &str) -> ShResult<Vec<String>> {
   let mut words = vec![];
 
-  if !raw.contains(['*', '?', '[']) || shopt!(set.noglob) {
+  if !might_be_glob(raw) || shopt!(set.noglob) {
     return Ok(vec![raw.to_string()]);
   }
   let escaped = super::escape_glob(raw, true);

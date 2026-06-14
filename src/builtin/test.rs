@@ -199,7 +199,7 @@ fn eval_binary(op: &BinaryOp, lhs: &(String, Span), rhs: &(String, Span)) -> ShR
           .iter()
           .map(|m| m.map(|mat| mat.as_str().to_string()).unwrap_or_default())
           .collect();
-        Shed::vars_mut(|v| v.set_var("SHED_REMATCH", VarKind::Arr(groups), VarFlags::LOCAL))?;
+        Shed::vars_mut(|v| v.set_var("SHED_REMATCH", VarKind::arr(groups), VarFlags::LOCAL))?;
         Ok(true)
       } else {
         Shed::vars_mut(|v| v.unset_var("SHED_REMATCH")).ok();

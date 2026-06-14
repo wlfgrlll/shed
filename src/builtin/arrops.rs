@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::state::vars::VarStr;
+
 use super::{
   BuiltinArgs, ShResult, Shed,
   getopt::{Opt, OptSpec},
@@ -40,16 +42,12 @@ trait ArrOp {
       Shed::vars_mut(|v| {
         if let Ok(arr) = v.get_arr_mut(&name) {
           match end {
-            End::Front => arr.push_front(val),
-            End::Back => arr.push_back(val),
+            End::Front => arr.push_front(val.into()),
+            End::Back => arr.push_back(val.into()),
           }
           Ok(())
         } else {
-          v.set_var(
-            &name,
-            VarKind::Arr(VecDeque::from([val])),
-            VarFlags::empty(),
-          )
+          v.set_var(&name, VarKind::arr([val]), VarFlags::empty())
         }
       })
       .blame(span)?;
@@ -86,7 +84,7 @@ trait ArrOp {
 
     for (arg, _) in args.argv {
       for _ in 0..count {
-        let pop = |arr: &mut VecDeque<String>| match end {
+        let pop = |arr: &mut VecDeque<VarStr>| match end {
           End::Front => arr.pop_front(),
           End::Back => arr.pop_back(),
         };
@@ -102,7 +100,7 @@ trait ArrOp {
         let val = popped.pop_back().unwrap();
         Shed::vars_mut(|v| v.set_var(var, VarKind::Str(val), VarFlags::empty()))?;
       } else {
-        Shed::vars_mut(|v| v.set_var(var, VarKind::Arr(popped), VarFlags::empty()))?;
+        Shed::vars_mut(|v| v.set_var(var, VarKind::arr(popped), VarFlags::empty()))?;
       }
     } else {
       for val in popped {
@@ -241,7 +239,7 @@ mod tests {
   use crate::{
     state::{
       self, Shed,
-      vars::{VarFlags, VarKind},
+      vars::{VarFlags, VarKind, VarStr},
     },
     tests::testutil::{TestGuard, test_input},
     var,
@@ -253,10 +251,10 @@ mod tests {
       .iter()
       .map(ToString::to_string)
       .collect::<VecDeque<_>>();
-    Shed::vars_mut(|v| v.set_var(name, VarKind::Arr(arr), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var(name, VarKind::arr(arr), VarFlags::empty())).unwrap();
   }
 
-  fn get_arr(name: &str) -> Vec<String> {
+  fn get_arr(name: &str) -> Vec<VarStr> {
     Shed::vars(|v| v.try_get_arr_elems(name)).unwrap()
   }
 

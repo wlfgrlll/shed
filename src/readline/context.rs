@@ -106,7 +106,7 @@ fn promote_exec_wrappers(tokens: &mut [CtxTk]) {
             tokens.next();
             continue;
           }
-          if get_exec_wrappers().contains(&target.span.as_str().to_string()) {
+          if get_exec_wrappers().contains(&target.span.as_str().into()) {
             // chaining exec wrappers is a thing people do, e.g. `sudo strace cmd`
             // continue the outer loop and let it get picked up by the next iteration
             // we don't use is_exec_wrapper() for this since it doesnt have the ValidCommand rule

@@ -606,13 +606,13 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "PWD",
-        crate::state::vars::VarKind::Str("/home/testuser/proj".to_string()),
+        crate::state::vars::VarKind::string("/home/testuser/proj"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
       v.set_var(
         "HOME",
-        crate::state::vars::VarKind::Str("/home/testuser".to_string()),
+        crate::state::vars::VarKind::string("/home/testuser"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
@@ -628,13 +628,13 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "PWD",
-        crate::state::vars::VarKind::Str("/a/b/c/d/e".to_string()),
+        crate::state::vars::VarKind::string("/a/b/c/d/e"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
       v.set_var(
         "HOME",
-        crate::state::vars::VarKind::Str("/nowhere".to_string()),
+        crate::state::vars::VarKind::string("/nowhere"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
@@ -657,13 +657,13 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "PWD",
-        crate::state::vars::VarKind::Str("/home/testuser/proj".to_string()),
+        crate::state::vars::VarKind::string("/home/testuser/proj"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
       v.set_var(
         "HOME",
-        crate::state::vars::VarKind::Str("/home/testuser".to_string()),
+        crate::state::vars::VarKind::string("/home/testuser"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
@@ -678,7 +678,7 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "HOST",
-        crate::state::vars::VarKind::Str("box.example.com".to_string()),
+        crate::state::vars::VarKind::string("box.example.com"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
@@ -693,7 +693,7 @@ mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "HOST",
-        crate::state::vars::VarKind::Str("box.example.com".to_string()),
+        crate::state::vars::VarKind::string("box.example.com"),
         crate::state::vars::VarFlags::empty(),
       )
       .unwrap();
@@ -739,7 +739,7 @@ mod tests {
 
   fn set_var(name: &str, value: &str) {
     use crate::state::vars::{VarFlags, VarKind};
-    Shed::vars_mut(|v| v.set_var(name, VarKind::Str(value.into()), VarFlags::empty())).unwrap();
+    Shed::vars_mut(|v| v.set_var(name, VarKind::string(value), VarFlags::empty())).unwrap();
   }
 
   #[test]

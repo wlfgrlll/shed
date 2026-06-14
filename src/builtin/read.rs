@@ -330,7 +330,7 @@ fn unescape(line: &[u8]) -> Vec<u8> {
 
 fn field_split_vars(input: &str, vars: &[(String, Span)]) -> ShResult<()> {
   if vars.is_empty() {
-    Shed::vars_mut(|v| v.set_var("REPLY", VarKind::Str(input.to_string()), VarFlags::empty()))?;
+    Shed::vars_mut(|v| v.set_var("REPLY", VarKind::string(input), VarFlags::empty()))?;
     return Ok(());
   }
 
@@ -339,7 +339,7 @@ fn field_split_vars(input: &str, vars: &[(String, Span)]) -> ShResult<()> {
   let fields: Vec<&str> = input.splitn(vars.len(), |c| sep.contains(c)).collect();
   for (name, field) in vars.iter().zip(fields) {
     let field = field.trim_start_matches(|c: char| sep.contains(c));
-    Shed::vars_mut(|v| v.set_var(&name.0, VarKind::Str(field.to_string()), VarFlags::empty()))?;
+    Shed::vars_mut(|v| v.set_var(&name.0, VarKind::string(field), VarFlags::empty()))?;
   }
 
   Ok(())
@@ -351,12 +351,9 @@ fn field_split_arr(input: &str, arr_name: &str) -> ShResult<()> {
   }
 
   let sep = state::util::get_separators();
-  let fields: VecDeque<String> = input
-    .split(|c| sep.contains(c))
-    .map(ToString::to_string)
-    .collect();
+  let fields: VecDeque<&str> = input.split(|c| sep.contains(c)).collect();
 
-  Shed::vars_mut(|v| v.set_var(arr_name, VarKind::Arr(fields), VarFlags::empty()))
+  Shed::vars_mut(|v| v.set_var(arr_name, VarKind::arr(fields), VarFlags::empty()))
 }
 
 pub(super) struct ReadKey;
@@ -422,7 +419,7 @@ impl super::Builtin for ReadKey {
     }
 
     if let Some(var) = var_name {
-      Shed::vars_mut(|v| v.set_var(var, VarKind::Str(vim_seq), VarFlags::empty()))?;
+      Shed::vars_mut(|v| v.set_var(var, VarKind::string(vim_seq), VarFlags::empty()))?;
     } else {
       out!("{vim_seq}");
     }

@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::state::vars::VarStr;
+
 use super::{
   ShErr, ShResult,
   escape::unescape_math,
@@ -575,7 +577,7 @@ impl ArithTk {
           let op = tokens.next().unwrap();
           let val = read_var_as_i64(var)?;
           let delta: i64 = if matches!(op, ArithTk::Inc) { 1 } else { -1 };
-          Shed::vars_mut(|v| v.set_var(var, VarKind::Str((val + delta).to_string()), VarFlags::empty())).unwrap();
+          Shed::vars_mut(|v| v.set_var(var, VarKind::string((val + delta).to_string()), VarFlags::empty())).unwrap();
           output.push(ArithTk::Num(val)); // push old value (postfix)
         } else {
           output.push(token); // keep as Var, may be assignment target
@@ -594,7 +596,7 @@ impl ArithTk {
         let val = read_var_as_i64(&var)?;
         let delta: i64 = if matches!(op, ArithTk::Inc) { 1 } else { -1 };
         let new_val = val + delta;
-        Shed::vars_mut(|v| v.set_var(&var, VarKind::Str(new_val.to_string()), VarFlags::empty())).unwrap();
+        Shed::vars_mut(|v| v.set_var(&var, VarKind::string(new_val.to_string()), VarFlags::empty())).unwrap();
         output.push(ArithTk::Num(new_val)); // push new value (prefix)
       }
 
@@ -832,8 +834,10 @@ impl ArithTk {
             ArithOp::Assign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
-              Shed::vars_mut(|v| v.set_var(&lhs, VarKind::Str(rhs.to_string()), VarFlags::empty()))
-                .unwrap();
+              Shed::vars_mut(|v| {
+                v.set_var(&lhs, VarKind::string(rhs.to_string()), VarFlags::empty())
+              })
+              .unwrap();
               stack.push(StackVal::Num(rhs));
             }
             ArithOp::PlusAssign => {
@@ -841,7 +845,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? + rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -851,7 +859,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? - rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -861,7 +873,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? * rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -874,7 +890,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? / rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -887,7 +907,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? % rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -1000,7 +1024,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? & rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -1010,7 +1038,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? | rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -1020,7 +1052,11 @@ impl ArithTk {
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)? ^ rhs;
               Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
+                v.set_var(
+                  &lhs,
+                  VarKind::string(new_val.to_string()),
+                  VarFlags::empty(),
+                )
               })
               .unwrap();
               stack.push(StackVal::Num(new_val));
@@ -1029,20 +1065,16 @@ impl ArithTk {
               let rhs = pop_num!();
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)?.wrapping_shl(rhs as u32);
-              Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
-              })
-              .unwrap();
+              Shed::vars_mut(|v| v.set_var(&lhs, VarKind::Int(new_val as i32), VarFlags::empty()))
+                .unwrap();
               stack.push(StackVal::Num(new_val));
             }
             ArithOp::ShiftRAssign => {
               let rhs = pop_num!();
               let lhs = pop_var!();
               let new_val = read_var_as_i64(&lhs)?.wrapping_shr(rhs as u32);
-              Shed::vars_mut(|v| {
-                v.set_var(&lhs, VarKind::Str(new_val.to_string()), VarFlags::empty())
-              })
-              .unwrap();
+              Shed::vars_mut(|v| v.set_var(&lhs, VarKind::Int(new_val as i32), VarFlags::empty()))
+                .unwrap();
               stack.push(StackVal::Num(new_val));
             }
           }
@@ -1078,18 +1110,18 @@ impl ArithTk {
 
 /// Evaluate an arithmetic expression string, returning the result.
 /// The caller is responsible for stripping any `((...))` or `(...)` wrappers.
-pub fn expand_arithmetic(expr: &str) -> ShResult<String> {
+pub fn expand_arithmetic(expr: &str) -> ShResult<VarStr> {
   let unescaped = unescape_math(expr)?;
   let expanded = expand_raw(&mut unescaped.chars().peekable())?;
   let tokens = ArithTk::tokenize(&expanded)?;
   let rpn = ArithTk::to_rpn(tokens)?;
   let result = ArithTk::eval_rpn(&rpn)?;
-  Ok(result.to_string())
+  Ok(result.into())
 }
 
 /// Strip `((...))` or `(...)` wrappers and evaluate. Convenience for call sites
 /// that receive the raw token including its delimiters.
-pub fn expand_arithmetic_wrapped(raw: &str) -> ShResult<String> {
+pub fn expand_arithmetic_wrapped(raw: &str) -> ShResult<VarStr> {
   let mut expr = raw;
 
   if expr.starts_with("((") {

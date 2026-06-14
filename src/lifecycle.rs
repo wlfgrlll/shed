@@ -122,7 +122,7 @@ pub(super) fn setup() -> Option<ShedArgs> {
 
   if !args.no_rc {
     if let Some(ref path) = args.rc_path {
-      Shed::vars_mut(|v| v.set_var("SHED_RC", VarKind::Str(path.clone()), VarFlags::EXPORT)).ok();
+      Shed::vars_mut(|v| v.set_var("SHED_RC", VarKind::string(path), VarFlags::EXPORT)).ok();
     }
     if let Err(e) = source_env() {
       e.print_error();

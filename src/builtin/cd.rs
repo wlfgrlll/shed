@@ -37,7 +37,7 @@ impl super::Builtin for Cd {
       }
     } else {
       (
-        PathBuf::from(util::get_home_str().unwrap_or(String::from("/"))),
+        PathBuf::from(util::get_home_str().unwrap_or("/".into())),
         None,
       )
     };
@@ -84,7 +84,7 @@ impl super::Builtin for Cd {
     if print_dir {
       let mut dir = util::display_path(var!("PWD"));
       if let Some(home) = util::get_home_str()
-        && let Some(home_dir) = dir.strip_prefix(&home)
+        && let Some(home_dir) = dir.strip_prefix(&*home)
       {
         dir = format!("~{home_dir}");
       }
@@ -108,7 +108,7 @@ fn search_cd_path(new_dir: impl AsRef<Path>) -> Option<PathBuf> {
 
 fn get_old_pwd() -> PathBuf {
   try_var!("OLDPWD")
-    .or_else(|| util::get_home_str().or_else(|| Some(String::from("/"))))
+    .or_else(|| util::get_home_str().or_else(|| Some("/".into())))
     .map(PathBuf::from)
     .unwrap()
 }
@@ -155,7 +155,7 @@ pub mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "HOME",
-        VarKind::Str(temp_dir.path().display().to_string()),
+        VarKind::Str(temp_dir.path().display().to_string().into()),
         VarFlags::empty(),
       )
     })
@@ -359,7 +359,7 @@ pub mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
-        VarKind::Str(base.path().display().to_string()),
+        VarKind::Str(base.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })
@@ -383,7 +383,7 @@ pub mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
-        VarKind::Str(format!("/nonexistent_cdpath_xyz:{}", base.path().display())),
+        VarKind::Str(format!("/nonexistent_cdpath_xyz:{}", base.path().to_string_lossy()).into()),
         VarFlags::EXPORT,
       )
     })
@@ -406,7 +406,7 @@ pub mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
-        VarKind::Str(decoy.path().display().to_string()),
+        VarKind::Str(decoy.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })
@@ -433,7 +433,7 @@ pub mod tests {
     Shed::vars_mut(|v| {
       v.set_var(
         "CDPATH",
-        VarKind::Str(decoy.path().display().to_string()),
+        VarKind::Str(decoy.path().to_string_lossy().into()),
         VarFlags::EXPORT,
       )
     })

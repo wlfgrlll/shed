@@ -1809,18 +1809,10 @@ mod readline_mod_coverage {
   fn prompt_new_uses_ps1_and_psr_when_set() {
     let _g = TestGuard::new();
     Shed::vars_mut(|v| {
-      v.set_var(
-        "PS1",
-        VarKind::Str("PS1_RAW".to_string()),
-        VarFlags::empty(),
-      )
-      .unwrap();
-      v.set_var(
-        "PSR",
-        VarKind::Str("PSR_RAW".to_string()),
-        VarFlags::empty(),
-      )
-      .unwrap();
+      v.set_var("PS1", VarKind::string("PS1_RAW"), VarFlags::empty())
+        .unwrap();
+      v.set_var("PSR", VarKind::string("PSR_RAW"), VarFlags::empty())
+        .unwrap();
     });
     let mut p = Prompt::new();
     assert_eq!(p.get_ps1(), "PS1_RAW");
