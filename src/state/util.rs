@@ -260,6 +260,10 @@ pub fn get_time_fmt() -> VarStr {
 }
 
 pub fn lookup_cmd(cmd: &str) -> Option<PathBuf> {
+  if cmd.contains('/') {
+    let p = PathBuf::from(cmd);
+    return p.is_file().then_some(p);
+  }
   let path = Shed::meta_mut(|m| {
     m.invalidate_path_cache_if_stale();
     if let Some(p) = m.lookup_cached_cmd(cmd) {
