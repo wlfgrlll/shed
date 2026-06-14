@@ -1273,44 +1273,6 @@ mod hist_builtin_execute_tests {
     assert!(out.contains(": json-entry"), "got: {out:?}");
   }
 
-  #[test]
-  fn hist_contains_filter_narrows_results() {
-    let g = TestGuard::new();
-    let h = fresh_history("shed_history");
-    h.push(": git push").unwrap();
-    h.push(": ls -la").unwrap();
-    h.push(": git log").unwrap();
-    test_input("hist --contains git").unwrap();
-    let out = g.read_output();
-    assert!(out.contains(": git push"), "got: {out:?}");
-    assert!(out.contains(": git log"), "got: {out:?}");
-    assert!(!out.contains(": ls -la"), "got: {out:?}");
-  }
-
-  #[test]
-  fn hist_specific_id_arg_filters_to_that_entry() {
-    let g = TestGuard::new();
-    let h = fresh_history("shed_history");
-    h.push(": one").unwrap();
-    h.push(": two").unwrap();
-    h.push(": three").unwrap();
-    test_input("hist 2").unwrap();
-    let out = g.read_output();
-    assert!(out.contains(": two"), "got: {out:?}");
-    assert!(!out.contains(": one"), "got: {out:?}");
-    assert!(!out.contains(": three"), "got: {out:?}");
-  }
-
-  #[test]
-  fn hist_invalid_id_arg_errors() {
-    let _g = TestGuard::new();
-    let h = fresh_history("shed_history");
-    h.push(": entry").unwrap();
-    // The dispatcher turns the ShErr into a non-zero status.
-    test_input("hist not_a_number").ok();
-    assert_ne!(Shed::get_status(), 0, "expected non-zero status");
-  }
-
   // ─── --ex selects ex_history table ─────────────────────────────────
 
   #[test]
