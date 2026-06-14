@@ -1,8 +1,10 @@
+use itertools::Itertools;
+
 use crate::{
   ShResult, Shed,
   builtin::getopt::OptSpec,
   eval::lex::{LexFlags, LexStream},
-  expand, outln, procio,
+  expand, out, outln, procio,
   state::vars::{VarFlags, VarKind},
   util::with_status,
 };
@@ -11,7 +13,13 @@ use super::getopt::Opt;
 
 pub(super) struct Quote;
 impl super::Builtin for Quote {
-  fn execute(&self, args: super::BuiltinArgs) -> ShResult<()> {
+  fn execute(&self, mut args: super::BuiltinArgs) -> ShResult<()> {
+    if let Some(stdin) = args.take_stdin() {
+      let quoted = expand::shell_quote(&stdin);
+      outln!("{quoted}");
+      return with_status(0);
+    }
+
     let parts: Vec<String> = args
       .argv
       .iter()
