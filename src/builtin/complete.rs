@@ -184,13 +184,12 @@ impl super::Builtin for Compadd {
     }
 
     let make_candidate = |a: &str| -> Candidate {
-      if let Some(p) = &prefix {
-        return format!("{p}{a}").into();
+      match (&prefix, &suffix) {
+        (Some(p), Some(s)) => format!("{p}{a}{s}").into(),
+        (Some(p), None) => format!("{p}{a}").into(),
+        (None, Some(s)) => format!("{a}{s}").into(),
+        (None, None) => Candidate::from(a),
       }
-      if let Some(s) = &suffix {
-        return format!("{a}{s}").into();
-      }
-      Candidate::from(a)
     };
 
     let mut candidates: Vec<Candidate> = args
