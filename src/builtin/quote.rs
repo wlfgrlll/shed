@@ -43,6 +43,9 @@ impl super::Builtin for Unquote {
       OptSpec::single_arg("array"),
       OptSpec::single_arg('v'),
       OptSpec::single_arg("var"),
+      OptSpec::single_arg('s'),
+      OptSpec::single_arg("sep"),
+      OptSpec::flag('0'),
     ]
   }
   fn execute(&self, mut args: super::BuiltinArgs) -> ShResult<()> {
@@ -57,33 +60,34 @@ impl super::Builtin for Unquote {
       super::join_raw_args(args.argv).0
     };
     let mut target = None;
+    let mut delim = "\n";
 
     for opt in &args.opts {
       match opt {
         Opt::LongWithArg(flag, arg) => match flag.as_str() {
           "array" => target = Some(UnquoteTarget::Array(arg.clone())),
           "var" => target = Some(UnquoteTarget::Var(arg.clone())),
+          "sep" => delim = arg,
           _ => {}
         },
+        Opt::Short('0') => delim = "\0",
+        Opt::ShortWithArg('s', arg) => delim = arg,
         Opt::ShortWithArg('a', arg) => target = Some(UnquoteTarget::Array(arg.clone())),
         Opt::ShortWithArg('v', arg) => target = Some(UnquoteTarget::Var(arg.clone())),
         _ => {}
       }
     }
 
-    let tokens = LexStream::new(input.into(), LexFlags::empty());
-    let mut fields = vec![];
-
-    for tk in tokens {
-      let tk = tk?;
-
-      fields.extend(tk.expand_to_words()?);
-    }
+    let mut fields = unquote_raw(&input)?.into_iter();
 
     match target {
       None => {
-        for word in fields {
-          outln!("{word}")
+        if let Some(first) = fields.next() {
+          out!("{first}");
+          for fields in fields {
+            out!("{delim}{fields}");
+          }
+          outln!();
         }
       }
       Some(UnquoteTarget::Array(name)) => {
@@ -98,4 +102,17 @@ impl super::Builtin for Unquote {
 
     with_status(0)
   }
+}
+
+pub(crate) fn unquote_raw(s: &str) -> ShResult<Vec<String>> {
+  let tokens = LexStream::new(s.into(), LexFlags::empty());
+  let mut fields = vec![];
+
+  for tk in tokens {
+    let tk = tk?;
+
+    fields.extend(tk.expand_to_words()?);
+  }
+
+  Ok(fields)
 }
