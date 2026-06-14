@@ -1762,7 +1762,13 @@ fn internal_pipeline(cmds: &[Node], is_bg: bool, has_redirs: bool) -> bool {
 pub(crate) fn is_builtin(cmd: &Node) -> bool {
   cmd
     .get_command()
-    .map(|cmd_word| !is_func(cmd_word.as_str()) && cmd_word.flags.contains(TkFlags::BUILTIN))
+    .map(|cmd_word| {
+      !is_func(cmd_word.as_str())
+        && cmd_word.as_str() != "command"
+        && cmd_word.as_str() != "exec"
+        && cmd_word.as_str() != "eval"
+        && cmd_word.flags.contains(TkFlags::BUILTIN)
+    })
     .unwrap_or(true) // empty argv: assignment-only command
 }
 
