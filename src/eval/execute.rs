@@ -192,10 +192,6 @@ pub fn exec_dash_c(input: String, args: Vec<String>) -> ShResult<()> {
 
   let mut nodes = parser.extract_nodes();
 
-  for node in nodes.iter_mut() {
-    node.freeze_context();
-  }
-
   // Single simple command: exec directly without forking.
   // The parser wraps single commands as Conjunction -> Pipeline -> Command.
   // Unwrap all layers to check, then set NO_FORK on the inner Command.
