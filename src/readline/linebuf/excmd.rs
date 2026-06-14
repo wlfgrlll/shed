@@ -598,10 +598,11 @@ impl super::LineBuf {
     autocmd!(PreCmd);
     let output = if let Some(stdin) = stdin {
       defer!(autocmd!(PostCmd));
+      let _guard = Shed::term_mut(|t| t.yield_terminal(false));
       Some(capture_command(sh_cmd, Some(stdin))?)
     } else {
       defer!(autocmd!(PostCmd));
-      let _guard = Shed::term_mut(Terminal::cooked_mode_guard);
+      let _guard = Shed::term_mut(|t| t.yield_terminal(false));
       exec_int(sh_cmd.to_string(), Some("<ex-mode-cmd>".into()))?;
       None
     };
