@@ -1,8 +1,8 @@
 use std::{path::Path, sync::atomic::Ordering};
 
-use nix::unistd::isatty;
+use nix::unistd::{Pid, isatty};
 
-use crate::procio::read_input;
+use crate::{eval::execute::exec_int, procio::read_input};
 
 use super::{
   ShResult, Shed, errln,
@@ -91,7 +91,15 @@ pub(crate) fn run_script<P: AsRef<Path>>(path: P, args: Vec<String>) -> ShResult
     }
   });
 
-  exec_nonint(input, Some(source_path.into()))
+  let controller = Shed::term(|t| t.controller());
+
+  if let Some(pid) = controller
+    && pid == Pid::this()
+  {
+    exec_int(input, Some(source_path.into()))
+  } else {
+    exec_nonint(input, Some(source_path.into()))
+  }
 }
 
 #[cfg(test)]
