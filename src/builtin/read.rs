@@ -63,14 +63,14 @@ impl super::Builtin for Read {
     for opt in &args.opts {
       match opt {
         Opt::Long(opt) => match opt.as_str() {
-          "quoted" => flags |= ReadFlags::QUOTED,
+          "quoted" => flags |= ReadFlags::QUOTED | ReadFlags::NO_ESCAPE,
           _ => {
             return Err(sherr!(ExecFail, "read: Unexpected flag '{opt}'")).promote_err(args.span);
           }
         },
         Opt::Short('r') => flags |= ReadFlags::NO_ESCAPE,
         Opt::Short('s') => flags |= ReadFlags::NO_ECHO,
-        Opt::Short('q') => flags |= ReadFlags::QUOTED,
+        Opt::Short('q') => flags |= ReadFlags::QUOTED | ReadFlags::NO_ESCAPE,
         Opt::ShortWithArg('a', a) => array_name = Some(a.clone()),
         Opt::ShortWithArg('p', p) => prompt = Some(p),
         Opt::ShortWithArg('d', d) => delim = d.chars().map(|c| c as u8).next().unwrap_or(b'\n'),
