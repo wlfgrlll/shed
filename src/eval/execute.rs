@@ -1390,7 +1390,9 @@ impl Dispatcher {
       // execvpe only returns on error
       let print_error = |err: ShErr| {
         // try to write the error message back to the parent's socket
-        if socket::send_to_socket(&format!("msg/system/{err}")).is_err() {
+        let token = &*socket::PRIVATE_TOKEN;
+        let response = socket::send_to_socket(&format!("PRIVATE {token} post-error {err}"));
+        if response.is_err() {
           // if that failed, just print the error ourselves
           err.print_error();
         }

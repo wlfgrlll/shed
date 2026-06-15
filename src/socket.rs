@@ -40,8 +40,8 @@ use super::{
 
 /// Used to validate requests to the socket's private interface.
 ///
-/// This shall never be written or printed anywhere. It should be a secret known
-/// only to the process and all of it's threads.
+/// This shall never be inspected or printed anywhere. It should be a secret known
+/// only to the process, all of it's threads, and it's child processes.
 ///
 /// Used in operations that are somewhat heavy, such as tab-completion autosuggestions.
 /// A thread is dispatched, and then writes it's findings to the socket via the private interface.
@@ -92,6 +92,9 @@ pub(crate) enum PrivateHeader {
   /// the receiver uses it to clear the hint when the user backspaces
   /// past the token boundary.
   SetCompletionHint(u64, usize, String),
+
+  /// Used for reporting errors from child processes.
+  PostError(String),
 }
 
 #[derive(Debug)]
@@ -164,6 +167,7 @@ impl SocketRequest {
         };
         PrivateHeader::SetCompletionHint(req_gen, token_start, line.to_string())
       }
+      "post-error" => PrivateHeader::PostError(payload.to_string()),
       _ => return err,
     };
 
@@ -679,6 +683,10 @@ pub(super) fn handle_socket_request(
     },
 
     SocketRequest::Private(req) => match req {
+      PrivateHeader::PostError(err) => {
+        system_msg!("{err}");
+        write(&conn, b"ok\n").ok();
+      }
       PrivateHeader::SetCompletionHint(req_gen, token_start, hint) => {
         let cur_gen = readline.worker_req_gen();
         if cur_gen == req_gen && !hint.is_empty() {
