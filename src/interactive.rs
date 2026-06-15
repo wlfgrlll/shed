@@ -359,7 +359,9 @@ fn shed_loop_iter(
               }
 
               for cmd in cmds {
-                if let LoopAction::Break = run_prompt_command(cmd.command().to_string(), false)? {
+                if let LoopAction::Break =
+                  run_prompt_command(cmd.command().to_string(), false, None)?
+                {
                   return Ok(LoopAction::Break);
                 }
               }
@@ -502,7 +504,9 @@ fn handle_readline_event(
       let cmd_start = Instant::now();
       Shed::meta_mut(MetaTab::start_timer);
 
-      if let LoopAction::Break = run_prompt_command(input.clone(), true)? {
+      if let LoopAction::Break =
+        run_prompt_command(input.clone(), true, Some(get_repl_entry_name()))?
+      {
         return Ok(LoopAction::Break);
       }
 
@@ -577,7 +581,11 @@ fn handle_readline_event(
   }
 }
 
-fn run_prompt_command(input: String, clear_prompt: bool) -> ShResult<LoopAction> {
+fn run_prompt_command(
+  input: String,
+  clear_prompt: bool,
+  source: Option<Rc<str>>,
+) -> ShResult<LoopAction> {
   exec_term!(TermCtl::Osc(ExecStart)).ok();
 
   let position = (!clear_prompt)
@@ -587,7 +595,7 @@ fn run_prompt_command(input: String, clear_prompt: bool) -> ShResult<LoopAction>
 
   let res = {
     let _scroll_guard = Shed::term_mut(|t| t.yield_terminal(clear_prompt));
-    exec_int(input, Some(get_repl_entry_name()))
+    exec_int(input, source)
   };
 
   if let Some((row, col)) = position {
