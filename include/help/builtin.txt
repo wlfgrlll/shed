@@ -1220,11 +1220,10 @@ PWD                                              *builtin-pwd* *pwd*
 ==============================================================================
 QUOTE                                            *builtin-quote* *quote*
 
-  `quote {arg...}`
+  `quote [arg...]`
 
-  Encode each argument as a shell-quoted string and print the results
-  joined by spaces. Output uses the minimal quoting needed for each
-  argument:
+  Encode arguments as shell-quoted strings and print the results.
+  Output uses the minimal quoting needed for each argument:
 
     - plain identifiers (no whitespace, shell metacharacters, or
       control characters) are emitted unchanged
@@ -1234,6 +1233,18 @@ QUOTE                                            *builtin-quote* *quote*
     - arguments containing control characters (newline, tab, etc.) are
       emitted as ANSI-C strings (`$'...'`) with backslash escapes
     - the empty string is emitted as `''`
+
+  When data is piped to `quote` on standard input, the entire input is
+  treated as a single value and encoded as one shell-quoted string.
+  This is useful for round-tripping output from another command:
+
+      `produce_data | quote | filter | unquote`
+
+  When called with arguments instead, each argument is encoded
+  independently and the results are joined by spaces. This is the
+  natural form for emitting structured data from shell functions:
+
+      `quote "${args[@]}"`
 
   All forms are bash-compatible, so the encoded output round-trips
   losslessly through any byte-clean pipe. Paired with |unquote|, this
@@ -1248,6 +1259,7 @@ QUOTE                                            *builtin-quote* *quote*
       `quote $'foo\nbar'`           outputs:  `$'foo\nbar'`
       `quote "${arr[@]}"`           encode each array element
 
+      `echo "raw text" | quote`     encode stdin as one quoted string
       `quote "$(produce)" | filter | unquote`
       `result=$(quote "${args[@]}")`
       `eval "args=($result)"`       decode preserving structure
@@ -1257,14 +1269,16 @@ QUOTE                                            *builtin-quote* *quote*
 ==============================================================================
 UNQUOTE                                          *builtin-unquote* *unquote*
 
-  `unquote [-v {name} | -a {name}] [{input}]`
+  `unquote [-v {name} | -a {name}] [-s {sep} | -0] [{input}]`
 
   Decode shell-quoted input and emit the original fields. Input is
   taken from standard input if anything is piped in, otherwise from
   the command-line arguments joined by spaces.
 
-  With no target option, each decoded field is printed on its own line.
-  With `-v` or `-a`, fields are assigned to a variable instead.
+  With no target option, each decoded field is printed separated by
+  the chosen field separator (newline by default). With `-v` or `-a`,
+  fields are assigned to a variable instead and the separator options
+  are ignored.
 
   Options:
 
@@ -1272,6 +1286,19 @@ UNQUOTE                                          *builtin-unquote* *unquote*
                                     assign to scalar variable {name}
     `-a {name}`, `--array {name}`   assign decoded fields as an array
                                     to {name}
+    `-s {sep}`, `--sep {sep}`       use {sep} as the field separator in
+                                    the output stream (default: newline)
+    `-0`                            shorthand for `-s $'\0'`: separate
+                                    fields with NUL bytes. Designed to
+                                    pair with `xargs -0`, `sort -z`,
+                                    `grep -z`, and other tools that
+                                    consume NUL-separated input.
+
+  The `-0` flag is the recommended way to bridge shed pipelines into
+  the GNU `-0`-aware toolchain, since NUL is the only byte that can
+  never appear in a filename or shell string. With `-s`, the output is
+  emitted with NO trailing separator; with the default newline mode,
+  a final newline is included for terminal-friendliness.
 
   Examples:
 
@@ -1281,29 +1308,70 @@ UNQUOTE                                          *builtin-unquote* *unquote*
       `split : "$PATH" | unquote -a paths`      split `PATH`, preserving structure
                                               even if some paths have spaces
 
-  See also: |quote|(builtin-quote)
+      `split : "$PATH" | unquote -0 | xargs -0 -I {} echo {}`
+      `split , "$csv"   | unquote -s ','`       emit comma-joined values
+      `produce | unquote -s ''`                 concatenate fields with no delimiter
+
+  See also: |quote|(builtin-quote), |builtin-read| (for the `-q` flag)
 
 ==============================================================================
 READ                                             *builtin-read* *read*
 
-  `read [-r] [-s] [-p {prompt}] [-d {delim}] [name ...]`
+  `read [-r] [-s] [-q] [-p {prompt}] [-d {delim}] [-a {array}] [name ...]`
 
   Read one line from standard input. The line is split by `$IFS` and
   assigned to {name}s in order. If there are more words than names,
   the last name receives the remainder. With no names, the result is
   stored in `$REPLY`.
 
-  `-r`           raw mode: backslash is not an escape character
-  `-s`           silent: do not echo typed characters (not yet implemented)
-  `-p {prompt}`  display {prompt} before reading (no newline added)
-  `-d {delim}`   read until {delim} byte instead of newline
+  `-r`               raw mode: backslash is not an escape character
+  `-s`               silent: do not echo typed characters
+  `-q`, `--quoted`   parse input as shell-quoted fields instead of
+                     splitting on `$IFS`. See "Quoted mode" below.
+  `-p {prompt}`      display {prompt} before reading (no newline added)
+  `-d {delim}`       read until {delim} byte instead of newline
+  `-a {name}`        read all fields into array {name}
+  `-n {bytes}`       read at most {bytes} bytes
+  `-t {seconds}`     timeout after {seconds} of inactivity
+
+  Quoted mode ~
+
+    With `-q`, the input is parsed using shell-quoting rules instead of
+    `$IFS`-based field splitting. Each input record (one line by default)
+    is decoded as if it were a quoted shell value, and the resulting
+    fields are assigned to {name}s in the same way as the default mode.
+
+    Quoted mode is the consumer-side counterpart to |quote| and to
+    output from commands like `printf %q`, `ls -Q --quoting-style=shell-escape`,
+    or `declare -p`. It allows iterating over arbitrary structured data
+    through a `while read` loop without the IFS hazards of the default
+    mode. In particular, values containing spaces, newlines, or other
+    characters that would normally collide with the field separator are
+    preserved correctly as long as the producer emitted them in shell-
+    quoted form.
+
+    `-q` implies `-r`. Backslash escape processing happens at the lexer
+    level inside `$'...'` sequences, not at the byte level.
 
   Examples:
 
-      `read name`
-      `read first rest`
-      `read -p "Enter value: " x`
-      `read -s password`
+    `read name`
+    `read first rest`
+    `read -p "Enter value: " x`
+    `read -s password`
+
+    `while read -q field; do                  iterate safely over
+         echo "got: $field"                   shell-quoted input
+     done < <(ls -Q --quoting-style=shell-escape)`
+
+    `split : "$PATH" | while read -q path; do  walk PATH entries even
+         echo "checking: $path"               if some contain spaces
+     done                                     or newlines`
+
+    `read -q -a fields                        decode all fields into
+                                              array $fields`
+
+  See also: |quote|(builtin-quote), |unquote|(builtin-unquote)
 
 ==============================================================================
 READONLY                                         *builtin-readonly* *readonly*
